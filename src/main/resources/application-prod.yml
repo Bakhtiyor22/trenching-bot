@@ -1,0 +1,24 @@
+# Production settings.
+#
+# The datasource is supplied entirely by the environment - there are no
+# fallbacks, so the application fails fast on a missing or misconfigured value
+# instead of silently starting against the wrong database.
+spring:
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DATABASE_POOL_SIZE:10}
+  jpa:
+    show-sql: false
+
+management:
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    com.trenching.bot: INFO

@@ -1,0 +1,17 @@
+# Local development against the PostgreSQL started by docker-compose.yml.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/trenching_bot
+    username: trenching
+    password: trenching
+  jpa:
+    show-sql: true
+
+management:
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.trenching.bot: DEBUG
