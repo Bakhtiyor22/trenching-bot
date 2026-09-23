@@ -23,3 +23,7 @@ Thumbs.db
 
 # Local environment
 .env
+
+# Claude Code (per-developer settings and agent worktrees)
+.claude/settings.local.json
+.claude/worktrees/

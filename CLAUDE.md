@@ -9,6 +9,23 @@ a global rule assumed flat layers (`controller/`, `service/`, ...), it applies
 here as a sub-package *inside* a module once that module is big enough to need
 it (e.g. `telegram/model`, `telegram/repository`), not as a top-level package.
 
+## Claude Code skills and agents
+
+Project tooling lives in `.claude/`; the developer guide is
+[docs/CLAUDE_CODE_GUIDE.md](docs/CLAUDE_CODE_GUIDE.md). Route work like this:
+
+| Situation | Use |
+|---|---|
+| Writing, changing, reviewing or planning Kotlin code | `kotlin-spring-guidelines` skill (conventions; always loaded by the others) |
+| A new feature, design, module contract or schema design | `backplan` skill → plan in `docs/plans/`, stop for approval |
+| An approved plan or multi-part task to implement | `orchestrate` skill → `backend-developer` per part, then `backend-reviewer` |
+| A scoped implementation part | `backend-developer` agent |
+| "Review this" / after an implementation | `review` skill or `backend-reviewer` agent |
+| Unclear requirements before starting | `/ask` command (user-invoked only) |
+
+A new feature starts with `backplan`, not code. Small fixes go straight to
+implementation, test first.
+
 ## Database migrations
 
 - Name Flyway migrations with a UTC timestamp, not sequential numbers:

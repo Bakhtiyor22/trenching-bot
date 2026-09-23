@@ -48,6 +48,12 @@ Rules of thumb for the boundaries:
 - Database migrations live in `src/main/resources/db/migration`, named with a UTC
   timestamp (`V<yyyyMMddHHmmss>__<description>.sql`) — see [CLAUDE.md](CLAUDE.md).
 
+## Working with Claude Code
+
+The repository ships shared Claude Code skills, agents and permissions in `.claude/`.
+See [docs/CLAUDE_CODE_GUIDE.md](docs/CLAUDE_CODE_GUIDE.md) for setup and for which skill
+triggers in which scenario.
+
 ## Running locally
 
 ### 1. Start PostgreSQL
