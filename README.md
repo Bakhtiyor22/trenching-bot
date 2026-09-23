@@ -73,7 +73,7 @@ data volume.
 ./gradlew bootRun
 ```
 
-The `local` profile is active by default and points at the Compose database.
+`bootRun` activates the `local` profile, which points at the Compose database.
 The application listens on <http://localhost:8080>.
 
 ### 3. Check health
@@ -93,7 +93,11 @@ are ready. Under the `local` profile the response includes per-indicator details
 ```
 
 Compiles, runs the tests and produces `build/libs/trenching-bot-0.0.1-SNAPSHOT.jar`.
-Run the jar with `java -jar build/libs/trenching-bot-0.0.1-SNAPSHOT.jar`.
+The jar needs a profile, since there is no default one:
+
+```bash
+SPRING_PROFILES_ACTIVE=local java -jar build/libs/trenching-bot-0.0.1-SNAPSHOT.jar
+```
 
 To compile without running tests:
 
@@ -113,19 +117,22 @@ state behind.
 
 ## Configuration
 
-Profile independent settings live in `application.yml`. Everything environment
-specific — above all the datasource — lives in the profile file, so no profile
-silently inherits another environment's database.
+`application.yml` holds only what is true in every environment: application name,
+server port and actuator exposure. Everything that varies — datasource and
+JPA/Hibernate behaviour — lives in the profile file, so no profile can silently
+inherit another environment's database.
 
-| File                    | Profile | Purpose                                                       |
-| ----------------------- | ------- | ------------------------------------------------------------- |
-| `application.yml`       | —       | Shared settings: app name, JPA, Flyway, actuator, server port  |
-| `application-local.yml` | `local` | Points at the Compose database; verbose logging, health details |
+| File                    | Profile | Purpose                                                           |
+| ----------------------- | ------- | ----------------------------------------------------------------- |
+| `application.yml`       | —       | App name, server port, actuator exposure                          |
+| `application-local.yml` | `local` | Compose database; verbose logging, health details                 |
 | `application-prod.yml`  | `prod`  | Datasource from the environment; quiet logging, no health details |
 
-`local` is the default profile, so `./gradlew bootRun` and `java -jar ...` work
-with no extra configuration. Select another profile with
-`SPRING_PROFILES_ACTIVE=<profile>`.
+There is **no default profile** — one is always chosen explicitly through
+`SPRING_PROFILES_ACTIVE=<profile>`. `bootRun` sets `local` for you.
+
+Flyway is not configured at all: it runs on Spring Boot's defaults, which are
+already what this project needs (enabled, reading `classpath:db/migration`).
 
 ### Running with the `prod` profile
 

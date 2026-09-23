@@ -46,3 +46,9 @@ tasks.withType<Test> {
         events("passed", "skipped", "failed")
     }
 }
+
+// `application.yml` deliberately declares no default profile, so an environment
+// is always chosen explicitly. `bootRun` picks `local` for developer convenience.
+tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
+    systemProperty("spring.profiles.active", "local")
+}
