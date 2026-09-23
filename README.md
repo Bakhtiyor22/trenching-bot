@@ -3,8 +3,8 @@
 Solana paper-trading research system.
 
 This repository currently contains **only the technical foundation**: build setup,
-configuration, local infrastructure and a health check. No trading logic,
-Solana integration or notification handling is implemented yet.
+configuration, local infrastructure, a health check and a minimal Telegram
+alert sender. No trading logic or Solana integration is implemented yet.
 
 ## Stack
 
@@ -37,15 +37,16 @@ src/main/kotlin/com/trenching/bot
 ├── marketdata/                  (empty) Solana market data ingestion
 ├── strategy/                    (empty) signal generation
 ├── papertrading/                (empty) simulated execution and portfolio
-└── notification/                (empty) outbound notifications
+├── notification/                (empty) outbound notifications
+└── telegram/                    Telegram alert sender (TelegramAlertSender)
 ```
 
 Rules of thumb for the boundaries:
 
 - A module owns its own persistence and exposes a narrow Kotlin API to others.
 - Modules do not reach into each other's internals; shared types live in `common`.
-- Database migrations live in `src/main/resources/db/migration` and are versioned
-  sequentially (`V<n>__<description>.sql`).
+- Database migrations live in `src/main/resources/db/migration`, named with a UTC
+  timestamp (`V<yyyyMMddHHmmss>__<description>.sql`) — see [CLAUDE.md](CLAUDE.md).
 
 ## Running locally
 
@@ -133,6 +134,29 @@ There is **no default profile** — one is always chosen explicitly through
 
 Flyway is not configured at all: it runs on Spring Boot's defaults, which are
 already what this project needs (enabled, reading `classpath:db/migration`).
+
+### Telegram alerts
+
+The `telegram` module long-polls Telegram's `getUpdates` for the configured
+bot and records every chat that messages it in `telegram_chats`, with
+`allowed = false` by default. `TelegramAlertSender.sendAlert` broadcasts to
+every chat where `allowed = true`, via the Telegram Bot HTTP API.
+
+There is no admin flow yet: after messaging your bot once, promote your own
+chat manually:
+
+```sql
+update telegram_chats set allowed = true where chat_id = <your chat id>;
+```
+
+Both the listener and `sendAlert` are optional in every profile: with no bot
+token configured, the listener doesn't start and `sendAlert` logs a warning
+and does nothing instead of failing. With a token but no allowed chats yet,
+`sendAlert` also just logs and skips.
+
+| Variable            | Required | Meaning                    |
+| -------------------- | -------- | --------------------------- |
+| `TELEGRAM_BOT_TOKEN` | no       | Bot token from @BotFather   |
 
 ### Running with the `prod` profile
 
