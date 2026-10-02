@@ -80,7 +80,7 @@ wallet ingestion?", "design the positions table").
 
 **Does not trigger for:** a small fix, a rename, a one-file change, or a review.
 
-**Produces:** `docs/plans/<yyyyMMdd>-<slug>.md` with contracts, domain rules, migrations, tests,
+**Produces:** `docs/plans/<yyyyMMdd>-<slug>.md` with contracts, domain rules, schema changes, tests,
 acceptance criteria and open questions — then **stops and asks for approval**. Decisions that
 affect simulation fidelity get an ADR in `docs/adr/`.
 
@@ -164,7 +164,7 @@ Enforced by `.claude/settings.json` and the strict rules:
 
 Beyond permissions, the rules tell Claude to: stay strictly read-only toward Solana, never call live
 providers (RPC, market data, Telegram) on its own, keep secrets in environment variables only,
-never edit an applied migration, not add dependencies without asking, and not change git state
+not make destructive schema changes without asking, not add dependencies without asking, and not change git state
 unless you ask.
 
 ## 7. Changing the setup

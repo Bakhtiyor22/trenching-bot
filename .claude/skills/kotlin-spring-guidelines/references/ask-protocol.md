@@ -20,9 +20,8 @@ simulation rule. Everything else is judgement — these lists make the edges con
   product decision, not a coding decision.
 - **A change to a public module contract** — a port signature, a cross-module value type, the
   replay fixture schema, or anything the other developer's module consumes.
-- **A destructive or data-changing migration** — drop, rename, narrowing, type change, `NOT NULL`
-  on a populated table without a default, a backfill — or editing a migration that may already be
-  applied.
+- **A destructive or data-changing schema change** — drop, rename, narrowing, type change,
+  `NOT NULL` on a populated table without a default, a backfill.
 - **Adding or bumping a dependency** (MapStruct, a WebSocket client, a provider SDK, MockK, ...).
 - **Calling a live provider or messaging a real Telegram chat.**
 - **A new secret or required prod variable**, or anything touching `application-prod.yml`.
@@ -56,8 +55,8 @@ Three checks answer most questions here without involving anyone:
 
 1. **Is it already decided?** Search `docs/adr/`, `docs/plans/` and `docs/WEEKLY_EXECUTION_PLAN.md`
    for the decision (fill rule, commitment, rounding, ...). A decision recorded there is the answer.
-2. **What does the schema say?** Read the migrations in `src/main/resources/db/migration`, newest
-   last, for the table, its constraints and unique keys — not a live database, not only the entity.
+2. **What does the schema say?** Read the entity — its `@Table` unique keys and indexes and its
+   `@Column` definitions — and `docs/schema/` for history; not a live database.
 3. **Who owns it?** Find the module whose public contract declares the type or port. If it is
    another module's contract, changing it is an "always ask".
 

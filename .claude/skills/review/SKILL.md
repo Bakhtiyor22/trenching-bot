@@ -72,8 +72,9 @@ Work these in order. Section 1 is the one reviews most often skip, and the one t
   fee/slippage model on a new record.
 - **Nullability.** Every `!!` is a finding. A platform type from JDBC/Jackson/Java into a non-null
   Kotlin type is a latent NPE.
-- **Schema.** Migration and entity disagree (fails `validate` at startup) — BLOCKER. An edited
-  migration that may already be applied — BLOCKER. A sequential `V<n>` name. A destructive change
+- **Schema.** A new Flyway/`.sql` migration file (there is no Flyway for now) — BLOCKER. A unique
+  key the code relies on that is not declared in the entity's `@Table` — BLOCKER. A schema change
+  with no SQL stated for production (`prod` validates). A destructive change
   without approval. Missing unique constraint on external identity. Missing index for a new query
   on a growing table.
 - **Transactions.** Multi-write path without `@Transactional`; `@Transactional` on a `private` or
@@ -166,7 +167,7 @@ Severity:
 Then close with:
 
 1. **Requirement coverage** — implemented / partial / missing, item by item.
-2. **Schema and startup risk** — migrations added, whether `validate` will pass, anything
+2. **Schema and startup risk** — entity/table changes, the SQL production needs, anything
    destructive.
 3. **Residual risk** — what could still break that the tests do not cover.
 4. **Verification gaps** — what was not run and should be.

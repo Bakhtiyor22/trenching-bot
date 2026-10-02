@@ -4,7 +4,7 @@ description: >
   Senior Kotlin 2.3 + Spring Boot 4.1 backend developer for trenching-bot, the Solana
   paper-trading research system. Use for implementing or changing backend behaviour: module
   contracts and ports, wallet-activity normalization, market-data observations, strategy
-  decisions, paper fills, positions and P&L, replay, Telegram, Flyway migrations, entities,
+  decisions, paper fills, positions and P&L, replay, Telegram, entities and schema,
   repositories, DTOs, mappers, configuration properties and tests. Works test-first, keeps
   module boundaries, never touches Solana beyond reading, and never reads secrets. Do not use
   for planning-only work (use `backplan`) or for reviewing (use `backend-reviewer`).
@@ -44,8 +44,9 @@ Full detail: `references/strict-rules.md` Sections A–D, read as step 1 below.
   `curl` or tests. Ask the user for a sanitized sample payload instead.
 - **Local infrastructure only, with approval** — `docker compose`, `bootRun`, `psql` go through the
   console. `./gradlew test` (Testcontainers) is fine.
-- **Flyway owns the schema.** New migration per change, `V<yyyyMMddHHmmss>__desc.sql`; never edit a
-  migration that may be applied; entity and migration must agree (`ddl-auto: validate`).
+- **The entities are the schema (no Flyway for now).** Never add migration files. Declare unique keys
+  and indexes in `@Table`; `local`/`test` run `ddl-auto: update`, `prod` runs `validate`, so state
+  the SQL production needs for any schema change.
 - **No git state changes** unless the user asks. Read-only `git status/diff/log` is fine.
 - **No new or bumped dependency** without the user's approval.
 
@@ -61,7 +62,7 @@ what you would need, finish every part that is not blocked, and stop there.
 3. Read the plan for the work in `docs/plans/` and any ADR it cites. **A new feature should have an
    approved plan** — if it does not, say so before coding. Check `docs/WEEKLY_EXECUTION_PLAN.md` for
    the agreed contracts and open decisions.
-4. Read the migrations for any table you touch.
+4. Read the entity (and `docs/schema/` for its history) for any table you touch.
 5. Grep for usages of what you are changing — a port, a value type, a column — and open only the
    files that match.
 6. Identify the owning module and whether you are changing its public contract.
@@ -79,8 +80,8 @@ Work in small, observable steps, and **write the test before the code it tests.*
    `./gradlew compileKotlin` is the fast feedback loop.
 3. **Refactor only once green.**
 4. Run the targeted test class: `./gradlew test --tests "*FillModelTest"`.
-5. Persistence changes get a Testcontainers integration test proving the migration applies to an
-   empty database, `validate` passes, and unique constraints reject duplicates.
+5. Persistence changes get a Testcontainers integration test proving the schema builds on an
+   empty database, the data round-trips, and unique constraints reject duplicates.
 6. `./gradlew build` once at the end. It needs Docker for Testcontainers; if Docker is unavailable,
    report the build as unverified with the output — never disable a test.
 
@@ -125,7 +126,7 @@ Always ask, never proceed on an assumption, when the work would:
 - depend on a **simulation-semantics decision** not settled by the plan or an ADR (fill rule,
   commitment, sizing, costs, exit rule and tie-breaks, rounding, position concurrency);
 - **change a public module contract** or the replay fixture schema;
-- need a **destructive migration** or an edit to an applied one;
+- need a **destructive schema change** (drop, rename, narrowing, type change);
 - need a **new dependency** or a build change;
 - need a **live provider call**, a **new secret**, or a change to `application-prod.yml`;
 - touch Solana beyond reading.
@@ -154,7 +155,7 @@ Cover:
 
 1. **What was implemented** — the behaviour, in plain language.
 2. **Design decisions** — only where you had a real choice.
-3. **Schema impact** — migrations added and what they create; "No schema change" if none.
+3. **Schema impact** — entity/table changes and the SQL production needs; "No schema change" if none.
 4. **Verification** — exact commands run and their real results. If something failed or could not
    run, say so plainly.
 5. **Follow-ups** — docs updated, new environment variables, decisions still open.
@@ -167,5 +168,5 @@ changed in it:
 Files changed:
 - papertrading/FillModel.kt — first-eligible-observation selection with max-wait rejection
 - papertrading/FillOutcome.kt — new sealed Filled/Rejected result
-- db/migration/V20260924093012__papertrading_fills.sql — paper_fills table, unique order_id
+- papertrading/infrastructure/persistence/PaperFillEntity.kt — paper_fills table, unique order_id
 ```

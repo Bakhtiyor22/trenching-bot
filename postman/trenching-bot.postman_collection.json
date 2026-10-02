@@ -1,0 +1,206 @@
+{
+  "info": {
+    "name": "Trenching Bot — Application API",
+    "description": "Read-only checks for the HTTP endpoints implemented by the current application. Replay, trade intents, fills and positions currently have CLI/domain interfaces, not HTTP endpoints. Start the local Spring app and PostgreSQL first. Local-only database details require the local profile. No credentials are included.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "expectHealthDetails",
+      "value": "true",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+          "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.match(/application\\/(?:json|vnd\\.spring-boot\\.actuator\\.v\\d+\\+json)/i); });",
+          "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Application endpoints",
+      "item": [
+        {
+          "name": "Discover Actuator endpoints",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/actuator",
+            "description": "Lists exposed Actuator links."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Health and info endpoints are exposed\", function () { const links = pm.response.json()._links; pm.expect(links).to.be.an(\"object\"); [\"self\", \"health\", \"info\"].forEach(function (key) { pm.expect(links[key].href).to.be.a(\"string\").and.not.empty; }); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Overall health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/actuator/health",
+            "description": "Overall health includes the database indicator. Set expectHealthDetails=false when testing a profile that hides component details."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Application is UP\", function () { pm.expect(pm.response.json().status).to.equal(\"UP\"); });",
+                  "if (pm.variables.get(\"expectHealthDetails\") === \"true\") {",
+                  "  pm.test(\"PostgreSQL component is UP\", function () { pm.expect(pm.response.json().components.db.status).to.equal(\"UP\"); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Liveness",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/actuator/health/liveness",
+            "description": "Checks process liveness. This probe does not independently verify PostgreSQL."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Liveness is UP\", function () { pm.expect(pm.response.json().status).to.equal(\"UP\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Readiness",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/actuator/health/readiness",
+            "description": "Checks Spring readiness state. Use overall health or the local database check for database connectivity."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Readiness is UP\", function () { pm.expect(pm.response.json().status).to.equal(\"UP\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Application info",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/actuator/info",
+            "description": "An empty JSON object is valid: build/git info contributors are not currently configured."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": []
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Local only — PostgreSQL details",
+      "description": "Run with the local profile only. Production hides components/details; omit this folder when checking production.",
+      "item": [
+        {
+          "name": "PostgreSQL health",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/actuator/health/db",
+            "description": "Verifies the real database health indicator, including the PostgreSQL product name."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Database is UP\", function () { pm.expect(pm.response.json().status).to.equal(\"UP\"); });",
+                  "pm.test(\"Database is PostgreSQL\", function () { pm.expect(pm.response.json().details.database).to.equal(\"PostgreSQL\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}

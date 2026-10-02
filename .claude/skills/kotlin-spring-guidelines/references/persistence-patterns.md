@@ -1,25 +1,28 @@
 # Persistence Patterns
 
-PostgreSQL 17, Spring Data JPA, Flyway. **Flyway owns the schema; Hibernate only validates it**
-(`ddl-auto: validate` in every profile).
+PostgreSQL 17, Spring Data JPA. **There is no Flyway for now; the entities are the schema.**
+Hibernate runs `ddl-auto: update` in `local` and `test` and `validate` in `prod`.
 
-## Migrations
+## Schema
 
-Location: `src/main/resources/db/migration`.
-
-- Name: `V<yyyyMMddHHmmss>__<lower_snake_description>.sql`, UTC timestamp from
-  `date -u +"%Y%m%d%H%M%S"`. Example: `V20260923105308__telegram_chats.sql`.
-- One migration per logical change; its module in the description when useful
-  (`__marketdata_observations.sql`).
-- **Never edit a migration that may have been applied.** Add a new one.
+- Every table, column, unique key and index is declared on the entity. Unique keys and indexes go
+  in `@Table(uniqueConstraints = [...], indexes = [...])`, never only in SQL.
 - Tables, columns, constraints and indexes are `snake_case`. Name constraints explicitly
-  (`uq_paper_fills_order_id`, `fk_positions_fill_id`, `idx_market_observations_mint_slot`) so an
-  error message tells you what was violated.
+  (`uq_paper_fills_order_id`, `idx_market_observations_mint_slot`) so an error message tells you
+  what was violated.
 - Primary keys and every idempotency key are explicit. **External identity gets a unique
   constraint**, not just an application check.
 - Timestamps are `timestamptz`; slots are `bigint`; raw token amounts `numeric(20,0)`; decimals
   `numeric(p,s)` with the scale the domain uses.
 - A module owns its tables. Another module does not add columns to them or query them directly.
+- `update` only **adds**: tables, columns, declared unique keys and indexes. It never drops,
+  renames, narrows or retypes, and it never creates CHECK constraints from annotations alone or
+  partial indexes. After such a change, reset the local database (`docker compose down -v`).
+- `prod` only validates, so a schema change needs SQL applied to production by hand before
+  deploying. State that SQL in the plan or PR.
+- `docs/schema/` holds the last Flyway SQL for reference, including the CHECK constraints,
+  composite foreign keys and the partial unique index `uq_positions_open_scenario`, which
+  Hibernate does not create.
 
 What needs the user's approval first (an "always ask"):
 
@@ -28,12 +31,12 @@ What needs the user's approval first (an "always ask"):
 | Drop a table or column | Data loss |
 | Rename a table or column | Breaks the running version and every query |
 | Narrow a type or length, change a type | Can fail on existing data |
-| Add `NOT NULL` to a populated table without a default | Fails the migration |
-| Backfill or rewrite rows | Data migration — needs a rollback note |
+| Add `NOT NULL` to a populated table without a default | Fails on existing rows |
+| Backfill or rewrite rows | Data change — needs a rollback note |
 | Add a unique constraint to a populated table | Fails on existing duplicates |
 
-Every migration must apply cleanly to an **empty** PostgreSQL 17 — the Testcontainers integration
-tests prove this on every `./gradlew test`.
+The schema must build cleanly from the entities on an **empty** PostgreSQL 17 — the Testcontainers
+integration tests prove this on every `./gradlew test`.
 
 ## Entities
 
@@ -70,9 +73,9 @@ Rules (from `CLAUDE.md`, expanded):
 - `var` for what changes, `val` for what never does after insert.
 - **No business logic** — no validation methods, no service calls, no mapping functions.
 - `@Table(name = ...)` and `@Column(name = ...)` explicit; `nullable`, `length`, `precision`,
-  `scale` explicit and **identical to the migration** — `validate` fails startup otherwise.
+  `scale` explicit — they define the column, and `prod` validates against them.
 - `@Enumerated(EnumType.STRING)` always, with a `length` that fits the longest constant.
-- Money/price columns: `@Column(precision = ..., scale = ...)` matching the migration's `numeric`.
+- Money/price columns: `@Column(precision = ..., scale = ...)` with the domain's `numeric` scale.
 - Entities are internal to their module and live in its `model/` (or `infrastructure/persistence/`)
   package. Map them to domain/DTO types before they leave the service.
 
@@ -131,6 +134,6 @@ interface TelegramChatRepository : JpaRepository<TelegramChat, Long> {
 
 ## Testing persistence
 
-Repository and migration behaviour is tested against real PostgreSQL through
+Repository and schema behaviour is tested against real PostgreSQL through
 `support/PostgresTestContainerConfiguration` — see `testing-and-build.md`. Test the unique
 constraints by deliberately inserting a duplicate.

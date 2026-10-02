@@ -44,25 +44,26 @@ explicitly approved it. `CLAUDE.md` is the base rule set; these rules add to it.
 10. **Local infrastructure only, and only with approval.** `docker compose up`, `./gradlew bootRun`
     and `psql` against the Compose database go through the console for approval (`ask` in
     settings). Never point anything at a non-local database.
-11. **Derive schema knowledge from the Flyway migrations and entities**, not from a live database.
+11. **Derive schema knowledge from the entities** (and `docs/schema/` for history), not from a live
+    database.
 12. **Never change git state unless the user asks** — no commit, branch, checkout, stage, stash,
     push or reset. Read-only `git status`, `git diff`, `git log`, `git show` are fine and are how a
     reviewer finds the change.
 13. **Never write secrets or real personal data into code, tests, fixtures, docs, or logs.** Wallet
     addresses and signatures are public on-chain data; everything else in a fixture is sanitized.
 
-## D. Schema — Flyway is the only authority
+## D. Schema — the entities are the authority (no Flyway for now)
 
-14. **Every schema change is a new Flyway migration** in `src/main/resources/db/migration`, named
-    `V<yyyyMMddHHmmss>__<lower_snake_description>.sql` with a UTC timestamp from
-    `date -u +"%Y%m%d%H%M%S"`. Never a sequential `V1`, `V2`.
-15. **Never edit a migration that may have been applied** (anything merged to `develop`, or that
-    the user has run). Add a new migration instead.
-16. **Hibernate runs `ddl-auto: validate`.** Entity and migration ship in the same change and must
-    agree exactly — column names, types, nullability, lengths, precision/scale. A mismatch fails
-    startup.
-17. **A destructive migration** — drop, rename, narrowing, type change, a `NOT NULL` column on a
-    populated table without a default, a backfill — needs the user's approval first and a
+14. **Every schema change is an entity change.** Do not add Flyway or `.sql` migration files.
+    Hibernate runs `ddl-auto: update` in `local`/`test` and `validate` in `prod`.
+15. **Unique keys and indexes are declared on the entity** with
+    `@Table(uniqueConstraints = [...], indexes = [...])` — `update` creates nothing else.
+16. **`update` only adds.** A drop, rename, narrowing or type change is not applied to an existing
+    database; say so and tell the user to reset the local database (`docker compose down -v`).
+    Production validates, so any schema change needs SQL applied there by hand — state it in the
+    plan or PR.
+17. **A destructive schema change** — drop, rename, narrowing, type change, a `NOT NULL` column on
+    a populated table without a default, a backfill — needs the user's approval first and a
     rollback/data note in the plan or PR.
 18. **External identity and idempotency keys get a database unique constraint**, not only an
     application-side check.
@@ -132,8 +133,8 @@ See `trading-domain.md` for the full model.
 45. **`FetchType.LAZY` on every association.** `JOIN FETCH` / `@EntityGraph` for what is always
     needed; no lazy traversal inside a loop (N+1).
 46. **`@Enumerated(EnumType.STRING)` always.**
-47. **Explicit column constraints** (`nullable`, `length`, `precision`, `scale`) matching the
-    migration.
+47. **Explicit column constraints** (`nullable`, `length`, `precision`, `scale`) — they define the
+    column.
 48. **`@Transactional` at the service layer only** — never on an adapter; never on a repository
     except a bulk `@Modifying` query. A `private` or self-invoked `@Transactional` function does
     nothing.

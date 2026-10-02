@@ -1,0 +1,15 @@
+# Provider research and verification
+
+Reviewed 2026-10-01. This is a provisional recommendation; no production adapter, account or paid plan was enabled.
+
+Start a one-wallet capture spike with standard Solana HTTP/WebSocket RPC and a narrow on-chain swap parser. Prices must be derived from supported transactions/pools with explicit slots, decimals and pair identities. This requires more decoding than a current-price API but preserves the ordering used by the simulator. Public devnet is the fallback for connectivity tests, not a mainnet research feed. [Solana clusters](https://solana.com/docs/references/clusters)
+
+Helius is the proposed first provider: its published Free plan lists 1M credits and 10 RPC requests/second. Standard subscriptions plus `getSignaturesForAddress`/`getTransaction` provide an economical first capture path. Minimum setup if adopted: register in the Helius dashboard, create an API key, select the correct network, supply the HTTP/WebSocket URLs through the shell environment, and set a credit budget. Do not paste keys into chat or commit URLs containing keys. The adapter and its environment bindings remain to be implemented. [Pricing](https://www.helius.dev/pricing), [transaction RPC](https://www.helius.dev/docs/api-reference/rpc/http/gettransaction)
+
+Yellowstone-compatible LaserStream gRPC offers slot-based historical replay up to 48 hours and managed delivery. Mainnet requires a higher tier; its documentation and current pricing page differ on devnet plan availability, so confirm entitlement in the account before relying on it. A gRPC client would add complexity and dependencies; defer until a measured gap/throughput requirement justifies it. [LaserStream](https://www.helius.dev/docs/laserstream)
+
+Birdeye is a possible specialist market-data alternative. Its pricing page lists paid WebSocket options; slot precision, relevant DEX coverage, payload retention rights, historical trade depth and illiquid-token behavior have not been verified here. Do not purchase it or substitute timestamp/OHLCV data for slot-exact fills on this evidence. [Birdeye pricing](https://birdeye.so/data-api/pricing)
+
+Go/no-go for a production adapter: capture a known successful supported swap and a failed/unsupported one; prove signature/instruction identity, decimals, confirmed commitment, exact observation slots, reconnect/gap recovery, bounded retries/429 handling, retention rights and operating cost. Latency, DEX coverage, production delivery guarantees and historical completeness are currently unmeasured.
+
+Real API evidence: the Java `SolanaDevnetLiveTest` passed `getVersion` and `getSlot` against public devnet on 2026-10-01. The final verification returned node version 4.3.0 and confirmed slot 506305915. Earlier Java/Windows checks returned slots 506260648/506260827. The Java client needed HTTP/1.1 in this environment. These checks used no credentials and made no chain writes. No Helius/Birdeye calls, wallet captures, or live price integration were tested.

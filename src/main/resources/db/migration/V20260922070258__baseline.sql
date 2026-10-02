@@ -1,4 +1,0 @@
--- Baseline migration.
---
--- Establishes the Flyway schema history for this database. Module owned tables
--- are added in later, separately versioned migrations.

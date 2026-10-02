@@ -26,13 +26,23 @@ Project tooling lives in `.claude/`; the developer guide is
 A new feature starts with `backplan`, not code. Small fixes go straight to
 implementation, test first.
 
-## Database migrations
+## Database schema
 
-- Name Flyway migrations with a UTC timestamp, not sequential numbers:
-  `V<yyyyMMddHHmmss>__description.sql` (e.g. `V20260923105308__telegram_chats.sql`).
-  Sequential `V1`, `V2`, ... collide when two developers add a migration on
-  separate branches at the same time; timestamps don't.
-- Get the timestamp with `date -u +"%Y%m%d%H%M%S"`.
+- There is no Flyway for now (removed 2026-10-02). The JPA entities are the
+  schema: Hibernate runs `ddl-auto: update` in the `local` and `test` profiles
+  and `validate` in `prod`.
+- Declare every business unique key and lookup index on the entity, via
+  `@Table(uniqueConstraints = [...], indexes = [...])`. Code that relies on a
+  duplicate insert failing (e.g. `SimulationRunLedger`) only works if the
+  constraint is declared there.
+- `update` only adds tables and columns, plus the unique keys and indexes
+  declared on entities. It never drops, renames, narrows or retypes anything.
+  After such a change, reset the local database with `docker compose down -v`.
+- `prod` only validates, so any schema change must be applied to the
+  production database by hand before deploying.
+- [docs/schema/](docs/schema/) keeps the last Flyway SQL for reference. It also
+  holds the CHECK constraints, composite foreign keys and the partial unique
+  index `uq_positions_open_scenario`, which Hibernate does not create.
 
 ## Code style
 

@@ -1,0 +1,28 @@
+package com.trenching.bot.replay.application
+
+import com.trenching.bot.replay.domain.ReplayDataset
+import com.trenching.bot.walletactivity.domain.OrderedWalletTransactions
+import com.trenching.bot.marketdata.domain.OrderedMarketData
+
+object DatasetFingerprint {
+    fun checksum(dataset: ReplayDataset): String {
+        val transactions = OrderedWalletTransactions.canonical(dataset.transactions)
+        val observations = OrderedMarketData.canonical(dataset.observations)
+        val parts = mutableListOf(dataset.schemaVersion.toString(), dataset.trackedWallet.value)
+        transactions.forEach { transaction ->
+            parts.addAll(listOf("transaction", transaction.wallet.value, transaction.signature.value,
+                transaction.instructionIndex.toString(), transaction.slot.value.toString(), transaction.blockTime?.toString() ?: "",
+                transaction.pair.base.value, transaction.pair.quote.value, transaction.baseDelta.toString(),
+                transaction.quoteDelta.toString(), transaction.baseDecimals.toString(), transaction.quoteDecimals.toString(),
+                transaction.successful.toString(), transaction.supportedRoute.toString(), transaction.signer.toString(),
+                transaction.source, transaction.commitment.name))
+        }
+        observations.forEach { observation ->
+            parts.addAll(listOf("observation", observation.id, observation.pair.base.value, observation.pair.quote.value,
+                observation.slot.value.toString(), observation.priceSlot.value.toString(), observation.observedTime.toString(),
+                observation.price.stripTrailingZeros().toPlainString(), observation.liquidityQuote?.stripTrailingZeros()?.toPlainString() ?: "",
+                observation.source, observation.sourceEventId, observation.commitment.name, observation.quality.name))
+        }
+        return StableHash.of(parts)
+    }
+}

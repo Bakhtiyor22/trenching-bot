@@ -34,7 +34,8 @@ Read, in this order, only what the change actually touches:
 3. `docs/WEEKLY_EXECUTION_PLAN.md` — agreed module boundaries, contracts (§3), data requirements
    (§5), test strategy (§6) and the open decisions (§9)
 4. `docs/adr/` and `docs/plans/` (+ `archive/`) for related, superseding or conflicting decisions
-5. The real code in the modules involved and the migrations in `src/main/resources/db/migration`
+5. The real code in the modules involved, including the entities (the schema — there is no Flyway
+   for now) and `docs/schema/` for history
 
 If something you need is undecided or undocumented, say so in the plan rather than guessing.
 
@@ -72,8 +73,8 @@ Every plan answers these. Skip one only by saying why it does not apply.
   dataset, provider timeout/rate limit, unconfigured optional integration
 
 **Persistence**
-- New tables/columns with types and constraints, as Flyway migration(s) named
-  `V<yyyyMMddHHmmss>__...sql`
+- New tables/columns with types and constraints, as entity changes (`@Column`, and
+  `@Table(uniqueConstraints, indexes)`), plus the SQL production needs since `prod` only validates
 - Unique constraints for external identity and idempotency; indexes for the query patterns
 - Whether anything is destructive (drop/rename/narrow/backfill) — needs approval and a rollback note
 - Entities and repositories per module; associations by id across modules
@@ -100,8 +101,8 @@ and consequential — then recommend one.
 
 ## Output
 
-**Every new feature gets a persisted plan** at `docs/plans/<yyyyMMdd>-<slug>.md` (date prefix, like
-the migrations, so two developers never collide on a number). Create `docs/plans/` if it does not
+**Every new feature gets a persisted plan** at `docs/plans/<yyyyMMdd>-<slug>.md` (date prefix, so two
+developers never collide on a number). Create `docs/plans/` if it does not
 exist. Only a small, already-scoped change may be presented inline instead.
 
 Lifecycle: approve → implement → review → update README/ADRs → move to `docs/plans/archive/` with a
@@ -138,7 +139,7 @@ determinism, idempotency, provenance.
 
 ## Data Model
 
-Migrations (file names), tables, columns, constraints, indexes. Destructive changes flagged with a
+Entities, tables, columns, constraints, indexes, and the SQL production needs. Destructive changes flagged with a
 rollback note. "No schema change" if none.
 
 ## Transactions & Integration
@@ -183,22 +184,23 @@ Present the plan's **substance in prose** — do not paste the plan file into th
 it lives, summarise the decisions and the open questions, and ask for approval.
 
 **Ask, don't assume**, on anything in the "always ask" list of `references/ask-protocol.md` —
-especially undecided simulation semantics, contract changes, destructive migrations, new
+especially undecided simulation semantics, contract changes, destructive schema changes, new
 dependencies and anything that would touch Solana beyond reading.
 
 ## Quality check
 
 Before presenting, verify:
 
-- You read the current code and migrations, not just the docs
+- You read the current code and entities, not just the docs
 - The owning module is named, and cross-module access goes only through public contracts
-- The plan matches the real stack (Kotlin 2.3, Boot 4.1, Jackson 3, Flyway + `validate`, JUnit 5 +
+- The plan matches the real stack (Kotlin 2.3, Boot 4.1, Jackson 3, entity-driven schema with `update` locally and
+  `validate` in prod, JUnit 5 +
   Testcontainers)
 - Every simulation-semantics dependency cites a decision or is an Open Question
 - No `Double`; every calculated number has a scale and rounding mode
 - Idempotency is enforced at both application and database level
 - Every business rule has at least one negative case
 - The core flow is testable with fixtures only — no live provider required
-- Migrations are timestamp-named and non-destructive, or flagged
+- Schema changes are additive, or flagged as destructive with a rollback note
 - Acceptance criteria are checkable
 - Nothing requires reading a secret, a keypair, or calling a live provider

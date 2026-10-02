@@ -1,0 +1,116 @@
+{
+  "info": {
+    "name": "Trenching Bot — Solana Devnet smoke",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Optional direct, read-only checks of public Solana devnet availability. These mirror getVersion/getSlot in SolanaDevnetLiveTest. They do not verify wallet capture, transaction parsing, market prices, the app's provider adapter, or paper execution. No wallet, credentials, billing or account is required for the default public endpoint."
+  },
+  "auth": {
+    "type": "noauth"
+  },
+  "variable": [
+    {
+      "key": "rpcUrl",
+      "value": "https://api.devnet.solana.com",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+          "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.match(/application\\/json/i); });",
+          "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Node version",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"getVersion\",\n  \"params\": []\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{rpcUrl}}",
+        "description": "Read-only public Solana devnet JSON-RPC request. Does not use the application's HTTP API."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"JSON-RPC 2.0 response\", function () { pm.expect(pm.response.json().jsonrpc).to.equal(\"2.0\"); });",
+              "pm.test(\"Request id is preserved\", function () { pm.expect(pm.response.json().id).to.equal(1); });",
+              "pm.test(\"No JSON-RPC error\", function () { pm.expect(pm.response.json()).not.to.have.property(\"error\"); });",
+              "pm.test(\"Solana version is present\", function () { pm.expect(pm.response.json().result[\"solana-core\"]).to.be.a(\"string\").and.not.empty; });"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "Confirmed slot",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"getSlot\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{rpcUrl}}",
+        "description": "Read-only public Solana devnet JSON-RPC request. Does not use the application's HTTP API."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"JSON-RPC 2.0 response\", function () { pm.expect(pm.response.json().jsonrpc).to.equal(\"2.0\"); });",
+              "pm.test(\"Request id is preserved\", function () { pm.expect(pm.response.json().id).to.equal(2); });",
+              "pm.test(\"No JSON-RPC error\", function () { pm.expect(pm.response.json()).not.to.have.property(\"error\"); });",
+              "pm.test(\"Confirmed slot is a positive safe integer\", function () { const slot = pm.response.json().result; pm.expect(Number.isSafeInteger(slot) && slot > 0).to.equal(true); });"
+            ]
+          }
+        }
+      ],
+      "response": []
+    }
+  ]
+}

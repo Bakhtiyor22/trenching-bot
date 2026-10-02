@@ -37,8 +37,8 @@ git changes). Three things you must still decide and pass down, because an agent
 
 - **The simulation-semantics decisions the part depends on**, with the ADR/plan reference. An agent
   that meets an undecided one stops and reports to you; you ask the user.
-- **Migration ownership.** Exactly one part owns all new migrations in a run, so timestamps and
-  table ownership stay coherent. Other parts depend on it.
+- **Schema ownership.** Exactly one part owns all new tables and schema changes in a run, so table
+  ownership stays coherent. Other parts depend on it.
 - **Contract ownership.** Exactly one part defines each shared port/value type; consumers wait.
 
 ## Dividing the work
@@ -56,7 +56,7 @@ How to cut the parts:
   `portfolio`, `replay`, `telegram`. Modules that talk only through public contracts can be built in
   parallel once the contract exists.
 - **Shared foundations go first, alone:** public contracts and value types in `common` or a module's
-  public package, the replay fixture schema, migrations, `config/`, `build.gradle.kts`. Sequence them
+  public package, the replay fixture schema, new entities/tables, `config/`, `build.gradle.kts`. Sequence them
   before their consumers.
 - **`build.gradle.kts`, `application*.yml` and `replay/**` wiring are single-owner** in a run.
 - **Keep the count honest.** Three real deliverables is three parts, not eight.
@@ -69,7 +69,7 @@ Labels: `[impl] Paper fill model` · `[review] Touched changes` · `[fix] Review
 1. **Objective** — the deliverable, in one or two sentences.
 2. **Scope** — the module/files it owns, and the files it must **not** touch.
 3. **Decisions** — the simulation-semantics decisions it relies on, with references.
-4. **Dependencies** — what is already done (contracts, migrations) and what it must not assume.
+4. **Dependencies** — what is already done (contracts, entities) and what it must not assume.
 5. **Acceptance criteria** — copied from the plan, observable.
 6. **Verification** — test-first; `./gradlew compileKotlin` in the loop, the targeted test class,
    `./gradlew build` at the end (Docker needed for Testcontainers).
@@ -94,8 +94,8 @@ Labels: `[impl] Paper fill model` · `[review] Touched changes` · `[fix] Review
 ## Closing out
 
 1. Confirm README and ADRs were updated where the change affected them.
-2. **Consolidate the schema impact** — all migrations added across parts, in order, and anything
-   destructive — in one statement.
+2. **Consolidate the schema impact** — all entity/table changes across parts, the SQL production
+   needs, and anything destructive — in one statement.
 3. Move the plan to `docs/plans/archive/`, appending `## Delivered`: date, what shipped, where it
    differed from the plan and why, docs updated.
 4. Run final verification once:
@@ -115,7 +115,7 @@ never as green, and never disable a test to get past it.
 4. Never let two agents own the same file at the same time.
 5. Call out blocked dependencies instead of guessing through them.
 6. **Ask the user on anything critical** — undecided simulation semantics, a contract change, a
-   destructive migration, a new dependency, anything touching Solana beyond reading. Do not let a
+   destructive schema change, a new dependency, anything touching Solana beyond reading. Do not let a
    sub-agent decide it.
 
 ## Output

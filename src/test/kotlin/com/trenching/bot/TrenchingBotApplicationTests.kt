@@ -1,17 +1,19 @@
 package com.trenching.bot
 
-import com.trenching.bot.support.PostgresTestContainerConfiguration
+import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import javax.sql.DataSource
 import kotlin.test.assertEquals
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Tag
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.test.context.ActiveProfiles
 
 @SpringBootTest
+@Tag("integration")
 @ActiveProfiles("test")
-@Import(PostgresTestContainerConfiguration::class)
+@Import(PostgresTestDatabaseConfiguration::class)
 class TrenchingBotApplicationTests {
 
     @Autowired

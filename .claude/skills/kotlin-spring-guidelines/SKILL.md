@@ -5,7 +5,7 @@ description: >
   paper-trading research system, package `com.trenching.bot`). Covers the feature-module
   monolith layout (common / config / walletactivity / marketdata / strategy / papertrading /
   portfolio / replay / notification / telegram), module boundaries and ports, entities and
-  Flyway migrations, DTOs and mapping, errors and logging, Solana/market-data/Telegram
+  schema, DTOs and mapping, errors and logging, Solana/market-data/Telegram
   integrations, the paper-trading domain invariants (read-only toward Solana, BigDecimal,
   slots, determinism, idempotency), tests with Testcontainers, and the project's strict rules.
   Trigger whenever writing, reviewing, scaffolding, or planning code in
@@ -23,7 +23,8 @@ paper-trading system. If the two ever disagree, follow `CLAUDE.md` and say so in
 - Kotlin **2.3.21**, JVM toolchain **21**, Gradle Kotlin DSL with the wrapper
 - Spring Boot **4.1.1** — Spring MVC, Actuator, Spring Data JPA
 - **Jackson 3** (`tools.jackson.*` packages, `jackson-module-kotlin`), not `com.fasterxml.jackson`
-- **PostgreSQL 17**, **Flyway** is the only schema authority, Hibernate `ddl-auto: validate`
+- **PostgreSQL 17**, no Flyway for now: the entities are the schema (`ddl-auto: update` in
+  `local`/`test`, `validate` in `prod`)
 - Kotlin compiler plugins: `plugin.spring` (opens Spring stereotypes), `plugin.jpa` (no-arg
   constructors for entities); `-Xjsr305=strict`
 - Tests: JUnit 5, `kotlin-test`, `spring-boot-starter-test` (AssertJ, Mockito), Testcontainers
@@ -106,7 +107,7 @@ never on its internals, JPA entities or vendor DTOs. Within a module:
 | When and how to ask the user | `references/ask-protocol.md` |
 | Modules, ports, adapters, services, configuration | `references/module-patterns.md` |
 | Paper-trading domain invariants | `references/trading-domain.md` |
-| Entities, repositories, Flyway, transactions | `references/persistence-patterns.md` |
+| Entities, schema, repositories, transactions | `references/persistence-patterns.md` |
 | DTOs, vendor payloads, mapping | `references/dto-and-mapping.md` |
 | Exceptions and logging | `references/errors-and-logging.md` |
 | Solana RPC, market data, Telegram, HTTP, schedulers | `references/integration-patterns.md` |
@@ -127,8 +128,8 @@ never on its internals, JPA entities or vendor DTOs. Within a module:
   `RoundingMode`. Raw on-chain amounts are integers. **Never `Double`/`Float`.**
 - Slots are `Long` and are the ordering authority in a simulation; timestamps are `Instant` in UTC.
 - Anything time- or id-dependent in the domain takes an injected `Clock` / id generator.
-- Schema changes are Flyway migrations named `V<yyyyMMddHHmmss>__description.sql`; entities are
-  validated against them at startup.
+- Schema changes are entity changes (no migration files); unique keys and indexes are declared in
+  `@Table`. Production only validates, so its SQL is applied by hand.
 - Literals used more than twice go into a constants `object`.
 - **Prefer self-documenting code to comments.** A comment earns its place only for a *why* the code
   cannot express.
@@ -176,7 +177,7 @@ When behaviour changes, update in the same unit of work:
 
 - Describe what you did **in prose. Do not paste code, diffs, or file dumps** into the console —
   reference `path:line`.
-- Always state the **schema impact** (new migration, or "no schema change").
+- Always state the **schema impact** (entity/table changes and the SQL production needs, or "no schema change").
 - Keep it short.
 - **Close every change with a "Files changed" list** — one line per file, path first, then what
   changed in it.

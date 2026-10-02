@@ -44,7 +44,7 @@ fill selection, fees/slippage, position transitions, exits and P&L, idempotency-
 Fixed `Clock`, deterministic ids, builders with explicit slots.
 
 **Integration tests.** Spring context and/or PostgreSQL via Testcontainers, only where wiring or
-persistence matters: Flyway migrations on an empty database, JPA validation, repository round-trips,
+persistence matters: the schema built from the entities on an empty database, repository round-trips,
 unique-constraint behaviour, vendor-JSON mapping from sanitized captured payloads, adapter contract
 tests against a fake HTTP server.
 
@@ -98,8 +98,11 @@ does not need a test first — say why you skipped it.
   running. That is an environment failure: report it with the output, say which tests could not run,
   and do not claim a green build.
 - `JAVA_HOME is not set` / `no Java executable` → the JDK is not configured for this shell.
-- `Schema-validation: missing table/column` at context start → entity and migration disagree; fix the
-  mismatch, never switch `ddl-auto` away from `validate`.
+- `Schema-validation: missing table/column` at context start → only `prod` validates; the production
+  database is missing a change made to an entity. Never "fix" it by switching `prod` away from
+  `validate`.
+- A unique key or index missing locally → it is not declared in the entity's `@Table`, or the local
+  database predates a rename/retype that `update` cannot apply (`docker compose down -v`).
 - **Never delete, `@Disabled`, or weaken a failing test to get green.**
 
 ## Dependencies and build changes
