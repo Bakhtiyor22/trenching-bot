@@ -1,8 +1,8 @@
 {
   "info": {
-    "name": "Trenching Bot — Solana Devnet smoke",
+    "name": "Trenching Bot — Solana Devnet RPC",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "description": "Optional direct, read-only checks of public Solana devnet availability. These mirror getVersion/getSlot in SolanaDevnetLiveTest. They do not verify wallet capture, transaction parsing, market prices, the app's provider adapter, or paper execution. No wallet, credentials, billing or account is required for the default public endpoint."
+    "description": "Every read-only Solana HTTP JSON-RPC method (50 of the 52 documented at https://solana.com/docs/rpc/http) against public devnet. Excluded on purpose: sendTransaction and requestAirdrop, which change chain state.\n\nRun the whole collection in order: earlier requests save live inputs (slot, blockSlot, signature, tokenSignature, tokenAccount, tokenOwner, votePubkey, blockhash, feeMessage, unsignedTransaction) as collection variables for later ones. tokenMint defaults to Circle's devnet USDC.\n\nThe public endpoint blocks getTokenLargestAccounts, getLargestAccounts and getTokenAccountsByDelegate (429); against it those three report 'Blocked on public devnet'. Any other rpcUrl asserts them fully.\n\nNo wallet, credentials, signing or billing is involved. These calls go to devnet directly and do not exercise the application."
   },
   "auth": {
     "type": "noauth"
@@ -12,6 +12,11 @@
       "key": "rpcUrl",
       "value": "https://api.devnet.solana.com",
       "type": "string"
+    },
+    {
+      "key": "tokenMint",
+      "value": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+      "type": "string"
     }
   ],
   "event": [
@@ -20,97 +25,2202 @@
       "script": {
         "type": "text/javascript",
         "exec": [
+          "const body = pm.response.json();",
+          "const sent = JSON.parse(pm.variables.replaceIn(pm.request.body.raw));",
+          "const restricted = [\"getTokenLargestAccounts\", \"getLargestAccounts\", \"getTokenAccountsByDelegate\"].includes(sent.method);",
+          "if (restricted && pm.variables.get('rpcUrl') === 'https://api.devnet.solana.com' && pm.response.code === 429) {",
+          "  pm.test(\"Blocked on public devnet (429): use a private RPC for a result\", function () { pm.expect(body.error.code).to.equal(429); });",
+          "} else {",
           "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
           "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.match(/application\\/json/i); });",
-          "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });"
+          "pm.test(\"JSON-RPC 2.0 response\", function () { pm.expect(body.jsonrpc).to.equal(\"2.0\"); });",
+          "pm.test(\"Request id is preserved\", function () { pm.expect(body.id).to.equal(sent.id); });",
+          "pm.test(\"No JSON-RPC error\", function () { pm.expect(body, JSON.stringify(body.error)).not.to.have.property(\"error\"); });",
+          "}"
         ]
       }
     }
   ],
   "item": [
     {
-      "name": "Node version",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          },
-          {
-            "key": "Accept",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"getVersion\",\n  \"params\": []\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
-        "url": "{{rpcUrl}}",
-        "description": "Read-only public Solana devnet JSON-RPC request. Does not use the application's HTTP API."
-      },
-      "event": [
+      "name": "Cluster",
+      "description": "Node, epoch, leader and validator state. Saves slot, leaderIdentity and votePubkey.",
+      "item": [
         {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test(\"JSON-RPC 2.0 response\", function () { pm.expect(pm.response.json().jsonrpc).to.equal(\"2.0\"); });",
-              "pm.test(\"Request id is preserved\", function () { pm.expect(pm.response.json().id).to.equal(1); });",
-              "pm.test(\"No JSON-RPC error\", function () { pm.expect(pm.response.json()).not.to.have.property(\"error\"); });",
-              "pm.test(\"Solana version is present\", function () { pm.expect(pm.response.json().result[\"solana-core\"]).to.be.a(\"string\").and.not.empty; });"
-            ]
-          }
+          "name": "Node version",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"getVersion\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getVersion` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getversion"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Reports solana-core version\", function () { pm.expect(result['solana-core']).to.be.a('string'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Confirmed slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"getSlot\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getSlot` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getslot"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Confirmed slot is a positive safe integer\", function () { pm.expect(Number.isSafeInteger(result) && result > 0).to.equal(true); });",
+                  "  pm.collectionVariables.set(\"slot\", result);",
+                  "  pm.collectionVariables.set(\"blocksFrom\", result - 200);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Node health",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"getHealth\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getHealth` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/gethealth"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Node is healthy\", function () { pm.expect(result).to.equal('ok'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Genesis hash",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"getGenesisHash\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getGenesisHash` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getgenesishash"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Endpoint is devnet\", function () { pm.expect(result).to.equal('EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Node identity",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 5,\n  \"method\": \"getIdentity\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getIdentity` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getidentity"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has identity\", function () { pm.expect(result.identity).to.be.a('string'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Epoch info",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"getEpochInfo\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getEpochInfo` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getepochinfo"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has epoch and slot index\", function () { pm.expect(result.epoch).to.be.a('number'); pm.expect(result.slotIndex).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Epoch schedule",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"method\": \"getEpochSchedule\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getEpochSchedule` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getepochschedule"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has slots per epoch\", function () { pm.expect(result.slotsPerEpoch).to.be.above(0); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Slot leader",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 8,\n  \"method\": \"getSlotLeader\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getSlotLeader` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getslotleader"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has leader\", function () { pm.expect(result).to.be.a('string'); });",
+                  "  pm.collectionVariables.set(\"leaderIdentity\", result);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Slot leaders",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 9,\n  \"method\": \"getSlotLeaders\",\n  \"params\": [\n    {{slot}},\n    10\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getSlotLeaders` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getslotleaders"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Ten leaders\", function () { pm.expect(result).to.be.an('array').with.lengthOf(10); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Leader schedule (one validator)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 10,\n  \"method\": \"getLeaderSchedule\",\n  \"params\": [\n    null,\n    {\n      \"identity\": \"{{leaderIdentity}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getLeaderSchedule` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getleaderschedule\n\nFiltered to the current slot leader; the unfiltered schedule is very large."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Schedule includes the leader\", function () { pm.expect(result[pm.collectionVariables.get('leaderIdentity')]).to.be.an('array'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Cluster nodes",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 11,\n  \"method\": \"getClusterNodes\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getClusterNodes` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getclusternodes"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has nodes\", function () { pm.expect(result).to.be.an('array').that.is.not.empty; pm.expect(result[0].pubkey).to.be.a('string'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Vote accounts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 12,\n  \"method\": \"getVoteAccounts\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getVoteAccounts` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getvoteaccounts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has current validators\", function () { pm.expect(result.current).to.be.an('array').that.is.not.empty; });",
+                  "  pm.collectionVariables.set(\"votePubkey\", result.current[0].votePubkey);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Highest snapshot slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 13,\n  \"method\": \"getHighestSnapshotSlot\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getHighestSnapshotSlot` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/gethighestsnapshotslot"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has full snapshot slot\", function () { pm.expect(result.full).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Max retransmit slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 14,\n  \"method\": \"getMaxRetransmitSlot\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getMaxRetransmitSlot` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getmaxretransmitslot"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Is a slot\", function () { pm.expect(result).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Max shred insert slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 15,\n  \"method\": \"getMaxShredInsertSlot\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getMaxShredInsertSlot` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getmaxshredinsertslot"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Is a slot\", function () { pm.expect(result).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
         }
-      ],
-      "response": []
+      ]
     },
     {
-      "name": "Confirmed slot",
-      "request": {
-        "method": "POST",
-        "header": [
-          {
-            "key": "Content-Type",
-            "value": "application/json"
-          },
-          {
-            "key": "Accept",
-            "value": "application/json"
-          }
-        ],
-        "body": {
-          "mode": "raw",
-          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"getSlot\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
-          "options": {
-            "raw": {
-              "language": "json"
-            }
-          }
-        },
-        "url": "{{rpcUrl}}",
-        "description": "Read-only public Solana devnet JSON-RPC request. Does not use the application's HTTP API."
-      },
-      "event": [
+      "name": "Blocks",
+      "description": "Block queries. Saves blockSlot and signature.",
+      "item": [
         {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test(\"JSON-RPC 2.0 response\", function () { pm.expect(pm.response.json().jsonrpc).to.equal(\"2.0\"); });",
-              "pm.test(\"Request id is preserved\", function () { pm.expect(pm.response.json().id).to.equal(2); });",
-              "pm.test(\"No JSON-RPC error\", function () { pm.expect(pm.response.json()).not.to.have.property(\"error\"); });",
-              "pm.test(\"Confirmed slot is a positive safe integer\", function () { const slot = pm.response.json().result; pm.expect(Number.isSafeInteger(slot) && slot > 0).to.equal(true); });"
-            ]
-          }
+          "name": "Blocks with limit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 16,\n  \"method\": \"getBlocksWithLimit\",\n  \"params\": [\n    {{blocksFrom}},\n    5,\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getBlocksWithLimit` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getblockswithlimit\n\nStarts 200 slots behind the confirmed tip and saves the first produced slot as blockSlot."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Returns produced slots\", function () { pm.expect(result).to.be.an('array').that.is.not.empty; });",
+                  "  pm.collectionVariables.set(\"blockSlot\", result[0]);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Blocks in range",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 17,\n  \"method\": \"getBlocks\",\n  \"params\": [\n    {{blockSlot}},\n    {{blocksTo}},\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getBlocks` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getblocks"
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"blocksTo\", Number(pm.collectionVariables.get('blockSlot')) + 20);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Range starts at blockSlot\", function () { pm.expect(result[0]).to.equal(Number(pm.collectionVariables.get('blockSlot'))); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Block (signatures only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 18,\n  \"method\": \"getBlock\",\n  \"params\": [\n    {{blockSlot}},\n    {\n      \"commitment\": \"confirmed\",\n      \"encoding\": \"json\",\n      \"transactionDetails\": \"signatures\",\n      \"rewards\": false,\n      \"maxSupportedTransactionVersion\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getBlock` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getblock\n\ntransactionDetails=signatures keeps the response small; saves the first signature."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has blockhash and signatures\", function () { pm.expect(result.blockhash).to.be.a('string'); pm.expect(result.signatures).to.be.an('array').that.is.not.empty; });",
+                  "  pm.collectionVariables.set(\"signature\", result.signatures[0]);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Block time",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 19,\n  \"method\": \"getBlockTime\",\n  \"params\": [\n    {{blockSlot}}\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getBlockTime` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getblocktime"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Unix timestamp\", function () { pm.expect(result).to.be.above(1600000000); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Block commitment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 20,\n  \"method\": \"getBlockCommitment\",\n  \"params\": [\n    {{blockSlot}}\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getBlockCommitment` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getblockcommitment"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has total stake\", function () { pm.expect(result.totalStake).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Block height",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 21,\n  \"method\": \"getBlockHeight\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getBlockHeight` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getblockheight"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Positive height\", function () { pm.expect(result).to.be.above(0); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Block production (one validator)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 22,\n  \"method\": \"getBlockProduction\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\",\n      \"identity\": \"{{leaderIdentity}}\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getBlockProduction` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getblockproduction"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has production range\", function () { pm.expect(result.value.range.firstSlot).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "First available block",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 23,\n  \"method\": \"getFirstAvailableBlock\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getFirstAvailableBlock` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getfirstavailableblock"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Is a slot\", function () { pm.expect(result).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Minimum ledger slot",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 24,\n  \"method\": \"minimumLedgerSlot\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `minimumLedgerSlot` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/minimumledgerslot"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Is a slot\", function () { pm.expect(result).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Recent performance samples",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 25,\n  \"method\": \"getRecentPerformanceSamples\",\n  \"params\": [\n    5\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getRecentPerformanceSamples` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getrecentperformancesamples"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has samples\", function () { pm.expect(result).to.be.an('array').that.is.not.empty; pm.expect(result[0].numSlots).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
         }
-      ],
-      "response": []
+      ]
+    },
+    {
+      "name": "Transactions",
+      "description": "Transaction lookups, fees and simulation. Saves tokenSignature, tokenAccount, tokenOwner and blockhash.",
+      "item": [
+        {
+          "name": "Signatures for token mint",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 37,\n  \"method\": \"getSignaturesForAddress\",\n  \"params\": [\n    \"{{tokenMint}}\",\n    {\n      \"commitment\": \"confirmed\",\n      \"limit\": 20\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getSignaturesForAddress` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getsignaturesforaddress\n\nSaves the newest successful transaction touching tokenMint as tokenSignature."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has a successful token transaction\", function () { pm.expect(result.find(s => s.err === null)).to.not.equal(undefined); });",
+                  "  pm.collectionVariables.set(\"tokenSignature\", result.find(s => s.err === null).signature);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Token transaction (parsed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 38,\n  \"method\": \"getTransaction\",\n  \"params\": [\n    \"{{tokenSignature}}\",\n    {\n      \"commitment\": \"confirmed\",\n      \"encoding\": \"jsonParsed\",\n      \"maxSupportedTransactionVersion\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getTransaction` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/gettransaction\n\nSaves a token account holding tokenMint (tokenAccount) and its owner (tokenOwner) from the transaction's post token balances. maxSupportedTransactionVersion is 1: devnet already carries version 1 transactions."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  const mint = pm.collectionVariables.get('tokenMint');",
+                  "  const holding = (result.meta.postTokenBalances || []).find(b => b.mint === mint && b.owner && b.uiTokenAmount.amount !== '0');",
+                  "  pm.test(\"Has a token balance for tokenMint\", function () { pm.expect(holding).to.not.equal(undefined); });",
+                  "  if (holding) {",
+                  "    const keys = result.transaction.message.accountKeys.map(k => k.pubkey || k);",
+                  "    pm.collectionVariables.set(\"tokenAccount\", keys[holding.accountIndex]);",
+                  "    pm.collectionVariables.set(\"tokenOwner\", holding.owner);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Latest blockhash",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 39,\n  \"method\": \"getLatestBlockhash\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getLatestBlockhash` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getlatestblockhash\n\nAlso builds an unsigned message/transaction (fee payer only, no instructions) for getFeeForMessage and simulateTransaction."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has blockhash\", function () { pm.expect(result.value.blockhash).to.be.a('string'); });",
+                  "  pm.collectionVariables.set(\"blockhash\", result.value.blockhash);",
+                  "  const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';",
+                  "  function base58Bytes(text) {",
+                  "    const bytes = [0];",
+                  "    for (const char of text) {",
+                  "      let carry = ALPHABET.indexOf(char);",
+                  "      if (carry < 0) throw new Error('Invalid base58 character');",
+                  "      for (let i = 0; i < bytes.length; i++) { carry += bytes[i] * 58; bytes[i] = carry & 255; carry >>= 8; }",
+                  "      while (carry) { bytes.push(carry & 255); carry >>= 8; }",
+                  "    }",
+                  "    while (bytes.length < 32) bytes.push(0);",
+                  "    return bytes.reverse();",
+                  "  }",
+                  "  const payer = base58Bytes(pm.collectionVariables.get('tokenOwner'));",
+                  "  const message = [1, 0, 0, 1, ...payer, ...base58Bytes(result.value.blockhash), 0];",
+                  "  const transaction = [1, ...new Array(64).fill(0), ...message];",
+                  "  pm.collectionVariables.set(\"feeMessage\", Buffer.from(message).toString('base64'));",
+                  "  pm.collectionVariables.set(\"unsignedTransaction\", Buffer.from(transaction).toString('base64'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Blockhash validity",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 40,\n  \"method\": \"isBlockhashValid\",\n  \"params\": [\n    \"{{blockhash}}\",\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `isBlockhashValid` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/isblockhashvalid"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Fresh blockhash is valid\", function () { pm.expect(result.value).to.equal(true); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Fee for message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 41,\n  \"method\": \"getFeeForMessage\",\n  \"params\": [\n    \"{{feeMessage}}\",\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getFeeForMessage` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getfeeformessage"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"One signature costs 5000 lamports\", function () { pm.expect(result.value).to.equal(5000); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Simulate unsigned transaction",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 42,\n  \"method\": \"simulateTransaction\",\n  \"params\": [\n    \"{{unsignedTransaction}}\",\n    {\n      \"commitment\": \"confirmed\",\n      \"encoding\": \"base64\",\n      \"sigVerify\": false,\n      \"replaceRecentBlockhash\": true\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `simulateTransaction` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/simulatetransaction\n\nSimulation only: sigVerify=false, nothing is signed or submitted. A non-null value.err (e.g. the payer has no SOL) is still a valid response."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Simulation returns a result\", function () { pm.expect(result.value).to.have.property('err'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Signature statuses",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 43,\n  \"method\": \"getSignatureStatuses\",\n  \"params\": [\n    [\n      \"{{signature}}\"\n    ],\n    {\n      \"searchTransactionHistory\": true\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getSignatureStatuses` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getsignaturestatuses"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Status found\", function () { pm.expect(result.value[0]).to.not.equal(null); pm.expect(result.value[0].slot).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Recent prioritization fees",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 44,\n  \"method\": \"getRecentPrioritizationFees\",\n  \"params\": [\n    [\n      \"{{tokenAccount}}\"\n    ]\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getRecentPrioritizationFees` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getrecentprioritizationfees"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has per-slot fees\", function () { pm.expect(result).to.be.an('array'); if (result.length) pm.expect(result[0].prioritizationFee).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Transaction count",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 45,\n  \"method\": \"getTransactionCount\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getTransactionCount` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/gettransactioncount"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Positive count\", function () { pm.expect(result).to.be.above(0); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Tokens",
+      "description": "SPL token queries for tokenMint.",
+      "item": [
+        {
+          "name": "Token supply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 26,\n  \"method\": \"getTokenSupply\",\n  \"params\": [\n    \"{{tokenMint}}\",\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getTokenSupply` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/gettokensupply"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has a context slot\", function () { pm.expect(result.context.slot).to.be.a('number'); });",
+                  "  pm.test(\"Has supply and decimals\", function () { pm.expect(result.value.amount).to.be.a('string'); pm.expect(result.value.decimals).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Token largest accounts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 27,\n  \"method\": \"getTokenLargestAccounts\",\n  \"params\": [\n    \"{{tokenMint}}\",\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getTokenLargestAccounts` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/gettokenlargestaccounts\n\nThe public devnet endpoint answers this method with 429 on every call. There the collection reports 'Blocked on public devnet' instead of failing; point rpcUrl at a private RPC for a real result."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has holders\", function () { pm.expect(result.value).to.be.an('array').that.is.not.empty; });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Token account balance",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 28,\n  \"method\": \"getTokenAccountBalance\",\n  \"params\": [\n    \"{{tokenAccount}}\",\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getTokenAccountBalance` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/gettokenaccountbalance"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has UI amount string\", function () { pm.expect(result.value.uiAmountString).to.be.a('string'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Token accounts by owner",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 29,\n  \"method\": \"getTokenAccountsByOwner\",\n  \"params\": [\n    \"{{tokenOwner}}\",\n    {\n      \"mint\": \"{{tokenMint}}\"\n    },\n    {\n      \"commitment\": \"confirmed\",\n      \"encoding\": \"jsonParsed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getTokenAccountsByOwner` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/gettokenaccountsbyowner"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Owner holds the token account\", function () { pm.expect(result.value.map(a => a.pubkey)).to.include(pm.collectionVariables.get('tokenAccount')); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Token accounts by delegate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 30,\n  \"method\": \"getTokenAccountsByDelegate\",\n  \"params\": [\n    \"{{tokenOwner}}\",\n    {\n      \"programId\": \"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\"\n    },\n    {\n      \"commitment\": \"confirmed\",\n      \"encoding\": \"jsonParsed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getTokenAccountsByDelegate` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/gettokenaccountsbydelegate\n\nThe public devnet endpoint answers this method with 429 on every call. There the collection reports 'Blocked on public devnet' instead of failing; point rpcUrl at a private RPC for a real result."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has a context slot\", function () { pm.expect(result.context.slot).to.be.a('number'); });",
+                  "  pm.test(\"Returns a list (often empty)\", function () { pm.expect(result.value).to.be.an('array'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Accounts",
+      "description": "Account and program-account queries.",
+      "item": [
+        {
+          "name": "Account info (parsed)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 31,\n  \"method\": \"getAccountInfo\",\n  \"params\": [\n    \"{{tokenAccount}}\",\n    {\n      \"commitment\": \"confirmed\",\n      \"encoding\": \"jsonParsed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getAccountInfo` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getaccountinfo"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Owned by the token program\", function () { pm.expect(result.value.owner).to.equal('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Balance",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 32,\n  \"method\": \"getBalance\",\n  \"params\": [\n    \"{{tokenOwner}}\",\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getBalance` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getbalance"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has a context slot\", function () { pm.expect(result.context.slot).to.be.a('number'); });",
+                  "  pm.test(\"Lamports\", function () { pm.expect(result.value).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Multiple accounts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 33,\n  \"method\": \"getMultipleAccounts\",\n  \"params\": [\n    [\n      \"{{tokenMint}}\",\n      \"{{tokenAccount}}\"\n    ],\n    {\n      \"commitment\": \"confirmed\",\n      \"encoding\": \"jsonParsed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getMultipleAccounts` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getmultipleaccounts"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Both accounts exist\", function () { pm.expect(result.value).to.have.lengthOf(2); pm.expect(result.value[0]).to.not.equal(null); pm.expect(result.value[1]).to.not.equal(null); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Program accounts (owner filter)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 34,\n  \"method\": \"getProgramAccounts\",\n  \"params\": [\n    \"TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA\",\n    {\n      \"commitment\": \"confirmed\",\n      \"encoding\": \"jsonParsed\",\n      \"filters\": [\n        {\n          \"dataSize\": 165\n        },\n        {\n          \"memcmp\": {\n            \"offset\": 32,\n            \"bytes\": \"{{tokenOwner}}\"\n          }\n        }\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getProgramAccounts` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getprogramaccounts\n\nFiltered to tokenOwner's token accounts; an unfiltered token-program scan is rejected or huge."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Finds the owner's token accounts\", function () { pm.expect(result.map(a => a.pubkey)).to.include(pm.collectionVariables.get('tokenAccount')); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Largest accounts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 35,\n  \"method\": \"getLargestAccounts\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\",\n      \"filter\": \"circulating\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getLargestAccounts` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getlargestaccounts\n\nThe public devnet endpoint answers this method with 429 on every call. There the collection reports 'Blocked on public devnet' instead of failing; point rpcUrl at a private RPC for a real result."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has accounts\", function () { pm.expect(result.value).to.be.an('array').that.is.not.empty; });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Rent-exempt minimum (token account)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 36,\n  \"method\": \"getMinimumBalanceForRentExemption\",\n  \"params\": [\n    165\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getMinimumBalanceForRentExemption` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getminimumbalanceforrentexemption"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Positive lamports\", function () { pm.expect(result).to.be.above(0); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Economics",
+      "description": "Supply, inflation and staking parameters.",
+      "item": [
+        {
+          "name": "Supply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 46,\n  \"method\": \"getSupply\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\",\n      \"excludeNonCirculatingAccountsList\": true\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getSupply` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getsupply"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has total supply\", function () { pm.expect(result.value.total).to.be.above(0); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Inflation governor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 47,\n  \"method\": \"getInflationGovernor\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getInflationGovernor` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getinflationgovernor"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has initial rate\", function () { pm.expect(result.initial).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Inflation rate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 48,\n  \"method\": \"getInflationRate\",\n  \"params\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getInflationRate` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getinflationrate"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Has epoch rate\", function () { pm.expect(result.epoch).to.be.a('number'); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Inflation reward (one vote account)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 49,\n  \"method\": \"getInflationReward\",\n  \"params\": [\n    [\n      \"{{votePubkey}}\"\n    ],\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getInflationReward` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getinflationreward"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"One entry (null when unrewarded)\", function () { pm.expect(result).to.be.an('array').with.lengthOf(1); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Stake minimum delegation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 50,\n  \"method\": \"getStakeMinimumDelegation\",\n  \"params\": [\n    {\n      \"commitment\": \"confirmed\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": "{{rpcUrl}}",
+            "description": "Read-only `getStakeMinimumDelegation` against public Solana devnet. Docs: https://solana.com/docs/rpc/http/getstakeminimumdelegation"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const result = pm.response.json().result;",
+                  "if (result !== undefined) {",
+                  "  pm.test(\"Positive lamports\", function () { pm.expect(result.value).to.be.above(0); });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
     }
   ]
 }
