@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 import tools.jackson.databind.json.JsonMapper
 
 class ObservationSelectorTest {
-    private val observation = javaClass.getResourceAsStream("/fixtures/weekly-buy-v1.json").use {
+    private val observation = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
         ReplayDatasetLoader(JsonMapper.builder().build()).load(requireNotNull(it)).observations.first()
     }
     private val selector = ObservationSelector()

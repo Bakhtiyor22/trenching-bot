@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
 import tools.jackson.databind.json.JsonMapper
 
 class PositionServiceTest {
-    private fun dataset() = javaClass.getResourceAsStream("/fixtures/weekly-buy-v1.json").use {
+    private fun dataset() = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
         ReplayDatasetLoader(JsonMapper.builder().build()).load(requireNotNull(it))
     }
 
@@ -39,7 +39,7 @@ class PositionServiceTest {
 
     @Test
     fun `a closed position cannot realize pnl a second time`() {
-        val dataset = javaClass.getResourceAsStream("/fixtures/weekly-buy-v1.json").use {
+        val dataset = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
             ReplayDatasetLoader(JsonMapper.builder().build()).load(requireNotNull(it))
         }
         val position = requireNotNull(ReplayRunner().run(dataset, SimulationConfig.mvp()).scenarios.first().position)

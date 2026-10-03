@@ -26,9 +26,9 @@ class PaperOrderStoreService(
             throw RecordBatchMismatchException(RECORDS, runId, "intents=${intents.size} outcomes=${outcomes.size}")
         }
         intents.zip(outcomes).forEach { (intent, outcome) ->
-            if (intent.runId != runId || intent.id != orderId(outcome)) {
+            if (intent.runId != runId || intent.id != outcome.orderId) {
                 throw RecordBatchMismatchException(RECORDS, runId,
-                    "intentId=${intent.id} intentRunId=${intent.runId} orderId=${orderId(outcome)}")
+                    "intentId=${intent.id} intentRunId=${intent.runId} orderId=${outcome.orderId}")
             }
         }
         val filled = outcomes.filterIsInstance<FillOutcome.Filled>().map { it.fill }
@@ -51,10 +51,9 @@ class PaperOrderStoreService(
             .map { mapper.outcome(it, byOrder[it.id]) }
     }
 
-    private fun orderId(outcome: FillOutcome): String = when (outcome) {
-        is FillOutcome.Filled -> outcome.fill.orderId
-        is FillOutcome.Rejected -> outcome.orderId
-    }
+    @Transactional(readOnly = true)
+    override fun rejectionCounts(): Map<RejectionReason, Long> =
+        orders.countRejectionsByReason().associate { it.reason to it.count }
 
     companion object {
         private const val RECORDS = "paper orders"

@@ -22,8 +22,9 @@ data class SimulationConfig private constructor(
                quoteMint: MintAddress = MintAddress.WRAPPED_SOL): SimulationConfig {
             val normalizedNotional = DecimalPolicy.scale(notional)
             require(normalizedNotional.signum() > 0) { "Notional must remain positive at the model scale" }
-            require(feeBps in 0..9999 && slippageBps in 0..9999) { "Invalid basis points" }
-            require(maxWaitSlots in 0..1000 && maxAgeSlots in 0..1000 && holdingSlots > 0) { "Invalid slot bounds" }
+            require(feeBps in SimulationConfigBounds.BASIS_POINTS && slippageBps in SimulationConfigBounds.BASIS_POINTS) { "Invalid basis points" }
+            require(maxWaitSlots in SimulationConfigBounds.SLOT_WINDOW && maxAgeSlots in SimulationConfigBounds.SLOT_WINDOW &&
+                holdingSlots >= SimulationConfigBounds.MIN_HOLDING_SLOTS) { "Invalid slot bounds" }
             require(strategyName.isNotBlank() && strategyVersion.isNotBlank()) { "Missing strategy identity" }
             return SimulationConfig(strategyName, strategyVersion, normalizedNotional,
                 feeBps, slippageBps, maxWaitSlots, maxAgeSlots, holdingSlots, quoteMint)

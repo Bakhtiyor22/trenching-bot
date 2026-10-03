@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 
 class ReplayRunnerTest {
     private val loader = ReplayDatasetLoader(tools.jackson.databind.json.JsonMapper.builder().build())
-    private fun dataset() = javaClass.getResourceAsStream("/fixtures/weekly-buy-v1.json").use {
+    private fun dataset() = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
         loader.load(requireNotNull(it))
     }
 
@@ -62,14 +62,14 @@ class ReplayRunnerTest {
 
     @Test
     fun `tampered fixtures and unsupported schema are rejected`() {
-        val json = requireNotNull(javaClass.getResource("/fixtures/weekly-buy-v1.json")).readText()
+        val json = requireNotNull(javaClass.getResource("/replay/samples/weekly-buy-v1.json")).readText()
         assertFailsWith<IllegalArgumentException> { loader.load(json.replace("\"schemaVersion\": 1", "\"schemaVersion\": 2").byteInputStream()) }
         assertFailsWith<IllegalArgumentException> { loader.load(json.replace("\"10\"", "\"12\"").byteInputStream()) }
     }
 
     @Test
     fun `datasets persistence would reject fail at load time`() {
-        val json = requireNotNull(javaClass.getResource("/fixtures/weekly-buy-v1.json")).readText()
+        val json = requireNotNull(javaClass.getResource("/replay/samples/weekly-buy-v1.json")).readText()
         // Each failure must come from the specific check, not from the checksum mismatch the edit also causes.
         listOf(
             json.replace("2026-09-23T00:00:00Z", "2026-09-23T00:00:00.000000001Z") to "microsecond",

@@ -27,7 +27,7 @@ class ReplayPersistenceIntegrationTest {
     @Autowired private lateinit var mapper: ObjectMapper
     @Autowired private lateinit var dataSource: DataSource
 
-    private fun dataset() = javaClass.getResourceAsStream("/fixtures/weekly-buy-v1.json").use {
+    private fun dataset() = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
         ReplayDatasetLoader(mapper).load(requireNotNull(it))
     }
 

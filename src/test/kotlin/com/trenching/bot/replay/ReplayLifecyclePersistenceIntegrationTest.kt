@@ -14,6 +14,7 @@ import java.math.BigDecimal
 import java.sql.SQLException
 import javax.sql.DataSource
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
+import com.trenching.bot.support.runRowCounts
 import kotlin.test.*
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
@@ -36,18 +37,11 @@ class ReplayLifecyclePersistenceIntegrationTest {
     @Autowired private lateinit var application: PersistedReplayService
     @Autowired private lateinit var dataSource: DataSource
 
-    private fun dataset(): ReplayDataset = javaClass.getResourceAsStream("/fixtures/weekly-buy-v1.json").use {
+    private fun dataset(): ReplayDataset = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
         ReplayDatasetLoader(json).load(requireNotNull(it))
     }
 
-    private fun counts(runId: String): List<Int> = dataSource.connection.use { connection ->
-        TABLES.map { table ->
-            connection.prepareStatement("select count(*) from $table where ${if (table == "simulation_runs") "id" else "run_id"} = ?").use { statement ->
-                statement.setString(1, runId)
-                statement.executeQuery().use { rows -> assertTrue(rows.next()); rows.getInt(1) }
-            }
-        }
-    }
+    private fun counts(runId: String): List<Int> = runRowCounts(dataSource, runId)
 
     @Test
     fun `complete lifecycle restores exactly after an idempotent replay`() {
@@ -106,7 +100,7 @@ class ReplayLifecyclePersistenceIntegrationTest {
         val report = ReplayRunner().run(input, SimulationConfig.mvp())
         assertFailsWith<ArithmeticException> { ledger.persist(input, report) }
         assertNull(ledger.find(report.runId))
-        assertEquals(List(TABLES.size) { 0 }, counts(report.runId))
+        assertTrue(counts(report.runId).all { it == 0 })
     }
 
     @Test
@@ -117,7 +111,7 @@ class ReplayLifecyclePersistenceIntegrationTest {
         })
         val report = ReplayRunner().run(input, SimulationConfig.mvp())
         assertFailsWith<IllegalArgumentException> { ledger.persist(input, report) }
-        assertEquals(List(TABLES.size) { 0 }, counts(report.runId))
+        assertTrue(counts(report.runId).all { it == 0 })
     }
 
     @Test
@@ -142,7 +136,4 @@ class ReplayLifecyclePersistenceIntegrationTest {
         }
     }
 
-    companion object {
-        private val TABLES = listOf("simulation_runs", "wallet_events", "market_observations", "trade_intents", "paper_orders", "paper_fills", "positions")
-    }
 }

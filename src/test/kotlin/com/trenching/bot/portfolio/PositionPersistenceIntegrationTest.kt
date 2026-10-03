@@ -30,7 +30,7 @@ class PositionPersistenceIntegrationTest {
 
     @Test
     fun `optimistic version rejects a stale position writer`() {
-        val dataset = javaClass.getResourceAsStream("/fixtures/weekly-buy-v1.json").use {
+        val dataset = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
             ReplayDatasetLoader(json).load(requireNotNull(it))
         }
         val run = application.execute(dataset, SimulationConfig.of(BigDecimal("103"), 10, 50, 2, 2, 5))

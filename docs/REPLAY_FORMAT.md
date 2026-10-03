@@ -1,6 +1,6 @@
 # Replay fixture v1
 
-See `src/test/resources/fixtures/weekly-buy-v1.json`. This is synthetic curated balance-delta data, not a raw Solana or provider capture. The synthetic zero wallet/signature is not the Decu identity.
+See the bundled sample `src/main/resources/replay/samples/weekly-buy-v1.json`. This is synthetic curated balance-delta data, not a raw Solana or provider capture. The synthetic zero wallet/signature is not the Decu identity.
 
 The root has `schemaVersion` (exactly 1), `trackedWallet`, `transactions`, `observations`, and a SHA-256 `checksum`. Arrays are bounded to 10,000 records each. Times must be exact at microsecond precision, prices and liquidity must fit `numeric(78,38)`, `source` is at most 128 characters and observation `id`/`sourceEventId` at most 255; the loader rejects anything persistence would. Addresses must decode from base58 to 32 bytes, signatures to 64 bytes. Slots are nonnegative Longs. Monetary values and raw token deltas are decimal strings, never floating-point JSON numbers. Decimals are 0..255; accepted absolute raw amounts fit u64.
 
@@ -12,7 +12,7 @@ Observations contain ID, pair, observed slot, price slot (for age checks), UTC o
 
 The configuration hash includes the strategy/version, numeric model parameters, scale/rounding, offsets, zero priority fee/price impact and confirmed signer-buy scope. The run ID combines engine version, dataset hash and configuration hash. The result checksum includes each intent's ordered fill/rejection, selected observation, position state and close economics. Increment the engine version if simulation semantics change.
 
-In-memory replay is stateless and repeatable. Persisted replay writes source outcomes, observations, intents, orders/fills and positions together with run/configuration/input/report snapshots in one transaction. Dataset/configuration/engine identity has a database unique constraint. Concurrent duplicate writers converge on the original run; a conflicting result checksum fails. Process restart and repeated input create no duplicate lifecycle records.
+In-memory replay is stateless and repeatable. Persisted replay writes source outcomes, observations, intents, orders/fills and positions together with run/configuration/input/report snapshots in one transaction. Dataset/configuration/engine identity has a database unique constraint. Concurrent duplicate writers converge on the original run; a conflicting result checksum fails. Process restart and repeated input create no duplicate lifecycle records. Stored datasets are identified by their checksum: registering identical content again, under any name, returns the existing dataset, and each persisted run also registers its dataset.
 
 A missing exit observation in the bounded timeout window leaves the position open with an explicit reason; observations arriving after that window do not silently close it. Runs are immutable experiments, not a live checkpoint stream. Adding new observations changes dataset/run identity.
 

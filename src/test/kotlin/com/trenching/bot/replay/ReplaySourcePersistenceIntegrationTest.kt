@@ -30,7 +30,7 @@ class ReplaySourcePersistenceIntegrationTest {
 
     @Test
     fun `raw u64 events and exact slot observations round trip with ignored outcomes`() {
-        val original = javaClass.getResourceAsStream("/fixtures/weekly-buy-v1.json").use {
+        val original = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
             ReplayDatasetLoader(mapper).load(requireNotNull(it))
         }
         val input = original.copy(transactions = original.transactions.map {

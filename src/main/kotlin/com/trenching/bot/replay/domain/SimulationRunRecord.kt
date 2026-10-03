@@ -12,5 +12,6 @@ data class SimulationRunRecord(
     val datasetSnapshot: String,
     val reportSnapshot: String,
     val resultChecksum: String,
+    val totals: RunTotals,
     val createdAt: Instant,
 )

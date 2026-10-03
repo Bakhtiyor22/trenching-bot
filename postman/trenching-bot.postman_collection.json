@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Trenching Bot — Application API",
-    "description": "Read-only checks for the HTTP endpoints implemented by the current application. Replay, trade intents, fills and positions currently have CLI/domain interfaces, not HTTP endpoints. Start the local Spring app and PostgreSQL first. Local-only database details require the local profile. No credentials are included.",
+    "description": "Local application health and console API checks. Console operations persist replay datasets/runs. Solana status is passive; the optional probe folder is skipped unless allowSolanaProbe=true. No provider credentials are exported.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -10,26 +10,43 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8080",
+      "value": "http://localhost:8081",
       "type": "string"
     },
     {
       "key": "expectHealthDetails",
       "value": "true",
       "type": "string"
-    }
-  ],
-  "event": [
+    },
     {
-      "listen": "test",
-      "script": {
-        "type": "text/javascript",
-        "exec": [
-          "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
-          "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.match(/application\\/(?:json|vnd\\.spring-boot\\.actuator\\.v\\d+\\+json)/i); });",
-          "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });"
-        ]
-      }
+      "key": "datasetId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "datasetPair",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runConfig",
+      "value": "{}",
+      "type": "string"
+    },
+    {
+      "key": "allowSolanaProbe",
+      "value": "false",
+      "type": "string"
+    },
+    {
+      "key": "address",
+      "value": "So11111111111111111111111111111111111111112",
+      "type": "string"
     }
   ],
   "item": [
@@ -167,6 +184,19 @@
           ],
           "response": []
         }
+      ],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+              "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.match(/application\\/(?:json|vnd\\.spring-boot\\.actuator\\.v\\d+\\+json)/i); });",
+              "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });"
+            ]
+          }
+        }
       ]
     },
     {
@@ -194,6 +224,694 @@
                 "exec": [
                   "pm.test(\"Database is UP\", function () { pm.expect(pm.response.json().status).to.equal(\"UP\"); });",
                   "pm.test(\"Database is PostgreSQL\", function () { pm.expect(pm.response.json().details.database).to.equal(\"PostgreSQL\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ],
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"HTTP 200\", function () { pm.response.to.have.status(200); });",
+              "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.match(/application\\/(?:json|vnd\\.spring-boot\\.actuator\\.v\\d+\\+json)/i); });",
+              "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Console API",
+      "description": "Run in order with the console enabled on the local profile. Imports the sample and starts an immutable persisted experiment; no live RPC requests.",
+      "item": [
+        {
+          "name": "Default simulation config and limits",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/config/defaults",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "const defaults = pm.response.json().defaults;",
+                  "pm.test(\"Notional stays an exact string\", function () { pm.expect(defaults.notional).to.equal(\"100.000000000000\"); });",
+                  "const {strategyName, strategyVersion, ...config} = defaults; pm.collectionVariables.set(\"runConfig\", JSON.stringify(config));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Import weekly sample",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/datasets/samples/weekly-buy-v1",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200,201]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "const registration = pm.response.json();",
+                  "pm.test(\"Dataset registration matches status\", function () { pm.expect(registration.created).to.equal(pm.response.code === 201); pm.expect(registration.dataset.id).to.be.a(\"string\").and.not.empty; });",
+                  "pm.collectionVariables.set(\"datasetId\", registration.dataset.id);",
+                  "if (registration.dataset.pairs.length) { const pair = registration.dataset.pairs[0]; pm.collectionVariables.set(\"datasetPair\", encodeURIComponent(pair.base + \"/\" + pair.quote)); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Upload replay dataset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/datasets",
+            "description": "For Postman desktop choose the bundled sample file and permit file access; Newman resolves this repository-relative path from the repository root. Limit:20MB, UTF-8 JSON.",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": "src/main/resources/replay/samples/weekly-buy-v1.json"
+                },
+                {
+                  "key": "name",
+                  "type": "text",
+                  "value": "Weekly buy sample"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200,201]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "const registration = pm.response.json();",
+                  "pm.test(\"Dataset registration matches status\", function () { pm.expect(registration.created).to.equal(pm.response.code === 201); pm.expect(registration.dataset.id).to.be.a(\"string\").and.not.empty; });",
+                  "pm.collectionVariables.set(\"datasetId\", registration.dataset.id);",
+                  "if (registration.dataset.pairs.length) { const pair = registration.dataset.pairs[0]; pm.collectionVariables.set(\"datasetPair\", encodeURIComponent(pair.base + \"/\" + pair.quote)); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List datasets",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/datasets?page=0&size=20",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Page has items and pagination\", function () { const page = pm.response.json(); pm.expect(page.items).to.be.an(\"array\"); [\"page\", \"size\", \"total\"].forEach(key => pm.expect(page[key]).to.be.a(\"number\")); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Dataset summary",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/datasets/{{datasetId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Dataset identity\", function () { pm.expect(pm.response.json().id).to.equal(pm.variables.get(\"datasetId\")); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Dataset observations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/datasets/{{datasetId}}/observations?pair={{datasetPair}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON array response\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });",
+                  "pm.test(\"Prices are decimal strings\", function () { pm.response.json().forEach(item => pm.expect(item.price).to.be.a(\"string\")); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Start default run",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"datasetId\":\"{{datasetId}}\",\"config\":{{runConfig}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200,201]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "const start = pm.response.json(); pm.collectionVariables.set(\"runId\", start.run.id);",
+                  "pm.test(\"Created status and exact sample summary\", function () { pm.expect(start.created).to.equal(pm.response.code === 201); pm.expect(start.run.realizedPnl).to.equal(\"26.089701492540\"); pm.expect(start.run.filledCount).to.equal(3); pm.expect(start.run.closedCount).to.equal(3); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Repeat run idempotently",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"datasetId\":\"{{datasetId}}\",\"config\":{{runConfig}}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Same persisted run\", function () { const start = pm.response.json(); pm.expect(start.created).to.equal(false); pm.expect(start.run.id).to.equal(pm.variables.get(\"runId\")); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Reject invalid configuration",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"datasetId\":\"{{datasetId}}\",\"config\":{\"feeBps\":10000}}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([400]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Field error envelope\", function () { const error = pm.response.json(); pm.expect(error.code).to.equal(\"CONFIG_INVALID\"); pm.expect(error.fields.feeBps).to.be.a(\"string\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List runs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs?page=0&size=20&datasetId={{datasetId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Page has items and pagination\", function () { const page = pm.response.json(); pm.expect(page.items).to.be.an(\"array\"); [\"page\", \"size\", \"total\"].forEach(key => pm.expect(page[key]).to.be.a(\"number\")); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Run detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs/{{runId}}",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Three scenario results\", function () { const detail = pm.response.json(); pm.expect(detail.run.id).to.equal(pm.variables.get(\"runId\")); pm.expect(detail.scenarios).to.have.lengthOf(3); detail.scenarios.forEach(item => pm.expect(item.position.close.realizedPnl).to.equal(\"8.696567164180\")); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Run events",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs/{{runId}}/events",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON array response\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Run observations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs/{{runId}}/observations",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON array response\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Run orders",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs/{{runId}}/orders",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON array response\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Run positions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs/{{runId}}/positions",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON array response\", function () { pm.expect(pm.response.json()).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Download stored report",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/runs/{{runId}}/report",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Report download\", function () { pm.expect(pm.response.headers.get(\"Content-Disposition\")).to.include(\"attachment;\").and.include(\".json\"); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Monitoring dashboard",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/dashboard",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Health and stored run KPIs\", function () { const dashboard = pm.response.json(); pm.expect(dashboard.health.status).to.equal(\"UP\"); pm.expect(dashboard.runs.total).to.be.at.least(1); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Passive Solana status",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/solana/status",
+            "description": "Reads the last result without making an RPC/provider request."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Configuration is explicit and URL is absent\", function () { const status = pm.response.json(); pm.expect(status.configured).to.be.a(\"boolean\"); pm.expect(status).not.to.have.property(\"rpcUrl\"); if (status.host !== null) pm.expect(status.host).not.to.match(/[/?#]/); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Optional Solana probes",
+      "description": "Skipped by default. Explicitly set allowSolanaProbe=true to make read-only provider requests through the configured backend. Keep provider URL/key in host environment only.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.variables.get(\"allowSolanaProbe\") !== \"true\") { pm.execution.skipRequest(); }"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Check Solana connectivity",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/solana/check",
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Explicit outcome\", function () { pm.expect(pm.response.json().outcome).to.be.oneOf([\"OK\", \"NOT_CONFIGURED\", \"RATE_LIMITED\", \"TIMEOUT\", \"RPC_ERROR\", \"UNAVAILABLE\"]); });"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Check address normalizer fields",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/solana/address-check",
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"address\":\"{{address}}\"}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([200,409]); });",
+                  "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
+                  "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
+                  "pm.test(\"Address result or unconfigured envelope\", function () { const result = pm.response.json(); if (pm.response.code === 409) pm.expect(result.code).to.equal(\"SOLANA_NOT_CONFIGURED\"); else pm.expect(result.outcome).to.be.a(\"string\"); });"
                 ]
               }
             }

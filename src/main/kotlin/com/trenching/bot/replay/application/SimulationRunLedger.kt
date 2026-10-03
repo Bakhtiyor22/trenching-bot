@@ -2,6 +2,8 @@ package com.trenching.bot.replay.application
 
 import com.trenching.bot.replay.domain.*
 import com.trenching.bot.replay.mapper.SimulationRunMapper
+import com.trenching.bot.config.SimulationClock
+import org.springframework.beans.factory.annotation.Qualifier
 import java.time.Clock
 import java.time.temporal.ChronoUnit
 import org.slf4j.LoggerFactory
@@ -13,28 +15,33 @@ import tools.jackson.databind.ObjectMapper
 class SimulationRunLedger(
     private val transactions: SimulationRunTransaction,
     private val records: SimulationRunMapper,
+    private val datasetEntries: DatasetEntryFactory,
     private val json: ObjectMapper,
-    private val clock: Clock,
+    @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(SimulationRunLedger::class.java)
 
-    fun persist(dataset: ReplayDataset, report: SimulationReport): SimulationRunRecord {
+    fun persist(dataset: ReplayDataset, report: SimulationReport): SimulationRunRecord = persistWithOutcome(dataset, report).record
+
+    fun persistWithOutcome(dataset: ReplayDataset, report: SimulationReport): RunPersistence {
         require(DatasetFingerprint.checksum(dataset) == report.datasetChecksum) { "Report does not belong to dataset" }
         require(StableHash.of(listOf(report.engineVersion, report.datasetChecksum, report.configurationHash)) == report.runId) {
             "Invalid simulation run identity"
         }
+        val createdAt = clock.instant().truncatedTo(ChronoUnit.MICROS)
         val record = records.record(report.runId, report.engineVersion, report.datasetChecksum, report.configurationHash,
             dataset.trackedWallet.value, json.writeValueAsString(report.configuration), json.writeValueAsString(dataset),
-            json.writeValueAsString(report), report.resultChecksum, clock.instant().truncatedTo(ChronoUnit.MICROS))
+            json.writeValueAsString(report), report.resultChecksum, RunTotals.of(report), createdAt)
+        val datasetEntry = datasetEntries.entry(null, dataset, createdAt)
         val stored = try {
-            transactions.insert(record, dataset, report)
+            transactions.insertWithOutcome(record, dataset, report, datasetEntry)
         } catch (exception: DataIntegrityViolationException) {
             val winner = transactions.find(record.id) ?: throw exception
             log.warn("duplicate simulation writer recovered runId={}", record.id)
-            winner
+            RunPersistence(winner, created = false)
         }
-        if (stored.resultChecksum != record.resultChecksum || stored.datasetChecksum != record.datasetChecksum ||
-            stored.configurationHash != record.configurationHash || stored.engineVersion != record.engineVersion) {
+        if (stored.record.resultChecksum != record.resultChecksum || stored.record.datasetChecksum != record.datasetChecksum ||
+            stored.record.configurationHash != record.configurationHash || stored.record.engineVersion != record.engineVersion) {
             throw SimulationRunConflictException(record.id)
         }
         return stored

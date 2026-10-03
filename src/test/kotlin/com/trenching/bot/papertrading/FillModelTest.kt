@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
 import tools.jackson.databind.json.JsonMapper
 
 class FillModelTest {
-    private val dataset = javaClass.getResourceAsStream("/fixtures/weekly-buy-v1.json").use {
+    private val dataset = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
         ReplayDatasetLoader(JsonMapper.builder().build()).load(requireNotNull(it))
     }
     private val config = SimulationConfig.mvp()

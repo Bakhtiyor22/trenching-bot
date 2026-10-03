@@ -8,6 +8,7 @@ import com.trenching.bot.papertrading.PaperOrderStore
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.portfolio.PositionStore
 import com.trenching.bot.portfolio.domain.Position
+import com.trenching.bot.portfolio.domain.StoredPosition
 import com.trenching.bot.portfolio.infrastructure.persistence.PositionRepository
 import com.trenching.bot.portfolio.mapper.PositionMapper
 import org.springframework.data.domain.PageRequest
@@ -35,10 +36,15 @@ class PositionStoreService(
     }
 
     @Transactional(readOnly = true)
-    override fun positions(runId: String): List<Position> {
+    override fun positions(runId: String): List<Position> = storedPositions(runId).map { it.position }
+
+    @Transactional(readOnly = true)
+    override fun storedPositions(runId: String): List<StoredPosition> {
         val byOrder = orders.fills(runId).associateBy { it.orderId }
         return repository.findByRunIdOrderByTargetSlotAscIdAsc(runId, PageRequest.of(0, ReplayLimits.MAX_SCENARIO_RECORDS))
-            .map { mapper.toPosition(it, requireNotNull(byOrder[it.fillOrderId]) { "Missing fill for position=${it.id}" }) }
+            .map { StoredPosition(mapper.toPosition(it, requireNotNull(byOrder[it.fillOrderId]) {
+                "Missing fill for position=${it.id}"
+            }), it.exitUnavailable) }
     }
 
     companion object {

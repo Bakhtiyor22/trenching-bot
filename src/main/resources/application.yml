@@ -3,6 +3,17 @@ spring:
     name: trenching-bot
   profiles:
     active: local
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+      # Parse uploads inside the handler so an oversized one reaches the console's error advice.
+      resolve-lazily: true
+
+trenching:
+  solana:
+    # Secret (may embed an API key): environment only; blank means not configured.
+    rpc-url: ${SOLANA_RPC_URL:}
 
 server:
   port: ${SERVER_PORT:8081}

@@ -45,6 +45,49 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
+val withConsole = providers.gradleProperty("withConsole").isPresent
+val frontendDirectory = layout.projectDirectory.dir("frontend")
+val npmCommand = if (System.getProperty("os.name").startsWith("Windows")) {
+    listOf("cmd", "/c", "npm.cmd")
+} else {
+    listOf("npm")
+}
+
+if (withConsole) {
+    val consoleNpmCi = tasks.register<Exec>("consoleNpmCi") {
+        description = "Install the console's locked frontend dependencies"
+        group = "build"
+        workingDir(frontendDirectory)
+        commandLine(npmCommand + "ci")
+        inputs.files(frontendDirectory.file("package.json"), frontendDirectory.file("package-lock.json"))
+        outputs.dir(frontendDirectory.dir("node_modules"))
+    }
+    val consoleBuild = tasks.register<Exec>("consoleBuild") {
+        description = "Build the console SPA for the application jar"
+        group = "build"
+        dependsOn(consoleNpmCi)
+        workingDir(frontendDirectory)
+        commandLine(npmCommand + listOf("run", "build"))
+        inputs.files(fileTree(frontendDirectory) {
+            exclude("node_modules/**", "dist/**", "*.tsbuildinfo", ".env", ".env.*", "npm-debug.log*")
+        })
+        outputs.dir(frontendDirectory.dir("dist"))
+    }
+    tasks.processResources {
+        dependsOn(consoleBuild)
+        from(frontendDirectory.dir("dist")) { into("static/console") }
+    }
+}
+
+val cleanConsoleResources = tasks.register<Delete>("cleanConsoleResources") {
+    delete(layout.buildDirectory.dir("resources/main/static/console"))
+}
+
+tasks.processResources {
+    dependsOn(cleanConsoleResources)
+    inputs.property("withConsole", withConsole)
+}
+
 tasks.withType<Test> {
     useJUnitPlatform()
     inputs.property("postgresProvider", providers.environmentVariable("TRENCHING_TESTS_POSTGRES_PROVIDER").orElse("docker"))
@@ -88,7 +131,7 @@ tasks.register<JavaExec>("replay") {
     group = "application"
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("com.trenching.bot.replay.api.ReplayCommandKt")
-    args(providers.gradleProperty("dataset").orElse("src/test/resources/fixtures/weekly-buy-v1.json").get())
+    args(providers.gradleProperty("dataset").orElse("src/main/resources/replay/samples/weekly-buy-v1.json").get())
     args(providers.gradleProperty("report").orElse("build/replay-report.json").get())
 }
 
@@ -98,12 +141,11 @@ tasks.register<JavaExec>("persistedReplay") {
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("com.trenching.bot.replay.api.PersistedReplayCommandKt")
     systemProperty("spring.profiles.active", providers.gradleProperty("profile").orElse("local").get())
-    args(providers.gradleProperty("dataset").orElse("src/test/resources/fixtures/weekly-buy-v1.json").get())
+    args(providers.gradleProperty("dataset").orElse("src/main/resources/replay/samples/weekly-buy-v1.json").get())
     args(providers.gradleProperty("report").orElse("build/persisted-replay-report.json").get())
 }
 
-// `application.yml` deliberately declares no default profile, so an environment
-// is always chosen explicitly. `bootRun` picks `local` for developer convenience.
+// `bootRun` explicitly selects the local profile for developer convenience.
 tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
     systemProperty("spring.profiles.active", "local")
 }
