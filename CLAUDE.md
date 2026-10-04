@@ -9,6 +9,18 @@ a global rule assumed flat layers (`controller/`, `service/`, ...), it applies
 here as a sub-package *inside* a module once that module is big enough to need
 it (e.g. `telegram/model`, `telegram/repository`), not as a top-level package.
 
+## Environment file privacy
+
+- Agents must never read, inspect, search the contents of, copy, print, quote,
+  write or edit `.env`, `.env.*` or `*.env` files, including example/template
+  files. Exclude them from content searches, bulk reads, archives and diagnostics.
+- Do not expose their contents indirectly through tools, subprocesses, browsers,
+  logs or generated artifacts. Never inspect or print secret environment values,
+  including `SOLANA_RPC_URL`.
+- Ask the user to configure needed variables locally. Ask only for variable names
+  or whether they are configured, never secret values. Application code may
+  consume environment configuration without exposing its contents to the agent.
+
 ## Claude Code skills and agents
 
 Project tooling lives in `.claude/`; the developer guide is

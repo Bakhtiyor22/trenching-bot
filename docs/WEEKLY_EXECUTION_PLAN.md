@@ -427,3 +427,7 @@ Difficulty is an engineering estimate, not a promise. If a task grows to XL, sto
 3. Persistence migration/repositories.
 4. Shared replay/E2E integration PR.
 5. Provider adapter work only after the spike decision; otherwise carry it into next week without compromising the deterministic deliverable.
+
+### Approved real capture increment (2026-10-03)
+
+The user approved the [bounded real wallet replay plan](plans/20261003-real-wallet-replay.md): mainnet, the supplied wallet and latest 100 address-reference transactions, with Helius standard HTTP RPC adopted for user-run acquisition. Its first unit provides an audited frozen history sample and offline inspection without database or schema changes. Verified swap decoding, slot-aware market acquisition and real replay export remain gated on actual sanitized samples and historical coverage; the broader production/backfill backlog above is not marked delivered. See the [capture ADR](adr/20261003-bounded-wallet-history-capture.md) and [user instructions](REAL_DATA_CAPTURE.md).

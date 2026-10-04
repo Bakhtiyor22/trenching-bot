@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm.cmd",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
+      "env": { "BROWSER": "none" },
+      "port": 5173,
+      "url": "http://localhost:5173"
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+package com.trenching.bot.marketdata.application
+
+import com.trenching.bot.chaincapture.CaptureValidationException
+import com.trenching.bot.chaincapture.ChainCaptureFormat
+import com.trenching.bot.chaincapture.SignatureListing
+import com.trenching.bot.chaincapture.SignatureListingEntry
+import com.trenching.bot.marketdata.MarketListedSignature
+import com.trenching.bot.marketdata.MarketWindowCoverage
+import com.trenching.bot.marketdata.MarketWindowRecord
+
+/** Applies newest-first listing pages of a window's base mint to its discovery state. */
+internal object MarketWindowScan {
+    /**
+     * Counts failed and newer entries, selects successful in-window ones and completes the window at the first entry
+     * older than it or at a short page. Selecting more signatures than [capacity] that are not in [admitted] makes the
+     * window [MarketWindowCoverage.OVER_CAP] at once, so no partial selection is ever fetched.
+     */
+    fun apply(window: MarketWindowRecord, entries: List<SignatureListingEntry>, admitted: Set<String>, capacity: Int): MarketWindowRecord {
+        val cursor = window.scanCursor
+        if (!SignatureListing.isNewestFirst(entries, cursor?.slot)) throw CaptureValidationException("SIGNATURE_ORDER")
+        val seen = window.selection.associate { it.signature to SignatureListingEntry(it.signature, it.slot, failed = false) }.toMutableMap()
+        val selection = window.selection.toMutableList()
+        var unadmitted = selection.count { it.signature !in admitted }
+        var scanned = window.scanned
+        var skippedFailed = window.skippedFailed
+        var skippedNewer = window.skippedNewer
+        var lastScanned = cursor
+        var reachedOlder = false
+        for (entry in entries) {
+            if (entry.signature == cursor?.signature) throw CaptureValidationException("NON_PROGRESSING_PAGE")
+            if (entry.slot < window.fromSlot) {
+                reachedOlder = true
+                break
+            }
+            val previous = seen.putIfAbsent(entry.signature, entry)
+            if (previous != null && previous != entry) throw CaptureValidationException("CONFLICTING_SIGNATURE")
+            scanned++
+            lastScanned = MarketListedSignature(entry.signature, entry.slot)
+            when {
+                previous != null -> Unit
+                entry.failed -> skippedFailed++
+                entry.slot > window.toSlot -> skippedNewer++
+                else -> {
+                    selection += MarketListedSignature(entry.signature, entry.slot)
+                    if (entry.signature !in admitted) unadmitted++
+                    if (unadmitted > capacity) {
+                        return window.copy(coverage = MarketWindowCoverage.OVER_CAP, pagesScanned = window.pagesScanned + 1,
+                            scanned = scanned, skippedFailed = skippedFailed, skippedNewer = skippedNewer,
+                            selected = selection.size, selection = emptyList(), scanCursor = lastScanned)
+                    }
+                }
+            }
+        }
+        val complete = reachedOlder || entries.size < ChainCaptureFormat.SIGNATURE_PAGE_SIZE
+        return window.copy(coverage = if (complete) MarketWindowCoverage.COMPLETE else MarketWindowCoverage.PENDING,
+            pagesScanned = window.pagesScanned + 1, scanned = scanned, skippedFailed = skippedFailed, skippedNewer = skippedNewer,
+            selected = selection.size, selection = selection.toList(), scanCursor = lastScanned)
+    }
+
+    fun boundReached(window: MarketWindowRecord): MarketWindowRecord =
+        window.copy(coverage = MarketWindowCoverage.COVERAGE_INCOMPLETE, selection = emptyList())
+}

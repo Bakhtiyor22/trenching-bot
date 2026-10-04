@@ -1,6 +1,8 @@
 # Provider research and verification
 
-Reviewed 2026-10-01. This is a provisional recommendation; no production adapter, account or paid plan was enabled.
+Reviewed 2026-10-01. The original comparison below is provisional; its plan prices and entitlements are historical, not a promise of current availability.
+
+Update 2026-10-03: the user adopted Helius standard HTTP RPC for the [bounded real wallet capture plan](plans/20261003-real-wallet-replay.md), configured it locally and shared successful mainnet-beta console connectivity evidence. The new user-run history command is a research acquisition path, not a production wallet/market feed. No agent called Helius or read its credential. Actual supported swap routes, historical block retention, market coverage and operating cost remain evidence gates; see [capture instructions](REAL_DATA_CAPTURE.md) and the [capture ADR](adr/20261003-bounded-wallet-history-capture.md). No paid upgrade was authorized.
 
 Start a one-wallet capture spike with standard Solana HTTP/WebSocket RPC and a narrow on-chain swap parser. Prices must be derived from supported transactions/pools with explicit slots, decimals and pair identities. This requires more decoding than a current-price API but preserves the ordering used by the simulator. Public devnet is the fallback for connectivity tests, not a mainnet research feed. [Solana clusters](https://solana.com/docs/references/clusters)
 

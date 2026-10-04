@@ -145,6 +145,52 @@ tasks.register<JavaExec>("persistedReplay") {
     args(providers.gradleProperty("report").orElse("build/persisted-replay-report.json").get())
 }
 
+val walletHistoryDirectory = providers.gradleProperty("captureDirectory").orElse("build/captures/wallet-history")
+
+tasks.register<JavaExec>("captureWalletHistory") {
+    description = "Explicit user-run read-only mainnet wallet history capture; never part of build"
+    group = "application"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.trenching.bot.replay.api.CaptureWalletHistoryCommandKt")
+    args("--wallet", providers.gradleProperty("wallet").orElse("").get())
+    args("--directory", walletHistoryDirectory.get())
+    args("--limit", providers.gradleProperty("limit").orElse("100").get())
+    args("--scan-pages", providers.gradleProperty("scanPages").orElse("20").get())
+    args("--request-budget", providers.gradleProperty("requestBudget").orElse("400").get())
+    args("--byte-budget", providers.gradleProperty("byteBudget").orElse("104857600").get())
+}
+
+tasks.register<JavaExec>("inspectWalletHistory") {
+    description = "Verify and summarize recorded wallet history offline, without credentials or PostgreSQL"
+    group = "application"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.trenching.bot.replay.api.InspectWalletHistoryCommandKt")
+    args("--directory", walletHistoryDirectory.get())
+}
+
+val replayMarketsDirectory = providers.gradleProperty("captureDirectory").orElse("build/captures/replay-markets")
+
+tasks.register<JavaExec>("captureReplayMarkets") {
+    description = "Explicit user-run read-only mainnet capture of same-mint trades around recorded wallet buys; never part of build"
+    group = "application"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.trenching.bot.replay.api.CaptureReplayMarketsCommandKt")
+    args("--wallet-capture-directory", providers.gradleProperty("walletCaptureDirectory").orElse("").get())
+    args("--directory", replayMarketsDirectory.get())
+    args("--scan-pages", providers.gradleProperty("scanPages").orElse("20").get())
+    args("--max-transactions", providers.gradleProperty("maxTransactions").orElse("300").get())
+    args("--request-budget", providers.gradleProperty("requestBudget").orElse("400").get())
+    args("--byte-budget", providers.gradleProperty("byteBudget").orElse("104857600").get())
+}
+
+tasks.register<JavaExec>("inspectReplayMarkets") {
+    description = "Verify recorded market history and extract observations offline, without credentials or PostgreSQL"
+    group = "application"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.trenching.bot.replay.api.InspectReplayMarketsCommandKt")
+    args("--directory", replayMarketsDirectory.get())
+}
+
 // `bootRun` explicitly selects the local profile for developer convenience.
 tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
     systemProperty("spring.profiles.active", "local")
