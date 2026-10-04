@@ -191,6 +191,16 @@ tasks.register<JavaExec>("inspectReplayMarkets") {
     args("--directory", replayMarketsDirectory.get())
 }
 
+tasks.register<JavaExec>("exportRecordedReplay") {
+    description = "Export verified wallet and market captures as a v1 replay dataset offline, without credentials or PostgreSQL"
+    group = "application"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.trenching.bot.replay.api.ExportRecordedReplayCommandKt")
+    args("--wallet-capture-directory", providers.gradleProperty("walletCaptureDirectory").orElse("").get())
+    args("--market-capture-directory", providers.gradleProperty("marketCaptureDirectory").orElse("build/captures/replay-markets").get())
+    args("--output", providers.gradleProperty("output").orElse("build/captures/recorded-replay-v1.json").get())
+}
+
 // `bootRun` explicitly selects the local profile for developer convenience.
 tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
     systemProperty("spring.profiles.active", "local")

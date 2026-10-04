@@ -17,7 +17,8 @@ internal object CaptureCommandArguments {
         return CommandArguments.Valid(values)
     }
 
-    fun directory(value: String?): CommandArguments<Path> {
+    /** An absolute, normalized directory or file path. */
+    fun path(value: String?): CommandArguments<Path> {
         if (value.isNullOrBlank()) return CommandArguments.Invalid
         return try { CommandArguments.Valid(Path.of(value).toAbsolutePath().normalize()) }
         catch (_: InvalidPathException) { CommandArguments.Invalid }

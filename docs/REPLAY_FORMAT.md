@@ -2,7 +2,7 @@
 
 See the bundled sample `src/main/resources/replay/samples/weekly-buy-v1.json`. This is synthetic curated balance-delta data, not a raw Solana or provider capture. The synthetic zero wallet/signature is not the Decu identity.
 
-The additive [real history capture](REAL_DATA_CAPTURE.md) saves raw transaction evidence and a separately versioned manifest. Those files are not v1 replay datasets and cannot be uploaded as such. Swap decoding and historical slot-aware market evidence must be verified before conversion; the capture does not alter this format, its checksum or simulation semantics.
+The additive [real history capture](REAL_DATA_CAPTURE.md) saves raw transaction evidence and a separately versioned manifest. Those files are not v1 replay datasets and cannot be uploaded as such. `exportRecordedReplay` converts a verified wallet capture and its market capture into a v1 dataset through `ReplayDatasetWriter`, and loads the result back before writing it. Neither the capture nor the export alters this format, its checksum or simulation semantics.
 
 The root has `schemaVersion` (exactly 1), `trackedWallet`, `transactions`, `observations`, and a SHA-256 `checksum`. Arrays are bounded to 10,000 records each. Times must be exact at microsecond precision, prices and liquidity must fit `numeric(78,38)`, `source` is at most 128 characters and observation `id`/`sourceEventId` at most 255; the loader rejects anything persistence would. Addresses must decode from base58 to 32 bytes, signatures to 64 bytes. Slots are nonnegative Longs. Monetary values and raw token deltas are decimal strings, never floating-point JSON numbers. Decimals are 0..255; accepted absolute raw amounts fit u64.
 

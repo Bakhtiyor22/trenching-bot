@@ -47,7 +47,7 @@ class ReplayMarketCommandsTest {
         val base = arrayOf("--wallet-capture-directory", wallet().toString(), "--directory", markets().toString())
         val invalid = listOf(emptyArray(), arrayOf("--directory", markets().toString()),
             arrayOf("--wallet-capture-directory", wallet().toString()), base + arrayOf("--endpoint", "private"),
-            base + arrayOf("--directory", markets().toString()), base + arrayOf("--scan-pages", "0"), base + arrayOf("--scan-pages", "51"),
+            base + arrayOf("--directory", markets().toString()), base + arrayOf("--scan-pages", "0"), base + arrayOf("--scan-pages", "501"),
             base + arrayOf("--scan-pages", "many"), base + arrayOf("--max-transactions", "0"), base + arrayOf("--max-transactions", "1001"),
             base + arrayOf("--request-budget", "0"), base + arrayOf("--request-budget", "1001"),
             base + arrayOf("--byte-budget", "0"), base + arrayOf("--byte-budget", "524288001"),

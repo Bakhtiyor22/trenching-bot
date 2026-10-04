@@ -211,7 +211,7 @@ The capture transport, budgets, artifact store and parsed-structure validation, 
 1. **Discovery by mint, not by block.**
    - For each decoded buy, discovery scans `getSignaturesForAddress(<mint>)` newest-first in 1,000-signature pages, with `until` = the source buy's signature, so the scan never goes older than the source trade.
    - It skips failed entries and collects successful signatures whose slot falls in the window [S+1, S+12].
-   - It stops once a page reaches below S+1, or at history end. The page bound is `scanPages` (default 20, maximum 50).
+   - It stops once a page reaches below S+1, or at history end. The page bound is `scanPages` (default 20, maximum 50; raised to 500 and made extendable by Amendment C).
    - Every Pump.fun bonding-curve trade passes the mint account, so this finds exactly the same-pair trades.
    - Hitting the page bound before reaching the window marks it `COVERAGE_INCOMPLETE`. It is never treated as "no trades".
 2. **Window parameters are recorded.** The window comes from the accepted defaults (offsets 1–3, wait 2, age 2, holding 5). Other console settings that need a wider window require a new capture, and the manifest names the supported parameters. Overlapping windows on the same mint are merged.
@@ -267,6 +267,30 @@ Export to replay schema v1, console import and running the simulation (unit 4). 
 - **Availability:** whether the account can still list and fetch these mint signatures is verified by the user's first run. Recommendation: one buy first (the only one), which is the plan's own "validate one before the batch" gate.
 - **Timing:** recommend running the market capture soon. An active token's later trades add listing pages before the scan reaches the window. The page bound makes that explicit, not silent.
 
+## Amendment C — extendable market scan
+
+Status: Approved (2026-10-04, user approved in chat).
+
+### Context
+
+The user's first market capture (`-PscanPages=50`, 51 requests, about 11.9 MB) stopped at the page bound with the window [453004997, 453005008] `COVERAGE_INCOMPLETE`. The mint listed 50,000 signatures (31,527 newer than the window, 18,473 failed, none in the window) and the cursor reached slot 453009699, about 4,700 slots short. A `COVERAGE_INCOMPLETE` window was terminal and a rerun with a different `scanPages` was refused, so the only way forward was a new directory with the same 50-page limit. The wallet capture holds no later transaction on this mint to start a narrower scan from.
+
+### Decisions (amend Amendment B decision 1)
+
+1. **Market page bound 500.** `scanPages` for market capture is 1–500 (default 20). The wallet capture bound stays 1–50; a busy mint lists far more signatures after a window than a wallet does.
+2. **Extend on resume.** A rerun may pass a `scanPages` at least the saved one. A larger value raises the manifest's `scanPageLimit` and reopens every `COVERAGE_INCOMPLETE` window to `PENDING`. It continues before its saved cursor with its counts carried on. A smaller value stays `RESUME_IDENTITY`. Windows, window parameters and `maxTransactions` must still match.
+3. **Lossless bound.** A window that reaches the page bound keeps its in-window selection (and `selected` equals its size) so an extension never drops signatures. It is still never fetched or admitted while `COVERAGE_INCOMPLETE`.
+4. **Record order.** Records are always the distinct selections of `COMPLETE` windows in window order, whichever window completed first. The manifest check that windows start in order now requires only that windows not yet started form a suffix, since an extended window can reopen before later finished ones.
+5. **Unchanged:** coverage rules and their effect on observations; budgets as totals across runs (maximum 1,000 requests and 500 MiB); the RPC methods; manifest schema version 1. An existing manifest stays valid.
+
+### Rejected alternative
+
+Fetching the window's 12 blocks with `getBlock` (accounts only). Fixed cost of about 13 requests, but it adds a fourth RPC method and each response can approach the 8 MiB cap. It remains a fallback if 500 pages do not reach the window.
+
+### Verification
+
+`MarketHistoryCaptureTest`: an extension continues from the saved cursor without relisting; a bounded window keeps in-window selections and admits them once extended; an earlier window extended after a later one completed keeps records in window order; 500 pages accepted and 501 refused; a smaller `scanPages` still refused. `RecordedMarketHistoryTest`: a `COVERAGE_INCOMPLETE` window with a kept selection still yields no observations. `ReplayMarketCommandsTest`: `--scan-pages 501` refused.
+
 ## Progress
 
 Plan remains active; the feature is not delivered.
@@ -309,7 +333,13 @@ Plan remains active; the feature is not delivered.
     - a window with a detail gap yields no observations.
   - **Real fixture:** the buy yields exactly one observation, price `0.00000019736807582073671197813450558296` at slot 453004996.
   - **Verification:** `./gradlew build` passed with 317 tests, 0 failures, 0 skipped.
-- **Units 4–5:** not started. Unit 4 exports the decoded wallet buys and market observations to replay schema v1, then imports and runs them in the console. Unit 5 is the final review and verification.
+- **Amendment C implemented (2026-10-04)** after the user's first market capture stopped `COVERAGE_INCOMPLETE` at 50 pages (cursor slot 453009699). Waiting on the user's extended capture.
+- **Live market capture evidence (2026-10-04, user-run).** The 50-page run stopped `COVERAGE_INCOMPLETE` (51 requests). The extended run (`-PscanPages=500`, 216 requests in total, about 48.3 MB) completed: 196,130 signatures scanned, 110,192 failed and 85,921 newer skipped, 17 in-window signatures, all captured. They yield 17 observations in slots 453004997–453005007, with no exclusions and no detail gaps.
+- **Unit 4 — real replay through the existing console: export implemented (2026-10-04); waiting on the user's console import.**
+  - `exportRecordedReplay` is offline. The plan's proposed name `importRecordedReplay` was changed because the command writes a file and the console does the import. It reuses the wallet planning of `captureReplayMarkets`, extracted into `RecordedWalletPlanning`. It requires the market capture to hold exactly the planned windows and parameters (`MARKET_CAPTURE_MISMATCH`), complete and gap-free (`MARKET_CAPTURE_INCOMPLETE`), refuses more than 10,000 records (`DATASET_BOUNDS`), writes through `ReplayDatasetWriter`, loads the JSON back, and writes atomically without replacing a different file (`OUTPUT_EXISTS`). Refused commands now also print the validation reason code.
+  - Real dataset `3a4771170535f8c6b8d9828e01c61bee876938105eb65f532338285129d12e2d` (1 transaction, 17 observations). Default run: +1, +2 and +3 all fill at their target slot and close on `MAX_HOLDING_SLOTS`, realized −0.469035946332, −0.689058352601 and −2.422146778200 (total −3.580241077133 in wrapped SOL on 100 notional), hand-checked from the observed prices. The +3 exit waited one slot because slot 453005004 has no trade.
+  - Tests: `RecordedReplayExportTest` (real buy and real in-window trade round-trip, repeat export, refusals), `RecordedReplayCommandsTest`, and `RecordedReplayIntegrationTest` (PostgreSQL: import by checksum, exact closes, repeat run with no new rows). `./gradlew build` passed with 333 tests, 0 failures, 0 skipped.
+- **Unit 5:** not started. Unit 4 exports the decoded wallet buys and market observations to replay schema v1, then imports and runs them in the console. Unit 5 is the final review and verification.
 
 ## Open questions and evidence gates
 

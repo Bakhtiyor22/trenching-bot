@@ -10,8 +10,8 @@ internal object ReplayMarketArgumentParser {
         val options = CaptureCommandArguments.options(args, ReplayMarketCommandOptions.CAPTURE_OPTIONS)
         if (options !is CommandArguments.Valid) return CommandArguments.Invalid
         val values = options.value
-        val walletDirectory = CaptureCommandArguments.directory(values[ReplayMarketCommandOptions.WALLET_CAPTURE_DIRECTORY])
-        val directory = CaptureCommandArguments.directory(values[ReplayMarketCommandOptions.DIRECTORY])
+        val walletDirectory = CaptureCommandArguments.path(values[ReplayMarketCommandOptions.WALLET_CAPTURE_DIRECTORY])
+        val directory = CaptureCommandArguments.path(values[ReplayMarketCommandOptions.DIRECTORY])
         if (walletDirectory !is CommandArguments.Valid || directory !is CommandArguments.Valid ||
             walletDirectory.value == directory.value) return CommandArguments.Invalid
         val scanPages = CaptureCommandArguments.integer(values, ReplayMarketCommandOptions.SCAN_PAGES,
@@ -29,6 +29,6 @@ internal object ReplayMarketArgumentParser {
     fun inspect(args: Array<String>): CommandArguments<Path> =
         when (val options = CaptureCommandArguments.options(args, setOf(ReplayMarketCommandOptions.DIRECTORY))) {
             CommandArguments.Invalid -> CommandArguments.Invalid
-            is CommandArguments.Valid -> CaptureCommandArguments.directory(options.value[ReplayMarketCommandOptions.DIRECTORY])
+            is CommandArguments.Valid -> CaptureCommandArguments.path(options.value[ReplayMarketCommandOptions.DIRECTORY])
         }
 }

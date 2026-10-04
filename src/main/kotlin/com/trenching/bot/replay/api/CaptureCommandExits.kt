@@ -6,7 +6,10 @@ import com.trenching.bot.chaincapture.CaptureValidationException
 import java.io.IOException
 import java.io.PrintStream
 
-/** Exit codes and sanitized failure categories shared by the capture commands; exception text is never printed. */
+/**
+ * Exit codes and sanitized failure categories shared by the capture commands. Exception text is never printed; a validation
+ * failure adds its fixed reason code.
+ */
 internal object CaptureCommandExits {
     const val SUCCESS = 0
     const val FAILURE = 1
@@ -24,6 +27,7 @@ internal object CaptureCommandExits {
             else -> "UNEXPECTED_FAILURE"
         }
         errors.println("operation=$operation category=$category")
+        if (exception is CaptureValidationException) errors.println("reason=${exception.category}")
         if (category == NOT_CONFIGURED) errors.println("Set SOLANA_RPC_URL in the environment of this command process.")
         FAILURE
     }

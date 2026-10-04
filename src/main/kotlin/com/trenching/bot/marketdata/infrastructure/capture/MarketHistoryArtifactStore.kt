@@ -111,21 +111,21 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         val coverage = when (window.coverage) {
             MarketWindowCoverage.PENDING -> window.pagesScanned < scanPageLimit && selection.size == window.selected
             MarketWindowCoverage.COMPLETE -> window.pagesScanned >= 1 && selection.size == window.selected
-            MarketWindowCoverage.COVERAGE_INCOMPLETE -> window.pagesScanned == scanPageLimit && selection.isEmpty()
+            MarketWindowCoverage.COVERAGE_INCOMPLETE -> window.pagesScanned == scanPageLimit && selection.size == window.selected
             MarketWindowCoverage.OVER_CAP -> window.pagesScanned >= 1 && selection.isEmpty() && window.selected > 0
         }
         return counts && listed && coverage
     }
 
-    /** Windows are discovered one at a time in order, so nothing after the first pending window has started. */
+    /**
+     * Windows start one at a time in order, so the windows not yet started form a suffix. An extended scan can reopen a
+     * started window before later finished ones, so a pending window with pages may precede them.
+     */
     private fun sequentialDiscovery(windows: List<MarketWindowRecord>): Boolean =
-        windows.dropWhile { it.coverage != MarketWindowCoverage.PENDING }.drop(1)
-            .all { it.coverage == MarketWindowCoverage.PENDING && it.pagesScanned == 0 }
+        windows.dropWhile { it.pagesScanned > 0 }.all { it.coverage == MarketWindowCoverage.PENDING && it.pagesScanned == 0 }
 
     private fun validateRecords(manifest: MarketHistoryManifest) {
-        val admitted = manifest.windows.filter { it.coverage == MarketWindowCoverage.COMPLETE }
-            .flatMap { it.selection }.distinctBy { it.signature }
-        if (manifest.records.map { MarketListedSignature(it.signature, it.slot) } != admitted) fail("RECORD_SELECTION")
+        if (manifest.records.map { MarketListedSignature(it.signature, it.slot) } != MarketWindowRecords.admitted(manifest.windows)) fail("RECORD_SELECTION")
         manifest.records.forEach { record ->
             val requiresArtifact = record.outcome == MarketTransactionOutcome.CAPTURED
             if (requiresArtifact != (record.artifact != null) || requiresArtifact != (record.sha256 != null)) fail("RECORD_ARTIFACT")

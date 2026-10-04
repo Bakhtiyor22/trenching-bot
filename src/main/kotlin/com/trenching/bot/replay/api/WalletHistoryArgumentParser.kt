@@ -11,7 +11,7 @@ internal object WalletHistoryArgumentParser {
         if (options !is CommandArguments.Valid) return CommandArguments.Invalid
         val values = options.value
         val walletValue = values[WalletHistoryCommandOptions.WALLET] ?: return CommandArguments.Invalid
-        val directory = CaptureCommandArguments.directory(values[WalletHistoryCommandOptions.DIRECTORY])
+        val directory = CaptureCommandArguments.path(values[WalletHistoryCommandOptions.DIRECTORY])
         if (directory !is CommandArguments.Valid) return CommandArguments.Invalid
         val wallet = try { WalletAddress.of(walletValue) } catch (_: IllegalArgumentException) { return CommandArguments.Invalid }
         val limit = CaptureCommandArguments.integer(values, WalletHistoryCommandOptions.LIMIT,
@@ -28,6 +28,6 @@ internal object WalletHistoryArgumentParser {
     fun inspect(args: Array<String>): CommandArguments<Path> =
         when (val options = CaptureCommandArguments.options(args, setOf(WalletHistoryCommandOptions.DIRECTORY))) {
             CommandArguments.Invalid -> CommandArguments.Invalid
-            is CommandArguments.Valid -> CaptureCommandArguments.directory(options.value[WalletHistoryCommandOptions.DIRECTORY])
+            is CommandArguments.Valid -> CaptureCommandArguments.path(options.value[WalletHistoryCommandOptions.DIRECTORY])
         }
 }

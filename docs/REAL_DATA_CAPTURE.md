@@ -111,7 +111,7 @@ Only the user runs this command against a live provider. Like wallet capture, it
 .\gradlew.bat captureReplayMarkets -PwalletCaptureDirectory=build/captures/decu-mainnet-successful -PcaptureDirectory=build/captures/replay-markets -PscanPages=20 -PmaxTransactions=300 -PrequestBudget=400 -PbyteBudget=104857600
 ```
 
-`-PwalletCaptureDirectory` has no default. `-PcaptureDirectory` defaults to `build/captures/replay-markets` and must differ from the wallet capture directory. The other values shown are the defaults. Bounds: `scanPages` 1–50 per window, `maxTransactions` 1–1,000 in total, `requestBudget` 1–1,000, `byteBudget` up to 500 MiB.
+`-PwalletCaptureDirectory` has no default. `-PcaptureDirectory` defaults to `build/captures/replay-markets` and must differ from the wallet capture directory. The other values shown are the defaults. Bounds: `scanPages` 1–500 per window, `maxTransactions` 1–1,000 in total, `requestBudget` 1–1,000, `byteBudget` up to 500 MiB.
 
 ### Windows
 
@@ -120,14 +120,20 @@ Each decoded buy at slot S that the strategy accepts gets the window [S+1, S+12]
 For each window, discovery lists the mint's signatures newest-first in pages of 1,000, at confirmed commitment, with `until` set to the source buy so it never lists anything older. Every Pump.fun bonding-curve trade passes the mint account, so this finds that mint's trades. Failed entries and successful entries newer than the window are counted and skipped. Successful entries inside the window are selected. Each window ends with one coverage:
 
 - `COMPLETE`: the listing reached an entry older than the window, or a short page (the source buy or history end).
-- `COVERAGE_INCOMPLETE`: `scanPages` pages were scanned without reaching the window's start. Nothing is fetched for it.
+- `COVERAGE_INCOMPLETE`: `scanPages` pages were scanned without reaching the window's start. Nothing is fetched for it. Its cursor, counts and any in-window signatures already selected are kept, so it can be extended (below).
 - `OVER_CAP`: the window would take the total of fetched transactions above `maxTransactions`. Nothing is fetched for it; the selection is not truncated.
 
-Selected transactions are fetched once each, even when two windows share one, with the same structure, identity, credential-echo and unsafe-text checks, hashed atomic artifacts, lock, retries, budgets and resume behaviour as wallet capture. No account has to appear in a market transaction. A rerun with the same directory continues where it stopped; it must use the same wallet capture (the same windows), `scanPages` and `maxTransactions`, otherwise it is refused with `RESUME_IDENTITY`. The manifest is `market-manifest.json`, schema version 1.
+Selected transactions are fetched once each, even when two windows share one, with the same structure, identity, credential-echo and unsafe-text checks, hashed atomic artifacts, lock, retries, budgets and resume behaviour as wallet capture. No account has to appear in a market transaction. A rerun with the same directory continues where it stopped; it must use the same wallet capture (the same windows) and `maxTransactions`, and a `scanPages` no smaller than the saved one, otherwise it is refused with `RESUME_IDENTITY`. The manifest is `market-manifest.json`, schema version 1.
+
+**Extending a scan.** A rerun with a larger `scanPages` raises the saved bound and reopens every `COVERAGE_INCOMPLETE` window. Each continues before its saved cursor; pages already scanned are never listed again, and its counts carry on. `requestBudget` and `byteBudget` are totals across all runs into the directory, so raise them too. For example, after a 50-page run that stopped short:
+
+```powershell
+.\gradlew.bat captureReplayMarkets -PwalletCaptureDirectory=build/captures/decu-mainnet-successful -PcaptureDirectory=build/captures/replay-markets -PscanPages=500 -PmaxTransactions=300 -PrequestBudget=1000 -PbyteBudget=314572800
+```
 
 ### Cost
 
-A window costs at most `scanPages` listing pages, plus one detail request per selected transaction, plus one genesis request per run. For the single decoded buy, a default run costs at most 1 + 20 + 300 = 321 requests, within the default 400. Requests are not a billing-credit estimate.
+A window costs at most `scanPages` listing pages (about 230 KB each on a busy mint), plus one detail request per selected transaction, plus one genesis request per run. For the single decoded buy, a default run costs at most 1 + 20 + 300 = 321 requests, within the default 400. Requests are not a billing-credit estimate.
 
 ### Inspect offline
 
@@ -149,7 +155,42 @@ Inspection then adds `observations=<n>`, a `windowYield=` line per window, `excl
 
 Observations come only from windows whose coverage is `COMPLETE` and whose every selected transaction was captured. A selected transaction that is unavailable, of an unsupported version or withheld for unsafe text could hide an earlier trade, so its window yields no observations and reports `detailGaps`. Events outside every such window count as `OUT_OF_WINDOW`. `EXCEEDS_REPLAY_BOUNDS` counts an event whose price rounds to zero or exceeds the replay format's `numeric(78,38)`, or whose block time or id would not fit it; nothing is truncated.
 
-`replayReady` stays `false`: exporting a replay dataset is the next unit.
+Inspection always prints `replayReady=false`, because it does not write a dataset; `exportRecordedReplay` does (below).
+
+## Export to a replay dataset
+
+```powershell
+.\gradlew.bat exportRecordedReplay -PwalletCaptureDirectory=build/captures/decu-mainnet-successful -PmarketCaptureDirectory=build/captures/replay-markets -Poutput=build/captures/recorded-replay-v1.json
+```
+
+Export is offline: it needs neither credentials nor PostgreSQL. `-PwalletCaptureDirectory` has no default; the other two values shown are the defaults. The command:
+
+1. verifies the wallet capture is complete, decodes it and plans the market windows of the buys the strategy accepts, exactly as `captureReplayMarkets` does;
+2. verifies the market capture and extracts its observations, as `inspectReplayMarkets` does;
+3. refuses a market capture whose windows or window parameters differ from that plan (`MARKET_CAPTURE_MISMATCH`), or that is not complete or has a window that yields no observations (`MARKET_CAPTURE_INCOMPLETE`), so a gap is never exported as an absence of trades;
+4. builds one v1 dataset: the tracked wallet, its decoded transactions and every observation. More than 10,000 of either is refused (`DATASET_BOUNDS`), never truncated;
+5. writes the canonical JSON with `ReplayDatasetWriter`, loads it back with the replay loader and its checksum check, then writes the file atomically. An existing file with identical content is kept (`written=false`); a different one is refused (`OUTPUT_EXISTS`) and left untouched.
+
+It prints the output path, the dataset checksum, the tracked wallet, the counts and `replayReady=true schemaVersion=1`, never the dataset JSON. A refused export prints `operation=exportRecordedReplay category=<category>` and `reason=<code>`. The same captures always produce the same bytes and checksum.
+
+### Run it
+
+- **Offline preview:** `.\gradlew.bat replay -Pdataset=build/captures/recorded-replay-v1.json -Preport=build/captures/recorded-replay-report.json` prints each entry offset's state and P&L and writes the full report.
+- **Console:** on the Datasets screen, import the file. It is registered by its checksum, so importing it again under any name returns the same dataset. Start a run with the default settings. The window was captured for those defaults (entry offsets 1–3, wait 2, holding 5); a longer wait or holding needs a new market capture.
+
+What to inspect in the run report: each scenario's intent (+1/+2/+3 target slot), its fill (`observationId` names the trade's signature and instruction indexes; `executionPrice` includes the modelled slippage), and its close (slot, observation, reason, realized P&L). Starting the same run again returns the existing run with no new rows.
+
+### Result from the user's capture (2026-10-04)
+
+Decu's buy at slot 453004996 and 17 same-mint trades in slots 453004997–453005007 export to dataset `3a4771170535f8c6b8d9828e01c61bee876938105eb65f532338285129d12e2d`. With the defaults (notional 100 in the quote unit, wrapped SOL here; 10 bps fee; 50 bps slippage) all three entries fill at their target slot and close after five slots:
+
+| Entry | Fill slot | Close slot | Realized P&L |
+|---|---|---|---|
+| +1 | 453004997 | 453005002 | −0.469035946332 |
+| +2 | 453004998 | 453005003 | −0.689058352601 |
+| +3 | 453004999 | 453005005 (no trade at 453005004) | −2.422146778200 |
+
+Total −3.580241077133. These are modelled paper results on observed curve prices, not Decu's actual profit and not executable quotes. One source buy is a single example, not a sample.
 
 ### Limitations
 

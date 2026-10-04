@@ -57,6 +57,11 @@ internal object MarketWindowScan {
             selected = selection.size, selection = selection.toList(), scanCursor = lastScanned)
     }
 
+    /** Keeps the window's cursor, counts and in-window selection, so a resume with more pages can extend it losslessly. */
     fun boundReached(window: MarketWindowRecord): MarketWindowRecord =
-        window.copy(coverage = MarketWindowCoverage.COVERAGE_INCOMPLETE, selection = emptyList())
+        window.copy(coverage = MarketWindowCoverage.COVERAGE_INCOMPLETE)
+
+    /** Reopens a window that stopped at the old page bound; it continues before its saved cursor. */
+    fun extended(window: MarketWindowRecord): MarketWindowRecord =
+        if (window.coverage == MarketWindowCoverage.COVERAGE_INCOMPLETE) window.copy(coverage = MarketWindowCoverage.PENDING) else window
 }

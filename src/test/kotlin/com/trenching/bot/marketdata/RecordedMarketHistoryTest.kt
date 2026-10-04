@@ -252,10 +252,14 @@ class RecordedMarketHistoryTest {
             selection = selection, scanCursor = selection.lastOrNull())
     }
 
-    private fun incomplete(mint: String, coverage: MarketWindowCoverage): MarketWindowRecord =
-        MarketWindowRecord(mint, MintAddress.WRAPPED_SOL.value, FROM, TO, UNTIL, coverage,
-            pagesScanned = 1, scanned = 1000, skippedFailed = 0, skippedNewer = 995, selected = 5,
-            selection = emptyList(), scanCursor = MarketListedSignature(signature(99), SLOT))
+    /** A window at the page bound keeps its in-window selection for a later extension; an over-cap window keeps none. */
+    private fun incomplete(mint: String, coverage: MarketWindowCoverage): MarketWindowRecord {
+        val cursor = MarketListedSignature(signature(99), SLOT)
+        val selection = if (coverage == MarketWindowCoverage.COVERAGE_INCOMPLETE) listOf(cursor) else emptyList()
+        return MarketWindowRecord(mint, MintAddress.WRAPPED_SOL.value, FROM, TO, UNTIL, coverage,
+            pagesScanned = 1, scanned = 1000, skippedFailed = 0, skippedNewer = 995, selected = if (selection.isEmpty()) 5 else selection.size,
+            selection = selection, scanCursor = cursor)
+    }
 
     private fun save(windows: List<MarketWindowRecord>, records: List<MarketTransactionRecord>, target: Path = directory) {
         store.save(target, manifest(windows, records))

@@ -100,6 +100,86 @@ class MarketHistoryCaptureTest {
     }
 
     @Test
+    fun `extends a coverage incomplete window from its saved cursor when resumed with more scan pages`() {
+        val windows = listOf(window(MINT, 1001, 1012, SOURCE))
+        val listing: (String, String?) -> List<String> = { _, before ->
+            when (before) {
+                null -> (1..1000).map { entry(it, 9000L - it) }
+                signature(1000) -> (1001..2000).map { entry(it, 9000L - it) }
+                signature(2000) -> listOf(entry(2001, 1005), entry(2002, 1003, failed = true), entry(2003, 900))
+                else -> error("Unexpected cursor")
+            }
+        }
+        val bounded = capture(request(windows, scanPages = 2), listing).manifest
+        assertEquals(MarketWindowCoverage.COVERAGE_INCOMPLETE, bounded.windows.single().coverage)
+        assertEquals(MarketListedSignature(signature(2000), 7000), bounded.windows.single().scanCursor)
+
+        val extended = capture(request(windows, scanPages = 4), listing).manifest
+        val window = extended.windows.single()
+        assertEquals(MarketWindowCoverage.COMPLETE, window.coverage)
+        assertEquals(4, extended.scanPageLimit)
+        assertEquals(3, window.pagesScanned)
+        assertEquals(2002, window.scanned)
+        assertEquals(2000, window.skippedNewer)
+        assertEquals(1, window.skippedFailed)
+        assertEquals(listOf(null, signature(1000), signature(2000)), listings.map { it["before"] })
+        assertEquals(listOf(signature(2001)), fetched)
+        assertTrue(extended.complete)
+        assertEquals(extended, recorded().inspect(directory).manifest)
+    }
+
+    @Test
+    fun `keeps in-window selections of a window at the page bound and admits them once extended`() {
+        val windows = listOf(window(MINT, 1001, 1012, SOURCE))
+        val listing: (String, String?) -> List<String> = { _, before ->
+            if (before == null) (1..998).map { entry(it, 9000L - it) } + listOf(entry(999, 1010), entry(1000, 1009))
+            else listOf(entry(1001, 1005), entry(1002, 900))
+        }
+        val bounded = capture(request(windows, scanPages = 1), listing).manifest
+        assertEquals(MarketWindowCoverage.COVERAGE_INCOMPLETE, bounded.windows.single().coverage)
+        assertEquals(listOf(999, 1000).map(::signature), bounded.windows.single().selection.map { it.signature })
+        assertEquals(emptyList(), bounded.records)
+        assertEquals(emptyList(), fetched)
+        assertEquals(bounded, recorded().inspect(directory).manifest)
+
+        val extended = capture(request(windows, scanPages = 2), listing).manifest
+        assertEquals(MarketWindowCoverage.COMPLETE, extended.windows.single().coverage)
+        assertEquals(listOf(999, 1000, 1001).map(::signature), extended.records.map { it.signature })
+        assertEquals(listOf(999, 1000, 1001).map(::signature), fetched)
+        assertTrue(extended.complete)
+    }
+
+    @Test
+    fun `extends an earlier window after a later one completed and keeps records in window order`() {
+        val windows = listOf(window(OTHER_MINT, 1001, 1012, SOURCE), window(MINT, 1001, 1012, SOURCE))
+        val listing: (String, String?) -> List<String> = { address, before ->
+            when {
+                address == MINT -> listOf(entry(5001, 1004))
+                before == null -> (1..1000).map { entry(it, 9000L - it) }
+                else -> listOf(entry(1001, 1006), entry(1002, 900))
+            }
+        }
+        val bounded = capture(request(windows, scanPages = 1), listing).manifest
+        assertEquals(listOf(MarketWindowCoverage.COVERAGE_INCOMPLETE, MarketWindowCoverage.COMPLETE), bounded.windows.map { it.coverage })
+        assertEquals(listOf(signature(5001)), fetched)
+
+        val extended = capture(request(windows, scanPages = 2), listing).manifest
+        assertEquals(List(2) { MarketWindowCoverage.COMPLETE }, extended.windows.map { it.coverage })
+        assertEquals(listOf(1001, 5001).map(::signature), extended.records.map { it.signature })
+        assertEquals(listOf(5001, 1001).map(::signature), fetched)
+        assertEquals(1, listedAddresses.count { it == MINT })
+        assertTrue(extended.complete)
+        assertEquals(extended, recorded().inspect(directory).manifest)
+    }
+
+    @Test
+    fun `accepts up to 500 scan pages per window`() {
+        val result = capture(request(listOf(window(MINT, 1001, 1012, SOURCE)), scanPages = 500)) { _, _ -> emptyList() }
+        assertEquals(500, result.manifest.scanPageLimit)
+        assertTrue(result.manifest.complete)
+    }
+
+    @Test
     fun `records a window over the transaction cap without fetching any of its details`() {
         val first = window(OTHER_MINT, 1001, 1012, SOURCE)
         val second = window(MINT, 1001, 1012, SOURCE)
@@ -299,7 +379,7 @@ class MarketHistoryCaptureTest {
     fun `validates request bounds and windows before any provider request`() {
         val valid = listOf(window(MINT, 1001, 1012, SOURCE))
         val invalid = listOf(
-            request(valid, scanPages = 0), request(valid, scanPages = 51),
+            request(valid, scanPages = 0), request(valid, scanPages = 501),
             request(valid, maxTransactions = 0), request(valid, maxTransactions = 1001),
             request(valid, requestBudget = 0), request(valid, requestBudget = 1001),
             request(valid, byteBudget = 0), request(valid, byteBudget = 500L * 1024 * 1024 + 1),

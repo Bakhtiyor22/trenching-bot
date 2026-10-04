@@ -22,14 +22,7 @@ import com.trenching.bot.walletactivity.WalletHistoryDecodeOutcome
 import com.trenching.bot.walletactivity.WalletHistoryDecodeRecord
 import com.trenching.bot.walletactivity.WalletHistoryDecodeResult
 import com.trenching.bot.walletactivity.WalletHistoryDecoderVersion
-import com.trenching.bot.walletactivity.WalletHistoryDiscoveryStop
-import com.trenching.bot.walletactivity.WalletHistoryManifest
-import com.trenching.bot.walletactivity.WalletHistoryOutcome
-import com.trenching.bot.walletactivity.WalletHistoryRecord
-import com.trenching.bot.walletactivity.WalletHistoryScanCursor
-import com.trenching.bot.walletactivity.WalletHistorySelection
 import com.trenching.bot.walletactivity.domain.WalletTransaction
-import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.nio.file.Files
@@ -40,7 +33,6 @@ import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import tools.jackson.databind.json.JsonMapper
-import tools.jackson.databind.node.ObjectNode
 
 class ReplayMarketWindowPlannerTest {
     @TempDir lateinit var directory: Path
@@ -138,26 +130,8 @@ class ReplayMarketWindowPlannerTest {
         },
     )
 
-    private fun saveWalletCapture(complete: Boolean, target: Path = directory, signer: Boolean = true) {
-        val store = WalletHistoryArtifactStore(mapper)
-        val transaction = javaClass.getResourceAsStream("/walletactivity/decoder/pumpfun-buy.json").use { mapper.readTree(requireNotNull(it)) }
-        val outcome = if (signer) WalletHistoryOutcome.UNCLASSIFIED else WalletHistoryOutcome.NON_SIGNER
-        if (!signer) {
-            (transaction.path("transaction").path("message").path("accountKeys")
-                .first { it.path("pubkey").asString() == WALLET } as ObjectNode).put("signer", false)
-        }
-        val record = if (complete) {
-            val artifact = store.writeTransaction(target, SIGNATURE, transaction)
-            WalletHistoryRecord(SIGNATURE, SLOT, outcome, artifact.path, artifact.sha256, artifact.bytes)
-        } else WalletHistoryRecord(SIGNATURE, SLOT, WalletHistoryOutcome.PENDING)
-        store.save(target, WalletHistoryManifest(
-            schemaVersion = 2, wallet = WALLET, genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
-            commitment = "confirmed", capturedAt = "2026-10-03T00:00:00Z", limit = 100, scanPageLimit = 1,
-            selection = listOf(WalletHistorySelection(SIGNATURE, SLOT)), records = listOf(record),
-            complete = complete, discoveryComplete = true, discoveryStop = WalletHistoryDiscoveryStop.HISTORY_END,
-            scannedSignatures = 1, skippedFailed = 0, scanCursor = WalletHistoryScanCursor(SIGNATURE, SLOT),
-            requestsUsed = 3, bytesUsed = record.bytes))
-    }
+    private fun saveWalletCapture(complete: Boolean, target: Path = directory, signer: Boolean = true) =
+        RecordedWalletFixtures.save(mapper, target, complete, signer)
 
     private fun history(vararg transactions: WalletTransaction) = WalletHistoryDecodeResult(
         directory, WalletAddress.of(WALLET), transactions.size, true, WalletHistoryDecoderVersion.PUMPFUN_BONDING_CURVE_BUY_V1,

@@ -41,6 +41,7 @@ internal class MarketHistoryCaptureService(
             maxTransactions = request.maxTransactions, windows = windows.map(MarketWindowRecords::pending), records = emptyList(),
             acquisitionComplete = false, complete = false, requestsUsed = 0, bytesUsed = 0,
         )
+        if (request.scanPages > manifest.scanPageLimit) manifest = extend(manifest, request.scanPages)
         store.save(request.directory, usage(manifest, budget))
         manifest = discover(request, manifest, budget)
         if (manifest.windows.none { it.coverage == MarketWindowCoverage.PENDING }) manifest = fetchDetails(request, manifest, budget)
@@ -74,13 +75,19 @@ internal class MarketHistoryCaptureService(
         return manifest
     }
 
+    private fun extend(manifest: MarketHistoryManifest, scanPages: Int): MarketHistoryManifest {
+        log.info("market_capture extending scanPages={} previousScanPages={}", scanPages, manifest.scanPageLimit)
+        return manifest.copy(scanPageLimit = scanPages, windows = manifest.windows.map(MarketWindowScan::extended))
+    }
+
+    /** Admits a completed window's selection, keeping records in window order and each existing record's state. */
     private fun withWindow(manifest: MarketHistoryManifest, index: Int, window: MarketWindowRecord): MarketHistoryManifest {
         val windows = manifest.windows.toMutableList().apply { set(index, window) }
         if (window.coverage != MarketWindowCoverage.COMPLETE) return manifest.copy(windows = windows)
-        val admitted = manifest.records.mapTo(HashSet()) { it.signature }
-        val added = window.selection.filter { it.signature !in admitted }
-            .map { MarketTransactionRecord(it.signature, it.slot, MarketTransactionOutcome.PENDING) }
-        return manifest.copy(windows = windows, records = manifest.records + added)
+        val existing = manifest.records.associateBy { it.signature }
+        val records = MarketWindowRecords.admitted(windows)
+            .map { existing[it.signature] ?: MarketTransactionRecord(it.signature, it.slot, MarketTransactionOutcome.PENDING) }
+        return manifest.copy(windows = windows, records = records)
     }
 
     private fun fetchDetails(request: MarketHistoryCaptureRequest, saved: MarketHistoryManifest, budget: CaptureBudget): MarketHistoryManifest {
@@ -130,7 +137,7 @@ internal class MarketHistoryCaptureService(
 
     private fun sameIdentity(saved: MarketHistoryManifest, request: MarketHistoryCaptureRequest, windows: List<MarketCaptureWindow>): Boolean =
         saved.windows.map(MarketWindowRecords::window) == windows && saved.windowParameters == request.windowParameters &&
-            saved.scanPageLimit == request.scanPages && saved.maxTransactions == request.maxTransactions
+            saved.scanPageLimit <= request.scanPages && saved.maxTransactions == request.maxTransactions
 
     /** Returns the request's windows in canonical order after checking every bound before any provider request. */
     private fun validate(request: MarketHistoryCaptureRequest): List<MarketCaptureWindow> {
