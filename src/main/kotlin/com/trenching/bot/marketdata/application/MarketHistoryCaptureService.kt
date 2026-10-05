@@ -53,19 +53,21 @@ internal class MarketHistoryCaptureService(
         for (index in manifest.windows.indices) {
             var window = manifest.windows[index]
             while (window.coverage == MarketWindowCoverage.PENDING) {
-                window = if (window.pagesScanned >= request.scanPages) MarketWindowScan.boundReached(window) else {
-                    val page = try {
-                        ChainCaptureReads.signaturePage(rpc, window.baseMint, window.scanCursor?.signature, window.untilSignature, budget)
-                    } catch (exception: CaptureProviderException) {
-                        log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
-                        return manifest
-                    } catch (_: CaptureBudgetException) {
-                        log.warn("market_capture discovery interrupted category=BUDGET mint={}", window.baseMint)
-                        return manifest
-                    }
-                    val admitted = manifest.records.mapTo(HashSet()) { it.signature }
-                    MarketWindowScan.apply(window, SignatureListing.parse(page), admitted, request.maxTransactions - manifest.records.size)
+                val page = try {
+                    ChainCaptureReads.signaturePage(rpc, window.baseMint, window.scanCursor?.signature, window.untilSignature, budget)
+                } catch (exception: CaptureProviderException) {
+                    log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
+                    return manifest
+                } catch (_: CaptureBudgetException) {
+                    log.warn("market_capture discovery interrupted category=BUDGET mint={}", window.baseMint)
+                    return manifest
                 }
+                val admitted = manifest.records.mapTo(HashSet()) { it.signature }
+                val scanned = MarketWindowScan.apply(window, SignatureListing.parse(page), admitted, request.maxTransactions - manifest.records.size)
+                // Marked in the same save, so an interruption never leaves a pending window at its page bound.
+                window = if (scanned.coverage == MarketWindowCoverage.PENDING && scanned.pagesScanned >= request.scanPages) {
+                    MarketWindowScan.boundReached(scanned)
+                } else scanned
                 manifest = withWindow(manifest, index, window)
                 store.save(request.directory, usage(manifest, budget))
             }

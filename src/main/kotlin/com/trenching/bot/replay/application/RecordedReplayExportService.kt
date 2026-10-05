@@ -3,6 +3,7 @@ package com.trenching.bot.replay.application
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.ReplayLimits
 import com.trenching.bot.marketdata.MarketHistoryDecodeResult
+import com.trenching.bot.marketdata.MarketObservationExclusion
 import com.trenching.bot.marketdata.RecordedMarketHistory
 import com.trenching.bot.replay.domain.RecordedReplayExport
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
@@ -17,8 +18,9 @@ import tools.jackson.databind.ObjectMapper
 
 /**
  * Exports a recorded wallet capture and the market capture planned from it as one canonical v1 dataset. Both captures are
- * verified offline. The market capture must hold exactly the planned windows, each complete and free of detail gaps, so a
- * missing trade can never read as an absence of trades. The JSON is loaded back before it is written.
+ * verified offline. The market capture must hold exactly the planned windows, each complete and free of detail gaps and
+ * in-window exclusions, so a missing trade can never read as an absence of trades. The JSON is loaded back before it is
+ * written.
  */
 class RecordedReplayExportService(
     walletHistory: RecordedWalletHistory,
@@ -54,9 +56,15 @@ class RecordedReplayExportService(
             throw CaptureValidationException("MARKET_CAPTURE_MISMATCH")
         }
         if (!market.complete || market.windows.any { !it.yieldsObservations }) throw CaptureValidationException("MARKET_CAPTURE_INCOMPLETE")
+        if (market.exclusions.any { (reason, count) -> reason !in NON_BLOCKING_EXCLUSIONS && count > 0 }) {
+            throw CaptureValidationException("MARKET_CAPTURE_EXCLUSIONS")
+        }
     }
 
     private companion object {
         const val SCHEMA_VERSION = 1
+
+        /** Events no replay window needs. Every other exclusion is a trade a window lost, which could move a fill. */
+        val NON_BLOCKING_EXCLUSIONS = setOf(MarketObservationExclusion.OUT_OF_WINDOW, MarketObservationExclusion.QUOTE_MINT)
     }
 }

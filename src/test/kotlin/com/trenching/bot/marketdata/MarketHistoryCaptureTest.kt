@@ -173,6 +173,27 @@ class MarketHistoryCaptureTest {
     }
 
     @Test
+    fun `an extended window whose kept selection exceeds the remaining cap is over the cap and the capture stays loadable`() {
+        val windows = listOf(window(OTHER_MINT, 1001, 1012, SOURCE), window(MINT, 1001, 1012, SOURCE))
+        val listing: (String, String?) -> List<String> = { address, before ->
+            when {
+                address == MINT -> listOf(entry(5001, 1006), entry(5002, 1004))
+                before == null -> (1..998).map { entry(it, 9000L - it) } + listOf(entry(999, 1010), entry(1000, 1009))
+                else -> listOf(entry(1001, 900))
+            }
+        }
+        val bounded = capture(request(windows, scanPages = 1, maxTransactions = 3), listing).manifest
+        assertEquals(listOf(MarketWindowCoverage.COVERAGE_INCOMPLETE, MarketWindowCoverage.COMPLETE), bounded.windows.map { it.coverage })
+
+        val extended = capture(request(windows, scanPages = 2, maxTransactions = 3), listing).manifest
+
+        assertEquals(listOf(MarketWindowCoverage.OVER_CAP, MarketWindowCoverage.COMPLETE), extended.windows.map { it.coverage })
+        assertEquals(listOf(5001, 5002).map(::signature), extended.records.map { it.signature })
+        assertEquals(listOf(5001, 5002).map(::signature), fetched)
+        assertEquals(extended, recorded().inspect(directory).manifest)
+    }
+
+    @Test
     fun `accepts up to 500 scan pages per window`() {
         val result = capture(request(listOf(window(MINT, 1001, 1012, SOURCE)), scanPages = 500)) { _, _ -> emptyList() }
         assertEquals(500, result.manifest.scanPageLimit)

@@ -41,11 +41,12 @@ internal class PumpFunTradeObservationExtractor {
         inWindow: (MintAddress, Slot) -> Boolean,
     ): TradeExtraction {
         val blockTime = transaction.path("blockTime")
+        // The window check comes first, so every later reason concerns a trade a replay window needs.
         val reason = when {
-            event.isBuy != SELL && event.isBuy != BUY -> MarketObservationExclusion.MALFORMED_EVENT
             event.mint == MintAddress.WRAPPED_SOL -> MarketObservationExclusion.QUOTE_MINT
-            event.solAmount.signum() == 0 || event.tokenAmount.signum() == 0 -> MarketObservationExclusion.ZERO_AMOUNT
             !inWindow(event.mint, slot) -> MarketObservationExclusion.OUT_OF_WINDOW
+            event.isBuy != SELL && event.isBuy != BUY -> MarketObservationExclusion.MALFORMED_EVENT
+            event.solAmount.signum() == 0 || event.tokenAmount.signum() == 0 -> MarketObservationExclusion.ZERO_AMOUNT
             !blockTime.isIntegralNumber -> MarketObservationExclusion.BLOCK_TIME_MISSING
             else -> null
         }

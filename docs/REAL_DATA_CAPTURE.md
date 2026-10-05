@@ -1,6 +1,6 @@
 # Real wallet history capture
 
-This is the first stage of the [approved real replay plan](plans/20261003-real-wallet-replay.md), as changed by its Amendment A ([successful-reference discovery](adr/20261003-successful-reference-discovery.md)). It records a bounded mainnet sample of successful transactions, verifies its evidence offline and decodes one verified route, the Pump.fun bonding-curve buy (see [Decoding](#decoding)). A second command captures the same-mint market trades around each decoded buy (see [Market capture](#market-capture)). Exporting both into a replay dataset is still to come, so these commands do not yet produce real paper-trading P&L.
+This is the first stage of the [approved real replay plan](plans/20261003-real-wallet-replay.md), as changed by its Amendment A ([successful-reference discovery](adr/20261003-successful-reference-discovery.md)). It records a bounded mainnet sample of successful transactions, verifies its evidence offline and decodes one verified route, the Pump.fun bonding-curve buy (see [Decoding](#decoding)). A second command captures the same-mint market trades around each decoded buy (see [Market capture](#market-capture)). A third, offline command exports both into a replay dataset the console can import and run (see [Export](#export-to-a-replay-dataset)).
 
 ## Configure the user-run capture
 
@@ -91,7 +91,7 @@ decode.<outcome>=<n>   (one line per outcome)
 decodedTrade=<signature> slot=<slot> mint=<mint> baseRaw=<n> baseDecimals=<d> quoteRaw=<n> quoteDecimals=9 instructionIndex=<i>
 ```
 
-At most three `decodedTrade` lines are printed, in slot, signature and instruction order. `replayReady` stays `false`: no market observations are captured yet, and a decoded buy alone cannot price the later +1/+2/+3 slots.
+At most three `decodedTrade` lines are printed, in slot, signature and instruction order. `replayReady` stays `false`: a decoded buy alone cannot price the later +1/+2/+3 slots. Those prices come from the [market capture](#market-capture).
 
 ## Market capture
 
@@ -167,9 +167,9 @@ Export is offline: it needs neither credentials nor PostgreSQL. `-PwalletCapture
 
 1. verifies the wallet capture is complete, decodes it and plans the market windows of the buys the strategy accepts, exactly as `captureReplayMarkets` does;
 2. verifies the market capture and extracts its observations, as `inspectReplayMarkets` does;
-3. refuses a market capture whose windows or window parameters differ from that plan (`MARKET_CAPTURE_MISMATCH`), or that is not complete or has a window that yields no observations (`MARKET_CAPTURE_INCOMPLETE`), so a gap is never exported as an absence of trades;
+3. refuses a market capture whose windows or window parameters differ from that plan (`MARKET_CAPTURE_MISMATCH`), or that is not complete or has a window that yields no observations (`MARKET_CAPTURE_INCOMPLETE`), so a gap is never exported as an absence of trades. A market capture whose acquisition has not finished is refused earlier, by its own decode, with `CAPTURE_INCOMPLETE`. A trade inside a window that could not become an observation (any exclusion except `OUT_OF_WINDOW` and `QUOTE_MINT`) refuses the export with `MARKET_CAPTURE_EXCLUSIONS`, because it could change which observation a fill uses;
 4. builds one v1 dataset: the tracked wallet, its decoded transactions and every observation. More than 10,000 of either is refused (`DATASET_BOUNDS`), never truncated;
-5. writes the canonical JSON with `ReplayDatasetWriter`, loads it back with the replay loader and its checksum check, then writes the file atomically. An existing file with identical content is kept (`written=false`); a different one is refused (`OUTPUT_EXISTS`) and left untouched.
+5. writes the canonical JSON with `ReplayDatasetWriter`, loads it back with the replay loader and its checksum check, then writes it to a temporary file and renames it into place. An existing file with identical content is kept (`written=false`); a different one, even one created during the export, is refused (`OUTPUT_EXISTS`) and left untouched.
 
 It prints the output path, the dataset checksum, the tracked wallet, the counts and `replayReady=true schemaVersion=1`, never the dataset JSON. A refused export prints `operation=exportRecordedReplay category=<category>` and `reason=<code>`. The same captures always produce the same bytes and checksum.
 
@@ -202,6 +202,6 @@ Total −3.580241077133. These are modelled paper results on observed curve pric
 
 Supporting another route needs new evidence. Share the sanitized inspection summary and a sanitized transaction artifact for one example of that route. Failed transactions are no longer captured. Remove unrelated personal data or secret-bearing text; never include the environment file, endpoint, request headers or API key. Public on-chain wallet addresses and signatures are allowed. The agent will inspect only samples you explicitly provide, with no provider requests.
 
-Historical market capture then needs same-pair transactions at entry/exit slots. The wallet's own execution price cannot fill later +1/+2/+3 slots by itself. Missing market data remains an explicit rejection or open position in the existing simulation model.
+More than one source buy needs a different history scope. The wallet's own trades are rare among its address references (1 in 6,911 in the user's capture), so the latest references hold few buys. Choosing that scope, for example the wallet's token accounts or a provider-filtered history, is a separate decision.
 
 Keep raw evidence and its manifest together. `build/captures/` is ignored local output and is removed by a clean build-directory deletion. Export evidence you need to retain before running `clean`; never commit captures or credentials.

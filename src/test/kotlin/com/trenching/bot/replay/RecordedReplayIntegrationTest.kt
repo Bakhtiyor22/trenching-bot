@@ -18,7 +18,7 @@ import tools.jackson.databind.ObjectMapper
 
 /**
  * The dataset `exportRecordedReplay` produced from the user's live captures: Decu's one decoded Pump.fun buy at slot
- * 453004996 and the 17 same-mint bonding-curve trades in slots 453004997..453005008. Expected economics are hand-checked
+ * 453004996 and the 17 same-mint bonding-curve trades in its window [453004997, 453005008], the last at 453005007. Expected economics are hand-checked
  * from those observed prices with the MVP model (100 notional, 10 bps fee, 50 bps slippage, hold 5, wait 2).
  */
 @SpringBootTest

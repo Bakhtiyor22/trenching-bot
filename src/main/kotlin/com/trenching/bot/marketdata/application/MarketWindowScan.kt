@@ -12,8 +12,9 @@ import com.trenching.bot.marketdata.MarketWindowRecord
 internal object MarketWindowScan {
     /**
      * Counts failed and newer entries, selects successful in-window ones and completes the window at the first entry
-     * older than it or at a short page. Selecting more signatures than [capacity] that are not in [admitted] makes the
-     * window [MarketWindowCoverage.OVER_CAP] at once, so no partial selection is ever fetched.
+     * older than it or at a short page. Holding more signatures than [capacity] that are not in [admitted] makes the
+     * window [MarketWindowCoverage.OVER_CAP], so no partial selection is ever fetched. That includes a selection kept from
+     * before an extension, which is checked again when the window completes.
      */
     fun apply(window: MarketWindowRecord, entries: List<SignatureListingEntry>, admitted: Set<String>, capacity: Int): MarketWindowRecord {
         val cursor = window.scanCursor
@@ -26,6 +27,9 @@ internal object MarketWindowScan {
         var skippedNewer = window.skippedNewer
         var lastScanned = cursor
         var reachedOlder = false
+        fun overCap() = window.copy(coverage = MarketWindowCoverage.OVER_CAP, pagesScanned = window.pagesScanned + 1,
+            scanned = scanned, skippedFailed = skippedFailed, skippedNewer = skippedNewer,
+            selected = selection.size, selection = emptyList(), scanCursor = lastScanned)
         for (entry in entries) {
             if (entry.signature == cursor?.signature) throw CaptureValidationException("NON_PROGRESSING_PAGE")
             if (entry.slot < window.fromSlot) {
@@ -43,15 +47,12 @@ internal object MarketWindowScan {
                 else -> {
                     selection += MarketListedSignature(entry.signature, entry.slot)
                     if (entry.signature !in admitted) unadmitted++
-                    if (unadmitted > capacity) {
-                        return window.copy(coverage = MarketWindowCoverage.OVER_CAP, pagesScanned = window.pagesScanned + 1,
-                            scanned = scanned, skippedFailed = skippedFailed, skippedNewer = skippedNewer,
-                            selected = selection.size, selection = emptyList(), scanCursor = lastScanned)
-                    }
+                    if (unadmitted > capacity) return overCap()
                 }
             }
         }
         val complete = reachedOlder || entries.size < ChainCaptureFormat.SIGNATURE_PAGE_SIZE
+        if (complete && unadmitted > capacity) return overCap()
         return window.copy(coverage = if (complete) MarketWindowCoverage.COMPLETE else MarketWindowCoverage.PENDING,
             pagesScanned = window.pagesScanned + 1, scanned = scanned, skippedFailed = skippedFailed, skippedNewer = skippedNewer,
             selected = selection.size, selection = selection.toList(), scanCursor = lastScanned)

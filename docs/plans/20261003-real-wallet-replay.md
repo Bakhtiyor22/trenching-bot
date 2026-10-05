@@ -40,8 +40,8 @@ Full lifetime trading history, actual wallet realized P&L/cost-basis accounting,
 All additions are additive. Existing `WalletActivitySource`, `MarketDataSource`, `ReplayDatasetCatalog`, `SimulationRuns` and v1 schema stay unchanged.
 
 - `walletactivity` owns discovery, RPC transaction DTOs, evidence-backed swap decoding and the history audit. Proposed public `WalletHistoryCapture.capture(request: WalletHistoryCaptureRequest): WalletHistoryCaptureResult` and `RecordedWalletHistory.decode(directory: Path, wallet: WalletAddress): WalletHistoryDecodeResult`. Capture results expose artifact references and vendor-free coverage metadata; decode results expose `List<WalletTransaction>` and finite accepted/ignored/ambiguous outcomes. They never expose vendor DTOs or JPA entities. The source directory is a versioned artifact format owned by this module. Recorded/fake implementations make the boundary testable offline.
-- `marketdata` owns market block capture and observation extraction. Proposed public `MarketHistoryCapture.capture(request: MarketHistoryCaptureRequest): MarketHistoryCaptureResult` and `RecordedMarketHistory.decode(directory: Path, windows: List<MarketCaptureWindow>): MarketHistoryDecodeResult`. Windows contain pair and inclusive slot bounds; results expose coverage and `List<MarketObservation>`. Raw block DTOs and route/pool decoding remain internal. Fake/recorded implementations accompany the capture adapter.
-- `replay` owns the thin CLI entry points and coordination through those public contracts, capture-window calculation, v1 export and loader round-trip validation. Reuse `ReplayDatasetWriter`, never duplicate checksum logic. Proposed opt-in Gradle tasks `captureWalletHistory`, `captureReplayMarkets` and offline `importRecordedReplay`; final arguments and exact run instructions ship with implementation. No command currently exists under these names.
+- `marketdata` owns market block capture and observation extraction. Proposed public `MarketHistoryCapture.capture(request: MarketHistoryCaptureRequest): MarketHistoryCaptureResult` and `RecordedMarketHistory.decode(directory: Path): MarketHistoryDecodeResult` (as built; windows come from the verified manifest, see Amendment B). Windows contain pair and inclusive slot bounds; results expose coverage and `List<MarketObservation>`. Raw block DTOs and route/pool decoding remain internal. Fake/recorded implementations accompany the capture adapter.
+- `replay` owns the thin CLI entry points and coordination through those public contracts, capture-window calculation, v1 export and loader round-trip validation. Reuse `ReplayDatasetWriter`, never duplicate checksum logic. Opt-in Gradle tasks `captureWalletHistory`, `captureReplayMarkets` and offline `exportRecordedReplay` (proposed as `importRecordedReplay`; renamed because it writes a file and the console imports it). Arguments and run instructions are in REAL_DATA_CAPTURE.md.
 - `console` continues to import generated JSON through the catalog and start runs through `SimulationRuns`. No imports from its internal diagnostic RPC client into other modules. History inspection initially uses the offline audit artifact; no new HTTP job API or persisted job state.
 
 ## Domain rules
@@ -83,7 +83,7 @@ Raw captures and audits live under ignored `build/captures/` by default. Manifes
 
 ## Verification
 
-Test-first offline classes: `WalletHistoryCaptureTest` (selection/dedupe/pagination/null/details/version/limits/network), `SwapTransactionDecoderTest` (actual sanitized supported/failed/unsupported/ambiguous cases, signer, inner instructions, token accounts, decimals and u64), `MarketHistoryCaptureTest` (window union, skipped/unavailable slots, budgets), `RecordedMarketHistoryTest` (price math, correct pair, source identity, timestamps, missing depth), `RecordedReplayImportTest` (canonical round-trip, checksums, no silent truncation, manifest gaps). Fake HTTP adapter tests prove timeouts, 429/Retry-After, bounded retries, no unsafe logs/files and no writes. No test contacts a live provider.
+Test-first offline classes: `WalletHistoryCaptureTest` (selection/dedupe/pagination/null/details/version/limits/network), `SwapTransactionDecoderTest` (actual sanitized supported/failed/unsupported/ambiguous cases, signer, inner instructions, token accounts, decimals and u64), `MarketHistoryCaptureTest` (window union, skipped/unavailable slots, budgets), `RecordedMarketHistoryTest` (price math, correct pair, source identity, timestamps, missing depth), `RecordedReplayExportTest` (canonical round-trip, checksums, no silent truncation, manifest gaps; proposed as `RecordedReplayImportTest`). Fake HTTP adapter tests prove timeouts, 429/Retry-After, bounded retries, no unsafe logs/files and no writes. No test contacts a live provider.
 
 PostgreSQL Testcontainers integration reuses the replay/catalog flow with a sanitized captured example and asserts persisted provenance, exact hand-computed paper economics, repeat/concurrent registration and run idempotency, and rollback without partial records. Missing-price fixtures assert explicit rejection/open-position outcomes. Frontend tests cover any instructional behavior actually added; chart behavior stays covered by the delivered console tests.
 
@@ -195,7 +195,7 @@ A default run costs at most 1 genesis request + 20 listing pages + 100 detail re
 
 ## Amendment B — mint-referenced market capture (unit 3)
 
-Status: Approved (2026-10-04, user approved in chat). Implemented and reviewed on 2026-10-04; waiting on the user's live market capture.
+Status: Approved (2026-10-04, user approved in chat). Implemented and reviewed on 2026-10-04. The user's live market capture completed after Amendment C.
 
 ### Context
 
@@ -269,7 +269,7 @@ Export to replay schema v1, console import and running the simulation (unit 4). 
 
 ## Amendment C — extendable market scan
 
-Status: Approved (2026-10-04, user approved in chat).
+Status: Approved (2026-10-04, user approved in chat). Implemented on 2026-10-04 and reviewed in unit 5; the user's extended capture completed.
 
 ### Context
 
@@ -322,7 +322,7 @@ Plan remains active; the feature is not delivered.
   - `inspectWalletHistory` prints the decode counts and the decoded trades.
   - `./gradlew build` passed with 267 tests, 0 failures, 0 skipped.
 - **History-scope gate (open, user decision).** Decu's own trades are rare among the wallet's references: 1 in 6,911, over about 40 seconds. A dataset with several entries needs a different history scope, such as the wallet's token accounts or a provider-filtered history; see the decoder ADR's Consequences.
-- **Unit 3 — slot-aware market evidence: implemented per Amendment B (2026-10-04); waiting on the user's live market capture.**
+- **Unit 3 — slot-aware market evidence: implemented per Amendments B and C (2026-10-04); the user's live market capture completed (see below).**
   - **Part 1:** behaviour-preserving extraction of `chaincapture` (read-only transport, budgets, artifact store, structure checks) and `protocol.pumpfun` (layout and reader). A byte-for-byte before/after fingerprint was identical.
   - **Part 2:**
     - `marketdata` `MarketHistoryCapture` / `RecordedMarketHistory`. The decode signature is `decode(directory)`: windows come from the verified manifest.
@@ -339,7 +339,14 @@ Plan remains active; the feature is not delivered.
   - `exportRecordedReplay` is offline. The plan's proposed name `importRecordedReplay` was changed because the command writes a file and the console does the import. It reuses the wallet planning of `captureReplayMarkets`, extracted into `RecordedWalletPlanning`. It requires the market capture to hold exactly the planned windows and parameters (`MARKET_CAPTURE_MISMATCH`), complete and gap-free (`MARKET_CAPTURE_INCOMPLETE`), refuses more than 10,000 records (`DATASET_BOUNDS`), writes through `ReplayDatasetWriter`, loads the JSON back, and writes atomically without replacing a different file (`OUTPUT_EXISTS`). Refused commands now also print the validation reason code.
   - Real dataset `3a4771170535f8c6b8d9828e01c61bee876938105eb65f532338285129d12e2d` (1 transaction, 17 observations). Default run: +1, +2 and +3 all fill at their target slot and close on `MAX_HOLDING_SLOTS`, realized −0.469035946332, −0.689058352601 and −2.422146778200 (total −3.580241077133 in wrapped SOL on 100 notional), hand-checked from the observed prices. The +3 exit waited one slot because slot 453005004 has no trade.
   - Tests: `RecordedReplayExportTest` (real buy and real in-window trade round-trip, repeat export, refusals), `RecordedReplayCommandsTest`, and `RecordedReplayIntegrationTest` (PostgreSQL: import by checksum, exact closes, repeat run with no new rows). `./gradlew build` passed with 333 tests, 0 failures, 0 skipped.
-- **Unit 5:** not started. Unit 4 exports the decoded wallet buys and market observations to replay schema v1, then imports and runs them in the console. Unit 5 is the final review and verification.
+- **Unit 5 — review and verification: in progress (2026-10-04).**
+  - The `backend-reviewer` reviewed Amendment C and unit 4 line by line, and units 1–4 feature-wide for module boundaries, read-only RPC, secret handling and price provenance. It independently recomputed the three realized P&L values. Boundaries, the three-method RPC allowlist, the credential echo guard and the trade-to-observation provenance were confirmed.
+  - Fixed: an extended window whose kept selection exceeded the remaining `maxTransactions` could complete and push the records past the cap, after which the directory could never load again; it is now `OVER_CAP`. A window reaching its page bound is now marked `COVERAGE_INCOMPLETE` in the same save, so an interruption cannot leave an unloadable manifest. The export's write no longer replaces a file created during the export. Docs list the `CAPTURE_INCOMPLETE` code of an unfinished market capture, and a test exports through real unfinished and page-bound market directories.
+  - Stale docs fixed: this plan's contract text, README, REAL_DATA_CAPTURE, IMPLEMENTATION_STATUS, WEEKLY_EXECUTION_PLAN, PROVIDER_SPIKE (user-observed retention and cost evidence), the guidelines skill's package tree, and the RPC class names in diagrams 08 and 15. The architecture README records what diagrams 02, 03 and 17 do not yet show.
+  - Accepted as is, matching units 1–3: capture and export result types are built by constructor in the CLI path rather than MapStruct, and export refusals reuse `CaptureValidationException`, which is what gives the commands their `reason=` codes.
+  - Frontend verification: lint clean, 65 Vitest tests passed, production build succeeded.
+  - The user decided that in-window observation exclusions refuse the export (`MARKET_CAPTURE_EXCLUSIONS`). Only `OUT_OF_WINDOW` and `QUOTE_MINT` are allowed. The extractor now checks the window before the other reasons, so another mint's bad event in a shared transaction counts only as `OUT_OF_WINDOW`. This is recorded in the observation ADR. The real capture had no exclusions and exports unchanged.
+  - Open: the user's console import of the real dataset, then archiving. Unit 4 exports the decoded wallet buys and market observations to replay schema v1, then imports and runs them in the console. Unit 5 is the final review and verification.
 
 ## Open questions and evidence gates
 

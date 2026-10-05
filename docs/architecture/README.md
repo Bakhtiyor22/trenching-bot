@@ -3,6 +3,11 @@
 Editable draw.io diagrams for the architecture handbook (snapshot 2026-10-03). Open them in
 [diagrams.net](https://app.diagrams.net) or the draw.io IDE plugin.
 
+Not yet drawn: the shared `chaincapture` and `protocol.pumpfun` packages (the RPC classes in 08 and
+15 now carry their `chaincapture` names, `SolanaReadRpc` and `HttpSolanaReadRpc`), and the market
+capture and export commands (`captureReplayMarkets`, `inspectReplayMarkets`, `exportRecordedReplay`)
+in 02, 03 and 17. [REAL_DATA_CAPTURE.md](../REAL_DATA_CAPTURE.md) describes them.
+
 | File | Shows |
 |---|---|
 | `01-system-context.drawio` | Users and external systems |

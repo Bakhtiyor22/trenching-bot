@@ -9,8 +9,10 @@ import com.trenching.bot.marketdata.MarketCaptureWindow
 import com.trenching.bot.marketdata.MarketHistoryCaptureConfiguration
 import com.trenching.bot.marketdata.MarketHistoryCaptureResult
 import com.trenching.bot.marketdata.MarketHistoryDecodeResult
+import com.trenching.bot.marketdata.MarketObservationExclusion
 import com.trenching.bot.marketdata.MarketTransactionOutcome
 import com.trenching.bot.marketdata.MarketTransactionRecord
+import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.marketdata.RecordedMarketHistory
 import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifactStore
 import com.trenching.bot.replay.RecordedWalletFixtures.MINT
@@ -110,6 +112,34 @@ class RecordedReplayExportTest {
         assertCategory("MARKET_CAPTURE_INCOMPLETE") { service(planned.copy(complete = false)).export(request()) }
         val gap = planned.copy(windows = planned.windows.map { it.copy(detailGaps = 1, yieldsObservations = false) })
         assertCategory("MARKET_CAPTURE_INCOMPLETE") { service(gap).export(request()) }
+        assertFalse(Files.exists(output()))
+    }
+
+    @Test
+    fun `refuses in-window exclusions but not trades outside the window or quoted in the quote mint`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val planned = ReplayMarketFixtures.decoded(markets(), ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 12))), 1)
+        val blocking = MarketObservationExclusion.entries -
+            setOf(MarketObservationExclusion.OUT_OF_WINDOW, MarketObservationExclusion.QUOTE_MINT)
+        blocking.forEach { reason ->
+            val excluded = planned.copy(exclusions = planned.exclusions + (reason to 1))
+            assertCategory("MARKET_CAPTURE_EXCLUSIONS") { service(excluded).export(request()) }
+        }
+        assertFalse(Files.exists(output()))
+        val outside = planned.copy(exclusions = planned.exclusions +
+            mapOf(MarketObservationExclusion.OUT_OF_WINDOW to 4, MarketObservationExclusion.QUOTE_MINT to 1))
+        assertEquals(1, service(outside).export(request()).observations)
+    }
+
+    @Test
+    fun `refuses a recorded market directory that is unfinished or stopped at its page bound`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val store = MarketHistoryArtifactStore(mapper)
+        val planned = listOf(window(SLOT + 1, SLOT + 12))
+        store.save(markets(), ReplayMarketFixtures.manifest(planned, firstCoverage = MarketWindowCoverage.PENDING))
+        assertCategory("CAPTURE_INCOMPLETE") { service().export(request()) }
+        store.save(markets(), ReplayMarketFixtures.manifest(planned, firstCoverage = MarketWindowCoverage.COVERAGE_INCOMPLETE))
+        assertCategory("MARKET_CAPTURE_INCOMPLETE") { service().export(request()) }
         assertFalse(Files.exists(output()))
     }
 

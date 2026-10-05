@@ -38,7 +38,10 @@ internal object ReplayMarketFixtures {
             val coverage = if (index == 0) firstCoverage else MarketWindowCoverage.COMPLETE
             val listed = if (coverage == MarketWindowCoverage.COMPLETE) selection else emptyList()
             MarketWindowRecord(window.baseMint.value, MintAddress.WRAPPED_SOL.value, window.fromSlot.value, window.toSlot.value,
-                window.untilSignature.value, coverage, pagesScanned = if (coverage == MarketWindowCoverage.COMPLETE) 2 else SCAN_PAGES,
+                window.untilSignature.value, coverage, pagesScanned = when (coverage) {
+                    MarketWindowCoverage.COMPLETE, MarketWindowCoverage.PENDING -> 2
+                    else -> SCAN_PAGES
+                },
                 scanned = selection.size + 1002, skippedFailed = 1000, skippedNewer = 2, selected = selection.size, selection = listed,
                 scanCursor = listed.lastOrNull() ?: MarketListedSignature(window.untilSignature.value, window.toSlot.value))
         }

@@ -25,6 +25,9 @@ Each valid Pump.fun `TradeEvent` event instruction in a captured, verified, succ
   - `EXCEEDS_REPLAY_BOUNDS`: a value the replay format cannot hold exactly. That is a price that rounds to zero at scale 38, a price beyond `numeric(78,38)`, a block time outside 0..9999-12-31, or an id longer than 255 characters. Values are never truncated.
 
   Events that exist only as `Program data:` log lines are ignored.
+
+  Reasons are checked in this order: `QUOTE_MINT`, then `OUT_OF_WINDOW`, then the rest. Every reason after `OUT_OF_WINDOW` therefore concerns a trade a replay window needs. A truncated event cannot name its mint, so `MALFORMED_EVENT` for one is always counted.
+- **Export (unit 4, user decision 2026-10-04):** a replay export is refused with `MARKET_CAPTURE_EXCLUSIONS` when any reason other than `OUT_OF_WINDOW` or `QUOTE_MINT` is counted. A lost in-window trade could change which observation an entry or exit fills on, the same reason a detail gap blocks a window. Counts are not attributed to windows, so any such exclusion refuses the whole export.
 - **Coverage:** observations are produced only from windows whose coverage is complete and that have no detail gap. A detail gap is an in-window signature recorded as `UNAVAILABLE`, `UNSUPPORTED_VERSION` or `WITHHELD_UNSAFE_TEXT`; the missing trade could change which observation is first eligible. Such a window reports its gaps and yields none. A window that is `COVERAGE_INCOMPLETE` or `OVER_CAP` yields none and is reported, so a partial window can never look like an absence of trades. Missing observations then follow the engine's existing rules: rejected entries, and open positions with an explicit reason.
 
 ## Alternatives

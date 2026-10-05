@@ -66,7 +66,7 @@ class RecordedMarketHistoryTest {
     }
 
     @Test
-    fun `every exclusion reason is counted and never becomes an observation`() {
+    fun `every exclusion reason is counted and an event of a mint outside every window only counts as out of window`() {
         val variants = listOf<(ObjectNode) -> Unit>(
             {},
             { rewriteEvent(it) { bytes -> writeU64(bytes, SOL_AMOUNT_OFFSET, BigInteger.ZERO) } },
@@ -80,6 +80,8 @@ class RecordedMarketHistoryTest {
             { (mintBalances(it, "postTokenBalances").first().path("uiTokenAmount") as ObjectNode).put("decimals", 9) },
             { tx -> listOf("preTokenBalances", "postTokenBalances").forEach { field ->
                 mintBalances(tx, field).forEach { (it.path("uiTokenAmount") as ObjectNode).put("decimals", 255) } } },
+            { rewriteEvent(it) { bytes -> writeKey(bytes, OTHER_MINT); writeU64(bytes, SOL_AMOUNT_OFFSET, BigInteger.ZERO) } },
+            { rewriteEvent(it) { bytes -> writeKey(bytes, OTHER_MINT); bytes[IS_BUY_OFFSET] = 2 } },
         )
         val records = variants.mapIndexed { index, mutate ->
             artifact(fixture(signature(index + 1), SLOT + index).also(mutate))
@@ -96,11 +98,11 @@ class RecordedMarketHistoryTest {
             MarketObservationExclusion.QUOTE_MINT to 1,
             MarketObservationExclusion.DECIMALS_UNPROVEN to 2,
             MarketObservationExclusion.BLOCK_TIME_MISSING to 1,
-            MarketObservationExclusion.OUT_OF_WINDOW to 1,
+            MarketObservationExclusion.OUT_OF_WINDOW to 3,
             MarketObservationExclusion.EXCEEDS_REPLAY_BOUNDS to 1,
         ), result.exclusions)
         assertEquals(MarketObservationExclusion.entries, result.exclusions.keys.toList())
-        assertEquals(List(10) { 1 } + 0, result.transactions.map { it.exclusions })
+        assertEquals(List(12) { 1 } + 0, result.transactions.map { it.exclusions })
     }
 
     @Test

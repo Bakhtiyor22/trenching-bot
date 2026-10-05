@@ -78,13 +78,16 @@ com.trenching.bot
 ├── strategy/        normalized wallet trade → versioned trade intents, exit policy
 ├── papertrading/    +1/+2/+3 slot entries, deterministic fill/fee/slippage model
 ├── portfolio/       position lifecycle, exits, realized P&L
-├── replay/          feed recorded datasets through the same flow, report a run
+├── replay/          feed recorded datasets through the same flow, report a run; capture/export CLIs
+├── console/         gated dataset/run REST API, React console, read-only Solana probe
+├── chaincapture/    flat, vendor-neutral read-only Solana RPC capture plumbing (no Spring context)
+├── protocol/pumpfun Pump.fun instruction/event layout and reader (flat, no Spring context)
 ├── notification/    outbound result/alert delivery (deferred)
-└── telegram/        Telegram bot: chat registry, alert sender
+└── telegram/        Telegram bot: chat registry, alert sender (planned)
 ```
 
-Only `common`, `config` and the application class exist today; the rest are created as the work
-lands. See `references/module-patterns.md` for boundaries, ports and the inner layout.
+`chaincapture` and `protocol.pumpfun` are shared building blocks for `walletactivity` and
+`marketdata`, so neither feature imports the other's capture internals. See `references/module-patterns.md` for boundaries, ports and the inner layout.
 
 ### Dependency direction
 
