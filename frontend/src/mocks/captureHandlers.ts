@@ -136,9 +136,11 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       const session = found(params.id);
       if (!session) return error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
       const body = (await request.json()) as CaptureAttemptRequest;
-      const next: CaptureSession = body.stage === 'MARKET'
-        ? { ...session, marketAttempt: { ...attempt(body.requestId, 'MARKET', session.walletAttemptId, null), market: body.market ?? captureConfig.marketDefaults }, ratesAttempt: null, inspection: null, datasetReady: false, calibrationReady: false, datasetId: null, calibration: null }
+      // A new market attempt brings its own empty rates attempt; either kind is then inspected offline.
+      const reset: CaptureSession = body.stage === 'MARKET'
+        ? { ...session, marketAttempt: { ...attempt(body.requestId, 'MARKET', session.walletAttemptId, null), market: body.market ?? captureConfig.marketDefaults }, ratesAttempt: attempt(`${body.requestId}-rates`, 'RATES', session.walletAttemptId, body.requestId), inspection: null, datasetReady: false, calibrationReady: false, datasetId: null, calibration: null }
         : { ...session, ratesAttempt: attempt(body.requestId, 'RATES', session.walletAttemptId, session.marketAttempt?.id ?? null), inspection: null, datasetReady: false, datasetId: null };
+      const next = completed(reset, { requestId: `${body.requestId}-inspect`, step: 'INSPECT', attemptId: reset.marketAttempt?.id });
       sessions.set(next.id, next);
       return HttpResponse.json(next);
     }),

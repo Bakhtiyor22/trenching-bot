@@ -26,18 +26,33 @@ class CaptureSessionServiceTest {
     private fun conflict(code: String, block: () -> Unit) = assertEquals(code, assertFailsWith<CaptureRequestException> { block() }.code)
 
     @Test
-    fun `creating a session allocates managed attempts without starting any work`() {
+    fun `creating a session allocates managed attempts and queues only the offline inspection`() {
         val fixture = CaptureConsoleFixture(root)
-        val session = fixture.create()
+        val session = fixture.sessions.create(CaptureCreateRequest("session-1", "Sample", wallet = CaptureWalletSettings(CaptureConsoleFixture.WALLET)))
 
         assertEquals("Sample", session.name)
         assertNotNull(session.marketAttempt)
         assertEquals(CaptureMarketSettings(), session.marketAttempt?.market)
         assertEquals(session.marketAttempt?.id, session.ratesAttempt?.marketAttemptId)
-        assertNull(session.operation)
-        assertTrue(fixture.executor.queued.isEmpty())
-        assertEquals(0, fixture.workflow.inspections)
+        assertEquals(CaptureNames.INSPECT, session.operation?.step)
         assertEquals("console/session-1/wallet", fixture.store.attempt("session-1", session.walletAttemptId).directory)
+        fixture.executor.runAll()
+
+        assertTrue(fixture.workflow.executed.single() is CaptureStepCommand.Inspect)
+        assertEquals(CaptureNames.SUCCEEDED, fixture.sessions.find("session-1").operation?.state)
+        assertNotNull(fixture.sessions.find("session-1").inspection)
+    }
+
+    @Test
+    fun `a session created while another capture runs skips the inspection instead of failing`() {
+        val fixture = CaptureConsoleFixture(root)
+        val running = fixture.create()
+        fixture.operations.start("session-1", CaptureOperationRequest("inspect-1", CaptureNames.INSPECT, running.marketAttempt?.id))
+
+        val session = fixture.create("session-2")
+
+        assertNull(session.operation)
+        assertNull(session.inspection)
     }
 
     @Test
@@ -106,12 +121,46 @@ class CaptureSessionServiceTest {
         assertEquals("market-2", updated.marketAttempt?.id)
         assertEquals(CaptureMarketSettings(80, 1000), updated.marketAttempt?.market)
         assertEquals("console/session-1/markets/market-2", fixture.store.attempt("session-1", "market-2").directory)
-        assertNull(updated.ratesAttempt)
         assertNull(updated.inspection)
         assertFalse(updated.datasetReady)
         assertFalse(updated.calibrationReady)
         assertNull(updated.datasetId)
-        assertEquals(4, fixture.sessions.attempts("session-1", 0, 20).total)
+        assertEquals(5, fixture.sessions.attempts("session-1", 0, 20).total)
+    }
+
+    @Test
+    fun `a new market attempt brings its own empty rates attempt and queues only the offline inspection`() {
+        val fixture = CaptureConsoleFixture(root)
+        val original = fixture.create()
+
+        val updated = fixture.sessions.newAttempt("session-1", CaptureAttemptRequest("market-2", CaptureNames.MARKET))
+        val rates = assertNotNull(updated.ratesAttempt)
+
+        assertEquals("market-2", rates.marketAttemptId)
+        assertEquals(original.walletAttemptId, rates.walletAttemptId)
+        assertEquals("console/session-1/rates/${rates.id}", rates.directory)
+        assertFalse(rates.attached)
+        assertEquals(CaptureNames.INSPECT, updated.operation?.step)
+        assertEquals("market-2", updated.operation?.attemptId)
+        fixture.executor.runAll()
+
+        val inspect = fixture.workflow.executed.single() as CaptureStepCommand.Inspect
+        assertEquals(root.resolve("console/session-1/markets/market-2"), inspect.paths.market)
+        assertEquals(root.resolve(rates.directory), inspect.paths.rates)
+        assertNotNull(fixture.sessions.find("session-1").inspection)
+    }
+
+    @Test
+    fun `replaying a new attempt request returns the session without a second attempt or inspection`() {
+        val fixture = CaptureConsoleFixture(root)
+        fixture.create()
+        val first = fixture.sessions.newAttempt("session-1", CaptureAttemptRequest("market-2", CaptureNames.MARKET))
+        fixture.settle()
+
+        val replayed = fixture.sessions.newAttempt("session-1", CaptureAttemptRequest("market-2", CaptureNames.MARKET))
+
+        assertEquals(first.ratesAttempt?.id, replayed.ratesAttempt?.id)
+        assertEquals(5, fixture.sessions.attempts("session-1", 0, 20).total)
         assertTrue(fixture.executor.queued.isEmpty())
     }
 
@@ -221,7 +270,8 @@ class CaptureSessionServiceTest {
         val recreated = fixture.create()
 
         assertEquals("session-1", recreated.id)
-        assertNull(recreated.inspection)
+        assertEquals(3, fixture.sessions.attempts("session-1", 0, 20).total)
+        assertEquals(1, fixture.store.operations("session-1").size)
         assertEquals(1, fixture.sessions.page(0, 20).total)
     }
 

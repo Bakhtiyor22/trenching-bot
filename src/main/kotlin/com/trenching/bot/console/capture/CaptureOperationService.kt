@@ -23,7 +23,8 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     /** The session whose operation the worker is running, or null when idle. */
     private var activeSession: String? = null
     private var closed = false
-    fun requireIdle() { if (activeSession != null || closed) CaptureValidation.conflict("CAPTURE_BUSY", "Capture worker is busy or stopping") }
+    fun idle(): Boolean = activeSession == null && !closed
+    fun requireIdle() { if (!idle()) CaptureValidation.conflict("CAPTURE_BUSY", "Capture worker is busy or stopping") }
     /** Rejects a change to [sessionId] while its own operation runs; other sessions may change meanwhile. */
     fun requireNotRunning(sessionId: String) { if (activeSession == sessionId) CaptureValidation.conflict("CAPTURE_BUSY", "This capture has a running operation") }
     fun recover() = synchronized(store) {

@@ -72,8 +72,15 @@ class CaptureConsoleFixture(root: Path, rpcConfigured: Boolean = true, ratesConf
     val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured)
     val sessions = CaptureSessionService(store, operations, clock) { "id-${++nextId}" }
 
-    fun create(requestId: String = "session-1") =
+    /** Creates a wallet session and runs its automatic offline inspection, leaving the worker idle and the log empty. */
+    fun create(requestId: String = "session-1"): CaptureSessionView {
         sessions.create(CaptureCreateRequest(requestId, "Sample", wallet = CaptureWalletSettings(WALLET)))
+        settle()
+        return sessions.find(requestId)
+    }
+
+    /** Runs queued work and forgets the commands it recorded, so a test sees only what it triggers itself. */
+    fun settle() { executor.runAll(); workflow.executed.clear(); workflow.inspections = 0 }
 
     companion object {
         const val WALLET = "4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9"
