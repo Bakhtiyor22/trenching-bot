@@ -6,8 +6,10 @@ import com.trenching.bot.console.capture.CaptureNames.MARKET
 import com.trenching.bot.console.capture.CaptureNames.RATES
 import com.trenching.bot.console.capture.CaptureNames.INSPECT
 import java.time.Clock
+import org.slf4j.LoggerFactory
 
 class CaptureSessionService(private val store: CaptureFileStore, private val operations: CaptureOperationService, private val clock: Clock, private val ids: CaptureIds) {
+    private val log = LoggerFactory.getLogger(CaptureSessionService::class.java)
     fun create(request: CaptureCreateRequest): CaptureSessionView = synchronized(store) {
         store.id(request.requestId)
         val normalized = request.copy(name = request.name.trim())
@@ -56,6 +58,13 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
         val updated = if (request.stage == MARKET) session.copy(marketAttemptId = attempt.id, ratesAttemptId = null, inspection = null, exportOperationId = null, calibrationOperationId = null, datasetId = null) else session.copy(ratesAttemptId = attempt.id, inspection = null, exportOperationId = null, datasetId = null)
         store.save(updated)
         view(updated)
+    }
+    /** Deletes the session and its managed files; attached evidence and imported datasets stay. */
+    fun delete(id: String) = synchronized(store) {
+        store.session(id)
+        operations.requireNotRunning(id)
+        val files = store.remove(id, ids.next())
+        log.info("capture_deleted sessionId={} managedFiles={}", id, files)
     }
     fun find(id: String): CaptureSessionView = synchronized(store) { view(store.session(id)) }
     fun page(page: Int, size: Int): CapturePage<CaptureSessionView> = synchronized(store) {

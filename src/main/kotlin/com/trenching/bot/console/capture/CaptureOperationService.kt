@@ -20,9 +20,12 @@ import org.slf4j.LoggerFactory
 class CaptureOperationService(private val store: CaptureFileStore, private val workflow: CaptureWorkflow, private val mapper: CaptureResponseMapper, private val json: ObjectMapper, private val clock: Clock, private val executor: ExecutorService, private val rpcConfigured: Boolean, private val ratesConfigured: Boolean) : AutoCloseable {
     private val log = LoggerFactory.getLogger(javaClass)
     private val inspectionMapper = CaptureInspectionMapper(mapper)
-    private var active = false
+    /** The session whose operation the worker is running, or null when idle. */
+    private var activeSession: String? = null
     private var closed = false
-    fun requireIdle() { if (active || closed) CaptureValidation.conflict("CAPTURE_BUSY", "Capture worker is busy or stopping") }
+    fun requireIdle() { if (activeSession != null || closed) CaptureValidation.conflict("CAPTURE_BUSY", "Capture worker is busy or stopping") }
+    /** Rejects a change to [sessionId] while its own operation runs; other sessions may change meanwhile. */
+    fun requireNotRunning(sessionId: String) { if (activeSession == sessionId) CaptureValidation.conflict("CAPTURE_BUSY", "This capture has a running operation") }
     fun recover() = synchronized(store) {
         store.sessions().forEach { id ->
             var session = store.session(id)
@@ -48,7 +51,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         val operation = CaptureOperationRecord(store.id(request.requestId),request.requestId,fingerprint,request.step,request.attemptId,CaptureNames.RUNNING,at,at,budget=request.budget,scanPages=request.scanPages,walletAttemptId=session.walletAttemptId,marketAttemptId=session.marketAttemptId,ratesAttemptId=session.ratesAttemptId)
         store.save(id,operation,true)
         store.save(session.copy(operationId=operation.id))
-        active=true
+        activeSession=id
         executor.execute { run(id,operation) }
         operation
     }
@@ -116,7 +119,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             operation = operation.copy(state=if(interrupted) CaptureNames.INTERRUPTED else CaptureNames.FAILED,updatedAt=clock.instant(),endedAt=clock.instant(),code=code,message="Capture operation stopped: $code. Inspect saved evidence before retrying.")
         } finally {
             synchronized(store) {
-                try { store.save(id,operation); store.save(project(store.session(id),operation)) } finally { active=false }
+                try { store.save(id,operation); store.save(project(store.session(id),operation)) } finally { activeSession=null }
             }
         }
     }

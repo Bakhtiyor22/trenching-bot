@@ -829,6 +829,32 @@
             }
           ],
           "response": []
+        },
+        {
+          "name": "Delete dataset (local only; runs stay)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{baseUrl}}/api/datasets/{{datasetId}}",
+            "description": "Removes the dataset from the catalog. Its runs keep their own snapshot. Allowed only from a local browser or client; the next collection run re-imports the sample."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Deleted or already gone\", function () { pm.expect(pm.response.code).to.be.oneOf([204, 404]); });"
+                ]
+              }
+            }
+          ],
+          "response": []
         }
       ]
     },

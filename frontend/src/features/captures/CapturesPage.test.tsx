@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { server } from '../../mocks/server';
@@ -26,7 +26,7 @@ describe('Capture console', () => {
     expect(body?.requestId).toEqual(expect.any(String));
   });
   it('keeps rates disabled for incomplete market coverage and offers fresh over-cap attempts', async () => {
-    server.use(http.get('/api/captures/capture-demo', () => HttpResponse.json({ ...captureSession, inspection: { ...readyInspection, market: { state: 'INCOMPLETE', reason: 'OVER_CAP', canStart: false, canResume: false, requiresNewAttempt: true }, rates: { state: 'NOT_STARTED', reason: 'MARKET_CAPTURE_NOT_READY', canStart: false, canResume: false, requiresNewAttempt: false }, canExport: false, canCalibrate: false } })));
+    server.use(http.get('/api/captures/capture-demo', () => HttpResponse.json({ ...captureSession, marketAttempt: { ...captureSession.marketAttempt!, market: { scanPages: 50, maxTransactions: 300 } }, inspection: { ...readyInspection, market: { state: 'INCOMPLETE', reason: 'OVER_CAP', canStart: false, canResume: false, requiresNewAttempt: true }, rates: { state: 'NOT_STARTED', reason: 'MARKET_CAPTURE_NOT_READY', canStart: false, canResume: false, requiresNewAttempt: false }, canExport: false, canCalibrate: false } })));
     const { user } = detail();
     await user.click(await screen.findByRole('tab', { name: /Rates/ }));
     expect(screen.getByRole('button', { name: 'Start rates capture' })).toBeDisabled();
@@ -128,5 +128,35 @@ describe('Capture console', () => {
     await user.click(await screen.findByRole('tab', { name: /Calibration/ }));
     expect(await screen.findByText('buy exact SOL in (v3)')).toBeInTheDocument();
     expect(screen.getByText('BUY_EXACT_QUOTE_IN_V3 1')).toBeInTheDocument();
+  });
+  it('deletes a capture after confirmation and returns to the list', async () => {
+    const { user } = renderPage(<CaptureDetailPage />, { path: '/captures/:id', url: '/captures/capture-demo', extraRoutes: [{ path: '/captures', element: <div>Capture list</div> }] });
+    await user.click(await screen.findByRole('button', { name: 'Delete capture' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Attached capture directories are only referenced and stay untouched/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText('Capture list')).toBeInTheDocument();
+  });
+  it('cannot delete a capture while its operation runs', async () => {
+    server.use(http.get('/api/captures/capture-demo', () => HttpResponse.json({ ...captureSession, operation: { ...captureOperation, state: 'RUNNING', endedAt: null } })));
+    detail();
+    expect(await screen.findByRole('button', { name: 'Delete capture' })).toBeDisabled();
+  });
+  it('points to a smaller sample when the attempt is already over cap at the maximum capacity', async () => {
+    const overCap = { state: 'UNUSABLE', reason: 'OVER_CAP', canStart: false, canResume: false, requiresNewAttempt: true };
+    const atMaximum = { ...captureSession, inspection: { ...readyInspection, market: overCap, canExport: false, canCalibrate: false } };
+    server.use(http.get('/api/captures/capture-demo', () => HttpResponse.json(atMaximum)));
+    const { user } = detail();
+    await user.click(await screen.findByRole('tab', { name: /Markets/ }));
+    expect(screen.getByText(/more market transactions than the maximum capacity allows/)).toBeInTheDocument();
+    expect(screen.queryByText(/Create a new market attempt with a larger capacity/)).not.toBeInTheDocument();
+  });
+  it('still suggests a larger capacity when the attempt is below the maximum', async () => {
+    const overCap = { state: 'UNUSABLE', reason: 'OVER_CAP', canStart: false, canResume: false, requiresNewAttempt: true };
+    const marketAttempt = { ...captureSession.marketAttempt!, market: { scanPages: 50, maxTransactions: 300 } };
+    server.use(http.get('/api/captures/capture-demo', () => HttpResponse.json({ ...captureSession, marketAttempt, inspection: { ...readyInspection, market: overCap } })));
+    const { user } = detail();
+    await user.click(await screen.findByRole('tab', { name: /Markets/ }));
+    expect(screen.getByText(/Create a new market attempt with a larger capacity/)).toBeInTheDocument();
   });
 });

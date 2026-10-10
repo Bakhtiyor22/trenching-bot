@@ -8,12 +8,22 @@ import { defineConfig } from 'vitest/config';
  * path; the dev server uses it too, so routes and asset URLs behave the same in both.
  * API calls are absolute (/api, /actuator) and are proxied to the backend in development.
  *
- * `npm run serve:public` serves the production build on PREVIEW_PORT for a jprq tunnel. Vite refuses
- * requests for unknown Host headers, so the tunnel's domains are allowed explicitly; override them with
- * CONSOLE_PUBLIC_HOSTS (comma separated, a leading dot allows every subdomain).
+ * `npm run serve:public` serves the production build on PREVIEW_PORT for a jprq or ngrok tunnel. Vite
+ * refuses requests for unknown Host headers, so the tunnels' domains are allowed explicitly; override them
+ * with CONSOLE_PUBLIC_HOSTS (comma separated, a leading dot allows every subdomain).
  */
 const PREVIEW_PORT = 4173;
-const DEFAULT_PUBLIC_HOSTS = ['.jprq.app', '.jprq.site', '.jprq.live', '.jprq.io'];
+const DEFAULT_PUBLIC_HOSTS = [
+  '.jprq.app',
+  '.jprq.site',
+  '.jprq.live',
+  '.jprq.io',
+  '.ngrok-free.app',
+  '.ngrok-free.dev',
+  '.ngrok.app',
+  '.ngrok.dev',
+  '.ngrok.io',
+];
 
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), 'VITE_');

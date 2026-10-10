@@ -216,6 +216,14 @@ export function createHandlers(options: MockOptions = {}) {
         : error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
     }),
 
+    http.delete('/api/datasets/:id', async ({ params }) => {
+      await wait();
+      const index = db.datasets.findIndex((d) => d.id === params.id);
+      if (index < 0) return error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
+      db.datasets.splice(index, 1);
+      return new HttpResponse(null, { status: 204 });
+    }),
+
     http.get('/api/datasets/:id/observations', async ({ params, request }) => {
       await wait();
       const dataset = db.datasets.find((d) => d.id === params.id);

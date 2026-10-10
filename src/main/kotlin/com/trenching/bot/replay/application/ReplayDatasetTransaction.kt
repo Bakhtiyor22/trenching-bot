@@ -32,4 +32,8 @@ class ReplayDatasetTransaction(
 
     @Transactional(readOnly = true)
     fun snapshot(id: String): String? = repository.findSnapshotById(id)
+
+    /** True when this call removed the dataset. */
+    @Transactional
+    fun delete(id: String): Boolean = repository.deleteDataset(id) == 1
 }

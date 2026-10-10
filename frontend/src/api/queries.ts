@@ -92,6 +92,21 @@ export function useUploadDataset() {
   });
 }
 
+/** Removes a dataset from the catalog; its runs stay, so only dataset and dashboard views refresh. */
+export function useDeleteDataset() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteDataset(id),
+    onSuccess: async (_, id) => {
+      client.removeQueries({ queryKey: queryKeys.dataset(id) });
+      await Promise.all([
+        client.invalidateQueries({ queryKey: queryKeys.datasetsAll }),
+        client.invalidateQueries({ queryKey: queryKeys.dashboard }),
+      ]);
+    },
+  });
+}
+
 export function useImportSample() {
   const client = useQueryClient();
   return useMutation({

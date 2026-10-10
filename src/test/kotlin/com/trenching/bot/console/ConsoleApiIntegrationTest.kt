@@ -368,6 +368,21 @@ class ConsoleApiIntegrationTest {
     }
 
     @Test
+    fun `deleting a dataset removes it from the catalog and keeps its runs`() {
+        val content = variant(json, "delete")
+        val runId = startRun(content, "delete.json")
+        val datasetId = upload(content, "delete.json").path("dataset").path("id").asString()
+
+        val deleted = http.delete("/api/datasets/$datasetId")
+
+        assertEquals(204, deleted.status, deleted.raw)
+        assertError(404, "DATASET_NOT_FOUND", http.get("/api/datasets/$datasetId"))
+        assertError(404, "DATASET_NOT_FOUND", http.delete("/api/datasets/$datasetId"))
+        assertEquals(runId, http.get("/api/runs?datasetId=$datasetId").body.path("items").first().path("id").asString())
+        assertEquals(200, http.get("/api/runs/$runId").status)
+    }
+
+    @Test
     fun `config defaults are the mvp values with their allowed ranges`() {
         val defaults = http.get("/api/config/defaults").body
 

@@ -16,6 +16,8 @@ Update 2026-10-10 (later): the approved [capture console plan](plans/archive/202
 
 Update 2026-10-10 (V3 buys): the approved [V3 decoder plan](plans/archive/20261010-pumpfun-exact-quote-in-v3-decoder.md) is delivered ([decision](adr/20261010-pumpfun-exact-quote-in-v3-buys.md)). Decu's current Pump.fun buys (`buy_exact_quote_in_v3`, routed through FLASHX) now decode alongside legacy `buy`. Curves quoted in another token are rejected as `NON_SOL_QUOTE`. Calibration applies each instruction's curve rule, and capture runs report their stop reason and accept a 1–30 minute deadline. The user's 100-transaction console sample re-decodes offline to 66 buys across 15 tokens. The backend passes 553 tests; the frontend passes 119 tests, lint and build.
 
+Update 2026-10-10 (deletion): the approved [delete plan](plans/archive/20261010-delete-captures-and-datasets.md) is delivered. It adds local-only `DELETE /api/captures/{id}` (managed files only; attached evidence untouched) and `DELETE /api/datasets/{id}` (catalog row only; runs keep their snapshots), each behind a console confirmation.
+
 The original WEEKLY_EXECUTION_PLAN was copied unchanged from the primary checkout. The deterministic, curated-fixture flow now includes durable PostgreSQL persistence. The complete production/live-data roadmap is not finished.
 
 ## Baseline and roadmap audit

@@ -1,17 +1,17 @@
-package com.trenching.bot.console.capture
+package com.trenching.bot.console
 
-import com.trenching.bot.console.config.web.CaptureLocalAccessFilter
+import com.trenching.bot.console.config.web.LocalAccessFilter
 import kotlin.test.assertEquals
 import org.junit.jupiter.api.Test
 import org.springframework.mock.web.MockFilterChain
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
 
-class CaptureLocalAccessFilterTest {
-    private val filter = CaptureLocalAccessFilter()
+class LocalAccessFilterTest {
+    private val filter = LocalAccessFilter()
 
-    private fun status(uri: String = "/api/captures", host: String = "localhost", peer: String = "127.0.0.1", origin: String? = null): Int {
-        val request = MockHttpServletRequest("GET", uri).apply {
+    private fun status(uri: String = "/api/captures", host: String = "localhost", peer: String = "127.0.0.1", origin: String? = null, method: String = "GET"): Int {
+        val request = MockHttpServletRequest(method, uri).apply {
             serverName = host
             serverPort = 8081
             remoteAddr = peer
@@ -39,5 +39,15 @@ class CaptureLocalAccessFilterTest {
     @Test
     fun `other console routes are not affected`() {
         assertEquals(200, status("/api/datasets", host = "console.jprq.app", peer = "10.0.0.7"))
+        assertEquals(200, status("/api/datasets/abc", host = "console.jprq.app", peer = "10.0.0.7"))
+        assertEquals(200, status("/api/datasets", host = "console.jprq.app", peer = "10.0.0.7", method = "POST"))
+    }
+
+    @Test
+    fun `dataset deletion is refused through the tunnel, a remote peer or a foreign origin`() {
+        assertEquals(403, status("/api/datasets/abc", host = "console.jprq.app", method = "DELETE"))
+        assertEquals(403, status("/api/datasets/abc", peer = "10.0.0.7", method = "DELETE"))
+        assertEquals(403, status("/api/datasets/abc", origin = "https://evil.example", method = "DELETE"))
+        assertEquals(200, status("/api/datasets/abc", origin = "http://localhost:5173", method = "DELETE"))
     }
 }

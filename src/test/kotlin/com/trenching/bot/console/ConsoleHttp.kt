@@ -22,6 +22,8 @@ class ConsoleHttp(port: Int, private val objectMapper: ObjectMapper) {
         return exchange(request)
     }
 
+    fun delete(path: String): ConsoleReply = exchange(client.delete().uri(path))
+
     fun upload(content: ByteArray, fileName: String, name: String? = null): ConsoleReply {
         val parts = LinkedMultiValueMap<String, Any>()
         parts.add("file", object : ByteArrayResource(content) {

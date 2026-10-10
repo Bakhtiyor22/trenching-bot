@@ -1,9 +1,10 @@
 import { Button, Group, Select, SimpleGrid, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useNavigate, useParams } from 'react-router';
 import { pairKey } from '../../api/endpoints';
-import { useDataset, useDatasetObservations } from '../../api/queries';
+import { useDataset, useDatasetObservations, useDeleteDataset } from '../../api/queries';
 import { Chart } from '../../components/Chart';
+import { ConfirmDelete } from '../../components/ConfirmDelete';
 import { Mint, ShortId, Timestamp } from '../../components/DisplayValues';
 import { ObservationTable } from '../../components/ObservationTable';
 import { IconPlay } from '../../components/Icons';
@@ -53,6 +54,8 @@ function ObservationsPanel({ datasetId, pair }: { datasetId: string; pair: strin
 export function DatasetDetailPage() {
   const { id = '' } = useParams();
   const dataset = useDataset(id);
+  const navigate = useNavigate();
+  const deleteDataset = useDeleteDataset();
   const [selectedPair, setSelectedPair] = useState<string | null>(null);
 
   if (dataset.isPending) return <LoadingState label="Loading dataset…" />;
@@ -78,6 +81,16 @@ export function DatasetDetailPage() {
             <Button component={Link} to={paths.newRunFor(data.id)} leftSection={<IconPlay size={16} />}>
               Start run with this dataset
             </Button>
+            <ConfirmDelete
+              label="Delete dataset"
+              title="Delete this dataset?"
+              onConfirm={async () => {
+                await deleteDataset.mutateAsync(data.id);
+                await navigate(paths.datasets);
+              }}
+            >
+              Removes “{data.name}” from Datasets. Runs made with it are kept, each with its own copy of the dataset. Uploading the same file again restores it under the same id.
+            </ConfirmDelete>
           </>
         }
       />

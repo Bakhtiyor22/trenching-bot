@@ -59,6 +59,10 @@ The [V3 decoder plan](docs/plans/archive/20261010-pumpfun-exact-quote-in-v3-deco
 - Restart the backend and click **Inspect evidence** on the capture session; nothing needs recapturing. The 100-transaction sample now has 66 SOL-quoted buys across 15 tokens, so its market capture is large. Consider a 10–20 transaction session first.
 - CLI capture runs accept `-PoperationTimeoutMinutes=<1..30>`. After `stopReason=DEADLINE`, re-run the same command to resume.
 
+## Deleting captures and datasets (delivered 2026-10-10, later)
+
+Both deletes work only from your machine and need confirmation in the console. Deleting a capture removes only the files the console created; attached CLI capture directories stay. Deleting a dataset keeps its runs; re-uploading the same file restores the dataset. Restart the backend to pick up the endpoints.
+
 ## Documented residual limit
 
 CurveExecution.priceImpactBps uses the approved Int contract. Extreme synthetic reserve states satisfying only the basic invariants can yield impact beyond Int range and cause intValueExact to fail. A wider representation or explicit rejection rule needs a follow-up decision; no clamping or new rejection semantics were introduced.

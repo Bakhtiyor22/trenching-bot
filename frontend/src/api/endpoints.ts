@@ -1,4 +1,4 @@
-import { API_BASE, getJson, postForm, postJson, withQuery } from './client';
+import { API_BASE, deleteRequest, getJson, postForm, postJson, withQuery } from './client';
 import type {
   ActuatorHealth,
   AddressCheck,
@@ -36,6 +36,7 @@ export const api = {
     getJson<Page<Dataset>>(withQuery(`${API_BASE}/datasets`, { page, size }), signal),
   dataset: (id: string, signal?: AbortSignal) =>
     getJson<Dataset>(`${API_BASE}/datasets/${enc(id)}`, signal),
+  deleteDataset: (id: string) => deleteRequest(`${API_BASE}/datasets/${enc(id)}`),
   datasetObservations: (id: string, pair: string | null, signal?: AbortSignal) =>
     getJson<Observation[]>(
       withQuery(`${API_BASE}/datasets/${enc(id)}/observations`, { pair }),

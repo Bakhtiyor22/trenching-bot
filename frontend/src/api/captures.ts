@@ -1,6 +1,6 @@
 import type { Page } from './types';
 import type { DatasetRegistration } from './types';
-import { API_BASE, getJson, postJson, withQuery } from './client';
+import { API_BASE, deleteRequest, getJson, postJson, withQuery } from './client';
 
 export type CaptureStep = 'WALLET' | 'MARKET' | 'RATES' | 'INSPECT' | 'EXPORT' | 'CALIBRATE';
 export interface WalletSettings { wallet: string; scope: string; limit: number; scanPages: number }
@@ -33,5 +33,6 @@ export const capturesApi = {
   operation: (id: string, operationId: string, signal?: AbortSignal) => getJson<CaptureOperation>(`${sessionUrl(id)}/operations/${encodeURIComponent(operationId)}`, signal),
   import: (id: string) => postJson<DatasetRegistration>(`${sessionUrl(id)}/dataset`),
   download: (id: string, kind: 'dataset' | 'calibration') => `${sessionUrl(id)}/downloads/${kind}`,
+  remove: (id: string) => deleteRequest(sessionUrl(id)),
 };
 

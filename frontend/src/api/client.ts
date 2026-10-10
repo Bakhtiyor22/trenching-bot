@@ -99,6 +99,15 @@ export function postJson<T>(url: string, body?: unknown): Promise<T> {
   });
 }
 
+/** Sends a DELETE. A 404 means it is already gone, which a confirmed delete treats as done. */
+export async function deleteRequest(url: string): Promise<void> {
+  try {
+    await request<void>(url, { method: 'DELETE' });
+  } catch (error) {
+    if (!(error instanceof ApiError && error.status === 404)) throw error;
+  }
+}
+
 export function postForm<T>(url: string, form: FormData): Promise<T> {
   // No Content-Type header: the browser sets the multipart boundary.
   return request<T>(url, { method: 'POST', body: form });

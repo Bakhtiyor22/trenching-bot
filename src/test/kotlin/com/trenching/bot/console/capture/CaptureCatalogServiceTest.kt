@@ -41,6 +41,7 @@ class CaptureCatalogServiceTest {
         override fun page(page: Int, size: Int): PageResult<DatasetSummary> = error("unused")
         override fun find(id: String): DatasetSummary? = error("unused")
         override fun load(id: String): ReplayDataset = error("unused")
+        override fun delete(id: String): Boolean = error("unused")
     }
 
     private fun exportedSession(fixture: CaptureConsoleFixture) {

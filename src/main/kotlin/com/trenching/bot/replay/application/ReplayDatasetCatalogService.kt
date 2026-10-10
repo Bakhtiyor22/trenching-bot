@@ -54,6 +54,12 @@ class ReplayDatasetCatalogService(
 
     override fun find(id: String): DatasetSummary? = datasets.find(id)
 
+    override fun delete(id: String): Boolean {
+        val deleted = datasets.delete(id)
+        if (deleted) log.info("replay dataset deleted datasetId={}", id)
+        return deleted
+    }
+
     override fun load(id: String): ReplayDataset {
         val snapshot = datasets.snapshot(id) ?: throw DatasetNotFoundException(id)
         return loader.load(snapshot.byteInputStream(Charsets.UTF_8))

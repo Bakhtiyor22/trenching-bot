@@ -1,8 +1,9 @@
 import { Anchor, Group, Pagination, ScrollArea, Stack, Table, Text } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router';
-import { useDatasets } from '../../api/queries';
+import { useDatasets, useDeleteDataset } from '../../api/queries';
 import type { Dataset } from '../../api/types';
+import { ConfirmDelete } from '../../components/ConfirmDelete';
 import { Mint, PairLabel, ShortId, Timestamp } from '../../components/DisplayValues';
 import { PageHeader, Section } from '../../components/Panels';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
@@ -14,6 +15,7 @@ const PAGE_SIZE = 20;
 
 function DatasetTable({ items }: { items: Dataset[] }) {
   const navigate = useNavigate();
+  const deleteDataset = useDeleteDataset();
   return (
     <ScrollArea type="auto">
       <Table highlightOnHover verticalSpacing="sm" miw={900}>
@@ -27,6 +29,7 @@ function DatasetTable({ items }: { items: Dataset[] }) {
             <Table.Th>Slot range</Table.Th>
             <Table.Th>Pairs</Table.Th>
             <Table.Th>Created</Table.Th>
+            <Table.Th aria-label="Actions" />
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -59,6 +62,12 @@ function DatasetTable({ items }: { items: Dataset[] }) {
               </Table.Td>
               <Table.Td style={{ whiteSpace: 'nowrap' }}>
                 <Timestamp iso={dataset.createdAt} />
+              </Table.Td>
+              {/* The dialog renders in a portal, whose clicks still bubble to the row through React. */}
+              <Table.Td onClick={(e) => e.stopPropagation()}>
+                <ConfirmDelete compact label="Delete" title="Delete this dataset?" onConfirm={() => deleteDataset.mutateAsync(dataset.id)}>
+                  Removes “{dataset.name}” from Datasets. Runs made with it are kept, each with its own copy of the dataset. Uploading the same file again restores it under the same id.
+                </ConfirmDelete>
               </Table.Td>
             </Table.Tr>
           ))}

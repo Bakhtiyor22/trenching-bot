@@ -31,6 +31,7 @@ class ReplayDatasetCatalogIntegrationTest {
     @Autowired private lateinit var catalog: ReplayDatasetCatalog
     @Autowired private lateinit var json: ObjectMapper
     @Autowired private lateinit var dataSource: DataSource
+    @Autowired private lateinit var runs: SimulationRuns
 
     private fun sampleJson(): String = requireNotNull(javaClass.getResource(SAMPLE)).readText()
     private fun sample(): ReplayDataset = ReplayDatasetLoader(json).load(sampleJson().byteInputStream())
@@ -119,6 +120,27 @@ class ReplayDatasetCatalogIntegrationTest {
         assertFailsWith<DatasetInvalidException> { catalog.register("empty", "".byteInputStream()) }
         assertFailsWith<DatasetInvalidException> { catalog.register(" ", write(variant("blank-name")).byteInputStream()) }
         assertEquals(before, count("select count(*) from replay_datasets"))
+    }
+
+    @Test
+    fun `deleting a dataset keeps its runs and re-registering the same content restores its id`() {
+        val dataset = variant("delete")
+        val registered = catalog.register("to delete", write(dataset).byteInputStream()).dataset
+        val run = runs.start(registered.id, SimulationConfig.mvp()).run
+
+        assertTrue(catalog.delete(registered.id))
+
+        assertNull(catalog.find(registered.id))
+        assertFailsWith<DatasetNotFoundException> { catalog.load(registered.id) }
+        assertEquals(0, count("select count(*) from replay_datasets where id = ?", registered.id))
+        assertEquals(1, count("select count(*) from simulation_runs where id = ?", run.id))
+        assertEquals(listOf(run.id), runs.page(0, 20, registered.id).items.map { it.id })
+        assertTrue(runs.report(run.id).isNotEmpty())
+        assertFalse(catalog.delete(registered.id))
+
+        val restored = catalog.register("restored", write(dataset).byteInputStream())
+        assertTrue(restored.created)
+        assertEquals(registered.id, restored.dataset.id)
     }
 
     @Test

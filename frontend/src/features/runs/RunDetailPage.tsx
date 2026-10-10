@@ -15,8 +15,10 @@ import {
 import { useHotkeys } from '@mantine/hooks';
 import { useState, type ReactNode } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router';
+import { ApiError } from '../../api/client';
 import { api, pairKey } from '../../api/endpoints';
 import {
+  useDataset,
   useRun,
   useRunEvents,
   useRunObservations,
@@ -57,9 +59,7 @@ function RunHeader({ detail }: { detail: RunDetail }) {
             [
               'Dataset',
               <Group key="ds" gap={4}>
-                <Anchor component={Link} to={paths.dataset(run.datasetId)} ff="monospace" size="sm">
-                  {shortId(run.datasetId)}
-                </Anchor>
+                <RunDataset datasetId={run.datasetId} />
                 <CopyValue value={run.datasetId} label="Copy dataset id" />
               </Group>,
             ],
@@ -297,6 +297,23 @@ function SolPrice() {
   );
 }
 
+
+/** Links to the run's dataset, or says it was deleted: a run keeps its own snapshot either way. */
+function RunDataset({ datasetId }: { datasetId: string }) {
+  const dataset = useDataset(datasetId);
+  if (dataset.error instanceof ApiError && dataset.error.status === 404) {
+    return (
+      <Text size="sm" c="dimmed">
+        <Text span ff="monospace" size="sm">{shortId(datasetId)}</Text> · Dataset deleted — this run keeps its own copy
+      </Text>
+    );
+  }
+  return (
+    <Anchor component={Link} to={paths.dataset(datasetId)} ff="monospace" size="sm">
+      {shortId(datasetId)}
+    </Anchor>
+  );
+}
 export function RunDetailPage() {
   const { id = '' } = useParams();
   const location = useLocation();

@@ -1,4 +1,4 @@
-import { keepPreviousData, useMutation, useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ApiError, BAD_RESPONSE } from '../../api/client';
 import { capturesApi, type CaptureSession } from '../../api/captures';
@@ -9,6 +9,18 @@ export const capturePollInterval = (session?: CaptureSession) => session?.operat
 export function useCaptureConfig() { return useQuery({ queryKey: captureKeys.config, queryFn: ({signal}) => capturesApi.config(signal) }); }
 export function useCapture(id: string) { return useQuery({ queryKey: captureKeys.session(id), queryFn: ({signal}) => capturesApi.session(id, signal), refetchInterval: query => capturePollInterval(query.state.data), refetchIntervalInBackground: false, staleTime: 0 }); }
 export function useCaptures(page: number) { return useQuery({ queryKey: [...captureKeys.all, 'list', page], queryFn: ({signal}) => capturesApi.list(page, signal), placeholderData: keepPreviousData, refetchInterval: query => query.state.data?.items.some(item => item.operation?.state === 'RUNNING') ? CAPTURE_POLL_MS : false, refetchIntervalInBackground: false }); }
+
+/** Deletes a capture session and refreshes the capture lists; its detail cache is dropped. */
+export function useDeleteCapture() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => capturesApi.remove(id),
+    onSuccess: async (_, id) => {
+      client.removeQueries({ queryKey: captureKeys.session(id) });
+      await client.invalidateQueries({ queryKey: captureKeys.all });
+    },
+  });
+}
 
 /** An uncertain POST is replayed with its original command and id, including after a page reload. */
 export function useCaptureCommand<T extends {requestId: string}, R>(key: string, send: (command: T) => Promise<R>, onSuccess: (result: R) => void | Promise<void>) {

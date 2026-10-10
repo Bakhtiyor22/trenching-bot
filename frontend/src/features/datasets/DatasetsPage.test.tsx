@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { SAMPLE_DATASET_ID, sampleDataset } from '../../mocks/fixtures';
@@ -90,5 +90,21 @@ describe('DatasetsPage', () => {
     await screen.findByRole('link', { name: 'dip-sample-v3' });
     await user.click(screen.getByRole('button', { name: 'Import sample dataset' }));
     expect(await screen.findByText(/Datasets are identified by their checksum/)).toBeInTheDocument();
+  });
+  it('deletes a dataset only after confirmation, and cancelling sends nothing', async () => {
+    const deleted: string[] = [];
+    server.use(http.delete('/api/datasets/:id', ({ params }) => { deleted.push(String(params.id)); return new HttpResponse(null, { status: 204 }); }));
+    const { user } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
+    const row = (await screen.findByText(sampleDataset.name)).closest('tr') as HTMLElement;
+
+    await user.click(within(row).getByRole('button', { name: 'Delete' }));
+    expect(await screen.findByText(/Runs made with it are kept/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(deleted).toEqual([]);
+
+    await user.click(within(row).getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    await waitFor(() => expect(deleted).toEqual([SAMPLE_DATASET_ID]));
   });
 });

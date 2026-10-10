@@ -116,6 +116,14 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       const session = found(params.id);
       return session ? HttpResponse.json(session) : error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
     }),
+    http.delete('/api/captures/:id', async ({ params }) => {
+      await wait();
+      const session = found(params.id);
+      if (!session) return error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
+      if (session.operation?.state === 'RUNNING') return error(409, 'CAPTURE_BUSY', 'This capture has a running operation');
+      sessions.delete(session.id);
+      return new HttpResponse(null, { status: 204 });
+    }),
     http.get('/api/captures/:id/attempts', async ({ params }) => {
       await wait();
       const session = found(params.id);

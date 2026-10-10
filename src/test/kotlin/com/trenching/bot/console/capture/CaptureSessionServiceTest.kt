@@ -16,6 +16,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -149,6 +150,102 @@ class CaptureSessionServiceTest {
         }.status)
         assertEquals(400, assertFailsWith<CaptureRequestException> { fixture.sessions.page(0, 101) }.status)
         assertEquals(404, assertFailsWith<CaptureRequestException> { fixture.sessions.find("missing") }.status)
+    }
+
+    @Test
+    fun `deleting a session removes its managed files and nothing it only references`() {
+        val fixture = CaptureConsoleFixture(root)
+        Files.createDirectories(root.resolve("decu-wallet"))
+        val attachedFile = Files.writeString(root.resolve("decu-wallet/manifest.json"), "{\"evidence\":true}")
+        fixture.sessions.create(CaptureCreateRequest("attached", "Decu", attach = CaptureAttachment("decu-wallet")))
+        fixture.executor.runAll()
+        fixture.create()
+        val managed = Files.createDirectories(root.resolve("console/session-1/wallet"))
+        Files.writeString(managed.resolve("manifest.json"), "{}")
+
+        fixture.sessions.delete("session-1")
+        fixture.sessions.delete("attached")
+
+        assertFalse(Files.exists(root.resolve("console/session-1")))
+        assertFalse(Files.exists(root.resolve("console/attached")))
+        assertEquals("{\"evidence\":true}", Files.readString(attachedFile))
+        assertEquals(0, fixture.sessions.page(0, 20).total)
+        assertEquals(listOf("worker.lock"), Files.list(root.resolve("console")).use { stream -> stream.map { it.fileName.toString() }.toList() })
+    }
+
+    @Test
+    fun `deletion removes a link inside the session without following it`() {
+        val fixture = CaptureConsoleFixture(root)
+        fixture.create()
+        val outside = Files.writeString(Files.createDirectories(root.resolve("outside")).resolve("keep.json"), "keep")
+        val link = root.resolve("console/session-1/linked")
+        link(link, root.resolve("outside"))
+
+        fixture.sessions.delete("session-1")
+
+        assertFalse(Files.exists(root.resolve("console/session-1")))
+        assertEquals("keep", Files.readString(outside))
+    }
+
+    @Test
+    fun `a session with a running operation cannot be deleted but another session can`() {
+        val fixture = CaptureConsoleFixture(root)
+        val running = fixture.create()
+        fixture.create("session-2")
+        fixture.operations.start("session-1", CaptureOperationRequest("inspect-1", CaptureNames.INSPECT, running.marketAttempt?.id))
+
+        conflict("CAPTURE_BUSY") { fixture.sessions.delete("session-1") }
+        fixture.sessions.delete("session-2")
+
+        assertTrue(Files.exists(root.resolve("console/session-1/session.json")))
+        assertFalse(Files.exists(root.resolve("console/session-2")))
+    }
+
+    @Test
+    fun `deleting an unknown or already deleted session is not found and an invalid id is rejected`() {
+        val fixture = CaptureConsoleFixture(root)
+        fixture.create()
+        fixture.sessions.delete("session-1")
+
+        assertEquals(404, assertFailsWith<CaptureRequestException> { fixture.sessions.delete("session-1") }.status)
+        assertEquals(404, assertFailsWith<CaptureRequestException> { fixture.sessions.delete("missing") }.status)
+        assertEquals(400, assertFailsWith<CaptureRequestException> { fixture.sessions.delete("../escape") }.status)
+    }
+
+    @Test
+    fun `reusing a deleted session's request id creates a fresh session`() {
+        val fixture = CaptureConsoleFixture(root)
+        fixture.create()
+        fixture.sessions.delete("session-1")
+
+        val recreated = fixture.create()
+
+        assertEquals("session-1", recreated.id)
+        assertNull(recreated.inspection)
+        assertEquals(1, fixture.sessions.page(0, 20).total)
+    }
+
+    @Test
+    fun `a deletion interrupted after its rename is finished at the next start and never listed`() {
+        val fixture = CaptureConsoleFixture(root)
+        fixture.create()
+        val leftover = Files.createDirectories(root.resolve("console/.deleted-old-1/wallet"))
+        Files.writeString(leftover.resolve("manifest.json"), "{}")
+        assertEquals(1, fixture.sessions.page(0, 20).total)
+        fixture.store.close()
+
+        CaptureFileStore(CapturePathPolicy(root), fixture.json).use { it.initialize() }
+
+        assertFalse(Files.exists(root.resolve("console/.deleted-old-1")))
+        assertTrue(Files.exists(root.resolve("console/session-1/session.json")))
+    }
+
+    /** A symbolic link, or on Windows without that privilege a directory junction, which needs none. */
+    private fun link(link: Path, target: Path) {
+        try { Files.createSymbolicLink(link, target); return } catch (_: Exception) { }
+        assumeTrue(System.getProperty("os.name").startsWith("Windows"), "links unavailable")
+        val process = ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toString()).redirectErrorStream(true).start()
+        assumeTrue(process.waitFor() == 0 && Files.exists(link.resolve("keep.json")), "junction unavailable")
     }
 
     /** Records a successful export, calibration and imported dataset against the current attempts. */

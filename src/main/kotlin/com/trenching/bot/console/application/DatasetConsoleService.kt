@@ -58,6 +58,11 @@ class DatasetConsoleService(
 
     fun find(id: String): DatasetSummary = catalog.find(id) ?: throw DatasetNotFoundException(id)
 
+    /** Removes the dataset from the catalog; its runs stay, each with its own snapshot. */
+    fun delete(id: String) {
+        if (!catalog.delete(id)) throw DatasetNotFoundException(id)
+    }
+
     /** [pair] is `<baseMint>/<quoteMint>`; without it every pair's observations are returned, slot-ordered. */
     fun observations(id: String, pair: String?): List<MarketObservation> {
         val filter = pair?.let(::parsePair)

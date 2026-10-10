@@ -13,6 +13,11 @@ interface ReplayDatasetRepository : JpaRepository<ReplayDatasetEntity, String> {
 
     fun findAllProjectedBy(pageable: Pageable): Page<ReplayDatasetSummaryRow>
 
+    /** Returns 1 when the dataset was removed, 0 when no dataset has the id. */
+    @Modifying
+    @Query("delete from ReplayDatasetEntity d where d.id = :id")
+    fun deleteDataset(@Param("id") id: String): Int
+
     @Query("select d.snapshot from ReplayDatasetEntity d where d.id = :id")
     fun findSnapshotById(@Param("id") id: String): String?
 

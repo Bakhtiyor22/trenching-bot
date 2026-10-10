@@ -1,4 +1,5 @@
 import { screen, within } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import {
   COST_BASIS,
@@ -29,6 +30,7 @@ import {
   USDT_TRANSACTION_COST,
 } from '../../mocks/fixtures';
 import { formatDecimal } from '../../lib/decimal';
+import { server } from '../../mocks/server';
 import { renderPage } from '../../test/render';
 import { RunDetailPage } from './RunDetailPage';
 
@@ -311,5 +313,11 @@ describe('RunDetailPage', () => {
       expect(hrefs('Solscan')).toEqual([]);
       expect(hrefs('pump.fun')).toEqual([]);
     });
+  });
+  it('says when the dataset of the run was deleted, since the run keeps its own copy', async () => {
+    server.use(http.get('/api/datasets/:id', () => HttpResponse.json({ code: 'DATASET_NOT_FOUND', message: 'not found', fields: {} }, { status: 404 })));
+    renderRun(SAMPLE_RUN_ID);
+
+    expect(await screen.findByText(/Dataset deleted — this run keeps its own copy/)).toBeInTheDocument();
   });
 });

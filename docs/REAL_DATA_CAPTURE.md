@@ -18,7 +18,7 @@ Only one console operation runs at a time. Refreshing or navigating away does no
 
 A new market attempt retains the wallet evidence and all prior attempts, but clears the current rates/export/calibration/dataset readiness. A new rates attempt keeps market and calibration results while clearing current export/dataset readiness. Previously imported datasets remain available in Datasets. New attempts allocate new directories; they never overwrite an old capture or automatically start acquisition.
 
-Managed sessions are stored under build/captures/console by default. The validated trenching.console.capture.root-directory property changes the evidence root for both managed sessions and attachment paths. Use an ignored location outside build for evidence that must survive clean. Capture routes are available only locally; they are not available through the public preview tunnel. Existing CLI commands below remain supported.
+Managed sessions are stored under build/captures/console by default. The validated trenching.console.capture.root-directory property changes the evidence root for both managed sessions and attachment paths. Use an ignored location outside build for evidence that must survive clean. Capture routes are available only locally; they are not available through the public preview tunnel. Delete removes a session and every file the console created for it, including managed evidence and generated exports and calibration reports. Attached directories are never touched, and imported datasets stay in Datasets. Existing CLI commands below remain supported.
 
 ## Configure the user-run capture
 

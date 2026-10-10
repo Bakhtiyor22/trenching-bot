@@ -1,11 +1,17 @@
 package com.trenching.bot.console.capture
 
+import java.io.IOException
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
 import java.nio.channels.OverlappingFileLockException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.StandardOpenOption
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.time.Clock
 import tools.jackson.databind.ObjectMapper
 
@@ -21,6 +27,44 @@ class CaptureFileStore(val paths: CapturePathPolicy, private val json: ObjectMap
         if (acquired == null) { candidate.close(); throw CaptureRequestException(409, "CAPTURE_BUSY", "Another console process owns the capture worker") }
         channel = candidate
         lock = acquired
+        purgeDeleted()
+    }
+
+    /**
+     * Removes a session directory and every managed file in it: first an atomic rename to a `.deleted-` name the session
+     * listing never shows, then a recursive delete that removes links as links and never follows them. Returns the
+     * number of files removed. Attached evidence lives outside the session directory and is never touched.
+     */
+    @Synchronized fun remove(session: String, suffix: String): Int {
+        val directory = paths.resolve("console/${id(session)}")
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) throw CaptureRequestException(404, "CAPTURE_NOT_FOUND", "Capture record was not found")
+        val trash = paths.resolve("console/$DELETED_PREFIX$session-${id(suffix)}")
+        try { Files.move(directory, trash, StandardCopyOption.ATOMIC_MOVE) }
+        catch (_: IOException) { throw CaptureRequestException(409, "CAPTURE_DELETE_FAILED", "The capture directory is in use; close anything reading it and retry") }
+        return deleteTree(trash)
+    }
+
+    /** Finishes deletions a crash interrupted after their rename. */
+    private fun purgeDeleted() {
+        Files.list(paths.resolve("console")).use { stream -> stream.filter { it.fileName.toString().startsWith(DELETED_PREFIX) }.toList() }
+            .forEach(::deleteTree)
+    }
+
+    private fun deleteTree(root: Path): Int {
+        var files = 0
+        Files.walkFileTree(root, object : SimpleFileVisitor<Path>() {
+            // A Windows junction reads as a directory that is also a reparse point: remove the junction, never its target.
+            override fun preVisitDirectory(directory: Path, attributes: BasicFileAttributes): FileVisitResult {
+                if (directory == root || !(attributes.isOther || attributes.isSymbolicLink)) return FileVisitResult.CONTINUE
+                Files.delete(directory); files++; return FileVisitResult.SKIP_SUBTREE
+            }
+            override fun visitFile(file: Path, attributes: BasicFileAttributes): FileVisitResult { Files.delete(file); files++; return FileVisitResult.CONTINUE }
+            override fun postVisitDirectory(directory: Path, exception: IOException?): FileVisitResult {
+                if (exception != null) throw exception
+                Files.delete(directory); return FileVisitResult.CONTINUE
+            }
+        })
+        return files
     }
     fun id(value: String): String {
         if (!value.matches(Regex("[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}"))) throw CaptureRequestException(400, "INVALID_REQUEST", "Invalid identifier")
@@ -62,4 +106,8 @@ class CaptureFileStore(val paths: CapturePathPolicy, private val json: ObjectMap
         }
     }
     @Synchronized override fun close() { lock?.close(); channel?.close(); lock = null; channel = null }
+
+    private companion object {
+        const val DELETED_PREFIX = ".deleted-"
+    }
 }

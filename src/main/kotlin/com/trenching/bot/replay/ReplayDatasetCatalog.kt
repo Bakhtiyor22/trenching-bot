@@ -15,4 +15,7 @@ interface ReplayDatasetCatalog {
     fun page(page: Int, size: Int): PageResult<DatasetSummary>
     fun find(id: String): DatasetSummary?
     fun load(id: String): ReplayDataset
+
+    /** Removes the catalog entry; runs keep their own dataset snapshot. False when no dataset has [id]. */
+    fun delete(id: String): Boolean
 }

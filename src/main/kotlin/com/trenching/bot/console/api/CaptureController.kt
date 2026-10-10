@@ -21,6 +21,7 @@ class CaptureController(private val sessions: CaptureSessionService, private val
     @GetMapping("/config") fun config(): CaptureConfigResponse = mapper.config(!rpc.rpcUrl.isNullOrBlank(),rates.enabled,CaptureWalletSettings(""),CaptureMarketSettings(),CaptureBudget(),CaptureValidation.bounds,4500)
     @GetMapping fun page(@RequestParam(defaultValue="0") page: Int,@RequestParam(defaultValue="20") size: Int): CaptureSessionPageResponse = mapper.sessions(sessions.page(page,size))
     @PostMapping fun create(@RequestBody request: CaptureCreateRequest): CaptureSessionResponse = mapper.session(sessions.create(request))
+    @DeleteMapping("/{id}") @ResponseStatus(HttpStatus.NO_CONTENT) fun delete(@PathVariable id: String) = sessions.delete(id)
     @GetMapping("/{id}") fun find(@PathVariable id: String): CaptureSessionResponse = mapper.session(sessions.find(id))
     @GetMapping("/{id}/attempts") fun attempts(@PathVariable id: String,@RequestParam(defaultValue="0") page: Int,@RequestParam(defaultValue="20") size: Int): CaptureAttemptPageResponse = mapper.attempts(sessions.attempts(id,page,size))
     @PostMapping("/{id}/attempts") fun attempt(@PathVariable id: String,@RequestBody request: CaptureAttemptRequest): CaptureSessionResponse = mapper.session(sessions.newAttempt(id,request))
