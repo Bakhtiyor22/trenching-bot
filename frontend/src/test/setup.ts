@@ -1,9 +1,12 @@
 import '@testing-library/jest-dom/vitest';
 import { notifications } from '@mantine/notifications';
-import { cleanup } from '@testing-library/react';
+import { cleanup, configure } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { resetMockDb } from '../mocks/handlers';
 import { server } from '../mocks/server';
+
+// Dependent API queries and concurrent jsdom workers can exceed the default one-second wait.
+configure({ asyncUtilTimeout: 5_000 });
 
 /** Serializes a chart option for assertions; functions (formatters) are dropped. */
 function serializeOption(option: unknown): string {

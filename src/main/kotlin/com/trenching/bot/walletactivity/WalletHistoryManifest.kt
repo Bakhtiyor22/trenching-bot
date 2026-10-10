@@ -1,8 +1,11 @@
 package com.trenching.bot.walletactivity
 
+/** [listingAddress] is the address whose signature listing discovery scanned, derived from [scope] and [wallet]. */
 data class WalletHistoryManifest(
     val schemaVersion: Int,
     val wallet: String,
+    val scope: WalletHistoryScope = WalletHistoryScope.WALLET_REFERENCES,
+    val listingAddress: String = wallet,
     val genesisHash: String,
     val commitment: String,
     val capturedAt: String,
@@ -49,4 +52,7 @@ enum class WalletHistoryOutcome {
     INVALID_TRANSACTION,
     PROVIDER_UNAVAILABLE,
     WITHHELD_UNSAFE_TEXT,
+
+    /** Listed under a scope other than the wallet itself, but the wallet is not among its accounts. */
+    WALLET_ABSENT,
 }

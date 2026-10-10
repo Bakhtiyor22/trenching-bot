@@ -78,13 +78,19 @@ export function humanizeCode(code: string | null | undefined): string {
   return sentence.charAt(0).toUpperCase() + sentence.slice(1);
 }
 
-/** "+1", "+2", ... for an entry offset. */
-export function offsetLabel(offset: number): string {
-  return offset >= 0 ? `+${offset}` : String(offset);
-}
-
 /** "first – last" slot range, or a dash for an empty dataset. */
 export function slotRange(range: { firstSlot: number | null; lastSlot: number | null }): string {
   if (range.firstSlot == null || range.lastSlot == null) return '—';
   return `${formatSlot(range.firstSlot)} – ${formatSlot(range.lastSlot)}`;
+}
+
+/** Where a USDT value came from: the SOL/USDT rate and the UTC minute whose Binance 1-minute open it is. */
+export function usdtRateNote(rate: string | null | undefined, minute: string | null | undefined): string | null {
+  if (!rate || !minute) return null;
+  return `At ${rate} USDT per SOL, Binance 1-minute open of ${minute.slice(0, 16).replace('T', ' ')} UTC`;
+}
+
+/** Basis points with an explicit sign, e.g. "+19 bps" for a buy's price impact and "-22 bps" for a sale's. */
+export function signedBps(bps: number): string {
+  return `${bps > 0 ? '+' : ''}${bps} bps`;
 }

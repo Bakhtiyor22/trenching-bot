@@ -4,7 +4,11 @@ import com.trenching.bot.marketdata.MarketHistoryCaptureLimits
 import com.trenching.bot.marketdata.MarketTransactionOutcome
 
 internal object MarketCaptureFormat {
-    const val VERSION = 1
+    /** Version 2: windows follow a horizon after each mint's first buy, not entry offsets and a holding period. */
+    const val VERSION = 2
+
+    /** Transactions fetched between manifest checkpoints; a resume refetches any newer, unreferenced artifact. */
+    const val DETAIL_CHECKPOINT_INTERVAL = 100
     const val MANIFEST = "market-manifest.json"
     const val MAX_WINDOWS = MarketHistoryCaptureLimits.MAX_WINDOWS
     const val MAX_TRANSACTIONS = MarketHistoryCaptureLimits.MAX_TRANSACTIONS

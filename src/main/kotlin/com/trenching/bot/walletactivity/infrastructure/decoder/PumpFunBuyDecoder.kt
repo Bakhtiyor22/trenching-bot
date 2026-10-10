@@ -6,65 +6,113 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
+import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.protocol.pumpfun.PumpFunInstruction
+import com.trenching.bot.protocol.pumpfun.PumpFunInstructionName
 import com.trenching.bot.protocol.pumpfun.PumpFunInstructionReader
 import com.trenching.bot.protocol.pumpfun.PumpFunLayout
+import com.trenching.bot.walletactivity.PumpFunBuyFacts
+import com.trenching.bot.walletactivity.PumpFunBuyInstruction
 import com.trenching.bot.walletactivity.domain.WalletTransaction
 import java.time.Instant
 import tools.jackson.databind.JsonNode
 
 /**
- * Decodes a successful transaction signed by the wallet that contains exactly one Pump.fun bonding-curve `buy`.
+ * Decodes a successful transaction signed by the wallet that contains exactly one SOL-quoted Pump.fun bonding-curve buy:
+ * a legacy `buy` or a `buy_exact_quote_in_v3`.
  * The trade is read from Pump.fun's self-invoked `TradeEvent` instruction, never from `Program data:` logs,
  * because only Pump.fun can emit that instruction while any program can write a log line.
  */
 internal class PumpFunBuyDecoder {
     fun decode(transaction: JsonNode, wallet: WalletAddress): PumpFunBuyDecoding {
         val instructions = PumpFunInstructionReader.read(transaction)
-        if (instructions.any { it is PumpFunInstruction.Malformed }) return rejected(PumpFunBuyRejection.MALFORMED_EVIDENCE)
-        val buys = instructions.filterIsInstance<PumpFunInstruction.Buy>()
+        val names = names(instructions)
+        if (instructions.any { it is PumpFunInstruction.Malformed }) return rejected(PumpFunBuyRejection.MALFORMED_EVIDENCE, names)
+        val buys = instructions.filter { it is PumpFunInstruction.Buy || it is PumpFunInstruction.BuyExactQuoteInV3 }
         val events = instructions.filterIsInstance<PumpFunInstruction.TradeEvent>()
-        if (buys.size > 1) return rejected(PumpFunBuyRejection.MULTIPLE_BUYS)
-        if (events.size > 1) return rejected(PumpFunBuyRejection.MULTIPLE_TRADE_EVENTS)
-        val buy = buys.firstOrNull() ?: return rejected(PumpFunBuyRejection.NO_BUY)
-        val event = events.firstOrNull() ?: return rejected(PumpFunBuyRejection.NO_TRADE_EVENT)
+        if (buys.size > 1) return rejected(PumpFunBuyRejection.MULTIPLE_BUYS, names)
+        if (events.size > 1) return rejected(PumpFunBuyRejection.MULTIPLE_TRADE_EVENTS, names)
+        val buy = buys.firstOrNull() ?: return rejected(PumpFunBuyRejection.NO_BUY, names)
+        val event = events.firstOrNull() ?: return rejected(PumpFunBuyRejection.NO_TRADE_EVENT, names)
         val mismatch = mismatch(buy, event, wallet)
-        if (mismatch != null) return rejected(mismatch)
+        if (mismatch != null) return rejected(mismatch, names)
         return when (val change = WalletTokenBalances.change(transaction.path("meta"), wallet, event.mint)) {
-            is WalletTokenBalanceChange.Unproven -> rejected(change.reason)
+            is WalletTokenBalanceChange.Unproven -> rejected(change.reason, names)
             is WalletTokenBalanceChange.Measured ->
-                if (change.delta != event.tokenAmount) rejected(PumpFunBuyRejection.BALANCE_MISMATCH)
-                else represent(transaction, wallet, buy, event, change.decimals)
+                if (change.delta != event.tokenAmount) rejected(PumpFunBuyRejection.BALANCE_MISMATCH, names)
+                else represent(transaction, wallet, buy, event, change.decimals, names)
         }
     }
 
-    private fun mismatch(buy: PumpFunInstruction.Buy, event: PumpFunInstruction.TradeEvent, wallet: WalletAddress): PumpFunBuyRejection? =
+    /** Checks shared by both buy instructions, then the instruction's own binding to the event's amounts. */
+    private fun mismatch(buy: PumpFunInstruction, event: PumpFunInstruction.TradeEvent, wallet: WalletAddress): PumpFunBuyRejection? =
         when {
             event.isBuy == SELL -> PumpFunBuyRejection.SELL_EVENT
             event.isBuy != BUY -> PumpFunBuyRejection.MALFORMED_EVIDENCE
             event.user != wallet -> PumpFunBuyRejection.OTHER_USER
-            buy.topLevelIndex != event.topLevelIndex -> PumpFunBuyRejection.INSTRUCTION_MISMATCH
-            buy.tokenAmount != event.tokenAmount -> PumpFunBuyRejection.AMOUNT_MISMATCH
+            topLevelIndex(buy) != event.topLevelIndex -> PumpFunBuyRejection.INSTRUCTION_MISMATCH
+            // Before the amount checks: a non-SOL curve reports its quote elsewhere, so its SOL fields are all zero.
+            event.solAmount.signum() == 0 && event.virtualSolReserves.signum() == 0 -> PumpFunBuyRejection.NON_SOL_QUOTE
+            !amountsMatch(buy, event) -> PumpFunBuyRejection.AMOUNT_MISMATCH
             event.tokenAmount.signum() == 0 || event.solAmount.signum() == 0 -> PumpFunBuyRejection.ZERO_AMOUNT
             event.mint == MintAddress.WRAPPED_SOL -> PumpFunBuyRejection.MALFORMED_EVIDENCE
             else -> null
         }
 
+    /**
+     * Legacy `buy` names its exact token output. `buy_exact_quote_in_v3` spends exactly the curve payment plus both fees and
+     * names a minimum output, per the pumpfun-exact-quote-in-v3-buys ADR.
+     */
+    private fun amountsMatch(buy: PumpFunInstruction, event: PumpFunInstruction.TradeEvent): Boolean = when (buy) {
+        is PumpFunInstruction.Buy -> buy.tokenAmount == event.tokenAmount
+        is PumpFunInstruction.BuyExactQuoteInV3 ->
+            buy.spendableQuoteIn == event.solAmount.add(event.feeLamports).add(event.creatorFeeLamports) &&
+                event.tokenAmount >= buy.minBaseAmountOut
+        else -> false
+    }
+
+    private fun topLevelIndex(buy: PumpFunInstruction): Int? = when (buy) {
+        is PumpFunInstruction.Buy -> buy.topLevelIndex
+        is PumpFunInstruction.BuyExactQuoteInV3 -> buy.topLevelIndex
+        else -> null
+    }
+
+    private fun kind(buy: PumpFunInstruction): PumpFunBuyInstruction =
+        if (buy is PumpFunInstruction.BuyExactQuoteInV3) PumpFunBuyInstruction.BUY_EXACT_QUOTE_IN_V3 else PumpFunBuyInstruction.BUY
+
+    /** The named Pump.fun instructions present, plus markers for unrecognised Pump.fun data or no Pump.fun instruction at all. */
+    private fun names(instructions: List<PumpFunInstruction>): Set<String> {
+        val names = instructions.mapNotNullTo(sortedSetOf()) { instruction ->
+            when (instruction) {
+                is PumpFunInstruction.Buy -> PumpFunInstructionName.BUY.name
+                is PumpFunInstruction.BuyExactQuoteInV3 -> PumpFunInstructionName.BUY_EXACT_QUOTE_IN_V3.name
+                is PumpFunInstruction.Unsupported -> instruction.name.name
+                PumpFunInstruction.Other -> OTHER_PUMPFUN
+                is PumpFunInstruction.TradeEvent, PumpFunInstruction.Malformed -> null
+            }
+        }
+        if (instructions.isEmpty()) names += NO_PUMPFUN
+        return names
+    }
+
     private fun represent(
         transaction: JsonNode,
         wallet: WalletAddress,
-        buy: PumpFunInstruction.Buy,
+        buy: PumpFunInstruction,
         event: PumpFunInstruction.TradeEvent,
         baseDecimals: Int,
+        names: Set<String>,
     ): PumpFunBuyDecoding {
-        val signature = signature(transaction) ?: return rejected(PumpFunBuyRejection.MALFORMED_EVIDENCE)
-        val slot = slot(transaction) ?: return rejected(PumpFunBuyRejection.MALFORMED_EVIDENCE)
+        val malformed = rejected(PumpFunBuyRejection.MALFORMED_EVIDENCE, names)
+        val signature = signature(transaction) ?: return malformed
+        val slot = slot(transaction) ?: return malformed
         val blockTime = transaction.path("blockTime")
-        val time = if (blockTime.isNull) null else blockTime(blockTime) ?: return rejected(PumpFunBuyRejection.MALFORMED_EVIDENCE)
+        val time = if (blockTime.isNull) null else blockTime(blockTime) ?: return malformed
+        val facts = facts(transaction, wallet, signature, slot, event, kind(buy)) ?: return malformed
         return PumpFunBuyDecoding.Decoded(WalletTransaction(
             wallet = wallet,
             signature = signature,
-            instructionIndex = buy.topLevelIndex,
+            instructionIndex = event.topLevelIndex,
             slot = slot,
             blockTime = time,
             pair = MarketPair.of(event.mint, MintAddress.WRAPPED_SOL),
@@ -75,9 +123,39 @@ internal class PumpFunBuyDecoder {
             successful = true,
             supportedRoute = true,
             signer = true,
-            source = SOURCE,
+            source = PumpFunLayout.BUY_SOURCE,
             commitment = Commitment.CONFIRMED,
-        ))
+        ), facts)
+    }
+
+    private fun facts(
+        transaction: JsonNode,
+        wallet: WalletAddress,
+        signature: TransactionSignature,
+        slot: Slot,
+        event: PumpFunInstruction.TradeEvent,
+        instruction: PumpFunBuyInstruction,
+    ): PumpFunBuyFacts? {
+        if (!CurveReserves.isValid(event.virtualSolReserves, event.virtualTokenReserves, event.realSolReserves, event.realTokenReserves)) {
+            return null
+        }
+        val transactionFee = WalletLamportBalances.transactionFee(transaction) ?: return null
+        val walletDelta = WalletLamportBalances.delta(transaction, wallet) ?: return null
+        return PumpFunBuyFacts(
+            signature = signature,
+            slot = slot,
+            mint = event.mint,
+            solAmount = event.solAmount,
+            tokenAmount = event.tokenAmount,
+            feeLamports = event.feeLamports,
+            creatorFeeLamports = event.creatorFeeLamports,
+            feeBps = event.feeBasisPoints,
+            creatorFeeBps = event.creatorFeeBasisPoints,
+            postReserves = CurveReserves(event.virtualSolReserves, event.virtualTokenReserves, event.realSolReserves, event.realTokenReserves),
+            transactionFeeLamports = transactionFee,
+            walletLamportDelta = walletDelta,
+            instruction = instruction,
+        )
     }
 
     private fun signature(transaction: JsonNode): TransactionSignature? {
@@ -96,11 +174,12 @@ internal class PumpFunBuyDecoder {
             Instant.ofEpochSecond(value.asLong())
         } else null
 
-    private fun rejected(reason: PumpFunBuyRejection): PumpFunBuyDecoding = PumpFunBuyDecoding.Rejected(reason)
+    private fun rejected(reason: PumpFunBuyRejection, names: Set<String>): PumpFunBuyDecoding = PumpFunBuyDecoding.Rejected(reason, names)
 
     private companion object {
-        const val SOURCE = "pumpfun-bonding-curve-buy/v1"
         const val SELL = 0
         const val BUY = 1
+        const val OTHER_PUMPFUN = "OTHER_PUMPFUN"
+        const val NO_PUMPFUN = "NO_PUMPFUN"
     }
 }

@@ -4,6 +4,7 @@ import com.trenching.bot.common.Base58
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.WalletAddress
 import java.math.BigInteger
+import java.util.HexFormat
 import tools.jackson.databind.JsonNode
 
 /** Reads every Pump.fun instruction, top-level and inner, tagged with the top-level instruction that contains it. */
@@ -29,9 +30,21 @@ object PumpFunInstructionReader {
         val bytes = Base58.decode(data.asString()) ?: return PumpFunInstruction.Malformed
         return when {
             bytes.startsWith(PumpFunLayout.BUY_DISCRIMINATOR) -> buy(bytes, topLevelIndex)
+            bytes.startsWith(PumpFunLayout.BUY_EXACT_QUOTE_IN_V3_DISCRIMINATOR) -> buyExactQuoteInV3(bytes, topLevelIndex)
             bytes.startsWith(PumpFunLayout.TRADE_EVENT_PREFIX) -> tradeEvent(bytes, topLevelIndex, innerIndex)
-            else -> PumpFunInstruction.Other
+            else -> unsupported(bytes, topLevelIndex)
         }
+    }
+
+    private fun buyExactQuoteInV3(bytes: ByteArray, topLevelIndex: Int): PumpFunInstruction =
+        if (bytes.size < PumpFunLayout.BUY_EXACT_QUOTE_IN_V3_DATA_BYTES) PumpFunInstruction.Malformed
+        else PumpFunInstruction.BuyExactQuoteInV3(topLevelIndex,
+            u64(bytes, PumpFunLayout.BUY_EXACT_QUOTE_IN_V3_SPENDABLE_OFFSET), u64(bytes, PumpFunLayout.BUY_EXACT_QUOTE_IN_V3_MIN_OUT_OFFSET))
+
+    private fun unsupported(bytes: ByteArray, topLevelIndex: Int): PumpFunInstruction {
+        if (bytes.size < PumpFunLayout.DISCRIMINATOR_BYTES) return PumpFunInstruction.Other
+        val name = PumpFunLayout.UNSUPPORTED_INSTRUCTIONS[HEX.formatHex(bytes, 0, PumpFunLayout.DISCRIMINATOR_BYTES)]
+        return if (name == null) PumpFunInstruction.Other else PumpFunInstruction.Unsupported(topLevelIndex, name)
     }
 
     private fun buy(bytes: ByteArray, topLevelIndex: Int): PumpFunInstruction =
@@ -48,6 +61,14 @@ object PumpFunInstructionReader {
             tokenAmount = u64(bytes, PumpFunLayout.EVENT_TOKEN_AMOUNT_OFFSET),
             isBuy = bytes[PumpFunLayout.EVENT_IS_BUY_OFFSET].toInt() and 0xFF,
             user = WalletAddress.of(publicKey(bytes, PumpFunLayout.EVENT_USER_OFFSET)),
+            virtualSolReserves = u64(bytes, PumpFunLayout.EVENT_VIRTUAL_SOL_RESERVES_OFFSET),
+            virtualTokenReserves = u64(bytes, PumpFunLayout.EVENT_VIRTUAL_TOKEN_RESERVES_OFFSET),
+            realSolReserves = u64(bytes, PumpFunLayout.EVENT_REAL_SOL_RESERVES_OFFSET),
+            realTokenReserves = u64(bytes, PumpFunLayout.EVENT_REAL_TOKEN_RESERVES_OFFSET),
+            feeBasisPoints = u64(bytes, PumpFunLayout.EVENT_FEE_BASIS_POINTS_OFFSET),
+            feeLamports = u64(bytes, PumpFunLayout.EVENT_FEE_OFFSET),
+            creatorFeeBasisPoints = u64(bytes, PumpFunLayout.EVENT_CREATOR_FEE_BASIS_POINTS_OFFSET),
+            creatorFeeLamports = u64(bytes, PumpFunLayout.EVENT_CREATOR_FEE_OFFSET),
         )
 
     private fun isPumpFun(instruction: JsonNode): Boolean {
@@ -63,4 +84,6 @@ object PumpFunInstructionReader {
 
     private fun ByteArray.startsWith(prefix: ByteArray): Boolean =
         size >= prefix.size && prefix.indices.all { this[it] == prefix[it] }
+
+    private val HEX: HexFormat = HexFormat.of()
 }

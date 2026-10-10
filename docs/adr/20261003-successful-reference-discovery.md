@@ -1,6 +1,6 @@
 # Successful-reference wallet history discovery
 
-Accepted 2026-10-03 with Amendment A of the [real wallet replay plan](../plans/20261003-real-wallet-replay.md), approved by the user in chat.
+Accepted 2026-10-03 with Amendment A of the [real wallet replay plan](../plans/archive/20261003-real-wallet-replay.md), approved by the user in chat.
 Supersedes only the selection bullet ("Freeze up to 100 distinct address-reference signatures ... preserving failed transactions in the audit") of the [bounded wallet history capture decision](20261003-bounded-wallet-history-capture.md). Its other decisions stand.
 
 ## Context
@@ -32,3 +32,5 @@ The audit no longer contains failed transactions, only their count over the scan
 ## Revisit when
 
 No signer transaction appears within 50 pages, successful copy-bot traffic dominates the selection, or the user wants a time/slot window or a larger bound. Report such evidence and revisit scope with the user rather than raising bounds automatically.
+
+Update 2026-10-06: the copy-bot trigger fired for Decu's wallet (0 signer transactions among 100 selected). The [user-accumulator discovery decision](20261006-pumpfun-user-accumulator-discovery.md) adds a second scope; this one stays the default.

@@ -1,7 +1,9 @@
 package com.trenching.bot.replay.infrastructure.fixture
 
 import com.trenching.bot.common.*
+import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.marketdata.domain.*
+import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.replay.application.DatasetFingerprint
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.walletactivity.domain.WalletTransaction
@@ -16,7 +18,9 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
     fun load(input: InputStream): ReplayDataset {
         val root = mapper.readTree(input)
         val rawVersion = integer(root, "schemaVersion")
-        require(rawVersion == 1L) { "Unsupported replay schemaVersion=$rawVersion" }
+        require(rawVersion == ReplayDataset.SCHEMA_VERSION.toLong()) {
+            "Unsupported replay schemaVersion=$rawVersion; re-export it with curve state (UNSUPPORTED_SCHEMA)"
+        }
         val version = rawVersion.toInt()
         val wallet = WalletAddress.of(string(root, "trackedWallet"))
         val transactions = array(root, "transactions").map { node ->
@@ -36,16 +40,53 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
             require(price.signum() > 0 && (liquidity == null || liquidity.signum() >= 0)) { "Invalid observation amounts" }
             DecimalPolicy.requireExactPrice(price)
             liquidity?.let(DecimalPolicy::requireExactPrice)
-            MarketObservation(string(node, "id", ReplayLimits.MAX_OBSERVATION_ID_LENGTH), pair(node), Slot.of(integer(node, "slot")),
+            val id = string(node, "id", ReplayLimits.MAX_OBSERVATION_ID_LENGTH)
+            val curveComplete = boolean(node, "curveComplete")
+            MarketObservation(id, pair(node), Slot.of(integer(node, "slot")),
                 Slot.of(integer(node, "priceSlot")), instant(string(node, "observedTime")), price,
                 liquidity, string(node, "source", ReplayLimits.MAX_SOURCE_LENGTH),
                 string(node, "sourceEventId", ReplayLimits.MAX_OBSERVATION_ID_LENGTH),
-                Commitment.valueOf(string(node, "commitment")), ObservationQuality.valueOf(string(node, "quality")))
+                Commitment.valueOf(string(node, "commitment")), ObservationQuality.valueOf(string(node, "quality")),
+                curveComplete, curve(node.path("curve"), id, curveComplete))
         }
-        val dataset = ReplayDataset(version, wallet, transactions, observations)
+        val rates = array(root, "referenceRates").map { node ->
+            ReferenceRate(instant(string(node, "minute")), BigDecimal(string(node, "rate")), string(node, "source", ReplayLimits.MAX_SOURCE_LENGTH))
+        }
+        val ordered = OrderedReferenceRates(rates)
+        observations.forEach { observation ->
+            require(ordered.rateAt(observation.observedTime) != null) {
+                "No reference rate for observation id=${observation.id} minute=${ReferenceRate.minuteOf(observation.observedTime)} (REFERENCE_RATE_MISSING)"
+            }
+        }
+        val dataset = ReplayDataset(version, wallet, transactions, observations, rates)
         val checksum = DatasetFingerprint.checksum(dataset)
         require(string(root, "checksum") == checksum) { "Replay checksum mismatch computed=$checksum" }
         return dataset
+    }
+
+    private fun curve(node: JsonNode, observationId: String, curveComplete: Boolean): CurveState {
+        val virtualSol = curveInteger(node, ReplayCurveFields.VIRTUAL_SOL_RESERVES, observationId)
+        val virtualToken = curveInteger(node, ReplayCurveFields.VIRTUAL_TOKEN_RESERVES, observationId)
+        val realSol = curveInteger(node, ReplayCurveFields.REAL_SOL_RESERVES, observationId)
+        val realToken = curveInteger(node, ReplayCurveFields.REAL_TOKEN_RESERVES, observationId)
+        val feeBps = CurveState.basisPoints(curveInteger(node, ReplayCurveFields.FEE_BPS, observationId))
+        val creatorFeeBps = CurveState.basisPoints(curveInteger(node, ReplayCurveFields.CREATOR_FEE_BPS, observationId))
+        require(CurveReserves.isValid(virtualSol, virtualToken, realSol, realToken) && feeBps != null && creatorFeeBps != null) {
+            "Invalid curve state observation id=$observationId ($CURVE_STATE_INVALID)"
+        }
+        val curve = CurveState(CurveReserves(virtualSol, virtualToken, realSol, realToken), feeBps, creatorFeeBps)
+        require(curve.complete == curveComplete) {
+            "curveComplete=$curveComplete contradicts realTokenReserves=$realToken observation id=$observationId (CURVE_STATE_INCONSISTENT)"
+        }
+        return curve
+    }
+
+    private fun curveInteger(node: JsonNode, field: String, observationId: String): BigInteger {
+        val value = node.path(field)
+        require(value.isString && RAW_INTEGER.matches(value.asString())) {
+            "Expected raw integer string curve.$field observation id=$observationId ($CURVE_STATE_INVALID)"
+        }
+        return BigInteger(value.asString())
     }
 
     private fun pair(node: JsonNode): MarketPair = MarketPair.of(
@@ -86,5 +127,10 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
         val value = node.path(field)
         require(value.isArray && value.size() <= ReplayLimits.MAX_INPUT_RECORDS) { "Expected bounded array field=$field" }
         return value.toList()
+    }
+
+    private companion object {
+        const val CURVE_STATE_INVALID = "CURVE_STATE_INVALID"
+        val RAW_INTEGER = Regex("[0-9]{1,20}")
     }
 }

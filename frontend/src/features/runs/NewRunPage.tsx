@@ -104,25 +104,41 @@ function RunConfigForm({
 
         <Section
           title="Simulation parameters"
-          hint="Prefilled with the MVP defaults from ADR 0001. Identical dataset, parameters and engine always produce the same run."
+          hint="Prefilled with the dip-entry defaults: buy a 15% dip below the wallet's first buy at a market cap of at least $10,000, then take profit at +30% or stop out at -15% within about 30 minutes. Identical dataset, parameters and engine always produce the same run."
           actions={
             <Button
               variant="subtle"
               size="xs"
               onClick={() => form.setValues(formValuesFrom(defaults, form.values.datasetId))}
             >
-              Reset to MVP defaults
+              Reset to defaults
             </Button>
           }
         >
           <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
             <TextInput
               label="Notional"
-              description={`${FIELD_HINTS.notional} Rounded to ${limits.notionalScale} decimals with HALF_EVEN.`}
+              description={`${FIELD_HINTS.notional} At most ${limits.notionalScale} decimals (whole lamports).`}
               inputMode="decimal"
               autoComplete="off"
               withAsterisk
               {...form.getInputProps('notional')}
+            />
+            <TextInput
+              label="Minimum market cap (USD)"
+              description={`${FIELD_HINTS.minMarketCapUsd} Range ${rangeText(limits.minMarketCapUsd)}.`}
+              inputMode="decimal"
+              autoComplete="off"
+              withAsterisk
+              {...form.getInputProps('minMarketCapUsd')}
+            />
+            <TextInput
+              label="Transaction cost (SOL)"
+              description={`${FIELD_HINTS.transactionCostSol} Range ${limits.transactionCostSol.min} – ${limits.transactionCostSol.max}, at most ${limits.transactionCostScale} decimals.`}
+              inputMode="decimal"
+              autoComplete="off"
+              withAsterisk
+              {...form.getInputProps('transactionCostSol')}
             />
             {INTEGER_FIELDS.map((field) => (
               <NumberInput

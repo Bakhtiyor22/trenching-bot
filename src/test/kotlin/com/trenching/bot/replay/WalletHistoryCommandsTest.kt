@@ -22,6 +22,7 @@ import com.trenching.bot.walletactivity.WalletHistoryRecord
 import com.trenching.bot.walletactivity.WalletHistoryScanCursor
 import com.trenching.bot.walletactivity.WalletHistorySelection
 import com.trenching.bot.walletactivity.domain.WalletTransaction
+import com.trenching.bot.walletactivity.WalletHistoryScope
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
 import java.io.ByteArrayOutputStream
 import java.math.BigInteger
@@ -94,6 +95,33 @@ class WalletHistoryCommandsTest {
             base + arrayOf("--byte-budget", "-1"), base + arrayOf("--byte-budget", "overflow"),
             base + arrayOf("--scan-pages", "0"), base + arrayOf("--scan-pages", "51"), base + arrayOf("--scan-pages", "many"))
         invalid.forEach { assertEquals(2, commands().capture(it)) }
+        assertEquals(0, factoryCalls)
+    }
+
+    @Test
+    fun `capture selects the scope option and prints the scope and listed address`() {
+        val base = arrayOf("--wallet", wallet, "--directory", directory.toString())
+        assertEquals(0, commands().capture(base))
+        assertEquals(WalletHistoryScope.WALLET_REFERENCES, requireNotNull(captured).scope)
+        assertTrue(output.toString().lines().contains(
+            "scope=LATEST_SUCCESSFUL_WALLET_REFERENCES wallet=$wallet commitment=confirmed listingAddress=$wallet"))
+        assertEquals(0, commands().capture(base + arrayOf("--scope", "wallet-references")))
+        assertEquals(WalletHistoryScope.WALLET_REFERENCES, requireNotNull(captured).scope)
+        output.reset()
+        assertEquals(0, commands().capture(base + arrayOf("--scope", "pumpfun-user-buys")))
+        assertEquals(WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR, requireNotNull(captured).scope)
+        assertTrue(output.toString().lines().contains(
+            "scope=LATEST_SUCCESSFUL_PUMPFUN_USER_ACCUMULATOR_REFERENCES wallet=$wallet commitment=confirmed listingAddress=$ACCUMULATOR"))
+        assertTrue(output.toString().contains("WALLET_ABSENT=0"))
+    }
+
+    @Test
+    fun `capture rejects an unknown or repeated scope without constructing provider`() {
+        val base = arrayOf("--wallet", wallet, "--directory", directory.toString())
+        listOf(base + arrayOf("--scope", "all"), base + arrayOf("--scope", "PUMPFUN_USER_VOLUME_ACCUMULATOR"),
+            base + arrayOf("--scope", "pumpfun-user-buys", "--scope", "pumpfun-user-buys")).forEach {
+            assertEquals(2, commands().capture(it))
+        }
         assertEquals(0, factoryCalls)
     }
 
@@ -210,7 +238,7 @@ class WalletHistoryCommandsTest {
         val store = WalletHistoryArtifactStore(mapper)
         val artifact = store.writeTransaction(directory, REAL_SIGNATURE, transaction)
         store.save(directory, WalletHistoryManifest(
-            schemaVersion = 2, wallet = REAL_WALLET, genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+            schemaVersion = 3, wallet = REAL_WALLET, genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
             commitment = "confirmed", capturedAt = "2026-10-03T00:00:00Z", limit = 100, scanPageLimit = 1,
             selection = listOf(WalletHistorySelection(REAL_SIGNATURE, 453004996)),
             records = listOf(WalletHistoryRecord(REAL_SIGNATURE, 453004996, WalletHistoryOutcome.UNCLASSIFIED,
@@ -242,7 +270,10 @@ class WalletHistoryCommandsTest {
                     override fun capture(request: WalletHistoryCaptureRequest): WalletHistoryCaptureResult {
                         captured = request
                         captureFailure?.let { throw it }
-                        return result(complete, candidates)
+                        return result(complete, candidates).let {
+                            if (request.scope == WalletHistoryScope.WALLET_REFERENCES) it
+                            else it.copy(manifest = it.manifest.copy(scope = request.scope, listingAddress = ACCUMULATOR))
+                        }
                     }
                 }
             },
@@ -254,7 +285,7 @@ class WalletHistoryCommandsTest {
 
     private fun result(complete: Boolean, candidates: Int): WalletHistoryCaptureResult = WalletHistoryCaptureResult(directory,
         WalletHistoryManifest(
-            schemaVersion = 2, wallet = wallet, genesisHash = "mainnet-identity", commitment = "confirmed",
+            schemaVersion = 3, wallet = wallet, genesisHash = "mainnet-identity", commitment = "confirmed",
             capturedAt = "2026-10-03T00:00:00Z", limit = 100, scanPageLimit = 2,
             selection = (1..candidates).map { WalletHistorySelection("signature$it", 123L) },
             records = (1..candidates).map { WalletHistoryRecord("signature$it", 123L, WalletHistoryOutcome.UNCLASSIFIED,
@@ -280,5 +311,6 @@ class WalletHistoryCommandsTest {
         const val MINT = "5bYUihkPWGph9BLyG4uUbNV634UTwjf3Ly5JEsnokbDs"
         const val REAL_WALLET = "4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9"
         const val REAL_SIGNATURE = "35Vnpu9DSwADxy77FBQV8seGitMXuQRPB575AKXv1Jhh3NQSuZRKtuppUkiyLkYszxxi9HaKcmNN7fywqJ9R3mNA"
+        const val ACCUMULATOR = "7GxTMtPtJuY11YEPk9uTXrixjW4XHidUmrWRCSL9VE94"
     }
 }

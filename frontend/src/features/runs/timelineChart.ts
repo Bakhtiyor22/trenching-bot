@@ -1,14 +1,18 @@
 import type { EChartsOption, SeriesOption } from 'echarts';
 import { pairKey } from '../../api/endpoints';
-import type { Observation, Scenario } from '../../api/types';
+import type { Observation, RunUsdtView, Scenario } from '../../api/types';
 import { itemTooltip, observationSeries, slotAxes } from '../../charts/priceChart';
-import { formatDecimal, toChartNumber } from '../../lib/decimal';
-import { formatSlot, humanizeCode, offsetLabel } from '../../lib/format';
+import { compactDecimal, formatDecimal, toChartNumber } from '../../lib/decimal';
+import { formatSlot, humanizeCode, signedBps, usdtRateNote } from '../../lib/format';
+import { FONT_MONO, terminal } from '../../theme';
 
-export const ENTRY_COLOR = '#12b886';
-export const EXIT_COLOR = '#f76707';
-export const REJECTED_COLOR = '#fa5252';
-export const SOURCE_COLOR = '#868e96';
+export const ENTRY_COLOR = terminal.info;
+export const EXIT_COLOR = terminal.rejected;
+export const REJECTED_COLOR = terminal.loss;
+export const SOURCE_COLOR = terminal.dimmed;
+/** Legend name shared by the level lines, so one click hides or shows them all. */
+export const LEVELS_SERIES = 'Levels';
+export const LEVEL_COLORS = { reference: '#C3CDD5', dip: terminal.info, takeProfit: terminal.gain, stopLoss: terminal.loss } as const;
 
 export interface PriceMarker {
   slot: number;
@@ -23,50 +27,133 @@ export interface SlotMarker {
   label: string;
 }
 
+/** A horizontal price level: the first buy's price, the dip level, take profit or stop loss. */
+export interface LevelMarker {
+  price: string;
+  label: string;
+  color: string;
+}
+
 export interface TimelineMarkers {
   sourceBuys: SlotMarker[];
   entries: PriceMarker[];
   exits: PriceMarker[];
   rejections: SlotMarker[];
+  levels: LevelMarker[];
 }
 
-/** Markers for the scenarios of one pair: source buys, entry fills, exits and rejected targets. */
-export function timelineMarkers(scenarios: Scenario[]): TimelineMarkers {
+/** Which prices the timeline plots, and in which unit. A null price leaves that point or marker out. */
+export interface TimelineValues {
+  unit: string;
+  observationPrice: (observation: Observation) => string | null;
+  entryPrice: (scenario: Scenario) => string | null;
+  exitPrice: (scenario: Scenario) => string | null;
+  costBasis: (scenario: Scenario) => string | null;
+  netProceeds: (scenario: Scenario) => string | null;
+  realizedPnl: (scenario: Scenario) => string | null;
+  /** Provenance lines (the rate and minute of a conversion); null for stored values. */
+  observationNote: (observation: Observation) => string | null;
+  entryNote: (scenario: Scenario) => string | null;
+  exitNote: (scenario: Scenario) => string | null;
+  /** A strategy level (P0, dip, take profit, stop loss) in this unit, or null when it has no single value in it. */
+  level: (price: string) => string | null;
+}
+
+/** The stored prices, in the run's quote unit. */
+export function quoteValues(unit: string): TimelineValues {
+  return {
+    unit,
+    observationPrice: (o) => o.price,
+    entryPrice: (s) => s.fill?.executionPrice ?? null,
+    exitPrice: (s) => s.position?.close?.executionPrice ?? null,
+    costBasis: (s) => s.fill?.costBasis ?? null,
+    netProceeds: (s) => s.position?.close?.netProceeds ?? null,
+    realizedPnl: (s) => s.position?.close?.realizedPnl ?? null,
+    observationNote: () => null,
+    entryNote: () => null,
+    exitNote: () => null,
+    level: (price) => price,
+  };
+}
+
+/** The same prices converted to USDT by the backend, each at its own minute's rate. */
+export function usdtValues(view: RunUsdtView): TimelineValues {
+  const observations = new Map(view.observations.map((o) => [o.id, o]));
+  const scenarios = new Map(view.scenarios.map((s) => [s.intentId, s]));
+  const fill = (s: Scenario) => scenarios.get(s.intentId)?.fill;
+  const close = (s: Scenario) => scenarios.get(s.intentId)?.close;
+  return {
+    unit: 'USDT',
+    observationPrice: (o) => observations.get(o.id)?.priceUsdt ?? null,
+    entryPrice: (s) => fill(s)?.executionPriceUsdt ?? null,
+    exitPrice: (s) => close(s)?.executionPriceUsdt ?? null,
+    costBasis: (s) => fill(s)?.costBasisUsdt ?? null,
+    netProceeds: (s) => close(s)?.netProceedsUsdt ?? null,
+    realizedPnl: (s) => close(s)?.realizedPnlUsdt ?? null,
+    observationNote: (o) => usdtRateNote(observations.get(o.id)?.rate, observations.get(o.id)?.minute),
+    entryNote: (s) => usdtRateNote(fill(s)?.rate, fill(s)?.minute),
+    exitNote: (s) => usdtRateNote(close(s)?.rate, close(s)?.minute),
+    // The strategy compares levels in SOL; each trade converts at its own minute, so a level has no one USDT value.
+    level: () => null,
+  };
+}
+
+/** Markers for the cycle of one pair: its first buy, price levels, entry fill and exit, or why it never entered. */
+export function timelineMarkers(scenarios: Scenario[], values: TimelineValues = quoteValues('')): TimelineMarkers {
+  const unit = values.unit ? ` ${values.unit}` : '';
   const sourceSlots = [...new Set(scenarios.map((s) => s.sourceSlot))].sort((a, b) => a - b);
   const entries: PriceMarker[] = [];
   const exits: PriceMarker[] = [];
   const rejections: SlotMarker[] = [];
+  const levels: LevelMarker[] = [];
+  const addLevel = (price: string, label: string, color: string) => {
+    const converted = values.level(price);
+    if (converted != null) levels.push({ price: converted, label, color });
+  };
   for (const s of scenarios) {
-    const offset = offsetLabel(s.entryOffset);
+    addLevel(s.referencePrice, 'P0', LEVEL_COLORS.reference);
+    addLevel(s.dipPrice, 'Dip', LEVEL_COLORS.dip);
+    if (s.position) {
+      addLevel(s.position.takeProfitPrice, 'Take profit', LEVEL_COLORS.takeProfit);
+      addLevel(s.position.stopLossPrice, 'Stop loss', LEVEL_COLORS.stopLoss);
+    }
     if (s.status === 'REJECTED' || !s.fill) {
       rejections.push({
         slot: s.targetSlot,
-        label: `${offset} rejected: ${humanizeCode(s.rejectionReason)}`,
+        label: `No entry: ${humanizeCode(s.rejectionReason)}`,
       });
       continue;
     }
-    entries.push({
-      slot: s.fill.actualSlot,
-      price: s.fill.executionPrice,
-      label: offset,
-      tooltip: [
-        `<b>Entry ${offset}</b> (source slot ${formatSlot(s.sourceSlot)})`,
-        `Target slot ${formatSlot(s.targetSlot)}, filled at slot ${formatSlot(s.fill.actualSlot)}`,
-        `Execution price <b>${formatDecimal(s.fill.executionPrice)}</b>`,
-        `Quantity ${formatDecimal(s.fill.quantity)} · cost ${formatDecimal(s.fill.costBasis)}`,
-      ].join('<br/>'),
-    });
+    const entryPrice = values.entryPrice(s);
+    if (entryPrice != null) {
+      entries.push({
+        slot: s.fill.actualSlot,
+        price: entryPrice,
+        label: 'entry',
+        tooltip: [
+          `<b>Entry</b> (first buy at slot ${formatSlot(s.sourceSlot)})`,
+          `Dip at slot ${formatSlot(s.targetSlot)}, filled at slot ${formatSlot(s.fill.actualSlot)}`,
+          `Execution price <b>${formatDecimal(entryPrice)}</b>${unit}`,
+          `Quantity ${formatDecimal(s.fill.quantity)} · cost ${formatDecimal(values.costBasis(s))}${unit}`,
+          `Fees ${s.fill.feeBps} bps · impact ${signedBps(s.fill.priceImpactBps)}`,
+          ...noteLine(values.entryNote(s)),
+        ].join('<br/>'),
+      });
+    }
     const close = s.position?.close;
-    if (close) {
+    const exitPrice = values.exitPrice(s);
+    if (close && exitPrice != null) {
       exits.push({
         slot: close.slot,
-        price: close.executionPrice,
-        label: `exit ${offset}`,
+        price: exitPrice,
+        label: close.reason === 'TAKE_PROFIT' ? 'TP' : 'SL',
         tooltip: [
-          `<b>Exit ${offset}</b> at slot ${formatSlot(close.slot)} (${humanizeCode(close.reason)})`,
-          `Execution price <b>${formatDecimal(close.executionPrice)}</b>`,
-          `Net proceeds ${formatDecimal(close.netProceeds)}`,
-          `Realized P&L <b>${formatDecimal(close.realizedPnl)}</b>`,
+          `<b>Exit</b> at slot ${formatSlot(close.slot)} (${humanizeCode(close.reason)})`,
+          `Execution price <b>${formatDecimal(exitPrice)}</b>${unit}`,
+          `Fees ${close.feeBps} bps · impact ${signedBps(close.priceImpactBps)}`,
+          `Net proceeds ${formatDecimal(values.netProceeds(s))}${unit}`,
+          `Realized P&L <b>${formatDecimal(values.realizedPnl(s))}</b>${unit}`,
+          ...noteLine(values.exitNote(s)),
         ].join('<br/>'),
       });
     }
@@ -76,7 +163,12 @@ export function timelineMarkers(scenarios: Scenario[]): TimelineMarkers {
     entries,
     exits,
     rejections,
+    levels,
   };
+}
+
+function noteLine(note: string | null): string[] {
+  return note ? [note] : [];
 }
 
 function markerSeries(name: string, markers: PriceMarker[], color: string, rotate = 0): SeriesOption {
@@ -86,7 +178,7 @@ function markerSeries(name: string, markers: PriceMarker[], color: string, rotat
     symbol: 'triangle',
     symbolRotate: rotate,
     symbolSize: 14,
-    itemStyle: { color, borderColor: '#fff', borderWidth: 1 },
+    itemStyle: { color, borderColor: terminal.ground, borderWidth: 1 },
     z: 5,
     label: {
       show: true,
@@ -103,10 +195,18 @@ function markerSeries(name: string, markers: PriceMarker[], color: string, rotat
  * Price vs slot for one pair's observations, with the scenario markers. The x-axis is padded to
  * include every marker, because ECharts does not widen the axis for mark lines.
  */
-export function timelineOption(observations: Observation[], scenarios: Scenario[]): EChartsOption {
-  const markers = timelineMarkers(scenarios);
+export function timelineOption(
+  observations: Observation[],
+  scenarios: Scenario[],
+  values: TimelineValues = quoteValues(''),
+): EChartsOption {
+  const markers = timelineMarkers(scenarios, values);
+  const plotted = observations.flatMap((o) => {
+    const price = values.observationPrice(o);
+    return price == null ? [] : [{ ...o, price }];
+  });
   const slots = [
-    ...observations.map((o) => o.slot),
+    ...plotted.map((o) => o.slot),
     ...markers.sourceBuys.map((m) => m.slot),
     ...markers.entries.map((m) => m.slot),
     ...markers.exits.map((m) => m.slot),
@@ -115,7 +215,7 @@ export function timelineOption(observations: Observation[], scenarios: Scenario[
   const min = slots.length ? Math.min(...slots) : 0;
   const max = slots.length ? Math.max(...slots) : 1;
   const pad = Math.max(1, Math.round((max - min) * 0.04));
-  const axes = slotAxes();
+  const axes = slotAxes(values.unit ? `Price (${values.unit})` : 'Price');
 
   const verticalLines: SeriesOption = {
     type: 'line',
@@ -142,17 +242,45 @@ export function timelineOption(observations: Observation[], scenarios: Scenario[
     },
   };
 
+  // Levels are plain two-point lines across the slot range, not mark lines: ECharts drops horizontal
+  // mark lines at memecoin-sized prices (around 1e-7), and real lines also widen the price axis to
+  // keep take profit and stop loss in view.
+  const levelLines: SeriesOption[] = markers.levels.flatMap((m) => {
+    const price = toChartNumber(m.price);
+    if (price == null) return [];
+    return [
+      {
+        type: 'line',
+        name: LEVELS_SERIES,
+        data: [
+          [min - pad, price],
+          [max + pad, price],
+        ],
+        showSymbol: false,
+        silent: true,
+        lineStyle: { color: m.color, type: 'dotted', width: 1.5 },
+        itemStyle: { color: LEVEL_COLORS.reference },
+        endLabel: { show: true, formatter: `${m.label} ${compactDecimal(m.price)}`, color: m.color, fontFamily: FONT_MONO, fontSize: 11 },
+        tooltip: { show: false },
+        emphasis: { disabled: true },
+        z: 0,
+      },
+    ];
+  });
+
   return {
-    grid: { left: 12, right: 32, top: 48, bottom: 64, containLabel: true },
+    // Room on the right for the level labels at the end of each level line.
+    grid: { left: 12, right: levelLines.length ? 150 : 32, top: 48, bottom: 64, containLabel: true },
     legend: { top: 0 },
     tooltip: { trigger: 'item', formatter: itemTooltip },
     ...axes,
     xAxis: { ...(axes.xAxis as object), min: min - pad, max: max + pad },
     series: [
-      ...observationSeries(observations),
+      ...observationSeries(plotted, values.observationNote),
       markerSeries('Entry fills', markers.entries, ENTRY_COLOR),
       markerSeries('Exits', markers.exits, EXIT_COLOR, 180),
       verticalLines,
+      ...levelLines,
     ],
   } as EChartsOption;
 }

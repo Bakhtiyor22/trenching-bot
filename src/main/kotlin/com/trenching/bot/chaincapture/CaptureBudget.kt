@@ -2,7 +2,14 @@ package com.trenching.bot.chaincapture
 
 import java.time.Duration
 
-class CaptureBudget(val maxRequests: Int, val maxBytes: Long, val initialRequests: Int = 0, val initialBytes: Long = 0) {
+/** One invocation's allowance. [operationTimeout] overrides the transport's default deadline for this invocation only. */
+class CaptureBudget(
+    val maxRequests: Int,
+    val maxBytes: Long,
+    val initialRequests: Int = 0,
+    val initialBytes: Long = 0,
+    val operationTimeout: Duration? = null,
+) {
     private var deadlineNanos: Long? = null
     var requestsUsed: Int = 0
         private set

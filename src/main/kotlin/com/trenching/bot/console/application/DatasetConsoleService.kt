@@ -44,7 +44,7 @@ class DatasetConsoleService(
         registration
     }
 
-    /** [sample] is matched case-insensitively, with `-` standing for `_` (`weekly-buy-v1`). */
+    /** [sample] is matched case-insensitively, with `-` standing for `_` (`dip-sample-v3`). */
     fun importSample(sample: String): DatasetRegistration {
         val key = sample.trim().uppercase().replace('-', '_')
         val dataset = SampleDataset.entries.firstOrNull { it.name == key } ?: throw SampleDatasetNotFoundException(sample)

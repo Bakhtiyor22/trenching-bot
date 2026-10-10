@@ -1,6 +1,6 @@
 # Pump.fun bonding-curve buy decoder
 
-Accepted 2026-10-03. The user chose the quote representation, the price basis and the route scope in chat. This is unit 2 of the [real wallet replay plan](../plans/20261003-real-wallet-replay.md).
+Accepted 2026-10-03. Amended 2026-10-10 by [exact-SOL-in (V3) buys](20261010-pumpfun-exact-quote-in-v3-buys.md), which adds `buy_exact_quote_in_v3` and rejects curves quoted in another token. The user chose the quote representation, the price basis and the route scope in chat. This is unit 2 of the [real wallet replay plan](../plans/archive/20261003-real-wallet-replay.md).
 
 ## Context
 

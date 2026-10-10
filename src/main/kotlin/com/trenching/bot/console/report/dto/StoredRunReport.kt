@@ -14,11 +14,14 @@ data class StoredConfiguration(
     val strategyName: String,
     val strategyVersion: String,
     val notional: BigDecimal,
-    val feeBps: Int,
-    val slippageBps: Int,
-    val maxWaitSlots: Long,
     val maxAgeSlots: Long,
-    val holdingSlots: Long,
+    val dipBps: Int,
+    val takeProfitBps: Int,
+    val stopLossBps: Int,
+    val minMarketCapUsd: BigDecimal,
+    val horizonSlots: Long,
+    val latencySlots: Long,
+    val transactionCostSol: BigDecimal,
     val quoteMint: StoredAddress,
 )
 

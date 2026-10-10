@@ -7,9 +7,11 @@ import com.trenching.bot.common.MarketPair
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
+import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.ObservationQuality
 import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifactStore
+import com.trenching.bot.protocol.pumpfun.CurveReserves
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.nio.file.Files
@@ -52,6 +54,12 @@ class RecordedMarketHistoryTest {
             sourceEventId = "$SIGNATURE:1:7",
             commitment = Commitment.CONFIRMED,
             quality = ObservationQuality.LAST_TRADE,
+            curveComplete = false,
+            curve = CurveState(
+                CurveReserves(BigInteger("79829770982"), BigInteger("403233026450985"), BigInteger("49829770982"), BigInteger("123333026450985")),
+                feeBps = 95,
+                creatorFeeBps = 30,
+            ),
         )
         assertEquals(listOf(expected), result.observations)
         assertEquals(38, result.observations.single().price.scale())
@@ -216,7 +224,7 @@ class RecordedMarketHistoryTest {
         val valid = manifest(listOf(window), listOf(record))
         val otherArtifact = artifact(fixture(signature(5), SLOT + 1))
         val forgeries = mapOf(
-            "schema version" to valid.copy(schemaVersion = 2),
+            "schema version" to valid.copy(schemaVersion = 1),
             "genesis" to valid.copy(genesisHash = MINT),
             "selection outside window" to valid.copy(windows = listOf(window.copy(fromSlot = SLOT + 1))),
             "quote mint" to valid.copy(windows = listOf(window.copy(quoteMint = OTHER_MINT))),
@@ -271,7 +279,7 @@ class RecordedMarketHistoryTest {
         val unresolved = setOf(MarketTransactionOutcome.PENDING, MarketTransactionOutcome.PROVIDER_UNAVAILABLE, MarketTransactionOutcome.INVALID_TRANSACTION)
         val acquired = windows.none { it.coverage == MarketWindowCoverage.PENDING } && records.none { it.outcome in unresolved }
         return MarketHistoryManifest(
-            schemaVersion = 1, genesisHash = GENESIS, commitment = "confirmed", capturedAt = "2026-10-04T00:00:00Z",
+            schemaVersion = 2, genesisHash = GENESIS, commitment = "confirmed", capturedAt = "2026-10-04T00:00:00Z",
             windowParameters = PARAMETERS, scanPageLimit = 1, maxTransactions = 300,
             windows = windows.sortedWith(compareBy({ it.baseMint }, { it.fromSlot })), records = records,
             acquisitionComplete = acquired, complete = acquired && windows.all { it.coverage == MarketWindowCoverage.COMPLETE },
@@ -343,6 +351,6 @@ class RecordedMarketHistoryTest {
         const val SOL_AMOUNT_OFFSET = 48
         const val TOKEN_AMOUNT_OFFSET = 56
         const val IS_BUY_OFFSET = 64
-        val PARAMETERS = MarketCaptureWindowParameters(firstEntryOffset = 1, lastEntryOffset = 3, maxWaitSlots = 2, maxAgeSlots = 2, holdingSlots = 5)
+        val PARAMETERS = MarketCaptureWindowParameters(horizonSlots = 4500, maxAgeSlots = 2)
     }
 }

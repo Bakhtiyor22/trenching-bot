@@ -60,6 +60,69 @@ export function formatDecimal(
   return fraction === undefined ? `${sign}${grouped}` : `${sign}${grouped}.${fraction}`;
 }
 
+const SUBSCRIPT_DIGITS = '₀₁₂₃₄₅₆₇₈₉';
+/** Below this many leading fractional zeros a price is short enough to show as is. */
+const COMPACT_MIN_ZEROS = 4;
+
+/**
+ * DEX-style short form of a tiny price: the run of leading fractional zeros becomes a subscript
+ * count, so "0.00000008643" reads "0.0₇8643". Every significant digit is kept, so it is still
+ * exact; values with fewer than four leading zeros, and non-decimals, go through {@link formatDecimal}.
+ */
+export function compactDecimal(value: string | null | undefined): string {
+  if (value == null) return '—';
+  const trimmed = value.trim();
+  const match = /^([+-]?)0\.(0+)(\d*)$/.exec(trimmed);
+  if (!match || match[2]!.length < COMPACT_MIN_ZEROS || !/[1-9]/.test(match[3]!)) return formatDecimal(value);
+  const [, sign, zeros, digits] = match;
+  const count = String(zeros!.length).replace(/\d/g, (d) => SUBSCRIPT_DIGITS[Number(d)]!);
+  return `${sign}0.0${count}${digits}`;
+}
+
+/** A plain decimal as a scaled integer: value = units / 10^scale. */
+function toScaled(value: string): { units: bigint; scale: number } {
+  const trimmed = value.trim();
+  const negative = trimmed.startsWith('-');
+  const [integer = '0', fraction = ''] = trimmed.replace(/^[+-]/, '').split('.');
+  const units = BigInt(integer + fraction);
+  return { units: negative ? -units : units, scale: fraction.length };
+}
+
+/**
+ * Exact sum of plain decimal strings, at the largest scale among them ("26.0895" + "-3.58" =
+ * "22.5095"). Used for running totals that are shown, so no float rounding creeps in.
+ * Throws on a value that is not a plain decimal.
+ */
+export function addDecimals(...values: string[]): string {
+  for (const v of values) {
+    if (!isDecimalString(v.trim())) throw new Error(`Not a plain decimal: ${v}`);
+  }
+  const parts = values.map(toScaled);
+  const scale = Math.max(0, ...parts.map((p) => p.scale));
+  const total = parts.reduce((sum, p) => sum + p.units * 10n ** BigInt(scale - p.scale), 0n);
+  const digits = (total < 0n ? -total : total).toString().padStart(scale + 1, '0');
+  const sign = total < 0n ? '-' : '';
+  if (scale === 0) return `${sign}${digits}`;
+  return `${sign}${digits.slice(0, -scale)}.${digits.slice(-scale)}`;
+}
+
+/** The same plain decimal with its sign flipped ("-3.5" → "3.5", "2" → "-2"). */
+export function negateDecimal(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.startsWith('-') ? trimmed.slice(1) : `-${trimmed.replace(/^\+/, '')}`;
+}
+
+/** Exact ordering of two plain decimal strings: -1, 0 or 1, for sorting by amount. */
+export function compareDecimals(a: string, b: string): -1 | 0 | 1 {
+  return decimalSign(addDecimals(a, negateDecimal(b)));
+}
+
+/** Drops trailing fractional zeros ("212.34000000" → "212.34"); the value is unchanged. */
+export function trimFractionZeros(value: string): string {
+  if (!isDecimalString(value.trim()) || !value.includes('.')) return value;
+  return value.trim().replace(/0+$/, '').replace(/\.$/, '');
+}
+
 export type PnlTone = 'positive' | 'negative' | 'zero';
 
 export function pnlTone(value: string): PnlTone {
@@ -84,39 +147,37 @@ export function toChartNumber(value: string | null | undefined): number | null {
 }
 
 export interface PlainDecimalRule {
-  /** Fraction digits retained by backend HALF_EVEN normalization. */
+  /** Most fraction digits accepted once trailing zeros are dropped; the backend refuses more rather than rounding. */
   maxFractionDigits: number;
-  /** Maximum integer digits (backend precision - scale). */
+  /** Most integer digits (backend precision - scale). */
   maxIntegerDigits: number;
+  /** Inclusive minimum, as a plain decimal. */
+  min: string;
+  /** Inclusive maximum, as a plain decimal; unbounded when absent. */
+  max?: string;
 }
 
 /**
- * Validates user input meant to be sent as a positive plain decimal string (e.g. notional).
- * Returns an error message, or null when valid.
+ * Validates user input meant to be sent as a non-negative plain decimal string (e.g. notional or transaction cost),
+ * exactly on its digits. Returns an error message, or null when valid.
  */
-export function validatePositiveDecimal(input: string, rule: PlainDecimalRule): string | null {
+export function validateDecimal(input: string, rule: PlainDecimalRule): string | null {
   const value = input.trim();
   if (value === '') return 'Required';
   if (!UNSIGNED_PLAIN_DECIMAL.test(value)) {
-    return 'Use a plain positive decimal such as 100 or 0.5 (no sign, exponent or separators)';
+    return 'Use a plain decimal such as 100 or 0.5 (no sign, exponent or separators)';
   }
   const [integer = '', fraction = ''] = value.split('.');
-  const significantInteger = integer.replace(/^0+(?=\d)/, '');
-  if (significantInteger.length > rule.maxIntegerDigits) {
+  if (fraction.replace(/0+$/, '').length > rule.maxFractionDigits) {
+    return `At most ${rule.maxFractionDigits} decimals`;
+  }
+  if (integer.replace(/^0+/, '').length > rule.maxIntegerDigits) {
     return `At most ${rule.maxIntegerDigits} digits before the decimal point`;
   }
-  const retained = fraction.slice(0, rule.maxFractionDigits).padEnd(rule.maxFractionDigits, '0');
-  const discarded = fraction.slice(rule.maxFractionDigits);
-  let scaled = BigInt(significantInteger + retained);
-  const firstDiscarded = discarded[0] ?? '0';
-  const aboveHalf =
-    firstDiscarded > '5' || (firstDiscarded === '5' && /[1-9]/.test(discarded.slice(1)));
-  const oddTie = firstDiscarded === '5' && !/[1-9]/.test(discarded.slice(1)) && scaled % 2n === 1n;
-  if (aboveHalf || oddTie) scaled += 1n;
-  if (scaled === 0n)
-    return `Must be greater than zero after rounding to ${rule.maxFractionDigits} decimals`;
-  if (scaled.toString().length > rule.maxIntegerDigits + rule.maxFractionDigits) {
-    return `At most ${rule.maxIntegerDigits} digits before the decimal point`;
+  const belowMin = compareDecimals(value, rule.min) < 0;
+  const aboveMax = rule.max !== undefined && compareDecimals(value, rule.max) > 0;
+  if (belowMin || aboveMax) {
+    return rule.max === undefined ? `Must be at least ${rule.min}` : `Must be between ${rule.min} and ${rule.max}`;
   }
   return null;
 }

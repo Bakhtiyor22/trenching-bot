@@ -1,6 +1,6 @@
 # Bounded mainnet wallet history capture
 
-Accepted 2026-10-03 with the [real wallet replay plan](../plans/20261003-real-wallet-replay.md), approved by the user in chat.
+Accepted 2026-10-03 with the [real wallet replay plan](../plans/archive/20261003-real-wallet-replay.md), approved by the user in chat.
 
 ## Context
 

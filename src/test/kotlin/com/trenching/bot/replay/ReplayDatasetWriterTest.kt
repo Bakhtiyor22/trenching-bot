@@ -7,6 +7,7 @@ import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetWriter
 import com.trenching.bot.walletactivity.domain.OrderedWalletTransactions
 import java.math.BigDecimal
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import tools.jackson.databind.json.JsonMapper
 
@@ -14,7 +15,7 @@ class ReplayDatasetWriterTest {
     private val json = JsonMapper.builder().build()
     private val loader = ReplayDatasetLoader(json)
     private val writer = ReplayDatasetWriter(json)
-    private fun dataset() = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
+    private fun dataset() = javaClass.getResourceAsStream("/replay/samples/dip-sample-v3.json").use {
         loader.load(requireNotNull(it))
     }
 
@@ -47,6 +48,22 @@ class ReplayDatasetWriterTest {
         assertEquals("10.0500", restored.observations.single { it.id == first.id }.price.toPlainString())
         assertEquals(null, restored.observations.single { it.id == first.id }.liquidityQuote)
         assertEquals(List(input.transactions.size) { null }, restored.transactions.map { it.blockTime })
+    }
+
+    @Test
+    fun `each observation's curve is written as raw integer strings`() {
+        val original = dataset()
+        val first = OrderedMarketData.canonical(original.observations).first()
+
+        val curve = json.readTree(writer.write(original)).path("observations").path(0).path("curve")
+
+        assertEquals(first.curve.reserves.virtualSol.toString(), curve.path("virtualSolReserves").asString())
+        assertEquals(first.curve.reserves.virtualToken.toString(), curve.path("virtualTokenReserves").asString())
+        assertEquals(first.curve.reserves.realSol.toString(), curve.path("realSolReserves").asString())
+        assertEquals(first.curve.reserves.realToken.toString(), curve.path("realTokenReserves").asString())
+        assertEquals(first.curve.feeBps.toString(), curve.path("feeBps").asString())
+        assertEquals(first.curve.creatorFeeBps.toString(), curve.path("creatorFeeBps").asString())
+        assertTrue(curve.path("feeBps").isString)
     }
 
     @Test

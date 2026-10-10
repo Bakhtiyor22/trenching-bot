@@ -54,41 +54,47 @@ describe('NewRunPage', () => {
     expect(screen.queryByRole('button', { name: /Start run/ })).not.toBeInTheDocument();
   });
 
-  it('prefills the MVP defaults', async () => {
+  it('prefills the dip-entry defaults', async () => {
     renderNewRun();
-    expect(await screen.findByLabelText(/Notional/)).toHaveValue('100');
-    expect(screen.getByLabelText(/Fee \(bps\)/)).toHaveValue('10');
-    expect(screen.getByLabelText(/Slippage \(bps\)/)).toHaveValue('50');
-    expect(screen.getByLabelText(/Holding period/)).toHaveValue('5');
+    expect(await screen.findByLabelText(/Notional/)).toHaveValue('0.1');
+    expect(screen.getByLabelText(/Latency \(slots\)/)).toHaveValue('1');
+    expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).toHaveValue('0.001000000000');
+    expect(screen.queryByLabelText(/Fee \(bps\)/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Slippage/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Dip below first buy/)).toHaveValue('1500');
+    expect(screen.getByLabelText(/Take profit/)).toHaveValue('3000');
+    expect(screen.getByLabelText(/Stop loss/)).toHaveValue('1500');
+    expect(screen.getByLabelText(/Minimum market cap/)).toHaveValue('10000');
+    expect(screen.getByLabelText(/Horizon/)).toHaveValue('4500');
   });
 
-  it('shows a server fields.feeBps error next to the fee input', async () => {
+  it('shows a server fields.latencySlots error next to the latency input', async () => {
     server.use(
       http.post('/api/runs', () =>
         HttpResponse.json(
           {
             code: 'CONFIG_INVALID',
             message: 'Simulation configuration is invalid',
-            fields: { feeBps: 'must be an integer between 0 and 9999' },
+            fields: { latencySlots: 'must be an integer between 1 and 150' },
           },
           { status: 400 },
         ),
       ),
     );
     const { user } = renderNewRun();
-    await screen.findByLabelText(/Fee \(bps\)/);
+    await screen.findByLabelText(/Latency \(slots\)/);
     await user.click(screen.getByRole('button', { name: /Start run/ }));
 
-    const message = await screen.findByText('must be an integer between 0 and 9999');
-    const feeInput = screen.getByLabelText(/Fee \(bps\)/);
-    expect(feeInput).toHaveAttribute('aria-invalid', 'true');
-    expect(errorIdsOf(feeInput)).toContain(message.id);
+    const message = await screen.findByText('must be an integer between 1 and 150');
+    const latencyInput = screen.getByLabelText(/Latency \(slots\)/);
+    expect(latencyInput).toHaveAttribute('aria-invalid', 'true');
+    expect(errorIdsOf(latencyInput)).toContain(message.id);
     // Other inputs are not marked.
-    expect(screen.getByLabelText(/Slippage \(bps\)/)).not.toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).not.toHaveAttribute('aria-invalid', 'true');
     expect(screen.getByRole('alert')).toHaveTextContent('Simulation configuration is invalid');
   });
 
-  it('sends notional as a string and integers as numbers, then opens the run', async () => {
+  it('sends notional and transaction cost as strings and integers as numbers, without fee or slippage, then opens the run', async () => {
     let body: RunStartRequest | undefined;
     server.use(
       http.post('/api/runs', async ({ request }) => {
@@ -99,16 +105,20 @@ describe('NewRunPage', () => {
     const { user, router } = renderNewRun();
     const notional = await screen.findByLabelText(/Notional/);
     await user.clear(notional);
-    await user.type(notional, '1.0000000000001');
+    await user.type(notional, '1.000000001');
+    const cost = screen.getByLabelText(/Transaction cost \(SOL\)/);
+    await user.clear(cost);
+    await user.type(cost, '0');
     await user.click(screen.getByRole('button', { name: /Start run/ }));
 
     await screen.findByText('Run detail page');
     expect(router.state.location.pathname).toBe(`/runs/${SAMPLE_RUN_ID}`);
     expect(body?.datasetId).toBe(SAMPLE_DATASET_ID);
-    expect(body?.config?.notional).toBe('1.0000000000001');
-    expect(typeof body?.config?.notional).toBe('string');
-    expect(body?.config?.feeBps).toBe(10);
-    expect(typeof body?.config?.feeBps).toBe('number');
+    expect(body?.config?.notional).toBe('1.000000001');
+    expect(body?.config?.transactionCostSol).toBe('0');
+    expect(body?.config?.latencySlots).toBe(1);
+    expect(body?.config).not.toHaveProperty('feeBps');
+    expect(body?.config).not.toHaveProperty('slippageBps');
   });
 
   it('validates on the client before calling the server', async () => {
@@ -120,27 +130,33 @@ describe('NewRunPage', () => {
       }),
     );
     const { user } = renderNewRun();
-    const fee = await screen.findByLabelText(/Fee \(bps\)/);
-    await user.clear(fee);
-    await user.type(fee, '10000');
+    const latency = await screen.findByLabelText(/Latency \(slots\)/);
+    await user.clear(latency);
+    await user.type(latency, '151');
     const notional = screen.getByLabelText(/Notional/);
     await user.clear(notional);
-    await user.type(notional, '0.0000000000005');
+    await user.type(notional, '0.0000000005');
+    const cost = screen.getByLabelText(/Transaction cost \(SOL\)/);
+    await user.clear(cost);
+    await user.type(cost, '0.2');
     await user.click(screen.getByRole('button', { name: /Start run/ }));
 
-    expect(await screen.findByText('Must be between 0 and 9999')).toBeInTheDocument();
-    expect(
-      screen.getByText('Must be greater than zero after rounding to 12 decimals'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Must be between 1 and 150')).toBeInTheDocument();
+    expect(screen.getByText('At most 9 decimals')).toBeInTheDocument();
+    expect(screen.getByText('Must be between 0 and 0.1')).toBeInTheDocument();
     await waitFor(() => expect(called).toBe(false));
   });
 
-  it('resets to the MVP defaults', async () => {
+  it('resets to the defaults', async () => {
     const { user } = renderNewRun();
-    const fee = await screen.findByLabelText(/Fee \(bps\)/);
-    await user.clear(fee);
-    await user.type(fee, '77');
-    await user.click(screen.getByRole('button', { name: /Reset to MVP defaults/ }));
-    expect(screen.getByLabelText(/Fee \(bps\)/)).toHaveValue('10');
+    const latency = await screen.findByLabelText(/Latency \(slots\)/);
+    await user.clear(latency);
+    await user.type(latency, '7');
+    const cost = screen.getByLabelText(/Transaction cost \(SOL\)/);
+    await user.clear(cost);
+    await user.type(cost, '0.005');
+    await user.click(screen.getByRole('button', { name: /Reset to defaults/ }));
+    expect(screen.getByLabelText(/Latency \(slots\)/)).toHaveValue('1');
+    expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).toHaveValue('0.001000000000');
   });
 });

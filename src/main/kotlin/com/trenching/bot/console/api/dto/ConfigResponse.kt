@@ -4,11 +4,14 @@ data class ConfigResponse(
     val strategyName: String,
     val strategyVersion: String,
     val notional: String,
-    val feeBps: Int,
-    val slippageBps: Int,
-    val maxWaitSlots: Long,
     val maxAgeSlots: Long,
-    val holdingSlots: Long,
+    val dipBps: Int,
+    val takeProfitBps: Int,
+    val stopLossBps: Int,
+    val minMarketCapUsd: String,
+    val horizonSlots: Long,
+    val latencySlots: Long,
+    val transactionCostSol: String,
     val quoteMint: String,
 )
 
@@ -17,18 +20,31 @@ data class ConfigDefaultsResponse(
     val limits: ConfigLimitsResponse,
 )
 
-/** Inclusive ranges; a null `max` is unbounded above. */
+/**
+ * Inclusive ranges; a null `max` is unbounded above. A notional has at most [notionalScale] decimals (whole lamports)
+ * and [notionalPrecision] digits; a transaction cost is rounded to [transactionCostScale] decimals.
+ */
 data class ConfigLimitsResponse(
     val notionalScale: Int,
     val notionalPrecision: Int,
-    val feeBps: RangeResponse,
-    val slippageBps: RangeResponse,
-    val maxWaitSlots: RangeResponse,
     val maxAgeSlots: RangeResponse,
-    val holdingSlots: RangeResponse,
+    val dipBps: RangeResponse,
+    val takeProfitBps: RangeResponse,
+    val stopLossBps: RangeResponse,
+    val minMarketCapUsd: RangeResponse,
+    val horizonSlots: RangeResponse,
+    val latencySlots: RangeResponse,
+    val transactionCostScale: Int,
+    val transactionCostSol: DecimalRangeResponse,
 )
 
 data class RangeResponse(
     val min: Long,
     val max: Long?,
+)
+
+/** Inclusive decimal bounds as exact decimal strings. */
+data class DecimalRangeResponse(
+    val min: String,
+    val max: String,
 )

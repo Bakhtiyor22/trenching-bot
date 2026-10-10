@@ -131,7 +131,7 @@ tasks.register<JavaExec>("replay") {
     group = "application"
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("com.trenching.bot.replay.api.ReplayCommandKt")
-    args(providers.gradleProperty("dataset").orElse("src/main/resources/replay/samples/weekly-buy-v1.json").get())
+    args(providers.gradleProperty("dataset").orElse("src/main/resources/replay/samples/dip-sample-v3.json").get())
     args(providers.gradleProperty("report").orElse("build/replay-report.json").get())
 }
 
@@ -141,7 +141,7 @@ tasks.register<JavaExec>("persistedReplay") {
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("com.trenching.bot.replay.api.PersistedReplayCommandKt")
     systemProperty("spring.profiles.active", providers.gradleProperty("profile").orElse("local").get())
-    args(providers.gradleProperty("dataset").orElse("src/main/resources/replay/samples/weekly-buy-v1.json").get())
+    args(providers.gradleProperty("dataset").orElse("src/main/resources/replay/samples/dip-sample-v3.json").get())
     args(providers.gradleProperty("report").orElse("build/persisted-replay-report.json").get())
 }
 
@@ -158,6 +158,8 @@ tasks.register<JavaExec>("captureWalletHistory") {
     args("--scan-pages", providers.gradleProperty("scanPages").orElse("20").get())
     args("--request-budget", providers.gradleProperty("requestBudget").orElse("400").get())
     args("--byte-budget", providers.gradleProperty("byteBudget").orElse("104857600").get())
+    args("--scope", providers.gradleProperty("scope").orElse("wallet-references").get())
+    args("--operation-timeout-minutes", providers.gradleProperty("operationTimeoutMinutes").orElse("10").get())
 }
 
 tasks.register<JavaExec>("inspectWalletHistory") {
@@ -181,6 +183,7 @@ tasks.register<JavaExec>("captureReplayMarkets") {
     args("--max-transactions", providers.gradleProperty("maxTransactions").orElse("300").get())
     args("--request-budget", providers.gradleProperty("requestBudget").orElse("400").get())
     args("--byte-budget", providers.gradleProperty("byteBudget").orElse("104857600").get())
+    args("--operation-timeout-minutes", providers.gradleProperty("operationTimeoutMinutes").orElse("10").get())
 }
 
 tasks.register<JavaExec>("inspectReplayMarkets") {
@@ -192,13 +195,42 @@ tasks.register<JavaExec>("inspectReplayMarkets") {
 }
 
 tasks.register<JavaExec>("exportRecordedReplay") {
-    description = "Export verified wallet and market captures as a v1 replay dataset offline, without credentials or PostgreSQL"
+    description = "Export verified wallet, market and rate captures as a v3 replay dataset offline, without credentials or PostgreSQL"
     group = "application"
     classpath = sourceSets.main.get().runtimeClasspath
     mainClass.set("com.trenching.bot.replay.api.ExportRecordedReplayCommandKt")
     args("--wallet-capture-directory", providers.gradleProperty("walletCaptureDirectory").orElse("").get())
     args("--market-capture-directory", providers.gradleProperty("marketCaptureDirectory").orElse("build/captures/replay-markets").get())
-    args("--output", providers.gradleProperty("output").orElse("build/captures/recorded-replay-v1.json").get())
+    args("--rates-capture-directory", providers.gradleProperty("ratesCaptureDirectory").orElse("build/captures/reference-rates").get())
+    args("--output", providers.gradleProperty("output").orElse("build/captures/recorded-replay-v3.json").get())
+}
+
+tasks.register<JavaExec>("calibrateExecution") {
+    description = "Calibrate curve math, latency and costs from verified local captures offline, without credentials or PostgreSQL"
+    group = "application"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.trenching.bot.replay.api.CalibrateExecutionCommandKt")
+    args("--wallet-capture-directory", providers.gradleProperty("walletCaptureDirectory").orElse("").get())
+    args("--market-capture-directory", providers.gradleProperty("marketCaptureDirectory").orElse("build/captures/replay-markets").get())
+    args("--report", providers.gradleProperty("report").orElse("build/captures/execution-calibration.json").get())
+}
+val referenceRatesDirectory = providers.gradleProperty("captureDirectory").orElse("build/captures/reference-rates")
+
+tasks.register<JavaExec>("captureReferenceRates") {
+    description = "Explicit user-run capture of Binance SOL/USDT minute rates for a market capture's trades; never part of build"
+    group = "application"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.trenching.bot.replay.api.CaptureReferenceRatesCommandKt")
+    args("--market-capture-directory", providers.gradleProperty("marketCaptureDirectory").orElse("build/captures/replay-markets").get())
+    args("--directory", referenceRatesDirectory.get())
+}
+
+tasks.register<JavaExec>("inspectReferenceRates") {
+    description = "Verify and summarize recorded SOL/USDT minute rates offline"
+    group = "application"
+    classpath = sourceSets.main.get().runtimeClasspath
+    mainClass.set("com.trenching.bot.replay.api.InspectReferenceRatesCommandKt")
+    args("--directory", referenceRatesDirectory.get())
 }
 
 // `bootRun` explicitly selects the local profile for developer convenience.

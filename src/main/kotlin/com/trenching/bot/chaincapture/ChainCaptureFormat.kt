@@ -5,6 +5,9 @@ object ChainCaptureFormat {
     const val COMMITMENT = "confirmed"
     const val SIGNATURE_PAGE_SIZE = 1000
     const val MAX_RESPONSE_BYTES = 8L * 1024 * 1024
+
+    /** A market manifest lists up to 50,000 transactions and their window selections. */
+    const val MAX_MANIFEST_BYTES = 64L * 1024 * 1024
     const val MAX_SUPPORTED_TRANSACTION_VERSION = 1
     const val CAPTURE_LOCK = ".capture.lock"
     const val GET_GENESIS = "getGenesisHash"

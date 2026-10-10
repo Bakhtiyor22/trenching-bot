@@ -44,7 +44,7 @@ class ReplayDatasetCatalogService(
 
     override fun importSample(sample: SampleDataset): DatasetRegistration {
         val name = when (sample) {
-            SampleDataset.WEEKLY_BUY_V1 -> "weekly-buy-v1"
+            SampleDataset.DIP_SAMPLE_V3 -> "dip-sample-v3"
         }
         val resource = checkNotNull(javaClass.getResourceAsStream("$SAMPLE_DIRECTORY$name.json")) { "Missing bundled sample=$sample" }
         return resource.use { register(name, it) }

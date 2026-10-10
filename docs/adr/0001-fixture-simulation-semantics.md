@@ -17,3 +17,5 @@ Accepted 2026-10-01. The user approved these simulation semantics in chat.
 Hand-calculated example (source slot 100): entry observations at 101/102/103 all price 10; exit observations at 106/107/108 all price 11. Each entry has execution price 10.05, quantity 9.950248756219, fee 0.100000000000, cost 100.100000000000. Each exit has execution price 10.945, gross proceeds 108.905472636817, fee 0.108905472637, net proceeds 108.796567164180, realized P&L 8.696567164180 quote units.
 
 This is a fee/slippage model, not an executable quote: no pool impact, MEV, priority fees, route parsing or live timing guarantee. Revisit when actual slot-aware captures and supported protocols are available.
+
+Update 2026-10-08: the [dip-entry strategy decision](20261008-dip-entry-strategy.md) supersedes the entry offsets, fill wait, holding exit and their parameters. Fees, slippage, quantities, rounding and idempotency stand.

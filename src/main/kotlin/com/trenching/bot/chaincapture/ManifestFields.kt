@@ -41,8 +41,14 @@ object ManifestFields {
 
     /** Reads the manifest's integer schema version, failing with `MANIFEST_VERSION` unless it is [expected]. */
     fun requireVersion(node: JsonNode, expected: Int) {
+        requireVersion(node, setOf(expected))
+    }
+
+    /** Reads the manifest's integer schema version, failing with `MANIFEST_VERSION` unless it is one of [accepted]. */
+    fun requireVersion(node: JsonNode, accepted: Set<Int>): Int {
         val version = node.path("schemaVersion")
-        if (!version.isIntegralNumber || !version.canConvertToInt() || version.asInt() != expected) fail("MANIFEST_VERSION")
+        if (!version.isIntegralNumber || !version.canConvertToInt() || version.asInt() !in accepted) fail("MANIFEST_VERSION")
+        return version.asInt()
     }
 
     private fun fail(category: String): Nothing = throw CaptureValidationException(category)

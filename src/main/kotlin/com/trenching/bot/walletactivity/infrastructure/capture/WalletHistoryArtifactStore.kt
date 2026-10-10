@@ -30,8 +30,7 @@ internal class WalletHistoryArtifactStore(private val mapper: ObjectMapper) {
     fun loadIfPresent(directory: Path, onArtifact: (WalletHistoryRecord, JsonNode) -> Unit = { _, _ -> }): WalletHistoryManifest? {
         val root = files.root(directory, create = false)
         val inner = files.readManifest(root, WalletCaptureFormat.MANIFEST) ?: return null
-        ManifestFields.requireVersion(inner, WalletCaptureFormat.VERSION)
-        val manifest = parse(inner)
+        val manifest = parse(inner, ManifestFields.requireVersion(inner, WalletCaptureFormat.READABLE_VERSIONS))
         validate(manifest)
         manifest.records.forEach { record ->
             val artifact = record.artifact
@@ -39,15 +38,19 @@ internal class WalletHistoryArtifactStore(private val mapper: ObjectMapper) {
                 val sha256 = checkNotNull(record.sha256) { "Validated record has an artifact without a hash signature=${record.signature}" }
                 val node = files.readArtifact(root, artifact, record.bytes, sha256)
                 val selection = manifest.selection.single { it.signature == record.signature }
-                if (WalletTransactionEvidence().classify(node, selection, manifest.wallet) != record.outcome) fail("ARTIFACT_IDENTITY")
+                if (WalletTransactionEvidence().classify(node, selection, manifest.wallet, manifest.listingAddress) != record.outcome) {
+                    fail("ARTIFACT_IDENTITY")
+                }
                 onArtifact(record, node)
             }
         }
         return manifest
     }
 
+    /** Always writes the current format: scope fields are part of every saved manifest. */
     fun save(directory: Path, manifest: WalletHistoryManifest) {
-        files.writeManifest(files.root(directory, create = true), WalletCaptureFormat.MANIFEST, mapper.valueToTree(manifest))
+        files.writeManifest(files.root(directory, create = true), WalletCaptureFormat.MANIFEST,
+            mapper.valueToTree(manifest.copy(schemaVersion = WalletCaptureFormat.VERSION)))
     }
 
     fun lock(directory: Path): AutoCloseable = files.lock(directory)
@@ -55,7 +58,7 @@ internal class WalletHistoryArtifactStore(private val mapper: ObjectMapper) {
     fun writeTransaction(directory: Path, signature: String, raw: JsonNode): CaptureArtifact =
         files.writeTransaction(directory, signature, raw)
 
-    private fun parse(node: JsonNode): WalletHistoryManifest = try {
+    private fun parse(node: JsonNode, version: Int): WalletHistoryManifest = try {
         val selection = array(node, "selection").map { value -> WalletHistorySelection(
             string(value, "signature"), integer(value, "slot"),
         ) }
@@ -65,7 +68,12 @@ internal class WalletHistoryArtifactStore(private val mapper: ObjectMapper) {
         ) }
         val cursor = node.path("scanCursor").takeUnless { it.isNull || it.isMissingNode }
             ?.let { WalletHistoryScanCursor(string(it, "signature"), integer(it, "slot")) }
-        WalletHistoryManifest(smallInteger(node, "schemaVersion"), string(node, "wallet"), string(node, "genesisHash"),
+        val wallet = string(node, "wallet")
+        val scoped = version != WalletCaptureFormat.SCOPELESS_VERSION
+        if (!scoped && (node.has(SCOPE) || node.has(LISTING_ADDRESS))) fail("MANIFEST_FIELDS")
+        val scope = if (scoped) WalletHistoryScope.valueOf(string(node, SCOPE)) else WalletHistoryScope.WALLET_REFERENCES
+        val listingAddress = if (scoped) string(node, LISTING_ADDRESS) else wallet
+        WalletHistoryManifest(version, wallet, scope, listingAddress, string(node, "genesisHash"),
             string(node, "commitment"), string(node, "capturedAt"), smallInteger(node, "limit"), smallInteger(node, "scanPageLimit"),
             selection, records, boolean(node, "complete"), boolean(node, "discoveryComplete"),
             optionalString(node, "discoveryStop")?.let(WalletHistoryDiscoveryStop::valueOf),
@@ -82,7 +90,7 @@ internal class WalletHistoryArtifactStore(private val mapper: ObjectMapper) {
             manifest.selection.map { it.signature }.distinct().size != manifest.selection.size ||
             manifest.requestsUsed < 0 || manifest.bytesUsed < 0) fail("MANIFEST_BOUNDS")
         try {
-            WalletAddress.of(manifest.wallet)
+            if (manifest.listingAddress != WalletHistoryListing.address(manifest.scope, WalletAddress.of(manifest.wallet))) fail("LISTING_ADDRESS")
             Instant.parse(manifest.capturedAt)
             manifest.selection.forEach { TransactionSignature.of(it.signature); if (it.slot < 0) fail("SLOT") }
             manifest.scanCursor?.let { TransactionSignature.of(it.signature) }
@@ -95,6 +103,7 @@ internal class WalletHistoryArtifactStore(private val mapper: ObjectMapper) {
             if (record.artifact != null && record.artifact != files.transactionPath(record.signature)) fail("ARTIFACT_PATH")
             if (record.sha256 != null && !record.sha256.matches(Regex("[0-9a-f]{64}"))) fail("ARTIFACT_HASH")
             if (!requiresArtifact && record.bytes != 0L) fail("RECORD_BYTES")
+            if (record.outcome == WalletHistoryOutcome.WALLET_ABSENT && manifest.listingAddress == manifest.wallet) fail("RECORD_OUTCOME")
         }
         if (!consistentDiscovery(manifest)) fail("DISCOVERY_STATE")
         val resolved = manifest.discoveryComplete && manifest.records.none { it.outcome in WalletCaptureFormat.UNRESOLVED_OUTCOMES }
@@ -117,4 +126,9 @@ internal class WalletHistoryArtifactStore(private val mapper: ObjectMapper) {
     }
 
     private fun fail(category: String): Nothing = throw CaptureValidationException(category)
+
+    private companion object {
+        const val SCOPE = "scope"
+        const val LISTING_ADDRESS = "listingAddress"
+    }
 }

@@ -1,6 +1,6 @@
 # Pump.fun bonding-curve LAST_TRADE observations
 
-Accepted 2026-10-04 with [Amendment B](../plans/20261003-real-wallet-replay.md) of the real wallet replay plan, approved by the user in chat. This decision implements the plan's key decision 4 for the first evidenced route. It builds on the [buy decoder ADR](20261003-pumpfun-bonding-curve-buy-decoder.md), whose quote representation and price basis the user chose.
+Accepted 2026-10-04 with [Amendment B](../plans/archive/20261003-real-wallet-replay.md) of the real wallet replay plan, approved by the user in chat. This decision implements the plan's key decision 4 for the first evidenced route. It builds on the [buy decoder ADR](20261003-pumpfun-bonding-curve-buy-decoder.md), whose quote representation and price basis the user chose.
 
 ## Context
 

@@ -42,40 +42,38 @@ class ReplayMarketWindowPlannerTest {
     private var captured: MarketHistoryCaptureRequest? = null
 
     @Test
-    fun `plans one window from source slot plus one through plus twelve with the default simulation parameters`() {
+    fun `plans one window over the horizon after the source buy with the default simulation parameters`() {
         val plan = planner.plan(history(buy(SIGNATURE, SLOT)))
-        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 12, SIGNATURE)), plan.windows)
-        assertEquals(MarketCaptureWindowParameters(firstEntryOffset = 1, lastEntryOffset = 3, maxWaitSlots = 2, maxAgeSlots = 2, holdingSlots = 5),
-            plan.parameters)
+        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 4500, SIGNATURE)), plan.windows)
+        assertEquals(MarketCaptureWindowParameters(horizonSlots = 4500, maxAgeSlots = 2), plan.parameters)
         assertEquals(1, plan.sourceBuys)
     }
 
     @Test
-    fun `derives the window span from the simulation parameters it is given`() {
-        val config = SimulationConfig.of(BigDecimal("100"), 10, 50, maxWaitSlots = 1, maxAgeSlots = 4, holdingSlots = 3)
+    fun `derives the window span from the horizon it is given`() {
+        val config = SimulationConfig.of(BigDecimal("0.1"), 4, 1500, 3000, 1500, BigDecimal("10000"), 900, 1, BigDecimal("0.001"))
         val plan = planner.plan(history(buy(SIGNATURE, SLOT)), config)
-        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 8, SIGNATURE)), plan.windows)
-        assertEquals(MarketCaptureWindowParameters(1, 3, 1, 4, 3), plan.parameters)
+        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 900, SIGNATURE)), plan.windows)
+        assertEquals(MarketCaptureWindowParameters(900, 4), plan.parameters)
     }
 
     @Test
-    fun `merges overlapping and adjacent windows of one mint and keeps the oldest source signature as the bound`() {
+    fun `plans one window per mint from its first buy, since later buys of a mint start no cycle`() {
         val plan = planner.plan(history(
-            buy(signature(1), SLOT), buy(signature(2), SLOT + 10), buy(signature(3), SLOT + 22), buy(signature(4), SLOT + 40),
+            buy(signature(1), SLOT), buy(signature(2), SLOT + 10), buy(signature(4), SLOT + 9000),
             buy(signature(5), SLOT, OTHER_MINT),
         ))
-        assertEquals(listOf(
-            window(MINT, SLOT + 1, SLOT + 34, signature(1)),
-            window(MINT, SLOT + 41, SLOT + 52, signature(4)),
-            window(OTHER_MINT, SLOT + 1, SLOT + 12, signature(5)),
-        ), plan.windows)
-        assertEquals(5, plan.sourceBuys)
+        assertEquals(setOf(
+            window(MINT, SLOT + 1, SLOT + 4500, signature(1)),
+            window(OTHER_MINT, SLOT + 1, SLOT + 4500, signature(5)),
+        ), plan.windows.toSet())
+        assertEquals(4, plan.sourceBuys)
     }
 
     @Test
     fun `breaks a same slot tie between source buys by signature`() {
         val plan = planner.plan(history(buy(signature(9), SLOT), buy(signature(8), SLOT)))
-        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 12, signature(8))), plan.windows)
+        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 4500, signature(8))), plan.windows)
     }
 
     @Test
@@ -92,7 +90,7 @@ class ReplayMarketWindowPlannerTest {
         saveWalletCapture(complete = true)
         val result = service().capture(ReplayMarketCaptureRequest(directory, directory.resolve("markets"), 7, 30, 70, 1_000_000))
         val request = requireNotNull(captured)
-        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 12, SIGNATURE)), request.windows)
+        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 4500, SIGNATURE)), request.windows)
         assertEquals(directory.resolve("markets"), request.directory)
         assertEquals(listOf(7, 30, 70), listOf(request.scanPages, request.maxTransactions, request.requestBudget))
         assertEquals(1_000_000L, request.byteBudget)

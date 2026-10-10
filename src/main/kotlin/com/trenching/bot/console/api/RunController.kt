@@ -8,11 +8,14 @@ import com.trenching.bot.console.api.dto.RunEventResponse
 import com.trenching.bot.console.api.dto.RunPageResponse
 import com.trenching.bot.console.api.dto.RunStartRequest
 import com.trenching.bot.console.api.dto.RunStartResponse
+import com.trenching.bot.console.api.dto.RunUsdtViewResponse
 import com.trenching.bot.console.application.ConsoleService
 import com.trenching.bot.console.application.RunLaunchService
+import com.trenching.bot.console.application.RunUsdtViewService
 import com.trenching.bot.console.config.ConditionalOnConsoleEnabled
 import com.trenching.bot.console.mapper.ObservationResponseMapper
 import com.trenching.bot.console.mapper.RunResponseMapper
+import com.trenching.bot.console.mapper.RunUsdtViewMapper
 import org.springframework.http.ContentDisposition
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -33,6 +36,8 @@ class RunController(
     private val consoleService: ConsoleService,
     private val runResponseMapper: RunResponseMapper,
     private val observationResponseMapper: ObservationResponseMapper,
+    private val runUsdtViewService: RunUsdtViewService,
+    private val runUsdtViewMapper: RunUsdtViewMapper,
 ) {
     @PostMapping
     fun start(@RequestBody request: RunStartRequest): ResponseEntity<RunStartResponse> {
@@ -56,6 +61,10 @@ class RunController(
     @GetMapping("/{id}/observations")
     fun observations(@PathVariable id: String): List<ObservationResponse> =
         observationResponseMapper.toResponses(consoleService.observations(id))
+
+    /** Display-only USDT values of a wrapped-SOL run, each at its own block time's minute. */
+    @GetMapping("/{id}/usdt")
+    fun usdt(@PathVariable id: String): RunUsdtViewResponse = runUsdtViewMapper.toResponse(runUsdtViewService.view(id))
 
     @GetMapping("/{id}/orders")
     fun orders(@PathVariable id: String): List<OrderResponse> = runResponseMapper.toOrders(consoleService.orders(id))

@@ -39,6 +39,24 @@ export const routes: RouteObject[] = [
         }),
       },
       {
+        path: 'compare',
+        lazy: async () => ({
+          Component: (await import('./features/compare/ComparePage')).ComparePage,
+        }),
+      },
+      {
+        path: 'captures',
+        lazy: async () => ({
+          Component: (await import('./features/captures/CapturesPage')).CapturesPage,
+        }),
+      },
+      {
+        path: 'captures/:id',
+        lazy: async () => ({
+          Component: (await import('./features/captures/CaptureDetailPage')).CaptureDetailPage,
+        }),
+      },
+      {
         path: 'solana',
         lazy: async () => ({
           Component: (await import('./features/solana/SolanaPage')).SolanaPage,

@@ -15,6 +15,7 @@ internal object CaptureCommandExits {
     const val FAILURE = 1
     const val INVALID_ARGUMENTS = 2
     const val NOT_CONFIGURED = "NOT_CONFIGURED"
+    private const val DEADLINE = "DEADLINE"
 
     fun execute(operation: String, errors: PrintStream, action: () -> Int): Int = try {
         action()
@@ -30,6 +31,13 @@ internal object CaptureCommandExits {
         if (exception is CaptureValidationException) errors.println("reason=${exception.category}")
         if (category == NOT_CONFIGURED) errors.println("Set SOLANA_RPC_URL in the environment of this command process.")
         FAILURE
+    }
+
+    /** Prints why an acquisition invocation stopped early; a stop is never fatal to the saved evidence. */
+    fun stopReason(output: PrintStream, reason: String?) {
+        if (reason == null) return
+        output.println("stopReason=$reason")
+        if (reason == DEADLINE) output.println("The operation deadline ended this run. Re-run the same command to resume from the saved checkpoint.")
     }
 
     fun incomplete(operation: String, errors: PrintStream): Int {

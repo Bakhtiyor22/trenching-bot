@@ -55,8 +55,7 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
 
     private fun parse(node: JsonNode): MarketHistoryManifest = try {
         val parameters = node.path("windowParameters").let { value ->
-            MarketCaptureWindowParameters(integer(value, "firstEntryOffset"), integer(value, "lastEntryOffset"),
-                integer(value, "maxWaitSlots"), integer(value, "maxAgeSlots"), integer(value, "holdingSlots"))
+            MarketCaptureWindowParameters(integer(value, "horizonSlots"), integer(value, "maxAgeSlots"))
         }
         val windows = array(node, "windows", MarketCaptureFormat.MAX_WINDOWS).map(::window)
         val records = array(node, "records", MarketCaptureFormat.MAX_TRANSACTIONS).map { value -> MarketTransactionRecord(

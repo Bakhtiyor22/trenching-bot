@@ -22,7 +22,7 @@ class WalletTransactionEvidenceTest {
         assertEquals(WalletHistoryOutcome.UNCLASSIFIED, classify { })
         assertEquals(WalletHistoryOutcome.NON_SIGNER, classify { (accountKeys(it)[0] as ObjectNode).put("signer", false) })
         assertEquals(WalletHistoryOutcome.UNCLASSIFIED, classify { it.put("version", "legacy") })
-        assertEquals(WalletHistoryOutcome.UNAVAILABLE, evidence.classify(mapper.readTree("null"), selection, wallet))
+        assertEquals(WalletHistoryOutcome.UNAVAILABLE, evidence.classify(mapper.readTree("null"), selection, wallet, wallet))
     }
 
     @Test
@@ -188,14 +188,14 @@ class WalletTransactionEvidenceTest {
         listOf("[]", "\"x\"", "5", "{}", """{"slot":{}}""", """{"slot":100,"transaction":{"signatures":[{}]}}""",
             """{"slot":100,"version":0,"transaction":{"signatures":["$signature"],"message":{"accountKeys":[{"pubkey":{},"signer":true}]}}}""",
         ).forEach { json ->
-            assertEquals(WalletHistoryOutcome.INVALID_TRANSACTION, evidence.classify(mapper.readTree(json), selection, wallet), json)
+            assertEquals(WalletHistoryOutcome.INVALID_TRANSACTION, evidence.classify(mapper.readTree(json), selection, wallet, wallet), json)
         }
     }
 
     private fun classify(mutation: (ObjectNode) -> Unit): WalletHistoryOutcome {
         val node = valid()
         mutation(node)
-        return evidence.classify(node, selection, wallet)
+        return evidence.classify(node, selection, wallet, wallet)
     }
 
     private fun accountKeys(node: ObjectNode): ArrayNode = message(node).get("accountKeys") as ArrayNode

@@ -20,7 +20,7 @@ function jsonFile(content: object | string, name = 'dataset.json'): File {
 describe('DatasetsPage', () => {
   it('lists stored datasets', async () => {
     renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
-    expect(await screen.findByRole('link', { name: 'weekly-buy-v1' })).toBeInTheDocument();
+    expect(await screen.findByRole('link', { name: 'dip-sample-v3' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'edge-cases' })).toBeInTheDocument();
     expect(screen.getByText('2 datasets')).toBeInTheDocument();
   });
@@ -34,7 +34,7 @@ describe('DatasetsPage', () => {
       ),
     );
     const { user, container } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
-    await screen.findByRole('link', { name: 'weekly-buy-v1' });
+    await screen.findByRole('link', { name: 'dip-sample-v3' });
 
     await user.upload(fileInput(container), jsonFile({ schemaVersion: 1, checksum: '0000aaaa' }, 'tampered.json'));
     await user.click(await screen.findByRole('button', { name: /Upload and validate/ }));
@@ -54,7 +54,7 @@ describe('DatasetsPage', () => {
       }),
     );
     const { user, container } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
-    await screen.findByRole('link', { name: 'weekly-buy-v1' });
+    await screen.findByRole('link', { name: 'dip-sample-v3' });
 
     await user.upload(fileInput(container), jsonFile({ schemaVersion: 1, checksum: SAMPLE_DATASET_ID }));
     await user.type(screen.getByLabelText(/Name/), 'renamed copy');
@@ -64,7 +64,7 @@ describe('DatasetsPage', () => {
     expect(contentType).toMatch(/^multipart\/form-data/);
   });
 
-  it('rejects files over 20 MB before uploading', async () => {
+  it('rejects files over 100 MB before uploading', async () => {
     let uploaded = false;
     server.use(
       http.post('/api/datasets', () => {
@@ -73,21 +73,21 @@ describe('DatasetsPage', () => {
       }),
     );
     const { user, container } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
-    await screen.findByRole('link', { name: 'weekly-buy-v1' });
+    await screen.findByRole('link', { name: 'dip-sample-v3' });
 
     const big = jsonFile('{}', 'big.json');
-    Object.defineProperty(big, 'size', { value: 21 * 1024 * 1024 });
+    Object.defineProperty(big, 'size', { value: 101 * 1024 * 1024 });
     await user.upload(fileInput(container), big);
 
     expect(await screen.findByText('File not accepted')).toBeInTheDocument();
-    expect(screen.getByRole('alert')).toHaveTextContent(/limit is 20\.0 MB/);
+    expect(screen.getByRole('alert')).toHaveTextContent(/limit is 100\.0 MB/);
     expect(screen.queryByRole('button', { name: /Upload and validate/ })).not.toBeInTheDocument();
     expect(uploaded).toBe(false);
   });
 
   it('imports the sample dataset and reports that it already existed', async () => {
     const { user } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
-    await screen.findByRole('link', { name: 'weekly-buy-v1' });
+    await screen.findByRole('link', { name: 'dip-sample-v3' });
     await user.click(screen.getByRole('button', { name: 'Import sample dataset' }));
     expect(await screen.findByText(/Datasets are identified by their checksum/)).toBeInTheDocument();
   });

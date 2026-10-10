@@ -11,7 +11,6 @@ import java.math.BigDecimal
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
-import kotlin.test.assertNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
@@ -26,6 +25,8 @@ class ConsoleConfigRequestTest {
     private fun validate(body: String?): ConfigValidation =
         validator.validate(body?.let { json.readValue<ConsoleConfigRequest>(it) })
 
+    private fun config(body: String): SimulationConfig = assertIs<ConfigValidation.Valid>(validate(body)).config
+
     private fun fields(body: String): Map<String, String> = assertIs<ConfigValidation.Invalid>(validate(body)).fields
 
     @Test
@@ -35,44 +36,72 @@ class ConsoleConfigRequestTest {
 
     @Test
     fun `an empty config falls back to the mvp value of every field`() {
-        assertEquals(SimulationConfig.mvp(), assertIs<ConfigValidation.Valid>(validate("{}")).config)
+        assertEquals(SimulationConfig.mvp(), config("{}"))
     }
 
     @Test
     fun `the default request spelled out equals the mvp configuration`() {
-        val body = """{"notional":"100","feeBps":10,"slippageBps":50,"maxWaitSlots":2,"maxAgeSlots":2,
-            |"holdingSlots":5,"quoteMint":"So11111111111111111111111111111111111111112"}""".trimMargin()
+        val body = """{"notional":"0.1","maxAgeSlots":2,"dipBps":1500,"takeProfitBps":3000,"stopLossBps":1500,
+            |"minMarketCapUsd":"10000","horizonSlots":4500,"latencySlots":1,"transactionCostSol":"0.001",
+            |"quoteMint":"So11111111111111111111111111111111111111112"}""".trimMargin()
 
-        assertEquals(SimulationConfig.mvp(), assertIs<ConfigValidation.Valid>(validate(body)).config)
+        assertEquals(SimulationConfig.mvp(), config(body))
     }
 
     @Test
     fun `edited values build the configuration through SimulationConfig of`() {
-        val body = """{"notional":"25.5","feeBps":0,"slippageBps":9999,"maxWaitSlots":1000,"maxAgeSlots":0,
-            |"holdingSlots":1,"quoteMint":"11111111111111111111111111111112"}""".trimMargin()
+        val body = """{"notional":"25.5","maxAgeSlots":0,"dipBps":2000,"takeProfitBps":5000,"stopLossBps":1000,
+            |"minMarketCapUsd":"25000.5","horizonSlots":900,"latencySlots":3,"transactionCostSol":"0.0025",
+            |"quoteMint":"11111111111111111111111111111112"}""".trimMargin()
 
-        val expected = SimulationConfig.of(BigDecimal("25.5"), 0, 9999, 1000, 0, 1,
-            quoteMint = MintAddress.of("11111111111111111111111111111112"))
-        assertEquals(expected, assertIs<ConfigValidation.Valid>(validate(body)).config)
+        val expected = SimulationConfig.of(BigDecimal("25.5"), 0, 2000, 5000, 1000, BigDecimal("25000.5"), 900, 3,
+            BigDecimal("0.0025"), quoteMint = MintAddress.of("11111111111111111111111111111112"))
+        assertEquals(expected, config(body))
     }
 
     @Test
     fun `every out-of-range field yields its own field error`() {
-        val body = """{"notional":"0","feeBps":10000,"slippageBps":-1,"maxWaitSlots":1001,"maxAgeSlots":-1,
-            |"holdingSlots":0,"quoteMint":"not-a-mint"}""".trimMargin()
+        val body = """{"notional":"0","maxAgeSlots":-1,"dipBps":0,"takeProfitBps":10000,"stopLossBps":0,
+            |"minMarketCapUsd":"1000000001","horizonSlots":4501,"latencySlots":0,"transactionCostSol":"0.2",
+            |"quoteMint":"not-a-mint"}""".trimMargin()
 
-        assertEquals(setOf("notional", "feeBps", "slippageBps", "maxWaitSlots", "maxAgeSlots", "holdingSlots", "quoteMint"),
-            fields(body).keys)
+        assertEquals(setOf("notional", "maxAgeSlots", "dipBps", "takeProfitBps", "stopLossBps", "minMarketCapUsd", "horizonSlots",
+            "latencySlots", "transactionCostSol", "quoteMint"), fields(body).keys)
     }
 
     @Test
-    fun `fee bps of 10000 is rejected on the fee field only`() {
-        assertEquals(setOf("feeBps"), fields("""{"feeBps":10000}""").keys)
+    fun `the removed fee and slippage fields are rejected as unknown, each on its own field`() {
+        assertEquals(mapOf("feeBps" to "is not a configuration field", "slippageBps" to "is not a configuration field"),
+            fields("""{"feeBps":10,"slippageBps":50}"""))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["0", "151", "1.5", "\"1\""])
+    fun `a latency outside 1 to 150 whole slots is rejected on its field only`(value: String) {
+        assertEquals(mapOf("latencySlots" to "must be an integer between 1 and 150"), fields("""{"latencySlots":$value}"""))
     }
 
     @Test
-    fun `notional as a JSON number is rejected`() {
-        assertEquals(setOf("notional"), fields("""{"notional":100}""").keys)
+    fun `latency bounds are inclusive`() {
+        assertEquals(150L, config("""{"latencySlots":150}""").latencySlots)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["\"0.100000000001\"", "\"-0.001\"", "0.001", "\"1e-3\""])
+    fun `a transaction cost that is not a plain decimal string from 0 to 0,1 is rejected on its field only`(value: String) {
+        assertEquals(setOf("transactionCostSol"), fields("""{"transactionCostSol":$value}""").keys)
+    }
+
+    @Test
+    fun `a zero transaction cost and a zero minimum market cap are allowed`() {
+        val config = config("""{"transactionCostSol":"0","minMarketCapUsd":"0"}""")
+        assertEquals("0.000000000000", config.transactionCostSol.toPlainString())
+        assertEquals("0.000000000000", config.minMarketCapUsd.toPlainString())
+    }
+
+    @Test
+    fun `notional and minimum market cap as JSON numbers are rejected`() {
+        assertEquals(setOf("notional", "minMarketCapUsd"), fields("""{"notional":100,"minMarketCapUsd":10000}""").keys)
     }
 
     @ParameterizedTest
@@ -81,39 +110,46 @@ class ConsoleConfigRequestTest {
         assertEquals(setOf("notional"), fields("""{"notional":"$notional"}""").keys)
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = ["0.0000000004", "1.0000000005", "0.0000000000004"])
+    fun `notional finer than one lamport is rejected`(notional: String) {
+        assertEquals(mapOf("notional" to "must be a whole number of lamports: at most 9 decimals"),
+            fields("""{"notional":"$notional"}"""))
+    }
+
     @Test
-    fun `notional that rounds to zero at scale 12 is rejected`() {
-        assertEquals(setOf("notional"), fields("""{"notional":"0.0000000000004"}""").keys)
+    fun `notional of one lamport is allowed and trailing zeros do not count as decimals`() {
+        assertEquals("0.000000001000", config("""{"notional":"0.000000001"}""").notional.toPlainString())
+        assertEquals("1.000000000000", config("""{"notional":"1.000000000000"}""").notional.toPlainString())
     }
 
     @Test
     fun `notional beyond the stored precision is rejected`() {
         assertEquals(setOf("notional"), fields("""{"notional":"${"9".repeat(27)}"}""").keys)
-    }
-
-    @Test
-    fun `notional is normalized to scale 12 half even`() {
-        val config = assertIs<ConfigValidation.Valid>(validate("""{"notional":"1.0000000000005"}""")).config
-
-        assertEquals("1.000000000000", config.notional.toPlainString())
+        assertEquals(BigDecimal("9".repeat(26)), config("""{"notional":"${"9".repeat(26)}"}""").notional.stripTrailingZeros())
     }
 
     @ParameterizedTest
     @ValueSource(strings = ["10.5", "\"10\"", "true", "99999999999"])
-    fun `a non-integer basis point value is rejected`(value: String) {
-        assertEquals(setOf("feeBps"), fields("""{"feeBps":$value}""").keys)
+    fun `a non-integer level value is rejected`(value: String) {
+        assertEquals(setOf("dipBps"), fields("""{"dipBps":$value}""").keys)
     }
 
     @Test
     fun `the shared limits are exactly the bounds SimulationConfig of enforces`() {
         val limits = SimulationConfigLimits.CURRENT
-        fun config(fee: Long = 10, slippage: Long = 50, wait: Long = 2, age: Long = 2, holding: Long = 5) =
-            SimulationConfig.of(BigDecimal("100"), fee.toInt(), slippage.toInt(), wait, age, holding)
+        fun config(age: Long = 2, dip: Long = 1500, takeProfit: Long = 3000, stopLoss: Long = 1500, marketCap: Long = 10000,
+                   horizon: Long = 4500, latency: Long = 1) =
+            SimulationConfig.of(BigDecimal("0.1"), age, dip.toInt(), takeProfit.toInt(), stopLoss.toInt(), BigDecimal(marketCap), horizon,
+                latency, BigDecimal("0.001"))
         val bounded = listOf<Pair<NumberRange, (Long) -> SimulationConfig>>(
-            limits.feeBps to { config(fee = it) },
-            limits.slippageBps to { config(slippage = it) },
-            limits.maxWaitSlots to { config(wait = it) },
             limits.maxAgeSlots to { config(age = it) },
+            limits.dipBps to { config(dip = it) },
+            limits.takeProfitBps to { config(takeProfit = it) },
+            limits.stopLossBps to { config(stopLoss = it) },
+            limits.minMarketCapUsd to { config(marketCap = it) },
+            limits.horizonSlots to { config(horizon = it) },
+            limits.latencySlots to { config(latency = it) },
         )
 
         bounded.forEach { (range, build) ->
@@ -123,14 +159,22 @@ class ConsoleConfigRequestTest {
             assertFailsWith<IllegalArgumentException> { build(range.min - 1) }
             assertFailsWith<IllegalArgumentException> { build(max + 1) }
         }
-        config(holding = limits.holdingSlots.min)
-        assertFailsWith<IllegalArgumentException> { config(holding = limits.holdingSlots.min - 1) }
-        assertNull(limits.holdingSlots.max)
+        val cost = limits.transactionCostSol
+        val unit = BigDecimal.ONE.movePointLeft(limits.transactionCostScale)
+        fun withCost(value: BigDecimal) = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, value)
+        withCost(cost.min)
+        withCost(cost.max)
+        assertFailsWith<IllegalArgumentException> { withCost(cost.min.subtract(unit)) }
+        assertFailsWith<IllegalArgumentException> { withCost(cost.max.add(unit)) }
+        fun withNotional(value: BigDecimal) = SimulationConfig.of(value, 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal.ZERO)
+        withNotional(BigDecimal.ONE.movePointLeft(limits.notionalScale))
+        assertFailsWith<IllegalArgumentException> { withNotional(BigDecimal.ONE.movePointLeft(limits.notionalScale + 1)) }
     }
 
     @Test
     fun `the range boundaries agree with SimulationConfig of`() {
-        val body = """{"feeBps":9999,"slippageBps":0,"maxWaitSlots":0,"maxAgeSlots":1000,"holdingSlots":1}"""
+        val body = """{"maxAgeSlots":1000,"dipBps":1,"takeProfitBps":9999,"stopLossBps":9999,"minMarketCapUsd":"1000000000",
+            "horizonSlots":1,"latencySlots":150,"transactionCostSol":"0.1"}"""
 
         assertIs<ConfigValidation.Valid>(validate(body))
     }

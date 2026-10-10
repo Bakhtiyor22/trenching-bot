@@ -16,6 +16,9 @@ data class MarketObservation(
     val sourceEventId: String,
     val commitment: Commitment,
     val quality: ObservationQuality,
+    /** Whether the trade left its bonding curve complete: from this trade on, the token has migrated off the curve. */
+    val curveComplete: Boolean,
+    val curve: CurveState,
 )
 
 enum class ObservationQuality { LAST_TRADE, MIDPOINT, INVALID }

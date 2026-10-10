@@ -2,6 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import {
+  EDGE_RUN_ID,
   EDGE_DATASET_ID,
   SAMPLE_DATASET_ID,
   SAMPLE_RUN_ID,
@@ -16,7 +17,10 @@ function renderRuns(url = '/runs') {
   return renderPage(<RunsPage />, {
     path: '/runs',
     url,
-    extraRoutes: [{ path: '/runs/:id', element: <div>Run detail</div> }],
+    extraRoutes: [
+      { path: '/runs/:id', element: <div>Run detail</div> },
+      { path: '/compare', element: <div>Compare</div> },
+    ],
   });
 }
 
@@ -29,6 +33,24 @@ describe('RunsPage', () => {
     await user.click(within(table).getByRole('link', { name: '4f0c…c5d6' }));
     await screen.findByText('Run detail');
     expect(router.state.location.pathname).toBe(`/runs/${SAMPLE_RUN_ID}`);
+  });
+
+  it('filters the page by text and outcome, and compares the ticked runs', async () => {
+    const { user, router } = renderRuns();
+    const table = await screen.findByRole('table');
+    await user.type(screen.getByRole('textbox', { name: 'Filter runs on this page' }), '9a8b');
+    expect(within(table).queryByText(SAMPLE_TOTAL_PNL)).not.toBeInTheDocument();
+    await user.clear(screen.getByRole('textbox', { name: 'Filter runs on this page' }));
+    await user.click(screen.getByRole('radio', { name: 'Loss' }));
+    expect(within(table).getByText(SAMPLE_TOTAL_PNL)).toBeInTheDocument();
+    expect(within(table).queryByText('0.000000000000')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('radio', { name: 'All' }));
+
+    await user.click(screen.getByRole('checkbox', { name: 'Select run 4f0c…c5d6 to compare' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Select run 9a8b…1e0f to compare' }));
+    await user.click(screen.getByRole('link', { name: /Compare 2/ }));
+    expect(router.state.location.pathname).toBe('/compare');
+    expect(router.state.location.search).toBe(`?runs=${SAMPLE_RUN_ID},${EDGE_RUN_ID}`);
   });
 
   it('filters by the dataset in the URL and keeps it in the new run link', async () => {
@@ -58,8 +80,8 @@ describe('RunsPage', () => {
     await user.click(screen.getByRole('button', { name: '2' }));
     await waitFor(() => expect(requests.at(-1)?.searchParams.get('page')).toBe('1'));
     const filter = screen.getByRole('combobox', { name: 'Filter by dataset' });
-    await user.type(filter, 'weekly');
-    await user.click(await screen.findByRole('option', { name: /weekly-buy-v1/ }));
+    await user.type(filter, 'dip');
+    await user.click(await screen.findByRole('option', { name: /dip-sample-v3/ }));
     await waitFor(() =>
       expect(requests.at(-1)?.searchParams.get('datasetId')).toBe(SAMPLE_DATASET_ID),
     );

@@ -32,7 +32,7 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
     /** Returns the manifest after verifying its envelope hash, or null when [name] does not exist under [root]. */
     fun readManifest(root: Path, name: String): JsonNode? {
         if (!Files.exists(root.resolve(name), NOFOLLOW_LINKS)) return null
-        val envelope = read(root, name, ChainCaptureFormat.MAX_RESPONSE_BYTES)
+        val envelope = read(root, name, ChainCaptureFormat.MAX_MANIFEST_BYTES)
         val inner = envelope.path(MANIFEST_FIELD)
         if (!inner.isObject || envelope.path(SHA256_FIELD).asString() != hash(mapper.writeValueAsBytes(inner))) fail("MANIFEST_HASH")
         return inner

@@ -16,9 +16,10 @@ class RunReportReader(private val json: ObjectMapper) {
     fun read(report: String): StoredReportFacts {
         val stored = json.readValue(report, StoredRunReport::class.java)
         val configuration = stored.configuration
-        val config = SimulationConfig.of(configuration.notional, configuration.feeBps, configuration.slippageBps,
-            configuration.maxWaitSlots, configuration.maxAgeSlots, configuration.holdingSlots,
-            configuration.strategyName, configuration.strategyVersion, MintAddress.of(configuration.quoteMint.value))
+        val config = SimulationConfig.of(configuration.notional, configuration.maxAgeSlots, configuration.dipBps,
+            configuration.takeProfitBps, configuration.stopLossBps, configuration.minMarketCapUsd, configuration.horizonSlots,
+            configuration.latencySlots, configuration.transactionCostSol, configuration.strategyName,
+            configuration.strategyVersion, MintAddress.of(configuration.quoteMint.value))
         return StoredReportFacts(config)
     }
 }

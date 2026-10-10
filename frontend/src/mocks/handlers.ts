@@ -7,20 +7,26 @@ import type {
   SolanaCheck,
   SolanaStatus,
 } from '../api/types';
+import { SAMPLE_DATASET } from '../api/endpoints';
 import { isSolanaAddress } from '../lib/base58';
+import { compareDecimals } from '../lib/decimal';
+import { createCaptureHandlers, resetCaptureMocks } from './captureHandlers';
 import {
   configDefaults,
   dashboardFixture,
   datasetObservations,
   edgeDataset,
+  realRunUsdt,
+  recordedRunRecords,
   runForDataset,
   runRecords,
   SAMPLE_DATASET_ID,
   sampleDataset,
   solanaUnconfigured,
+  solUsdtPrice,
 } from './fixtures';
 
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 export interface MockOptions {
   /** Pretend `SOLANA_RPC_URL` is set (devnet). Default false, like a fresh local setup. */
@@ -44,6 +50,7 @@ let db = freshDb();
 /** Restores the in-memory mock state; tests call it after each test. */
 export function resetMockDb(): void {
   db = freshDb();
+  resetCaptureMocks();
 }
 
 function error(status: number, code: string, message: string, fields: Record<string, string> = {}) {
@@ -58,27 +65,54 @@ function pageOf<T>(items: T[], url: URL) {
 }
 
 function runDetailOr404(id: string) {
-  const records = runRecords[id];
+  const records = runRecords[id] ?? recordedRunRecords[id];
   return records ?? null;
 }
+
+const PLAIN_DECIMAL = /^[0-9]+(\.[0-9]+)?$/;
+const DECIMAL_FORMAT_MESSAGE = 'must be a plain decimal string such as "100" or "0.5"';
+/** Every property the backend's config request accepts; any other is reported, as the backend does. */
+const CONFIG_FIELDS = new Set([
+  'notional',
+  'maxAgeSlots',
+  'dipBps',
+  'takeProfitBps',
+  'stopLossBps',
+  'minMarketCapUsd',
+  'horizonSlots',
+  'latencySlots',
+  'transactionCostSol',
+  'quoteMint',
+]);
 
 function validateConfig(config: RunStartRequest['config']): Record<string, string> {
   const fields: Record<string, string> = {};
   if (!config) return fields;
   const { limits } = configDefaults;
   if (config.notional !== undefined) {
-    if (typeof config.notional !== 'string') {
-      fields.notional = 'must be a positive plain decimal string such as "100" or "0.5"';
-    } else if (!/^[0-9]+(\.[0-9]+)?$/.test(config.notional) || !/[1-9]/.test(config.notional)) {
-      fields.notional = 'must be positive at scale 12';
+    if (typeof config.notional !== 'string' || !PLAIN_DECIMAL.test(config.notional)) {
+      fields.notional = DECIMAL_FORMAT_MESSAGE;
+    } else if ((config.notional.split('.')[1] ?? '').replace(/0+$/, '').length > limits.notionalScale) {
+      fields.notional = `must be a whole number of lamports: at most ${limits.notionalScale} decimals`;
+    } else if (!/[1-9]/.test(config.notional)) {
+      fields.notional = 'must be at least one lamport';
+    }
+  }
+  if (config.transactionCostSol !== undefined) {
+    const { min, max } = limits.transactionCostSol;
+    if (typeof config.transactionCostSol !== 'string' || !PLAIN_DECIMAL.test(config.transactionCostSol)) {
+      fields.transactionCostSol = DECIMAL_FORMAT_MESSAGE;
+    } else if (compareDecimals(config.transactionCostSol, min) < 0 || compareDecimals(config.transactionCostSol, max) > 0) {
+      fields.transactionCostSol = `must be between ${min} and ${max} SOL`;
     }
   }
   const ranges = {
-    feeBps: limits.feeBps,
-    slippageBps: limits.slippageBps,
-    maxWaitSlots: limits.maxWaitSlots,
     maxAgeSlots: limits.maxAgeSlots,
-    holdingSlots: limits.holdingSlots,
+    dipBps: limits.dipBps,
+    takeProfitBps: limits.takeProfitBps,
+    stopLossBps: limits.stopLossBps,
+    horizonSlots: limits.horizonSlots,
+    latencySlots: limits.latencySlots,
   } as const;
   for (const [field, range] of Object.entries(ranges)) {
     const value = (config as Record<string, unknown>)[field];
@@ -95,8 +129,15 @@ function validateConfig(config: RunStartRequest['config']): Record<string, strin
           : `must be an integer between ${range.min} and ${range.max}`;
     }
   }
+  if (config.minMarketCapUsd !== undefined &&
+    (typeof config.minMarketCapUsd !== 'string' || !PLAIN_DECIMAL.test(config.minMarketCapUsd))) {
+    fields.minMarketCapUsd = DECIMAL_FORMAT_MESSAGE;
+  }
   if (config.quoteMint !== undefined && !isSolanaAddress(String(config.quoteMint))) {
     fields.quoteMint = 'must be a 32-byte base58 address';
+  }
+  for (const field of Object.keys(config)) {
+    if (!CONFIG_FIELDS.has(field)) fields[field] = 'is not a configuration field';
   }
   return fields;
 }
@@ -121,7 +162,7 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.post('/api/datasets/samples/:sample', async ({ params }) => {
       await wait();
-      if (params.sample !== 'weekly-buy-v1') {
+      if (params.sample !== SAMPLE_DATASET) {
         return error(404, 'SAMPLE_NOT_FOUND', `Unknown sample dataset ${String(params.sample)}`);
       }
       const exists = db.datasets.some((d) => d.id === SAMPLE_DATASET_ID);
@@ -139,7 +180,7 @@ export function createHandlers(options: MockOptions = {}) {
       }
       const file = form.get('file');
       if (!(file instanceof File)) return error(400, 'INVALID_REQUEST', 'file is required', { file: 'is required' });
-      if (file.size > MAX_UPLOAD_BYTES) return error(413, 'UPLOAD_TOO_LARGE', 'The upload exceeds 20 MB');
+      if (file.size > MAX_UPLOAD_BYTES) return error(413, 'UPLOAD_TOO_LARGE', 'The upload exceeds 100 MB');
       const text = await file.text();
       if (!text.trim()) return error(400, 'DATASET_INVALID', 'The uploaded dataset is empty');
       let parsed: { checksum?: unknown; schemaVersion?: unknown };
@@ -232,6 +273,22 @@ export function createHandlers(options: MockOptions = {}) {
       }),
     ),
 
+    http.get('/api/runs/:id/usdt', async ({ params }) => {
+      await wait();
+      const id = String(params.id);
+      if (!runDetailOr404(id)) return error(404, 'RUN_NOT_FOUND', `Run ${id} not found`);
+      if (id === realRunUsdt.runId) return HttpResponse.json(realRunUsdt);
+      return HttpResponse.json({
+        runId: id, rateSource: null, unavailableReason: 'NOT_CONFIGURED', observations: [], scenarios: [],
+        realizedPnlUsdt: null, realizedPnlUnavailableReason: 'NOT_CONFIGURED',
+      });
+    }),
+
+    http.get('/api/market/sol-usdt', async () => {
+      await wait();
+      return HttpResponse.json(solUsdtPrice);
+    }),
+
     http.get('/api/runs/:id/report', ({ params }) => {
       const records = runDetailOr404(String(params.id));
       if (!records) return error(404, 'RUN_NOT_FOUND', `Run ${String(params.id)} not found`);
@@ -310,6 +367,8 @@ export function createHandlers(options: MockOptions = {}) {
       };
       return HttpResponse.json(result);
     }),
+
+    ...createCaptureHandlers(wait),
   ];
 }
 

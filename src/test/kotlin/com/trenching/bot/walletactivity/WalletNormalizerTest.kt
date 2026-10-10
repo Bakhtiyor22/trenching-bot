@@ -10,18 +10,20 @@ import org.junit.jupiter.api.Test
 import tools.jackson.databind.json.JsonMapper
 
 class WalletNormalizerTest {
-    private val dataset = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
+    private val dataset = javaClass.getResourceAsStream("/replay/samples/dip-sample-v3.json").use {
         ReplayDatasetLoader(JsonMapper.builder().build()).load(requireNotNull(it))
     }
     private val normalizer = WalletNormalizer()
 
     @Test
     fun `buy and sell deltas retain signature instruction and raw amounts`() {
-        val buy = (normalizer.normalize(dataset.transactions[0], dataset.trackedWallet, MintAddress.WRAPPED_SOL) as NormalizationOutcome.Accepted).trade
-        val sell = (normalizer.normalize(dataset.transactions[1], dataset.trackedWallet, MintAddress.WRAPPED_SOL) as NormalizationOutcome.Accepted).trade
+        val source = dataset.transactions[0]
+        val selling = source.copy(instructionIndex = 1, baseDelta = source.baseDelta.negate(), quoteDelta = source.quoteDelta.negate())
+        val buy = (normalizer.normalize(source, dataset.trackedWallet, MintAddress.WRAPPED_SOL) as NormalizationOutcome.Accepted).trade
+        val sell = (normalizer.normalize(selling, dataset.trackedWallet, MintAddress.WRAPPED_SOL) as NormalizationOutcome.Accepted).trade
         assertEquals(TradeSide.BUY, buy.side)
         assertEquals(TradeSide.SELL, sell.side)
-        assertEquals(BigInteger("1000000000"), buy.baseAmount.raw)
+        assertEquals(BigInteger("1000000000000"), buy.baseAmount.raw)
         assertNotEquals(buy.id, sell.id)
     }
 

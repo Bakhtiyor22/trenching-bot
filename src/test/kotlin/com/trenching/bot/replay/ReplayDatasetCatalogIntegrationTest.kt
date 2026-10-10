@@ -35,7 +35,7 @@ class ReplayDatasetCatalogIntegrationTest {
     private fun sampleJson(): String = requireNotNull(javaClass.getResource(SAMPLE)).readText()
     private fun sample(): ReplayDataset = ReplayDatasetLoader(json).load(sampleJson().byteInputStream())
     private fun variant(tag: String): ReplayDataset = sample().let { dataset ->
-        dataset.copy(transactions = dataset.transactions.map { it.copy(source = "variant-$tag") })
+        dataset.copy(referenceRates = dataset.referenceRates.map { it.copy(source = "variant-$tag") })
     }
     private fun write(dataset: ReplayDataset): String = ReplayDatasetWriter(json).write(dataset)
 
@@ -52,13 +52,13 @@ class ReplayDatasetCatalogIntegrationTest {
         dataSource.connection.use { connection ->
             connection.prepareStatement("delete from replay_datasets where id = ?").use { it.setString(1, id); it.executeUpdate() }
         }
-        val first = catalog.importSample(SampleDataset.WEEKLY_BUY_V1)
-        val second = catalog.importSample(SampleDataset.WEEKLY_BUY_V1)
+        val first = catalog.importSample(SampleDataset.DIP_SAMPLE_V3)
+        val second = catalog.importSample(SampleDataset.DIP_SAMPLE_V3)
         assertTrue(first.created)
         assertFalse(second.created)
         assertEquals(id, first.dataset.id)
         assertEquals(first.dataset, second.dataset)
-        assertEquals("weekly-buy-v1", second.dataset.name)
+        assertEquals("dip-sample-v3", second.dataset.name)
         assertEquals(1, count("select count(*) from replay_datasets where id = ?", id))
     }
 
@@ -81,9 +81,9 @@ class ReplayDatasetCatalogIntegrationTest {
         val repeated = json.readTree(write(dataset)) as ObjectNode
         (repeated.get("transactions") as ArrayNode).let { it.addAll(it.deepCopy()) }
         val registered = catalog.register("summary", json.writeValueAsString(repeated).byteInputStream()).dataset
-        val pair = MarketPair.of(MintAddress.of("11111111111111111111111111111112"), MintAddress.WRAPPED_SOL)
+        val pairs = dataset.transactions.map { it.pair }.distinct().sortedWith(compareBy({ it.base.value }, { it.quote.value }))
         val expected = DatasetSummary(DatasetFingerprint.checksum(dataset), "summary", WalletAddress.of("11111111111111111111111111111111"),
-            1, 4, 6, Slot.of(100), Slot.of(111), listOf(pair), registered.createdAt)
+            3, 11, 31, Slot.of(1000), Slot.of(11501), pairs, registered.createdAt)
         assertEquals(expected, registered)
         assertEquals(expected, catalog.find(registered.id))
     }
@@ -112,7 +112,7 @@ class ReplayDatasetCatalogIntegrationTest {
     fun `invalid uploads keep the loader message and store nothing`() {
         val before = count("select count(*) from replay_datasets")
         val tampered = assertFailsWith<DatasetInvalidException> {
-            catalog.register("tampered", sampleJson().replace("\"10\"", "\"12\"").byteInputStream())
+            catalog.register("tampered", sampleJson().replace("\"0.000000086\"", "\"0.000000087\"").byteInputStream())
         }
         assertTrue(requireNotNull(tampered.message).contains("Replay checksum mismatch"), tampered.message)
         assertFailsWith<DatasetInvalidException> { catalog.register("malformed", "{".byteInputStream()) }
@@ -141,6 +141,6 @@ class ReplayDatasetCatalogIntegrationTest {
     }
 
     private companion object {
-        const val SAMPLE = "/replay/samples/weekly-buy-v1.json"
+        const val SAMPLE = "/replay/samples/dip-sample-v3.json"
     }
 }

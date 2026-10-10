@@ -1,7 +1,9 @@
 package com.trenching.bot.replay.api
 
+import com.trenching.bot.chaincapture.SolanaRpcSettings
 import java.nio.file.InvalidPathException
 import java.nio.file.Path
+import java.time.Duration
 
 /** `--option value` pairs shared by the capture commands: each allowed option at most once, no blank or option-like values. */
 internal object CaptureCommandArguments {
@@ -29,6 +31,14 @@ internal object CaptureCommandArguments {
         val value = if (option in values) values[option]?.toIntOrNull() else default
         return value?.takeIf { it in range }
     }
+
+    const val OPERATION_TIMEOUT_MINUTES = "--operation-timeout-minutes"
+    const val OPERATION_TIMEOUT_USAGE = "[--operation-timeout-minutes <1..30>]"
+
+    /** The invocation deadline in whole minutes, the transport default when absent, or null when out of range. */
+    fun operationTimeout(values: Map<String, String>): Duration? =
+        long(values, OPERATION_TIMEOUT_MINUTES, SolanaRpcSettings.DEFAULT_OPERATION_TIMEOUT_MINUTES,
+            1..SolanaRpcSettings.MAX_OPERATION_TIMEOUT_MINUTES)?.let(Duration::ofMinutes)
 
     fun long(values: Map<String, String>, option: String, default: Long, range: LongRange): Long? {
         val value = if (option in values) values[option]?.toLongOrNull() else default

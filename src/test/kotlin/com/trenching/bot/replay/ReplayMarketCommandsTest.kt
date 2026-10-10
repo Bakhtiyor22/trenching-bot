@@ -26,6 +26,7 @@ import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArti
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
 import java.nio.file.Path
+import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -48,9 +49,9 @@ class ReplayMarketCommandsTest {
         val invalid = listOf(emptyArray(), arrayOf("--directory", markets().toString()),
             arrayOf("--wallet-capture-directory", wallet().toString()), base + arrayOf("--endpoint", "private"),
             base + arrayOf("--directory", markets().toString()), base + arrayOf("--scan-pages", "0"), base + arrayOf("--scan-pages", "501"),
-            base + arrayOf("--scan-pages", "many"), base + arrayOf("--max-transactions", "0"), base + arrayOf("--max-transactions", "1001"),
-            base + arrayOf("--request-budget", "0"), base + arrayOf("--request-budget", "1001"),
-            base + arrayOf("--byte-budget", "0"), base + arrayOf("--byte-budget", "524288001"),
+            base + arrayOf("--scan-pages", "many"), base + arrayOf("--max-transactions", "0"), base + arrayOf("--max-transactions", "50001"),
+            base + arrayOf("--request-budget", "0"), base + arrayOf("--request-budget", "60001"),
+            base + arrayOf("--byte-budget", "0"), base + arrayOf("--byte-budget", "4294967297"),
             arrayOf("--wallet-capture-directory", wallet().toString(), "--directory", wallet().toString()))
         invalid.forEach { args -> assertEquals(2, commands().capture(args), args.joinToString(" ")) }
         assertEquals(null, captured)
@@ -61,13 +62,13 @@ class ReplayMarketCommandsTest {
     fun `capture forwards directories and explicit bounds`() {
         assertEquals(0, commands().capture(arrayOf("--wallet-capture-directory", wallet().toString(), "--directory", markets().toString(),
             "--scan-pages", "7", "--max-transactions", "30", "--request-budget", "70", "--byte-budget", "1000000")))
-        assertEquals(ReplayMarketCaptureRequest(wallet(), markets(), 7, 30, 70, 1_000_000), captured)
+        assertEquals(ReplayMarketCaptureRequest(wallet(), markets(), 7, 30, 70, 1_000_000, Duration.ofMinutes(10)), captured)
     }
 
     @Test
     fun `capture defaults to twenty pages three hundred transactions and the bounded budgets`() {
         assertEquals(0, commands().capture(arrayOf("--wallet-capture-directory", wallet().toString(), "--directory", markets().toString())))
-        assertEquals(ReplayMarketCaptureRequest(wallet(), markets(), 20, 300, 400, 104857600), captured)
+        assertEquals(ReplayMarketCaptureRequest(wallet(), markets(), 20, 300, 400, 104857600, Duration.ofMinutes(10)), captured)
     }
 
     @Test
@@ -76,7 +77,7 @@ class ReplayMarketCommandsTest {
         val lines = output.toString().lines()
         assertTrue(lines.contains("window=$MINT fromSlot=453004997 toSlot=453005008 coverage=COMPLETE scanned=1003 skippedFailed=1000 skippedNewer=2 selected=1"), output.toString())
         assertTrue(lines.contains("windows=1 scanPages=20 maxTransactions=300 acquisitionComplete=true complete=true"))
-        assertTrue(lines.contains("entryOffsets=1..3 maxWaitSlots=2 maxAgeSlots=2 holdingSlots=5"))
+        assertTrue(lines.contains("horizonSlots=4500 maxAgeSlots=2"))
         assertTrue(lines.contains("requestsUsed=5 bytesUsed=4096"))
         assertTrue(lines.contains("transaction.CAPTURED=1"))
         assertTrue(lines.contains("transaction.WITHHELD_UNSAFE_TEXT=0"))
@@ -97,7 +98,7 @@ class ReplayMarketCommandsTest {
     @Test
     fun `the wallet capture prerequisite is refused before the credential consuming adapter is created`() {
         WalletHistoryArtifactStore(mapper).save(wallet(), WalletHistoryManifest(
-            schemaVersion = 2, wallet = WALLET, genesisHash = GENESIS, commitment = "confirmed", capturedAt = "2026-10-03T00:00:00Z",
+            schemaVersion = 3, wallet = WALLET, genesisHash = GENESIS, commitment = "confirmed", capturedAt = "2026-10-03T00:00:00Z",
             limit = 100, scanPageLimit = 1, selection = listOf(WalletHistorySelection(SIGNATURE, SLOT)),
             records = listOf(WalletHistoryRecord(SIGNATURE, SLOT, WalletHistoryOutcome.PENDING)),
             complete = false, discoveryComplete = true, discoveryStop = WalletHistoryDiscoveryStop.HISTORY_END,

@@ -6,10 +6,10 @@ package com.trenching.bot.common
  */
 object ReplayLimits {
     /** Wallet transactions or market observations in one dataset. */
-    const val MAX_INPUT_RECORDS = 10_000
+    const val MAX_INPUT_RECORDS = 100_000
 
-    /** Entry scenarios derived from one source trade (+1, +2, +3 slots). */
-    const val MAX_SCENARIOS_PER_TRADE = 3
+    /** Entry cycles derived from one source trade: a dip entry follows at most one buy per mint. */
+    const val MAX_SCENARIOS_PER_TRADE = 1
 
     /** Intents, orders, fills or positions in one run. */
     const val MAX_SCENARIO_RECORDS = MAX_INPUT_RECORDS * MAX_SCENARIOS_PER_TRADE

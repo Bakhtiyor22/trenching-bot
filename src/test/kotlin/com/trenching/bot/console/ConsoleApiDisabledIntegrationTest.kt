@@ -38,8 +38,8 @@ class ConsoleApiDisabledIntegrationTest {
     }
 
     @Test
-    fun `uploads are limited to 20 MB`() {
-        assertEquals("20MB", environment.getProperty("spring.servlet.multipart.max-file-size"))
-        assertEquals("20MB", environment.getProperty("spring.servlet.multipart.max-request-size"))
+    fun `uploads are limited to 100 MB`() {
+        assertEquals("100MB", environment.getProperty("spring.servlet.multipart.max-file-size"))
+        assertEquals("100MB", environment.getProperty("spring.servlet.multipart.max-request-size"))
     }
 }

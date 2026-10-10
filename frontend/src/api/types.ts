@@ -80,11 +80,19 @@ export interface Config {
   strategyName: string;
   strategyVersion: string;
   notional: DecimalString;
-  feeBps: number;
-  slippageBps: number;
-  maxWaitSlots: number;
   maxAgeSlots: number;
-  holdingSlots: number;
+  /** Entry once a trade is this far below the wallet's first price P0. */
+  dipBps: number;
+  takeProfitBps: number;
+  stopLossBps: number;
+  /** Plain decimal US dollars. */
+  minMarketCapUsd: DecimalString;
+  /** Slots after the wallet's first buy that are watched; about 0.4 s each. */
+  horizonSlots: number;
+  /** Slots between a trigger and the trade that fills it; 1 fills at the next slot. */
+  latencySlots: number;
+  /** SOL charged per transaction (network plus priority fee or tip), on entry and on exit. */
+  transactionCostSol: DecimalString;
   quoteMint: string;
 }
 
@@ -94,14 +102,28 @@ export interface Range {
   max: number | null;
 }
 
+/** Inclusive decimal range, as exact decimal strings. */
+export interface DecimalRange {
+  min: DecimalString;
+  max: DecimalString;
+}
+
+/**
+ * A notional has at most `notionalScale` decimals (whole lamports; never rounded) and `notionalPrecision` digits at that
+ * scale; a transaction cost has at most `transactionCostScale` decimals.
+ */
 export interface ConfigLimits {
   notionalScale: number;
   notionalPrecision: number;
-  feeBps: Range;
-  slippageBps: Range;
-  maxWaitSlots: Range;
   maxAgeSlots: Range;
-  holdingSlots: Range;
+  dipBps: Range;
+  takeProfitBps: Range;
+  stopLossBps: Range;
+  minMarketCapUsd: Range;
+  horizonSlots: Range;
+  latencySlots: Range;
+  transactionCostScale: number;
+  transactionCostSol: DecimalRange;
 }
 
 export interface ConfigDefaults {
@@ -115,11 +137,16 @@ export interface RunStartRequest {
   config?: {
     /** Plain decimal string; the backend rejects a JSON number. */
     notional?: DecimalString;
-    feeBps?: number;
-    slippageBps?: number;
-    maxWaitSlots?: number;
     maxAgeSlots?: number;
-    holdingSlots?: number;
+    dipBps?: number;
+    takeProfitBps?: number;
+    stopLossBps?: number;
+    /** Plain decimal string, like notional. */
+    minMarketCapUsd?: DecimalString;
+    horizonSlots?: number;
+    latencySlots?: number;
+    /** Plain decimal string, like notional. */
+    transactionCostSol?: DecimalString;
     quoteMint?: string;
   };
 }
@@ -146,6 +173,11 @@ export interface RunStart {
   created: boolean;
 }
 
+/**
+ * An entry on the bonding curve. `fee` is the protocol and creator fees, charged at `feeBps`; `priorityFee` is the
+ * configured transaction cost; `priceImpactBps` is the buy's move against the curve (positive); `slippageBps` is always 0.
+ * `costBasis` = notional + fee + priorityFee.
+ */
 export interface Fill {
   orderId: string;
   targetSlot: number;
@@ -163,12 +195,16 @@ export interface Fill {
   priceImpactBps: number;
 }
 
+/** An exit: `netProceeds` = `grossProceeds` − `fee` (at `feeBps`) − `transactionCost`; `priceImpactBps` is negative for the sale. */
 export interface Close {
   slot: number;
   observationId: string;
   executionPrice: DecimalString;
   grossProceeds: DecimalString;
   fee: DecimalString;
+  feeBps: number;
+  transactionCost: DecimalString;
+  priceImpactBps: number;
   netProceeds: DecimalString;
   realizedPnl: DecimalString;
   reason: string;
@@ -177,12 +213,32 @@ export interface Close {
 export type ScenarioStatus = 'FILLED' | 'REJECTED';
 export type PositionState = 'OPEN' | 'CLOSED';
 
+/** The trade that crossed take profit or stop loss; the exit fills at a later slot's trade, if any. */
+export interface ExitTrigger {
+  observationId: string;
+  slot: number;
+  reason: string;
+}
+
 export interface ScenarioPosition {
   id: string;
   state: PositionState;
   close: Close | null;
+  takeProfitPrice: DecimalString;
+  stopLossPrice: DecimalString;
+  exitTrigger: ExitTrigger | null;
 }
 
+/** The trade that reached the dip level, with the market cap and SOL/USDT rate it was judged at. */
+export interface DipTrigger {
+  observationId: string;
+  slot: number;
+  price: DecimalString;
+  marketCapUsd: DecimalString;
+  rate: DecimalString;
+}
+
+/** One dip-entry cycle: the tracked wallet's first buy of a token, then the dip entry, if any, and its exit. */
 export interface Scenario {
   intentId: string;
   sourceEventId: string;
@@ -191,6 +247,13 @@ export interface Scenario {
   targetSlot: number;
   pair: Pair;
   notional: DecimalString;
+  /** P0: the wallet's own price on its first buy. */
+  referencePrice: DecimalString;
+  dipPrice: DecimalString;
+  horizonEndSlot: number;
+  /** TRIGGERED, NO_DIP, DIP_BELOW_MIN_MARKET_CAP, MIGRATED_BEFORE_ENTRY or UNSUPPORTED_SUPPLY. */
+  watch: string;
+  trigger: DipTrigger | null;
   status: ScenarioStatus;
   rejectionReason: string | null;
   fill: Fill | null;
@@ -203,6 +266,61 @@ export interface RunDetail {
   run: RunSummary;
   config: Config;
   scenarios: Scenario[];
+}
+
+/** A run's values in USDT for display. Each converted value is null when its rate is unavailable, with the reason. */
+export interface RunUsdtView {
+  runId: string;
+  rateSource: string | null;
+  /** Set when nothing could be converted, e.g. NOT_CONFIGURED or NOT_SOL_QUOTED. */
+  unavailableReason: string | null;
+  observations: UsdtObservation[];
+  scenarios: UsdtScenario[];
+  realizedPnlUsdt: DecimalString | null;
+  realizedPnlUnavailableReason: string | null;
+}
+
+export interface UsdtObservation {
+  id: string;
+  minute: IsoInstant;
+  rate: DecimalString | null;
+  priceUsdt: DecimalString | null;
+  unavailableReason: string | null;
+}
+
+export interface UsdtScenario {
+  intentId: string;
+  fill: UsdtFill | null;
+  close: UsdtClose | null;
+}
+
+export interface UsdtFill {
+  minute: IsoInstant;
+  rate: DecimalString | null;
+  executionPriceUsdt: DecimalString | null;
+  costBasisUsdt: DecimalString | null;
+  feeUsdt: DecimalString | null;
+  priorityFeeUsdt: DecimalString | null;
+  unavailableReason: string | null;
+}
+
+export interface UsdtClose {
+  minute: IsoInstant;
+  rate: DecimalString | null;
+  executionPriceUsdt: DecimalString | null;
+  grossProceedsUsdt: DecimalString | null;
+  feeUsdt: DecimalString | null;
+  transactionCostUsdt: DecimalString | null;
+  netProceedsUsdt: DecimalString | null;
+  realizedPnlUsdt: DecimalString | null;
+  unavailableReason: string | null;
+}
+
+export interface SolUsdtPrice {
+  rate: DecimalString | null;
+  asOf: IsoInstant | null;
+  source: string | null;
+  unavailableReason: string | null;
 }
 
 export interface RunEvent {
@@ -246,6 +364,9 @@ export interface RunPosition {
   fill: Fill;
   close: Close | null;
   exitUnavailableReason: string | null;
+  takeProfitPrice: DecimalString;
+  stopLossPrice: DecimalString;
+  exitTrigger: ExitTrigger | null;
 }
 
 export interface RecentRun {

@@ -29,11 +29,11 @@ data class MarketCaptureWindow private constructor(
     }
 }
 
-/** The simulation parameters a capture's windows were derived from; other parameters may need a new capture. */
+/**
+ * The simulation parameters a capture's windows were derived from: each window covers [horizonSlots] after the
+ * wallet's first buy of its mint. A run with a longer horizon needs a new capture.
+ */
 data class MarketCaptureWindowParameters(
-    val firstEntryOffset: Long,
-    val lastEntryOffset: Long,
-    val maxWaitSlots: Long,
+    val horizonSlots: Long,
     val maxAgeSlots: Long,
-    val holdingSlots: Long,
 )

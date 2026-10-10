@@ -2,17 +2,19 @@ import {
   Alert,
   Anchor,
   Badge,
+  Box,
   Button,
   Group,
-  Select,
+  SegmentedControl,
   SimpleGrid,
   Stack,
   Tabs,
   Text,
   Title,
 } from '@mantine/core';
+import { useHotkeys } from '@mantine/hooks';
 import { useState, type ReactNode } from 'react';
-import { Link, useLocation, useParams } from 'react-router';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { api, pairKey } from '../../api/endpoints';
 import {
   useRun,
@@ -20,20 +22,27 @@ import {
   useRunObservations,
   useRunOrders,
   useRunPositions,
+  useRunUsdt,
+  useSolUsdtPrice,
 } from '../../api/queries';
-import type { RunDetail, Scenario } from '../../api/types';
+import type { RunDetail, RunEvent, RunUsdtView, Scenario } from '../../api/types';
 import { Chart } from '../../components/Chart';
 import { CopyValue, Decimal, Mint, Pnl, ShortId, Timestamp } from '../../components/DisplayValues';
-import { IconDownload, IconPlay } from '../../components/Icons';
+import { IconCompare, IconDownload, IconPlay } from '../../components/Icons';
+import { MarketLinks } from '../../components/MarketLinks';
 import { ObservationTable } from '../../components/ObservationTable';
-import { KeyValueTable, PageHeader, Section, Stat } from '../../components/Panels';
+import { KeyValueTable, Kpi, KPI_VALUE_SIZE, KpiStrip, PageHeader, Section } from '../../components/Panels';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
-import { formatCount, formatSlot, mintLabel, shortId } from '../../lib/format';
+import { formatDecimal } from '../../lib/decimal';
+import { formatCount, formatSlot, humanizeCode, mintLabel, shortId, WRAPPED_SOL_MINT } from '../../lib/format';
+import { recordedEventSignature, tokenLinks, transactionLinks } from '../../lib/marketLinks';
 import { paths } from '../../paths';
 import type { RunStartNavigationState } from './NewRunPage';
 import { EventsTable, OrdersTable, PositionsTable } from './RunTables';
+import { bpsLabel, horizonMinutes, latencyLabel, transactionCostLabel } from './configLabels';
+import { CycleList, CycleStory, OutcomeBar, RunLanes } from './RunInspector';
 import { ScenarioCard } from './ScenarioCard';
-import { scenarioPairs, timelineOption } from './timelineChart';
+import { quoteValues, timelineOption, usdtValues } from './timelineChart';
 
 type RecordTab = 'events' | 'observations' | 'orders' | 'positions';
 
@@ -67,11 +76,14 @@ function RunHeader({ detail }: { detail: RunDetail }) {
           rows={[
             ['Strategy', `${config.strategyName} v${config.strategyVersion}`],
             ['Notional', <Decimal key="n" value={config.notional} />],
-            ['Fee', `${config.feeBps} bps`],
-            ['Slippage', `${config.slippageBps} bps`],
-            ['Max wait', `${formatSlot(config.maxWaitSlots)} slots`],
+            ['Dip below first buy', bpsLabel(config.dipBps)],
+            ['Minimum market cap', `$${formatDecimal(config.minMarketCapUsd)}`],
+            ['Take profit', bpsLabel(config.takeProfitBps)],
+            ['Stop loss', bpsLabel(config.stopLossBps)],
+            ['Horizon', `${formatSlot(config.horizonSlots)} slots (about ${horizonMinutes(config.horizonSlots)} min)`],
+            ['Latency', latencyLabel(config.latencySlots)],
+            ['Transaction cost', transactionCostLabel(config.transactionCostSol)],
             ['Max observation age', `${formatSlot(config.maxAgeSlots)} slots`],
-            ['Holding period', `${formatSlot(config.holdingSlots)} slots`],
             ['Quote mint', <Mint key="q" mint={config.quoteMint} />],
           ]}
         />
@@ -80,71 +92,77 @@ function RunHeader({ detail }: { detail: RunDetail }) {
   );
 }
 
-function RunTotals({ detail }: { detail: RunDetail }) {
+/** Open positions counted by why they never exited, e.g. "1 migrated · 1 horizon reached"; migrated tokens stay apart. */
+function openReasons(scenarios: Scenario[]): string | undefined {
+  const counts = new Map<string, number>();
+  for (const s of scenarios) {
+    if (s.position?.state === 'OPEN' && s.exitUnavailableReason) {
+      counts.set(s.exitUnavailableReason, (counts.get(s.exitUnavailableReason) ?? 0) + 1);
+    }
+  }
+  if (counts.size === 0) return undefined;
+  return [...counts.entries()].map(([reason, count]) => `${count} ${humanizeCode(reason).toLowerCase()}`).join(' · ');
+}
+
+function RunTotals({ detail, usdt }: { detail: RunDetail; usdt: RunUsdtView | null }) {
   const { run } = detail;
+  const reasons = openReasons(detail.scenarios);
   return (
-    <Section title="Outcome">
-      <SimpleGrid cols={{ base: 2, md: 4 }}>
-        <Stat label="Scenarios" value={<Text fw={700} size="xl">{formatCount(run.scenarioCount)}</Text>} />
-        <Stat
-          label="Filled / rejected"
-          value={
-            <Text fw={700} size="xl">
-              <Text span c="teal" inherit>{formatCount(run.filledCount)}</Text>
-              {' / '}
-              <Text span c={run.rejectedCount > 0 ? 'orange' : undefined} inherit>{formatCount(run.rejectedCount)}</Text>
-            </Text>
-          }
-        />
-        <Stat
-          label="Open / closed"
-          value={<Text fw={700} size="xl">{formatCount(run.openCount)} / {formatCount(run.closedCount)}</Text>}
-        />
-        <Stat
-          label={`Realized P&L (${mintLabel(run.quoteMint)})`}
-          value={<Pnl value={run.realizedPnl} size="xl" />}
-          hint="Exact sum over closed positions"
-        />
-      </SimpleGrid>
-    </Section>
+    <KpiStrip label="Outcome">
+      {usdt ? (
+        <Kpi label="Realized P&L (USDT)" hint="Net proceeds at each exit minute's rate minus cost at each entry minute's rate">
+          {usdt.realizedPnlUsdt == null ? <Text c="dimmed">— {usdt.realizedPnlUnavailableReason}</Text> : <Pnl value={usdt.realizedPnlUsdt} fz={KPI_VALUE_SIZE} fw={500} />}
+        </Kpi>
+      ) : (
+        <Kpi label={`Realized P&L (${mintLabel(run.quoteMint)})`} hint="Exact sum over closed positions">
+          <Pnl value={run.realizedPnl} fz={KPI_VALUE_SIZE} fw={500} />
+        </Kpi>
+      )}
+      <Kpi label="Outcomes">
+        <OutcomeBar scenarios={detail.scenarios} />
+      </Kpi>
+      <Kpi label="Tokens · entered / no entry">
+        <Text ff="monospace" fz={KPI_VALUE_SIZE} fw={500}>
+          {formatCount(run.scenarioCount)}{' '}
+          <Text span c="dimmed" inherit>
+            ·
+          </Text>{' '}
+          <Text span c="teal" inherit>
+            {formatCount(run.filledCount)}
+          </Text>
+          {' / '}
+          <Text span c={run.rejectedCount > 0 ? 'orange' : undefined} inherit>
+            {formatCount(run.rejectedCount)}
+          </Text>
+        </Text>
+      </Kpi>
+      <Kpi label="Open / closed" hint={reasons && `Open: ${reasons}`}>
+        <Text ff="monospace" fz={KPI_VALUE_SIZE} fw={500}>
+          {formatCount(run.openCount)} / {formatCount(run.closedCount)}
+        </Text>
+      </Kpi>
+    </KpiStrip>
   );
 }
 
-function Timeline({ runId, scenarios }: { runId: string; scenarios: Scenario[] }) {
+/** Price by slot for the selected cycle's pair, with its levels, entry and exit. */
+function Timeline({ runId, scenarios, pair, unit, usdt }: { runId: string; scenarios: Scenario[]; pair: string; unit: string; usdt: RunUsdtView | null }) {
   const observations = useRunObservations(runId);
-  const pairs = scenarioPairs(scenarios);
-  const [selected, setSelected] = useState<string | null>(null);
-  const pair = selected ?? pairs[0] ?? null;
-
-  if (scenarios.length === 0) {
-    return (
-      <Section title="Price timeline">
-        <EmptyState title="No scenarios" description="The dataset had no confirmed buys against the quote mint." />
-      </Section>
-    );
-  }
   const pairScenarios = scenarios.filter((s) => pairKey(s.pair) === pair);
   const pairObservations = (observations.data ?? []).filter((o) => pairKey(o.pair) === pair);
+  const [base = '', quote = ''] = pair.split('/');
 
   return (
     <Section
-      title="Price timeline"
-      hint="Observed price by slot. Gray line: source buy. Green triangles: entry fills (+1/+2/+3) at their execution price. Orange triangles: exits. Dashed red lines: rejected entry targets. Scroll or drag the slider to zoom."
-      actions={
-        pairs.length > 1 && (
-          <Select
-            aria-label="Pair"
-            data={pairs.map((p) => {
-              const [base = '', quote = ''] = p.split('/');
-              return { value: p, label: `${mintLabel(base)} / ${mintLabel(quote)}` };
-            })}
-            value={pair}
-            onChange={setSelected}
-            allowDeselect={false}
-            w={240}
-          />
-        )
+      title={
+        <>
+          Price path ·{' '}
+          <Text span ff="monospace" inherit>
+            {mintLabel(base)} / {mintLabel(quote)}
+          </Text>
+        </>
       }
+      hint="Observed price by slot. Dotted lines: the first buy's price P0, the dip level, take profit and stop loss. Triangles: the entry fill and the exit. Ctrl + scroll or drag the slider to zoom; drag the chart to pan."
     >
       {observations.isPending ? (
         <LoadingState label="Loading observations…" />
@@ -152,46 +170,65 @@ function Timeline({ runId, scenarios }: { runId: string; scenarios: Scenario[] }
         <ErrorState error={observations.error} onRetry={() => void observations.refetch()} />
       ) : (
         <Chart
-          option={timelineOption(pairObservations, pairScenarios)}
+          option={timelineOption(pairObservations, pairScenarios, usdt ? usdtValues(usdt) : quoteValues(unit))}
           height={380}
-          ariaLabel="Price by slot with source buy, entry fill and exit markers"
+          ariaLabel="Price by slot with the first buy, dip, take-profit and stop-loss levels, entry and exit markers"
         />
       )}
     </Section>
   );
 }
 
-function Scenarios({ scenarios }: { scenarios: Scenario[] }) {
+/** The recorded first buy behind a cycle, with its transaction and token links; nothing for other sources. */
+function SourceBuyLinks({ event }: { event: RunEvent | undefined }) {
+  const signature = event ? recordedEventSignature(event) : null;
+  if (!event || !signature) return null;
+  return (
+    <Group gap="md">
+      <Group gap={6}>
+        <Text size="xs" c="dimmed">First buy</Text>
+        <MarketLinks links={transactionLinks(signature)} />
+      </Group>
+      <Group gap={6}>
+        <Text size="xs" c="dimmed">Token {shortId(event.pair.base)}</Text>
+        <MarketLinks links={tokenLinks(event.pair.base)} />
+      </Group>
+    </Group>
+  );
+}
+
+/** Every cycle's full card, in first-buy order; the inspected one is outlined. */
+function Scenarios({ runId, scenarios, selectedId, unit, usdt }: { runId: string; scenarios: Scenario[]; selectedId: string | null; unit: string; usdt: RunUsdtView | null }) {
+  const events = useRunEvents(runId, scenarios.length > 0);
   if (scenarios.length === 0) return null;
-  const bySource = new Map<string, Scenario[]>();
-  for (const s of scenarios) {
-    bySource.set(s.sourceEventId, [...(bySource.get(s.sourceEventId) ?? []), s]);
-  }
+  const eventsById = new Map((events.data ?? []).map((e) => [e.eventId, e]));
+  const usdtById = new Map((usdt?.scenarios ?? []).map((s) => [s.intentId, s]));
   return (
     <Stack gap="md">
-      <Title order={3}>Scenarios</Title>
-      {[...bySource.entries()].map(([sourceEventId, group]) => (
-        <Stack key={sourceEventId} gap="xs">
-          {bySource.size > 1 && (
-            <Text size="sm" c="dimmed">
-              Source buy at slot {formatSlot(group[0]?.sourceSlot)} · event{' '}
-              <Text span ff="monospace" inherit>{sourceEventId}</Text>
-            </Text>
-          )}
-          <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>
-            {[...group]
-              .sort((a, b) => a.entryOffset - b.entryOffset)
-              .map((s) => (
-                <ScenarioCard key={s.intentId} scenario={s} />
-              ))}
-          </SimpleGrid>
-        </Stack>
-      ))}
+      <Stack gap={2}>
+        <Title order={3}>Cycle details</Title>
+        <Text size="sm" c="dimmed">
+          One per token, from the wallet's first buy of it. Later buys of the same token start no cycle.
+        </Text>
+      </Stack>
+      <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>
+        {scenarios.map((s) => (
+          <Stack key={s.intentId} gap="xs">
+            <SourceBuyLinks event={eventsById.get(s.sourceEventId)} />
+            <ScenarioCard scenario={s} unit={unit} usdt={usdt ? usdtById.get(s.intentId) : undefined} selected={s.intentId === selectedId} />
+          </Stack>
+        ))}
+      </SimpleGrid>
     </Stack>
   );
 }
 
-function RecordTabs({ runId }: { runId: string }) {
+/** Cycles in the order their first buys happened. */
+function byFirstBuy(scenarios: Scenario[]): Scenario[] {
+  return [...scenarios].sort((a, b) => a.sourceSlot - b.sourceSlot);
+}
+
+function RecordTabs({ runId, usdt }: { runId: string; usdt: RunUsdtView | null }) {
   const [tab, setTab] = useState<RecordTab>('events');
   const events = useRunEvents(runId, tab === 'events');
   const observations = useRunObservations(runId, tab === 'observations');
@@ -218,7 +255,7 @@ function RecordTabs({ runId }: { runId: string }) {
         </Tabs.List>
         <Tabs.Panel value="events">{panel(events, () => <EventsTable events={events.data ?? []} />)}</Tabs.Panel>
         <Tabs.Panel value="observations">
-          {panel(observations, () => <ObservationTable observations={observations.data ?? []} />)}
+          {panel(observations, () => <ObservationTable observations={observations.data ?? []} usdt={usdt?.observations} />)}
         </Tabs.Panel>
         <Tabs.Panel value="orders">{panel(orders, () => <OrdersTable orders={orders.data ?? []} />)}</Tabs.Panel>
         <Tabs.Panel value="positions">
@@ -229,16 +266,65 @@ function RecordTabs({ runId }: { runId: string }) {
   );
 }
 
+/** SOL/USDT switch for a wrapped-SOL run, kept in the URL (`?quote=usdt`) so a link reopens the same view. */
+function useQuoteCurrency() {
+  const [params, setParams] = useSearchParams();
+  const usdt = params.get(QUOTE_PARAM) === USDT;
+  const setUsdt = (next: boolean) =>
+    setParams(
+      (current) => {
+        const updated = new URLSearchParams(current);
+        if (next) updated.set(QUOTE_PARAM, USDT);
+        else updated.delete(QUOTE_PARAM);
+        return updated;
+      },
+      { replace: true, state: null },
+    );
+  return [usdt, setUsdt] as const;
+}
+
+const QUOTE_PARAM = 'quote';
+const USDT = 'usdt';
+
+function SolPrice() {
+  const price = useSolUsdtPrice(true);
+  if (!price.data) return null;
+  const { rate, unavailableReason } = price.data;
+  return (
+    <Badge variant="light" color="gray" tt="none" size="lg" title="Binance SOLUSDT, refreshed every 30 seconds">
+      {rate ? `1 SOL = ${rate} USDT` : `SOL price unavailable: ${unavailableReason}`}
+    </Badge>
+  );
+}
+
 export function RunDetailPage() {
   const { id = '' } = useParams();
   const location = useLocation();
   const navigationState = location.state as RunStartNavigationState | null;
   const run = useRun(id);
+  const [usdtSelected, setUsdtSelected] = useQuoteCurrency();
+  const solQuoted = run.data?.run.quoteMint === WRAPPED_SOL_MINT;
+  const usdtQuery = useRunUsdt(id, solQuoted && usdtSelected);
+  const [selected, setSelected] = useState(0);
+  const cycles = run.data ? byFirstBuy(run.data.scenarios) : [];
+  const step = (by: number) => {
+    if (cycles.length > 0) setSelected((current) => (current + by + cycles.length) % cycles.length);
+  };
+
+  useHotkeys([
+    ['j', () => step(1)],
+    ['k', () => step(-1)],
+    ['u', () => solQuoted && setUsdtSelected(!usdtSelected)],
+  ]);
 
   if (run.isPending) return <LoadingState label="Loading run…" />;
   if (run.isError) return <ErrorState error={run.error} title="Could not load the run" onRetry={() => void run.refetch()} />;
 
   const detail = run.data;
+  const unit = mintLabel(detail.run.quoteMint);
+  const usdtView = solQuoted && usdtSelected ? usdtQuery.data ?? null : null;
+  const usdt = usdtView && usdtView.unavailableReason == null ? usdtView : null;
+  const current = cycles[Math.min(selected, cycles.length - 1)] ?? null;
   return (
     <Stack gap="lg">
       <PageHeader
@@ -248,9 +334,23 @@ export function RunDetailPage() {
             <CopyValue value={detail.run.id} label="Copy run id" />
           </Group>
         }
-        description="A persisted, immutable replay run: header, configuration, timeline, scenario results and every stored record."
+        description="A persisted, immutable replay run. Pick a cycle to follow it on the chart; J and K step through them."
         actions={
           <>
+            {solQuoted && (
+              <>
+                <SolPrice />
+                <SegmentedControl
+                  aria-label="Show values in"
+                  value={usdtSelected ? 'USDT' : 'SOL'}
+                  onChange={(value) => setUsdtSelected(value === 'USDT')}
+                  data={['SOL', 'USDT']}
+                />
+              </>
+            )}
+            <Button component={Link} to={paths.compareRuns([detail.run.id])} variant="default" leftSection={<IconCompare size={16} />}>
+              Compare with…
+            </Button>
             <Button component={Link} to={paths.newRunFor(detail.run.datasetId)} variant="default" leftSection={<IconPlay size={16} />}>
               New run on this dataset
             </Button>
@@ -270,11 +370,44 @@ export function RunDetailPage() {
           This exact run already existed — identical dataset, config and engine produce the same run id.
         </Alert>
       )}
-      <RunTotals detail={detail} />
+      {usdtView?.unavailableReason && (
+        <Alert color="yellow" variant="light" title="USDT view unavailable">
+          Values stay in {unit}: {usdtView.unavailableReason}
+        </Alert>
+      )}
+      {usdtQuery.isError && usdtSelected && (
+        <Alert color="yellow" variant="light" title="USDT view unavailable">
+          Values stay in {unit}.
+        </Alert>
+      )}
+      {usdt && (
+        <Text size="xs" c="dimmed">
+          USDT values are a display conversion at each trade's own minute (Binance SOLUSDT 1-minute open). Moves within a
+          minute are not resolved. The simulation, its checksums and its P&L stay in {unit}.
+        </Text>
+      )}
+      <RunTotals detail={detail} usdt={usdt} />
+      {current ? (
+        <>
+          <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--mantine-spacing-lg)', alignItems: 'flex-start' }}>
+            <Box style={{ flex: '1 1 300px', minWidth: 0 }}>
+              <CycleList scenarios={cycles} selected={selected} onSelect={setSelected} unit={unit} />
+            </Box>
+            <Stack gap="lg" style={{ flex: '3 1 560px', minWidth: 0 }}>
+              <Timeline runId={detail.run.id} scenarios={detail.scenarios} pair={pairKey(current.pair)} unit={unit} usdt={usdt} />
+              <CycleStory scenario={current} unit={unit} />
+            </Stack>
+          </Box>
+          <RunLanes scenarios={cycles} selected={selected} onSelect={setSelected} unit={unit} />
+        </>
+      ) : (
+        <Section title="Price path">
+          <EmptyState title="No cycles" description="The dataset had no confirmed buys against the quote mint." />
+        </Section>
+      )}
+      <Scenarios runId={detail.run.id} scenarios={cycles} selectedId={current?.intentId ?? null} unit={unit} usdt={usdt} />
       <RunHeader detail={detail} />
-      <Timeline runId={detail.run.id} scenarios={detail.scenarios} />
-      <Scenarios scenarios={detail.scenarios} />
-      <RecordTabs runId={detail.run.id} />
+      <RecordTabs runId={detail.run.id} usdt={usdt} />
     </Stack>
   );
 }

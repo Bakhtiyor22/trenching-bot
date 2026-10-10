@@ -17,15 +17,23 @@ import com.trenching.bot.marketdata.MarketTransactionRecord
 import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.marketdata.MarketWindowDecodeRecord
 import com.trenching.bot.marketdata.MarketWindowRecord
+import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.ObservationQuality
+import com.trenching.bot.protocol.pumpfun.CurveReserves
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.nio.file.Path
 import java.time.Instant
 
 internal object ReplayMarketFixtures {
     private const val SCAN_PAGES = 20
-    val PARAMETERS = MarketCaptureWindowParameters(firstEntryOffset = 1, lastEntryOffset = 3, maxWaitSlots = 2, maxAgeSlots = 2, holdingSlots = 5)
+    val PARAMETERS = MarketCaptureWindowParameters(horizonSlots = 4500, maxAgeSlots = 2)
+    private val CURVE = CurveState(
+        CurveReserves(BigInteger("80123104314"), BigInteger("401756777019139"), BigInteger("50123104314"), BigInteger("121856777019139")),
+        feeBps = 95,
+        creatorFeeBps = 30,
+    )
 
     /** A manifest whose windows each selected [records]; the first window is [firstCoverage]. */
     fun manifest(
@@ -48,7 +56,7 @@ internal object ReplayMarketFixtures {
         val acquired = windowRecords.none { it.coverage == MarketWindowCoverage.PENDING } &&
             records.none { it.outcome == MarketTransactionOutcome.PENDING }
         return MarketHistoryManifest(
-            schemaVersion = 1, genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", commitment = "confirmed",
+            schemaVersion = 2, genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", commitment = "confirmed",
             capturedAt = "2026-10-04T00:00:00Z", windowParameters = PARAMETERS, scanPageLimit = SCAN_PAGES, maxTransactions = 300,
             windows = windowRecords, records = records, acquisitionComplete = acquired,
             complete = acquired && windowRecords.all { it.coverage == MarketWindowCoverage.COMPLETE }, requestsUsed = 5, bytesUsed = 4096,
@@ -63,7 +71,7 @@ internal object ReplayMarketFixtures {
         val listed = (0 until observations).map { index ->
             MarketObservation("pumpfun-bonding-curve-trade/v1:observation$index", window.pair, window.fromSlot.plus(index.toLong()),
                 window.fromSlot.plus(index.toLong()), Instant.ofEpochSecond(1791049629), BigDecimal("0.00000019736807582073671197813450558296"),
-                null, "pumpfun-bonding-curve-trade/v1", "observation$index", Commitment.CONFIRMED, ObservationQuality.LAST_TRADE)
+                null, "pumpfun-bonding-curve-trade/v1", "observation$index", Commitment.CONFIRMED, ObservationQuality.LAST_TRADE, false, CURVE)
         }
         return MarketHistoryDecodeResult(directory, manifest.complete, MarketObservationExtractorVersion.PUMPFUN_BONDING_CURVE_TRADE_V1,
             manifest.windowParameters, listOf(MarketWindowDecodeRecord(window, first.coverage, first.selected, 0, true, observations)),

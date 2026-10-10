@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addDecimals,
+  compactDecimal,
+  compareDecimals,
   compareToZero,
   decimalSign,
   formatDecimal,
   isDecimalString,
   pnlColor,
   toChartNumber,
-  validatePositiveDecimal,
+  trimFractionZeros,
+  validateDecimal,
 } from './decimal';
 
 describe('formatDecimal', () => {
@@ -73,30 +77,82 @@ describe('toChartNumber', () => {
   });
 });
 
-describe('validatePositiveDecimal', () => {
-  const rule = { maxFractionDigits: 12, maxIntegerDigits: 26 };
+describe('validateDecimal', () => {
+  const notional = { maxFractionDigits: 9, maxIntegerDigits: 26, min: '0.000000001' };
+  const cost = { maxFractionDigits: 12, maxIntegerDigits: 26, min: '0', max: '0.1' };
 
-  it('accepts plain positive decimals', () => {
-    expect(validatePositiveDecimal('100', rule)).toBeNull();
-    expect(validatePositiveDecimal('0.5', rule)).toBeNull();
-    expect(validatePositiveDecimal('0.000000000001', rule)).toBeNull();
-    expect(validatePositiveDecimal('1.0000000000001', rule)).toBeNull();
-    expect(validatePositiveDecimal('0.00000000000051', rule)).toBeNull();
-    expect(validatePositiveDecimal('0.0000000000015', rule)).toBeNull();
-    expect(validatePositiveDecimal('0.0000000000025', rule)).toBeNull();
-    expect(validatePositiveDecimal('9'.repeat(26) + '.9999999999985', rule)).toBeNull();
+  it('accepts whole lamports, ignoring trailing zeros', () => {
+    expect(validateDecimal('100', notional)).toBeNull();
+    expect(validateDecimal('0.5', notional)).toBeNull();
+    expect(validateDecimal('0.000000001', notional)).toBeNull();
+    expect(validateDecimal('0.100000000000', notional)).toBeNull();
+    expect(validateDecimal('9'.repeat(26) + '.999999999', notional)).toBeNull();
   });
 
-  it('rejects exponents, signs, rounded zero and values overflowing storage precision', () => {
-    expect(validatePositiveDecimal('1e2', rule)).toMatch(/plain positive decimal/);
-    expect(validatePositiveDecimal('-1', rule)).toMatch(/plain positive decimal/);
-    expect(validatePositiveDecimal('0.000', rule)).toMatch(/greater than zero/);
-    expect(validatePositiveDecimal('0.0000000000001', rule)).toMatch(/greater than zero/);
-    expect(validatePositiveDecimal('0.0000000000005', rule)).toMatch(/greater than zero/);
-    expect(validatePositiveDecimal('9'.repeat(26) + '.9999999999995', rule)).toMatch(
-      /At most 26 digits before/,
-    );
-    expect(validatePositiveDecimal('1'.repeat(27), rule)).toMatch(/At most 26 digits before/);
-    expect(validatePositiveDecimal('', rule)).toBe('Required');
+  it('rejects exponents, signs, sub-lamport digits, zero and values overflowing storage precision', () => {
+    expect(validateDecimal('1e2', notional)).toMatch(/plain decimal/);
+    expect(validateDecimal('-1', notional)).toMatch(/plain decimal/);
+    expect(validateDecimal('0.0000000015', notional)).toBe('At most 9 decimals');
+    expect(validateDecimal('0.000', notional)).toBe('Must be at least 0.000000001');
+    expect(validateDecimal('1'.repeat(27), notional)).toMatch(/At most 26 digits before/);
+    expect(validateDecimal('', notional)).toBe('Required');
+  });
+
+  it('accepts zero up to an inclusive maximum, compared exactly', () => {
+    expect(validateDecimal('0', cost)).toBeNull();
+    expect(validateDecimal('0.000000000001', cost)).toBeNull();
+    expect(validateDecimal('0.1', cost)).toBeNull();
+    expect(validateDecimal('0.100000000001', cost)).toBe('Must be between 0 and 0.1');
+    expect(validateDecimal('0.0000000000001', cost)).toBe('At most 12 decimals');
+  });
+});
+
+describe('compactDecimal', () => {
+  it('folds the leading fractional zeros of a tiny price into a subscript count, keeping every digit', () => {
+    expect(compactDecimal('0.00000008643')).toBe('0.0₇8643');
+    expect(compactDecimal('0.000000112359')).toBe('0.0₆112359');
+    expect(compactDecimal('-0.0000000734655')).toBe('-0.0₇734655');
+    expect(compactDecimal('0.0000000000124017')).toBe('0.0₁₀124017');
+  });
+
+  it('leaves short, large, zero and non-decimal values to formatDecimal', () => {
+    expect(compactDecimal('0.000123')).toBe('0.000123');
+    expect(compactDecimal('1234.5')).toBe('1,234.5');
+    expect(compactDecimal('0.000000000')).toBe('0.000000000');
+    expect(compactDecimal('1e-9')).toBe('1e-9');
+    expect(compactDecimal(null)).toBe('—');
+  });
+});
+
+describe('trimFractionZeros', () => {
+  it('drops trailing fractional zeros only', () => {
+    expect(trimFractionZeros('212.34000000')).toBe('212.34');
+    expect(trimFractionZeros('200.000')).toBe('200');
+    expect(trimFractionZeros('200')).toBe('200');
+    expect(trimFractionZeros('n/a')).toBe('n/a');
+  });
+});
+
+describe('addDecimals', () => {
+  it('adds exactly at the largest scale', () => {
+    expect(addDecimals('26.089701492540', '-3.580241077133')).toBe('22.509460415407');
+    expect(addDecimals('32.157983339118', '-38.283768656717')).toBe('-6.125785317599');
+    expect(addDecimals('0.1', '0.2')).toBe('0.3');
+    expect(addDecimals('-0.05', '0.01')).toBe('-0.04');
+    expect(addDecimals('5', '7')).toBe('12');
+    expect(addDecimals()).toBe('0');
+  });
+
+  it('refuses values that are not plain decimals', () => {
+    expect(() => addDecimals('1e-9')).toThrow('Not a plain decimal: 1e-9');
+  });
+});
+
+describe('compareDecimals', () => {
+  it('orders exactly, beyond float precision', () => {
+    expect(compareDecimals('26.089701492540', '-3.580241077133')).toBe(1);
+    expect(compareDecimals('-3.58', '-3.580')).toBe(0);
+    expect(compareDecimals('0.10000000000000000001', '0.1')).toBe(1);
+    expect(compareDecimals('-1', '+2')).toBe(-1);
   });
 });

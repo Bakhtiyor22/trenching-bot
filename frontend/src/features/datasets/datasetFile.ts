@@ -1,7 +1,7 @@
 import { formatBytes } from '../../lib/format';
 
 /** Server limit (`spring.servlet.multipart.max-file-size`); checked client-side before upload. */
-export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
 /** Client-side file check mirroring the backend limits. Returns an error message or null. */
 export function validateDatasetFile(file: File): string | null {

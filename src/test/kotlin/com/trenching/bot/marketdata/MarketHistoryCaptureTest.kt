@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.chaincapture.CaptureBudgetException
 import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.chaincapture.SolanaReadRpc
@@ -14,11 +15,13 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -397,19 +400,62 @@ class MarketHistoryCaptureTest {
     }
 
     @Test
+    fun `reports a deadline stop as its own category and resumes on the next invocation`() {
+        var deadline = true
+        val service = service { method, params, budget ->
+            if (method == "getTransaction" && deadline) throw CaptureBudgetException("DEADLINE")
+            budget.request()
+            when (method) {
+                "getGenesisHash" -> genesis()
+                "getSignaturesForAddress" -> page(listOf(entry(1, 1003), entry(2, 1002)))
+                "getTransaction" -> transaction(params[0] as String, slotOf.getValue(params[0] as String))
+                else -> error("Unexpected method")
+            }
+        }
+        val request = request(listOf(window(MINT, 1001, 1012, SOURCE))).copy(operationTimeout = Duration.ofMinutes(30))
+
+        val stopped = service.capture(request)
+        assertEquals("DEADLINE", stopped.stopReason)
+        assertFalse(stopped.manifest.acquisitionComplete)
+        deadline = false
+        val resumed = service.capture(request)
+        assertNull(resumed.stopReason)
+        assertTrue(resumed.manifest.complete)
+    }
+
+    @Test
+    fun `a request budget stop reports its own category`() {
+        val service = service { method, params, budget ->
+            budget.request()
+            when (method) {
+                "getGenesisHash" -> genesis()
+                "getSignaturesForAddress" -> page(listOf(entry(1, 1003), entry(2, 1002)))
+                "getTransaction" -> transaction(params[0] as String, slotOf.getValue(params[0] as String))
+                else -> error("Unexpected method")
+            }
+        }
+
+        assertEquals("REQUESTS", service.capture(request(listOf(window(MINT, 1001, 1012, SOURCE)), requestBudget = 3)).stopReason)
+    }
+
+    @Test
     fun `validates request bounds and windows before any provider request`() {
         val valid = listOf(window(MINT, 1001, 1012, SOURCE))
         val invalid = listOf(
             request(valid, scanPages = 0), request(valid, scanPages = 501),
-            request(valid, maxTransactions = 0), request(valid, maxTransactions = 1001),
-            request(valid, requestBudget = 0), request(valid, requestBudget = 1001),
-            request(valid, byteBudget = 0), request(valid, byteBudget = 500L * 1024 * 1024 + 1),
+            request(valid, maxTransactions = 0), request(valid, maxTransactions = 50_001),
+            request(valid, requestBudget = 0), request(valid, requestBudget = 60_001),
+            request(valid, byteBudget = 0), request(valid, byteBudget = 4L * 1024 * 1024 * 1024 + 1),
             request(emptyList()),
             request(listOf(window(MINT, 1001, 1012, SOURCE), window(MINT, 1012, 1020, SOURCE))),
             request(listOf(window(MINT, 1001, 1012, SOURCE), window(MINT, 1013, 1020, SOURCE))),
             request((1..101).map { window(MINT, it * 100L, it * 100L + 12, SOURCE) }),
-            request(valid, parameters = PARAMETERS.copy(lastEntryOffset = 0)),
-            request(valid, parameters = PARAMETERS.copy(maxWaitSlots = -1)),
+            request(valid, parameters = PARAMETERS.copy(horizonSlots = 0)),
+            request(valid, parameters = PARAMETERS.copy(horizonSlots = 4501)),
+            request(valid, parameters = PARAMETERS.copy(maxAgeSlots = -1)),
+            request(valid).copy(operationTimeout = Duration.ofSeconds(30)),
+            request(valid).copy(operationTimeout = Duration.ofMinutes(31)),
+            request(valid).copy(operationTimeout = Duration.ofSeconds(90)),
         )
         val service = service { method, _, _ -> calls += method; error("Must not call provider") }
         invalid.forEachIndexed { index, request ->
@@ -426,7 +472,7 @@ class MarketHistoryCaptureTest {
         assertEquals(listOf(MINT, OTHER_MINT).sorted(), first.windows.map { it.baseMint })
         assertEquals(PARAMETERS, first.windowParameters)
         assertEquals(List(2) { MintAddress.WRAPPED_SOL.value }, first.windows.map { it.quoteMint })
-        assertEquals(1, first.schemaVersion)
+        assertEquals(2, first.schemaVersion)
         assertEquals(20, first.scanPageLimit)
         assertEquals(300, first.maxTransactions)
         val callsBefore = calls.size
@@ -434,7 +480,7 @@ class MarketHistoryCaptureTest {
             request(windows.take(1)),
             request(windows, scanPages = 3),
             request(windows, maxTransactions = 30),
-            request(windows, parameters = PARAMETERS.copy(holdingSlots = 6)),
+            request(windows, parameters = PARAMETERS.copy(horizonSlots = 4499)),
         ).forEach { changed -> assertCategory("RESUME_IDENTITY") { capture(changed) { _, _ -> emptyList() } } }
         assertEquals(callsBefore, calls.size)
         assertTrue(capture(request(windows.reversed())) { _, _ -> emptyList() }.manifest.complete)
@@ -468,6 +514,43 @@ class MarketHistoryCaptureTest {
         assertEquals(callsBefore, calls.size)
     }
 
+    @Test
+    fun `checkpoint observes persisted evidence and distinguishes invocation usage on resume`() {
+        val checkpoints = mutableListOf<com.trenching.bot.chaincapture.CaptureCheckpoint>()
+        val rpc = SolanaReadRpc { method, params, budget ->
+            budget.request()
+            when (method) {
+                "getGenesisHash" -> genesis()
+                "getSignaturesForAddress" -> page(listOf(entry(1, 1003), entry(2, 1002)))
+                "getTransaction" -> transaction(params[0] as String, slotOf.getValue(params[0] as String))
+                else -> error("Unexpected method")
+            }
+        }
+        val service = MarketHistoryCaptureService(rpc, MarketHistoryArtifactStore(mapper), CLOCK) { checkpoint ->
+            assertEquals(checkpoint.cumulativeRequests, recorded().inspect(directory).manifest.requestsUsed)
+            checkpoints += checkpoint
+        }
+        val request = request(listOf(window(MINT, 1001, 1012, SOURCE)), requestBudget = 3)
+        service.capture(request)
+        assertEquals(3, checkpoints.last().operationRequests)
+        assertEquals(3, checkpoints.last().cumulativeRequests)
+        service.capture(request)
+        assertEquals(2, checkpoints.last().operationRequests)
+        assertEquals(5, checkpoints.last().cumulativeRequests)
+        assertEquals("MARKET_COMPLETE", checkpoints.last().phase)
+    }
+
+    @Test
+    fun `observer failure surfaces after persisted checkpoint and leaves evidence resumable`() {
+        val rpc = SolanaReadRpc { method, _, budget ->
+            budget.request()
+            assertEquals("getGenesisHash", method)
+            genesis()
+        }
+        val service = MarketHistoryCaptureService(rpc, MarketHistoryArtifactStore(mapper), CLOCK) { error("progress unavailable") }
+        assertFailsWith<IllegalStateException> { service.capture(request(listOf(window(MINT, 1001, 1012, SOURCE)))) }
+        assertEquals(1, recorded().inspect(directory).manifest.requestsUsed)
+    }
     private fun capture(request: MarketHistoryCaptureRequest, listing: (String, String?) -> List<String>): MarketHistoryCaptureResult =
         service { method, params, _ ->
             calls += method
@@ -535,7 +618,7 @@ class MarketHistoryCaptureTest {
         const val MINT = "5bYUihkPWGph9BLyG4uUbNV634UTwjf3Ly5JEsnokbDs"
         const val OTHER_MINT = "4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9"
         const val SOURCE = 77_777
-        val PARAMETERS = MarketCaptureWindowParameters(firstEntryOffset = 1, lastEntryOffset = 3, maxWaitSlots = 2, maxAgeSlots = 2, holdingSlots = 5)
+        val PARAMETERS = MarketCaptureWindowParameters(horizonSlots = 4500, maxAgeSlots = 2)
         val CLOCK: Clock = Clock.fixed(Instant.parse("2026-10-04T00:00:00Z"), ZoneOffset.UTC)
     }
 }

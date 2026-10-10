@@ -1,7 +1,9 @@
-import { Badge, ScrollArea, Table, Text } from '@mantine/core';
-import type { Observation } from '../api/types';
-import { humanizeCode, formatSlot } from '../lib/format';
+import { Badge, Code, ScrollArea, Table, Text } from '@mantine/core';
+import type { Observation, UsdtObservation } from '../api/types';
+import { humanizeCode, formatSlot, usdtRateNote } from '../lib/format';
+import { recordedTradeSignature, transactionLinks } from '../lib/marketLinks';
 import { Decimal, Timestamp } from './DisplayValues';
+import { MarketLinks } from './MarketLinks';
 import { PagingFooter } from './Panels';
 import { useClientPaging } from './useClientPaging';
 import { EmptyState } from './StateViews';
@@ -15,8 +17,30 @@ export function QualityBadge({ quality }: { quality: string }) {
   );
 }
 
-export function ObservationTable({ observations }: { observations: Observation[] }) {
+function UsdtPrice({ value }: { value: UsdtObservation | undefined }) {
+  if (value?.priceUsdt) {
+    return (
+      <Text span title={usdtRateNote(value.rate, value.minute) ?? undefined}>
+        <Decimal value={value.priceUsdt} />
+      </Text>
+    );
+  }
+  return (
+    <Text span size="sm" c="dimmed">
+      — {value?.unavailableReason && <Code fz="xs">{value.unavailableReason}</Code>}
+    </Text>
+  );
+}
+
+function TradeLinks({ observationId }: { observationId: string }) {
+  const signature = recordedTradeSignature(observationId);
+  return signature ? <MarketLinks links={transactionLinks(signature)} /> : null;
+}
+
+/** With [usdt], the price column shows each observation's USDT conversion (or why it has none). */
+export function ObservationTable({ observations, usdt }: { observations: Observation[]; usdt?: UsdtObservation[] }) {
   const paging = useClientPaging(observations, 50);
+  const usdtById = new Map((usdt ?? []).map((o) => [o.id, o]));
   if (observations.length === 0) return <EmptyState title="No observations" />;
   return (
     <>
@@ -28,7 +52,7 @@ export function ObservationTable({ observations }: { observations: Observation[]
               <Table.Th ta="right">Slot</Table.Th>
               <Table.Th ta="right">Price slot</Table.Th>
               <Table.Th>Observed</Table.Th>
-              <Table.Th ta="right">Price</Table.Th>
+              <Table.Th ta="right">{usdt ? 'Price (USDT)' : 'Price'}</Table.Th>
               <Table.Th ta="right">Liquidity (quote)</Table.Th>
               <Table.Th>Quality</Table.Th>
               <Table.Th>Source</Table.Th>
@@ -45,7 +69,7 @@ export function ObservationTable({ observations }: { observations: Observation[]
                   <Timestamp iso={o.observedTime} />
                 </Table.Td>
                 <Table.Td ta="right">
-                  <Decimal value={o.price} />
+                  {usdt ? <UsdtPrice value={usdtById.get(o.id)} /> : <Decimal value={o.price} />}
                 </Table.Td>
                 <Table.Td ta="right">
                   {o.liquidityQuote == null ? <Text span c="dimmed" size="sm">unknown</Text> : <Decimal value={o.liquidityQuote} />}
@@ -58,6 +82,7 @@ export function ObservationTable({ observations }: { observations: Observation[]
                   <Text size="xs" c="dimmed" ff="monospace">
                     {o.sourceEventId}
                   </Text>
+                  <TradeLinks observationId={o.id} />
                 </Table.Td>
                 <Table.Td>{o.commitment}</Table.Td>
               </Table.Tr>

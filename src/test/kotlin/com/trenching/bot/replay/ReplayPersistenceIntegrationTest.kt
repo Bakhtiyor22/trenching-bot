@@ -27,7 +27,7 @@ class ReplayPersistenceIntegrationTest {
     @Autowired private lateinit var mapper: ObjectMapper
     @Autowired private lateinit var dataSource: DataSource
 
-    private fun dataset() = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
+    private fun dataset() = javaClass.getResourceAsStream("/replay/samples/dip-sample-v3.json").use {
         ReplayDatasetLoader(mapper).load(requireNotNull(it))
     }
 
@@ -43,8 +43,8 @@ class ReplayPersistenceIntegrationTest {
         assertEquals(report.datasetChecksum, first.datasetChecksum)
         assertEquals(report.configurationHash, first.configurationHash)
         val stored = mapper.readTree(first.reportSnapshot)
-        assertEquals(3, stored.path("scenarios").size())
-        assertEquals(0, java.math.BigDecimal("8.696567164180").compareTo(java.math.BigDecimal(
+        assertEquals(10, stored.path("scenarios").size())
+        assertEquals(0, java.math.BigDecimal(com.trenching.bot.support.DipSample.TAKE_PROFIT_PNL).compareTo(java.math.BigDecimal(
             stored.path("scenarios")[0].path("position").path("close").path("realizedPnl").asString())))
         dataSource.connection.use { connection ->
             connection.prepareStatement("select count(*) from simulation_runs where id = ?").use { statement ->
@@ -57,7 +57,7 @@ class ReplayPersistenceIntegrationTest {
     @Test
     fun `concurrent duplicate writers converge on one durable run`() {
         val input = dataset()
-        val config = SimulationConfig.of(java.math.BigDecimal("101"), 10, 50, 2, 2, 5)
+        val config = SimulationConfig.of(java.math.BigDecimal("0.101"), 2, 1500, 3000, 1500, java.math.BigDecimal("10000"), 4500, 1, java.math.BigDecimal("0.001"))
         val report = ReplayRunner().run(input, config)
         val pool = Executors.newFixedThreadPool(2)
         val ready = CountDownLatch(2)

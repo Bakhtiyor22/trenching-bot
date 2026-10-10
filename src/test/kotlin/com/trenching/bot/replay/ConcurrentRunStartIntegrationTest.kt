@@ -42,7 +42,7 @@ class ConcurrentRunStartIntegrationTest {
 
     @Test
     fun `simultaneous starts return exactly one created outcome with one record batch`() {
-        val datasetId = catalog.importSample(SampleDataset.WEEKLY_BUY_V1).dataset.id
+        val datasetId = catalog.importSample(SampleDataset.DIP_SAMPLE_V3).dataset.id
         val barrier = CyclicBarrier(2)
         val clock = object : Clock() {
             override fun getZone(): ZoneId = ZoneOffset.UTC
@@ -54,7 +54,7 @@ class ConcurrentRunStartIntegrationTest {
         }
         val ledger = SimulationRunLedger(transactions, mapper, entries, json, clock)
         val service = SimulationRunsService(catalog, ledger, transactions, mapper)
-        val config = SimulationConfig.of(BigDecimal("100"), 17, 50, 2, 2, 5)
+        val config = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, java.math.BigDecimal("10000"), 4500, 1, BigDecimal("0.0017"))
         val pool = Executors.newFixedThreadPool(2)
         try {
             val pending = List(2) { pool.submit(Callable { service.start(datasetId, config) }) }
@@ -63,7 +63,7 @@ class ConcurrentRunStartIntegrationTest {
             assertEquals(results.first().run, results.last().run)
             val runId = results.first().run.id
             val counts = com.trenching.bot.support.runRowCounts(dataSource, runId)
-            assertEquals(listOf(1, 4, 6, 3, 3, 3, 3), counts)
+            assertEquals(listOf(1, 11, 31, 10, 10, 5, 5), counts)
             val repeated = SimulationRunsService(catalog,
                 SimulationRunLedger(transactions, mapper, entries, json, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC)),
                 transactions, mapper).start(datasetId, config)

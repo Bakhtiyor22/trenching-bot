@@ -48,7 +48,7 @@ class DashboardService(
 
     private fun rejections(): List<RejectionCount> {
         val counts = orders.rejectionCounts()
-        return RejectionReason.entries.map { RejectionCount(it, counts[it] ?: 0) }
+        return RejectionReason.ENTRY.map { RejectionCount(it, counts[it] ?: 0) }
     }
 
     private companion object {

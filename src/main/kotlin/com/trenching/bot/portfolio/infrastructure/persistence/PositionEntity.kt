@@ -44,6 +44,12 @@ class PositionEntity(
     var grossProceeds: BigDecimal?,
     @Column(name = "exit_fee", nullable = true, precision = 38, scale = 12)
     var exitFee: BigDecimal?,
+    @Column(name = "close_fee_bps", nullable = true)
+    var closeFeeBps: Int?,
+    @Column(name = "close_transaction_cost", nullable = true, precision = 38, scale = 12)
+    var closeTransactionCost: BigDecimal?,
+    @Column(name = "close_price_impact_bps", nullable = true)
+    var closePriceImpactBps: Int?,
     @Column(name = "net_proceeds", nullable = true, precision = 38, scale = 12)
     var netProceeds: BigDecimal?,
     @Column(name = "realized_pnl", nullable = true, precision = 38, scale = 12)
@@ -54,6 +60,18 @@ class PositionEntity(
     @Enumerated(EnumType.STRING)
     @Column(name = "exit_unavailable", nullable = true, length = 32)
     var exitUnavailable: RejectionReason?,
+    // Nullable only because `ddl-auto: update` cannot add NOT NULL columns to a populated table.
+    @Column(name = "take_profit_price", nullable = true, precision = DecimalPolicy.PRICE_PRECISION, scale = DecimalPolicy.PRICE_SCALE)
+    var takeProfitPrice: BigDecimal?,
+    @Column(name = "stop_loss_price", nullable = true, precision = DecimalPolicy.PRICE_PRECISION, scale = DecimalPolicy.PRICE_SCALE)
+    var stopLossPrice: BigDecimal?,
+    @Column(name = "exit_trigger_observation_id", nullable = true, length = 255)
+    var exitTriggerObservationId: String?,
+    @Column(name = "exit_trigger_slot", nullable = true)
+    var exitTriggerSlot: Long?,
+    @Enumerated(EnumType.STRING)
+    @Column(name = "exit_trigger_reason", nullable = true, length = 32)
+    var exitTriggerReason: CloseReason?,
     @Version
     @Column(nullable = false)
     var version: Long? = null,

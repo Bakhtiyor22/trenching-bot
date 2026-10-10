@@ -26,6 +26,16 @@ class MarketHistoryCaptureConfiguration {
         return MarketHistoryCaptureService(HttpSolanaReadRpc(properties, objectMapper, clock), MarketHistoryArtifactStore(objectMapper), clock)
     }
 
+    fun observedCapture(
+        properties: MarketHistoryCaptureProperties,
+        objectMapper: ObjectMapper,
+        clock: Clock,
+        observer: com.trenching.bot.chaincapture.CaptureCheckpointObserver,
+    ): MarketHistoryCapture {
+        properties.validate()
+        return MarketHistoryCaptureService(HttpSolanaReadRpc(properties, objectMapper, clock), MarketHistoryArtifactStore(objectMapper), clock, observer)
+    }
+
     @Bean
     fun recordedMarketHistory(objectMapper: ObjectMapper): RecordedMarketHistory =
         RecordedMarketHistoryService(MarketHistoryArtifactStore(objectMapper), PumpFunTradeObservationExtractor())

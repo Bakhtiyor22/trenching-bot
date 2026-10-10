@@ -5,6 +5,7 @@ import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.replay.domain.RunAggregates
 import com.trenching.bot.replay.domain.SampleDataset
 import com.trenching.bot.strategy.domain.SimulationConfig
+import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import java.math.BigDecimal
 import java.time.Clock
@@ -45,7 +46,7 @@ class SimulationRunAggregatesIntegrationTest {
         }
     }
 
-    private fun sampleId(): String = catalog.importSample(SampleDataset.WEEKLY_BUY_V1).dataset.id
+    private fun sampleId(): String = catalog.importSample(SampleDataset.DIP_SAMPLE_V3).dataset.id
 
     @Test
     fun `an empty database aggregates to zeros and no pnl`() {
@@ -58,16 +59,16 @@ class SimulationRunAggregatesIntegrationTest {
 
         val totals = runs.totals(Instant.EPOCH)
 
-        assertEquals(RunAggregates(1, 1, 3, 0, 0, 3, mapOf(MintAddress.WRAPPED_SOL to BigDecimal("26.089701492540"))), totals)
-        assertEquals("26.089701492540", totals.realizedPnlByQuoteMint.getValue(MintAddress.WRAPPED_SOL).toPlainString())
+        assertEquals(RunAggregates(1, 1, 5, 5, 3, 2, mapOf(MintAddress.WRAPPED_SOL to BigDecimal(DipSample.TOTAL_PNL))), totals)
+        assertEquals(DipSample.TOTAL_PNL, totals.realizedPnlByQuoteMint.getValue(MintAddress.WRAPPED_SOL).toPlainString())
     }
 
     @Test
     fun `runs with different fees add up and another quote mint stays a separate entry`() {
         val datasetId = sampleId()
-        val cheap = runs.start(datasetId, SimulationConfig.of(BigDecimal("100"), 10, 50, 2, 2, 5)).run
-        val dear = runs.start(datasetId, SimulationConfig.of(BigDecimal("100"), 20, 50, 2, 2, 5)).run
-        val other = runs.start(datasetId, SimulationConfig.of(BigDecimal("100"), 10, 50, 2, 2, 5, quoteMint = OTHER_MINT)).run
+        val cheap = runs.start(datasetId, SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, java.math.BigDecimal("10000"), 4500, 1, BigDecimal("0.001"))).run
+        val dear = runs.start(datasetId, SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, java.math.BigDecimal("10000"), 4500, 1, BigDecimal("0.002"))).run
+        val other = runs.start(datasetId, SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, java.math.BigDecimal("10000"), 4500, 1, BigDecimal("0.001"), quoteMint = OTHER_MINT)).run
 
         val totals = runs.totals(Instant.EPOCH)
 

@@ -17,7 +17,9 @@ internal object ReplayMarketCommandOptions {
     const val EXTRACTOR_NOT_RUN = "NOT_RUN"
     const val EXTRACTOR_CAPTURE_INCOMPLETE = "CAPTURE_INCOMPLETE"
     const val CAPTURE_USAGE = "Usage: captureReplayMarkets --wallet-capture-directory <path> --directory <path> [--scan-pages <1..500>] " +
-        "[--max-transactions <1..1000>] [--request-budget <1..1000>] [--byte-budget <1..524288000>]"
+        "[--max-transactions <1..1000>] [--request-budget <1..1000>] [--byte-budget <1..524288000>] " +
+        CaptureCommandArguments.OPERATION_TIMEOUT_USAGE
     const val INSPECT_USAGE = "Usage: inspectReplayMarkets --directory <path>"
-    val CAPTURE_OPTIONS = setOf(WALLET_CAPTURE_DIRECTORY, DIRECTORY, SCAN_PAGES, MAX_TRANSACTIONS, REQUEST_BUDGET, BYTE_BUDGET)
+    val CAPTURE_OPTIONS = setOf(WALLET_CAPTURE_DIRECTORY, DIRECTORY, SCAN_PAGES, MAX_TRANSACTIONS, REQUEST_BUDGET, BYTE_BUDGET,
+        CaptureCommandArguments.OPERATION_TIMEOUT_MINUTES)
 }

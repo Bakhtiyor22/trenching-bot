@@ -8,5 +8,5 @@ class CaptureValidationException(val category: String) :
 class CaptureProviderException(val category: String) :
     CaptureException("Capture provider failed category=$category")
 
-class CaptureBudgetException(category: String) :
+class CaptureBudgetException(val category: String) :
     CaptureException("Capture budget exhausted category=$category")

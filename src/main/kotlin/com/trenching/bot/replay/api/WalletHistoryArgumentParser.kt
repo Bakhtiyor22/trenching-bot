@@ -22,7 +22,11 @@ internal object WalletHistoryArgumentParser {
             WalletHistoryCommandOptions.DEFAULT_REQUEST_BUDGET, 1..WalletHistoryCaptureLimits.MAX_REQUESTS) ?: return CommandArguments.Invalid
         val byteBudget = CaptureCommandArguments.long(values, WalletHistoryCommandOptions.BYTE_BUDGET,
             WalletHistoryCommandOptions.DEFAULT_BYTE_BUDGET, 1..WalletHistoryCaptureLimits.MAX_BYTES) ?: return CommandArguments.Invalid
-        return CommandArguments.Valid(WalletHistoryCaptureRequest(wallet, directory.value, limit, scanPages, requestBudget, byteBudget))
+        val scope = WalletHistoryCommandOptions.SCOPES[values[WalletHistoryCommandOptions.SCOPE] ?: WalletHistoryCommandOptions.SCOPE_WALLET_REFERENCES]
+            ?: return CommandArguments.Invalid
+        val operationTimeout = CaptureCommandArguments.operationTimeout(values) ?: return CommandArguments.Invalid
+        return CommandArguments.Valid(WalletHistoryCaptureRequest(wallet, directory.value, limit, scanPages, requestBudget, byteBudget, scope,
+            operationTimeout))
     }
 
     fun inspect(args: Array<String>): CommandArguments<Path> =

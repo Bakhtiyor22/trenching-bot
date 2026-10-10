@@ -22,6 +22,14 @@ class PumpFunInstructionReaderTest {
             tokenAmount = BigInteger("1238520682656"),
             isBuy = 1,
             user = WalletAddress.of(USER),
+            virtualSolReserves = BigInteger("79829770982"),
+            virtualTokenReserves = BigInteger("403233026450985"),
+            realSolReserves = BigInteger("49829770982"),
+            realTokenReserves = BigInteger("123333026450985"),
+            feeBasisPoints = BigInteger("95"),
+            feeLamports = BigInteger("2322223"),
+            creatorFeeBasisPoints = BigInteger("30"),
+            creatorFeeLamports = BigInteger("733334"),
         )
         assertEquals(listOf(expected), PumpFunInstructionReader.read(fixture()).filterIsInstance<PumpFunInstruction.TradeEvent>())
     }

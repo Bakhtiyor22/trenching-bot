@@ -42,7 +42,7 @@ class HttpSolanaReadRpc(
     override fun call(method: String, params: List<Any>, budget: CaptureBudget): JsonNode {
         if (method !in ChainCaptureFormat.READ_METHODS) throw CaptureValidationException("RPC_METHOD")
         val uri = endpoint ?: throw CaptureProviderException("NOT_CONFIGURED")
-        budget.startDeadline(timing.nanoTime(), settings.operationTimeout)
+        budget.startDeadline(timing.nanoTime(), budget.operationTimeout ?: settings.operationTimeout)
         var last = CaptureHttpReply.Failed("UNAVAILABLE", true)
         for (attempt in 1..MAX_ATTEMPTS) {
             val waitNanos = maxOf(0, nextRequestNanos - timing.nanoTime())

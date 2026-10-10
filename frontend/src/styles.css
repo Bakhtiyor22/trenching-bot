@@ -1,0 +1,100 @@
+/* Global console styles that Mantine props cannot express: tabular numbers, live cues, scrollbars. */
+
+body {
+  font-feature-settings: 'tnum' 1;
+}
+
+[data-mantine-color-scheme='dark'] body {
+  background: #0a0d10;
+}
+
+/* A value that just changed flashes once, so polled updates are noticed without moving the layout. */
+@keyframes console-flash {
+  from {
+    background-color: rgba(242, 180, 60, 0.28);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.console-flash {
+  animation: console-flash 1.2s ease-out;
+  border-radius: 4px;
+}
+
+/* The pulsing dot next to anything that is polled live. */
+@keyframes console-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(61, 220, 151, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(61, 220, 151, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(61, 220, 151, 0);
+  }
+}
+
+.console-live-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  animation: console-pulse 1.8s infinite;
+}
+
+.console-row-button {
+  all: unset;
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  cursor: pointer;
+}
+
+.console-row-button:hover {
+  background: var(--mantine-color-default-hover);
+}
+
+.console-row-button:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-flash,
+  .console-live-dot {
+    animation: none;
+  }
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a343d transparent;
+}
+
+.console-kpi-strip {
+  display: grid;
+  /* Hairline dividers between cells that survive wrapping: each cell draws its own left and bottom line,
+     and the negative margin tucks the outermost ones under the card edge. */
+  margin: 0 0 -1px -1px;
+}
+
+.console-kpi-strip > .console-kpi {
+  border-left: 1px solid var(--mantine-color-default-border);
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+/* Exact decimals are long; a headline figure wraps inside its cell instead of overflowing it. */
+.console-kpi-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The palette's highlighted result: a raised row with an amber edge, so colored P&L stays readable. */
+.mantine-Spotlight-action[data-selected] {
+  background: var(--mantine-color-default-hover);
+  color: var(--mantine-color-text);
+  box-shadow: inset 3px 0 0 var(--mantine-primary-color-filled);
+}

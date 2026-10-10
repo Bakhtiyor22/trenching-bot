@@ -23,7 +23,7 @@ function ObservationsPanel({ datasetId, pair }: { datasetId: string; pair: strin
     <Stack gap="lg">
       <Section
         title="Price vs slot"
-        hint="Each point is an observation; its color and shape show the quality. Invalid observations are not joined by the line. Scroll or drag the slider to zoom."
+        hint="Each point is an observation; its color and shape show the quality. Invalid observations are not joined by the line. Ctrl + scroll or drag the slider to zoom; drag the chart to pan."
       >
         {items.length === 0 ? (
           <EmptyState title="No observations for this pair" />

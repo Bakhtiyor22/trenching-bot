@@ -21,6 +21,7 @@ internal class ReplayMarketCommands(
             is CommandArguments.Valid -> CaptureCommandExits.execute(CAPTURE, errors) {
                 val result = capture(parsed.value)
                 summarize(result)
+                CaptureCommandExits.stopReason(output, result.stopReason)
                 status(ReplayMarketCommandOptions.EXTRACTOR_NOT_RUN)
                 if (result.manifest.complete) CaptureCommandExits.SUCCESS else CaptureCommandExits.incomplete(CAPTURE, errors)
             }
@@ -47,8 +48,7 @@ internal class ReplayMarketCommands(
         output.println("directory=${result.directory}")
         output.println("manifest=${result.manifestFile}")
         output.println("scope=MINT_REFERENCED_PUMPFUN_BONDING_CURVE_TRADES commitment=${manifest.commitment}")
-        output.println("entryOffsets=${parameters.firstEntryOffset}..${parameters.lastEntryOffset} maxWaitSlots=${parameters.maxWaitSlots} " +
-            "maxAgeSlots=${parameters.maxAgeSlots} holdingSlots=${parameters.holdingSlots}")
+        output.println("horizonSlots=${parameters.horizonSlots} maxAgeSlots=${parameters.maxAgeSlots}")
         output.println("windows=${manifest.windows.size} scanPages=${manifest.scanPageLimit} maxTransactions=${manifest.maxTransactions} " +
             "acquisitionComplete=${manifest.acquisitionComplete} complete=${manifest.complete}")
         manifest.windows.forEach { window ->

@@ -6,6 +6,7 @@ import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
+import java.math.BigInteger
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.assertEquals
@@ -42,7 +43,7 @@ class RecordedWalletHistoryDecodeTest {
         assertEquals(directory.toAbsolutePath().normalize(), result.directory)
         assertEquals(4, result.selected)
         assertTrue(result.complete)
-        assertEquals(WalletHistoryDecoderVersion.PUMPFUN_BONDING_CURVE_BUY_V1, result.decoder)
+        assertEquals(WalletHistoryDecoderVersion.PUMPFUN_BONDING_CURVE_BUY_V2, result.decoder)
         assertEquals(listOf(
             WalletHistoryDecodeRecord(TransactionSignature.of(SIGNATURE), Slot.of(SLOT), WalletHistoryDecodeOutcome.DECODED),
             WalletHistoryDecodeRecord(TransactionSignature.of(OTHER_A), Slot.of(453004990), WalletHistoryDecodeOutcome.NOT_SIGNER),
@@ -50,6 +51,8 @@ class RecordedWalletHistoryDecodeTest {
             WalletHistoryDecodeRecord(TransactionSignature.of(OTHER_C), Slot.of(453004970), WalletHistoryDecodeOutcome.UNAVAILABLE),
         ), result.records)
         assertEquals(listOf(SIGNATURE), result.transactions.map { it.signature.value })
+        assertEquals(mapOf("NO_BUY" to 1), result.rejections)
+        assertEquals(mapOf("SELL" to 1), result.rejectedInstructions)
     }
 
     @Test
@@ -60,10 +63,26 @@ class RecordedWalletHistoryDecodeTest {
             artifact(buy(OTHER_A, 453004900), WalletHistoryOutcome.UNCLASSIFIED),
         ))
 
-        val transactions = recorded.decode(directory, wallet).transactions
+        val result = recorded.decode(directory, wallet)
 
-        assertEquals(listOf(OTHER_A, OTHER_B, SIGNATURE), transactions.map { it.signature.value })
-        assertEquals(listOf(453004900L, 453004900L, SLOT), transactions.map { it.slot.value })
+        assertEquals(listOf(OTHER_A, OTHER_B, SIGNATURE), result.transactions.map { it.signature.value })
+        assertEquals(listOf(453004900L, 453004900L, SLOT), result.transactions.map { it.slot.value })
+        assertEquals(listOf(OTHER_A, OTHER_B, SIGNATURE), result.buyFacts.map { it.signature.value })
+        assertEquals(listOf(453004900L, 453004900L, SLOT), result.buyFacts.map { it.slot.value })
+    }
+
+    @Test
+    fun `decode reports execution facts only for the decoded buys`() {
+        val sell = buy(OTHER_B, 453004980).also { sellDiscriminator(it) }
+        save(listOf(
+            artifact(buy(SIGNATURE, SLOT), WalletHistoryOutcome.UNCLASSIFIED),
+            artifact(sell, WalletHistoryOutcome.UNCLASSIFIED),
+        ))
+
+        val facts = recorded.decode(directory, wallet).buyFacts.single()
+
+        assertEquals(SIGNATURE, facts.signature.value)
+        assertEquals(BigInteger("244444444"), facts.solAmount)
     }
 
     @Test
@@ -107,7 +126,7 @@ class RecordedWalletHistoryDecodeTest {
         val oldest = records.minBy { it.slot }
         val complete = records.none { it.outcome == WalletHistoryOutcome.PENDING }
         store.save(directory, WalletHistoryManifest(
-            schemaVersion = 2, wallet = wallet.value, genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
+            schemaVersion = 3, wallet = wallet.value, genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
             commitment = "confirmed", capturedAt = "2026-10-03T00:00:00Z", limit = 100, scanPageLimit = 1,
             selection = records.map { WalletHistorySelection(it.signature, it.slot) }, records = records,
             complete = complete, discoveryComplete = true, discoveryStop = WalletHistoryDiscoveryStop.HISTORY_END,

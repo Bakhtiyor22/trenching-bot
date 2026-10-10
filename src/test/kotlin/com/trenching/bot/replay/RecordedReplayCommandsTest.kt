@@ -23,30 +23,33 @@ class RecordedReplayCommandsTest {
 
     @Test
     fun `rejects missing unknown repeated and blank arguments before exporting`() {
-        val base = arrayOf("--wallet-capture-directory", path("wallet"), "--market-capture-directory", path("markets"))
+        val base = arrayOf("--wallet-capture-directory", path("wallet"), "--market-capture-directory", path("markets"),
+            "--rates-capture-directory", path("rates"))
         listOf(
             emptyArray(), base, arrayOf("--market-capture-directory", path("markets"), "--output", path("replay.json")),
+            arrayOf("--wallet-capture-directory", path("wallet"), "--market-capture-directory", path("markets"), "--output", path("replay.json")),
             base + arrayOf("--output", path("replay.json"), "--output", path("other.json")),
             base + arrayOf("--output", path("replay.json"), "--scan-pages", "3"),
             base + arrayOf("--output", " "), base + arrayOf("--output"),
         ).forEachIndexed { index, args -> assertEquals(2, commands().export(args), "case $index") }
         assertEquals(null, exported)
         assertTrue(errors.toString().contains("category=INVALID_ARGUMENTS"))
-        assertTrue(errors.toString().contains("Usage: exportRecordedReplay --wallet-capture-directory <path> --market-capture-directory <path> --output <file>"))
+        assertTrue(errors.toString().contains("Usage: exportRecordedReplay --wallet-capture-directory <path> --market-capture-directory <path> " +
+            "--rates-capture-directory <path> --output <file>"))
     }
 
     @Test
     fun `forwards the normalized paths and prints the export summary without dataset json`() {
         assertEquals(0, commands().export(arrayOf("--wallet-capture-directory", path("wallet"),
-            "--market-capture-directory", path("markets"), "--output", path("out/../replay.json"))))
+            "--market-capture-directory", path("markets"), "--rates-capture-directory", path("rates"), "--output", path("out/../replay.json"))))
 
-        assertEquals(RecordedReplayExportRequest(resolved("wallet"), resolved("markets"), resolved("replay.json")), exported)
+        assertEquals(RecordedReplayExportRequest(resolved("wallet"), resolved("markets"), resolved("rates"), resolved("replay.json")), exported)
         val lines = output.toString().lines()
         assertTrue(lines.contains("output=${resolved("replay.json")}"), output.toString())
         assertTrue(lines.contains("checksum=$CHECKSUM"))
         assertTrue(lines.contains("trackedWallet=$WALLET"))
         assertTrue(lines.contains("sourceBuys=1 windows=1 transactions=1 observations=17 written=true"))
-        assertTrue(lines.contains("replayReady=true schemaVersion=1"))
+        assertTrue(lines.contains("replayReady=true schemaVersion=3"))
         assertTrue(lines.any { it.startsWith("note=") && it.contains("modelled paper") })
         assertFalse(output.toString().contains("{"))
         assertEquals("", errors.toString())
@@ -57,7 +60,7 @@ class RecordedReplayCommandsTest {
         val commands = RecordedReplayCommands({ throw CaptureValidationException("MARKET_CAPTURE_INCOMPLETE") }, PrintStream(output), PrintStream(errors))
 
         assertEquals(1, commands.export(arrayOf("--wallet-capture-directory", path("wallet"),
-            "--market-capture-directory", path("markets"), "--output", path("replay.json"))))
+            "--market-capture-directory", path("markets"), "--rates-capture-directory", path("rates"), "--output", path("replay.json"))))
 
         assertEquals(listOf("operation=exportRecordedReplay category=ARTIFACT_OR_CONFIGURATION_INVALID", "reason=MARKET_CAPTURE_INCOMPLETE"),
             errors.toString().lines().filter { it.isNotBlank() })

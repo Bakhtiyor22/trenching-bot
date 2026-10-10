@@ -2,6 +2,7 @@ package com.trenching.bot.marketdata.infrastructure.persistence
 
 import jakarta.persistence.*
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Instant
 import com.trenching.bot.common.Commitment
 import com.trenching.bot.common.DecimalPolicy
@@ -34,6 +35,14 @@ class MarketObservationEntity(
     @Column(name = "source_event_id", nullable = false, length = 255) var sourceEventId: String,
     @Enumerated(EnumType.STRING) @Column(name = "commitment", nullable = false, length = 16) var commitment: Commitment,
     @Enumerated(EnumType.STRING) @Column(name = "quality", nullable = false, length = 32) var quality: ObservationQuality,
+    // Nullable only because `ddl-auto: update` cannot add NOT NULL columns to a populated table.
+    @Column(name = "curve_complete", nullable = true, columnDefinition = "boolean") var curveComplete: Boolean?,
+    @Column(name = "virtual_sol_reserves", nullable = true, precision = 20, scale = 0) var virtualSolReserves: BigInteger?,
+    @Column(name = "virtual_token_reserves", nullable = true, precision = 20, scale = 0) var virtualTokenReserves: BigInteger?,
+    @Column(name = "real_sol_reserves", nullable = true, precision = 20, scale = 0) var realSolReserves: BigInteger?,
+    @Column(name = "real_token_reserves", nullable = true, precision = 20, scale = 0) var realTokenReserves: BigInteger?,
+    @Column(name = "fee_bps", nullable = true, columnDefinition = "integer") var feeBps: Int?,
+    @Column(name = "creator_fee_bps", nullable = true, columnDefinition = "integer") var creatorFeeBps: Int?,
 ) {
     @Version @Column(name = "version", nullable = false)
     var version: Long? = null

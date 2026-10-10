@@ -31,15 +31,18 @@ internal class RecordedWalletHistoryService(
         val records = manifest.records.map { record ->
             WalletHistoryDecodeRecord(TransactionSignature.of(record.signature), Slot.of(record.slot), outcome(record, decodings[record.signature]))
         }
-        val transactions = OrderedWalletTransactions.canonical(
-            decodings.values.filterIsInstance<PumpFunBuyDecoding.Decoded>().map { it.transaction },
-        )
-        log.info("wallet_history_decode finished wallet={} selected={} decoded={} unsupportedRoute={} ambiguous={}",
+        val decoded = decodings.values.filterIsInstance<PumpFunBuyDecoding.Decoded>()
+        val transactions = OrderedWalletTransactions.canonical(decoded.map { it.transaction })
+        val buyFacts = decoded.map { it.facts }.sortedWith(compareBy({ it.slot }, { it.signature.value }))
+        val rejected = decodings.values.filterIsInstance<PumpFunBuyDecoding.Rejected>()
+        val rejectedInstructions = rejected.flatMap { it.instructions }.groupingBy { it }.eachCount().toSortedMap()
+        val rejections = rejected.groupingBy { it.reason.name }.eachCount().toSortedMap()
+        log.info("wallet_history_decode finished wallet={} selected={} decoded={} unsupportedRoute={} ambiguous={} rejections={}",
             wallet.value, records.size, transactions.size,
             records.count { it.outcome == WalletHistoryDecodeOutcome.UNSUPPORTED_ROUTE },
-            records.count { it.outcome == WalletHistoryDecodeOutcome.AMBIGUOUS })
+            records.count { it.outcome == WalletHistoryDecodeOutcome.AMBIGUOUS }, rejections)
         return WalletHistoryDecodeResult(verified.directory, wallet, manifest.selection.size, manifest.complete,
-            WalletHistoryDecoderVersion.PUMPFUN_BONDING_CURVE_BUY_V1, transactions, records)
+            WalletHistoryDecoderVersion.PUMPFUN_BONDING_CURVE_BUY_V2, transactions, records, buyFacts, rejectedInstructions, rejections)
     }
 
     private fun outcome(record: WalletHistoryRecord, decoding: PumpFunBuyDecoding?): WalletHistoryDecodeOutcome = when (record.outcome) {
@@ -52,6 +55,7 @@ internal class RecordedWalletHistoryService(
         WalletHistoryOutcome.UNAVAILABLE -> WalletHistoryDecodeOutcome.UNAVAILABLE
         WalletHistoryOutcome.UNSUPPORTED_VERSION -> WalletHistoryDecodeOutcome.UNSUPPORTED_VERSION
         WalletHistoryOutcome.WITHHELD_UNSAFE_TEXT -> WalletHistoryDecodeOutcome.WITHHELD_UNSAFE_TEXT
+        WalletHistoryOutcome.WALLET_ABSENT -> WalletHistoryDecodeOutcome.WALLET_ABSENT
         WalletHistoryOutcome.PENDING, WalletHistoryOutcome.PROVIDER_UNAVAILABLE, WalletHistoryOutcome.INVALID_TRANSACTION ->
             throw CaptureValidationException("CAPTURE_INCOMPLETE")
     }

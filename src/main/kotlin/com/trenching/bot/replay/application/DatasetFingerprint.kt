@@ -3,6 +3,7 @@ package com.trenching.bot.replay.application
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.walletactivity.domain.OrderedWalletTransactions
 import com.trenching.bot.marketdata.domain.OrderedMarketData
+import com.trenching.bot.marketdata.domain.OrderedReferenceRates
 
 object DatasetFingerprint {
     fun checksum(dataset: ReplayDataset): String {
@@ -21,7 +22,14 @@ object DatasetFingerprint {
             parts.addAll(listOf("observation", observation.id, observation.pair.base.value, observation.pair.quote.value,
                 observation.slot.value.toString(), observation.priceSlot.value.toString(), observation.observedTime.toString(),
                 observation.price.stripTrailingZeros().toPlainString(), observation.liquidityQuote?.stripTrailingZeros()?.toPlainString() ?: "",
-                observation.source, observation.sourceEventId, observation.commitment.name, observation.quality.name))
+                observation.source, observation.sourceEventId, observation.commitment.name, observation.quality.name,
+                observation.curveComplete.toString(), observation.curve.reserves.virtualSol.toString(),
+                observation.curve.reserves.virtualToken.toString(), observation.curve.reserves.realSol.toString(),
+                observation.curve.reserves.realToken.toString(), observation.curve.feeBps.toString(),
+                observation.curve.creatorFeeBps.toString()))
+        }
+        OrderedReferenceRates.canonical(dataset.referenceRates).forEach { rate ->
+            parts.addAll(listOf("rate", rate.minute.toString(), rate.rate.stripTrailingZeros().toPlainString(), rate.source))
         }
         return StableHash.of(parts)
     }

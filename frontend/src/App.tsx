@@ -1,6 +1,8 @@
 import '@mantine/core/styles.css';
 import '@mantine/dropzone/styles.css';
 import '@mantine/notifications/styles.css';
+import '@mantine/spotlight/styles.css';
+import './styles.css';
 
 import { MantineProvider } from '@mantine/core';
 import { Notifications } from '@mantine/notifications';
@@ -17,8 +19,8 @@ const router = createBrowserRouter(routes, { basename: ROUTER_BASENAME });
 export function App() {
   const [queryClient] = useState(createQueryClient);
   return (
-    <MantineProvider theme={theme} defaultColorScheme="auto">
-      <Notifications position="top-right" />
+    <MantineProvider theme={theme} defaultColorScheme="dark">
+      <Notifications position="bottom-right" />
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />
       </QueryClientProvider>

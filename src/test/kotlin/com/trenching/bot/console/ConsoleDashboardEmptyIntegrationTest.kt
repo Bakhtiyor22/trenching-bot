@@ -1,5 +1,6 @@
 package com.trenching.bot.console
 
+import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -44,7 +45,7 @@ class ConsoleDashboardEmptyIntegrationTest {
         assertEquals(0, dashboard.body.path("positions").path("closed").asLong())
         assertTrue(dashboard.body.path("realizedPnlByQuoteMint").isArray)
         assertEquals(0, dashboard.body.path("realizedPnlByQuoteMint").size())
-        assertEquals(6, dashboard.body.path("rejectionsByReason").size())
+        assertEquals(RejectionReason.ENTRY.size, dashboard.body.path("rejectionsByReason").size())
         assertTrue(dashboard.body.path("rejectionsByReason").all { it.path("count").asLong() == 0L })
         assertEquals(0, datasets.path("total").asLong())
         assertEquals(0, datasets.path("items").size())

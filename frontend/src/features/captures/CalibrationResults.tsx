@@ -1,0 +1,15 @@
+import { Anchor, Button, Group, ScrollArea, Stack, Table, Text } from '@mantine/core';
+import type { BuyInstruction, CalibrationReport } from '../../api/captures';
+import { capturesApi } from '../../api/captures';
+import { ShortId } from '../../components/DisplayValues';
+import { KeyValueTable, PagingFooter, Section } from '../../components/Panels';
+import { useClientPaging } from '../../components/useClientPaging';
+
+const instructionLabel: Record<BuyInstruction, string> = { BUY: 'buy', BUY_EXACT_QUOTE_IN_V3: 'buy exact SOL in (v3)' };
+const summaryValue = (value: number | string | null | Record<string, number> | undefined) =>
+  value == null ? '—' : typeof value === 'object' ? Object.entries(value).map(([name, n]) => `${name} ${n}`).join(' · ') || '—' : value;
+
+export function CalibrationResults({report,id}: {report: CalibrationReport; id: string}) {
+  const paging = useClientPaging(report.buys,20);
+  return <Stack gap="md"><Group justify="space-between"><Text size="sm" c="dimmed">{report.decoder} · {report.extractor}</Text><Button component="a" href={capturesApi.download(id,'calibration')} variant="default">Download calibration JSON</Button></Group><KeyValueTable rows={Object.entries(report.summary).map(([key,value])=>[key.replace(/([A-Z])/g,' $1'), <Text key={key} ff="monospace" size="sm">{summaryValue(value)}</Text>])}/><Text size="xs" c="dimmed">Other lamports include tips and rent or refunds. These results do not change execution defaults.</Text><Section title="Per-buy calibration" padding="sm"><ScrollArea><Table miw={1100} verticalSpacing="sm"><Table.Thead><Table.Tr>{['Signature / slot','Mint','Instruction','Math','Actual / computed tokens','Protocol / creator fee (lamports)','Latency / error (bps)','Transaction / other (lamports)'].map(h=><Table.Th key={h}>{h}</Table.Th>)}</Table.Tr></Table.Thead><Table.Tbody>{paging.visible.map(buy=><Table.Tr key={buy.signature}><Table.Td><Anchor href={`https://solscan.io/tx/${encodeURIComponent(buy.signature)}`} target="_blank" rel="noopener noreferrer"><ShortId value={buy.signature}/></Anchor><Text size="xs" ff="monospace">{buy.slot}</Text></Table.Td><Table.Td><Anchor href={`https://solscan.io/token/${encodeURIComponent(buy.mint)}`} target="_blank" rel="noopener noreferrer"><ShortId value={buy.mint}/></Anchor></Table.Td><Table.Td><Text size="xs" ff="monospace">{instructionLabel[buy.instruction]}</Text></Table.Td><Table.Td>{buy.math.exact?'Exact':'Mismatch'}</Table.Td><Table.Td ff="monospace">{buy.math.tokenAmount}<br/>{buy.math.computedTokenAmount ?? '—'}</Table.Td><Table.Td ff="monospace">{buy.math.feeLamports} / {buy.math.computedFeeLamports}<br/>{buy.math.creatorFeeLamports} / {buy.math.computedCreatorFeeLamports}</Table.Td><Table.Td><Text size="xs">{buy.latency.status}</Text><Text size="sm" ff="monospace">{buy.latency.errorBps ?? buy.latency.reason ?? '—'}</Text><Text size="xs">{buy.latency.observationId ?? ''}</Text></Table.Td><Table.Td ff="monospace">{buy.costs.transactionFeeLamports}<br/>{buy.costs.otherLamports}</Table.Td></Table.Tr>)}</Table.Tbody></Table></ScrollArea><PagingFooter {...paging} onChange={paging.setPage} noun="buys"/></Section></Stack>;
+}

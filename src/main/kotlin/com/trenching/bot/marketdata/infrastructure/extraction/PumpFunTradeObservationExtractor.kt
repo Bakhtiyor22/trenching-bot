@@ -8,13 +8,13 @@ import com.trenching.bot.common.ReplayLimits
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.marketdata.MarketObservationExclusion
+import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.ObservationQuality
+import com.trenching.bot.protocol.pumpfun.BondingCurve
+import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.protocol.pumpfun.PumpFunInstruction
 import com.trenching.bot.protocol.pumpfun.PumpFunInstructionReader
-import com.trenching.bot.protocol.pumpfun.PumpFunLayout
-import java.math.BigDecimal
-import java.math.BigInteger
 import java.time.Instant
 import tools.jackson.databind.JsonNode
 
@@ -29,7 +29,8 @@ internal class PumpFunTradeObservationExtractor {
             when (instruction) {
                 is PumpFunInstruction.TradeEvent -> event(transaction, signature, slot, instruction, inWindow)
                 PumpFunInstruction.Malformed -> TradeExtraction.Excluded(MarketObservationExclusion.MALFORMED_EVENT)
-                is PumpFunInstruction.Buy, PumpFunInstruction.Other -> null
+                is PumpFunInstruction.Buy, is PumpFunInstruction.BuyExactQuoteInV3, is PumpFunInstruction.Unsupported,
+                PumpFunInstruction.Other -> null
             }
         }
 
@@ -51,9 +52,10 @@ internal class PumpFunTradeObservationExtractor {
             else -> null
         }
         if (reason != null) return TradeExtraction.Excluded(reason)
+        val curve = curveState(event) ?: return TradeExtraction.Excluded(MarketObservationExclusion.MALFORMED_EVENT)
         val decimals = mintDecimals(transaction.path("meta"), event.mint)
             ?: return TradeExtraction.Excluded(MarketObservationExclusion.DECIMALS_UNPROVEN)
-        val price = price(event, decimals)
+        val price = BondingCurve.price(event.solAmount, event.tokenAmount, decimals)
         val sourceEventId = "${signature.value}:${event.topLevelIndex}:${event.innerIndex ?: TOP_LEVEL_INNER_INDEX}"
         val id = "$SOURCE:$sourceEventId:${event.mint.value}"
         val seconds = blockTime.asLong()
@@ -73,14 +75,20 @@ internal class PumpFunTradeObservationExtractor {
             sourceEventId = sourceEventId,
             commitment = Commitment.CONFIRMED,
             quality = ObservationQuality.LAST_TRADE,
+            curveComplete = curve.complete,
+            curve = curve,
         ))
     }
 
-    /** Curve SOL per whole token, fees excluded: one division of exact integers at the price scale. */
-    private fun price(event: PumpFunInstruction.TradeEvent, baseDecimals: Int): BigDecimal {
-        val quote = BigDecimal(event.solAmount.multiply(BigInteger.TEN.pow(baseDecimals)))
-        val base = BigDecimal(event.tokenAmount.multiply(BigInteger.TEN.pow(PumpFunLayout.SOL_AMOUNT_DECIMALS)))
-        return quote.divide(base, DecimalPolicy.PRICE_SCALE, DecimalPolicy.ROUNDING)
+    /** The event's curve state, or null when its reserves break the curve's invariants or a fee basis point is out of range. */
+    private fun curveState(event: PumpFunInstruction.TradeEvent): CurveState? {
+        if (!CurveReserves.isValid(event.virtualSolReserves, event.virtualTokenReserves, event.realSolReserves, event.realTokenReserves)) {
+            return null
+        }
+        val feeBps = CurveState.basisPoints(event.feeBasisPoints) ?: return null
+        val creatorFeeBps = CurveState.basisPoints(event.creatorFeeBasisPoints) ?: return null
+        return CurveState(CurveReserves(event.virtualSolReserves, event.virtualTokenReserves, event.realSolReserves, event.realTokenReserves),
+            feeBps, creatorFeeBps)
     }
 
     /** The mint's decimals when every pre and post token balance of the mint in the transaction agrees on them. */

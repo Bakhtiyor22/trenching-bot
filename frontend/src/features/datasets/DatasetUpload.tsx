@@ -115,7 +115,7 @@ export function DatasetUpload() {
               Drag a replay dataset here or click to choose
             </Text>
             <Text size="sm" c="dimmed">
-              Schema v1 JSON, up to 20 MB. The backend validates it fully, including the checksum.
+              Schema v3 JSON, up to 100 MB. The backend validates it fully, including the checksum.
             </Text>
           </div>
         </Group>
@@ -165,7 +165,7 @@ export function DatasetUpload() {
 
       <Group justify="space-between" gap="sm">
         <Text size="sm" c="dimmed">
-          No dataset yet? Import the bundled synthetic sample (weekly-buy-v1).
+          No dataset yet? Import the bundled synthetic sample (dip-sample-v3).
         </Text>
         <Button variant="light" onClick={importSample} loading={sample.isPending}>
           Import sample dataset

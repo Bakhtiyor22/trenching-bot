@@ -44,4 +44,7 @@ data class PositionResponse(
     val fill: FillResponse,
     val close: CloseResponse?,
     val exitUnavailableReason: String?,
+    val takeProfitPrice: String,
+    val stopLossPrice: String,
+    val exitTrigger: ExitTriggerResponse?,
 )

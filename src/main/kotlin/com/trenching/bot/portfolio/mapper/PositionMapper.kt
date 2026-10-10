@@ -19,10 +19,16 @@ abstract class PositionMapper {
         Mapping(target = "exitPrice", source = "position.close.executionPrice"),
         Mapping(target = "grossProceeds", source = "position.close.grossProceeds"),
         Mapping(target = "exitFee", source = "position.close.fee"),
+        Mapping(target = "closeFeeBps", source = "position.close.feeBps"),
+        Mapping(target = "closeTransactionCost", source = "position.close.transactionCost"),
+        Mapping(target = "closePriceImpactBps", source = "position.close.priceImpactBps"),
         Mapping(target = "netProceeds", source = "position.close.netProceeds"),
         Mapping(target = "realizedPnl", source = "position.close.realizedPnl"),
         Mapping(target = "closeReason", source = "position.close.reason"),
         Mapping(target = "exitUnavailable", source = "exitUnavailable"),
+        Mapping(target = "exitTriggerObservationId", source = "position.exitTrigger.observationId"),
+        Mapping(target = "exitTriggerSlot", source = "position.exitTrigger.slot.value"),
+        Mapping(target = "exitTriggerReason", source = "position.exitTrigger.reason"),
         Mapping(target = "version", ignore = true),
     ])
     abstract fun toEntity(position: Position, exitUnavailable: RejectionReason?): PositionEntity
@@ -36,6 +42,9 @@ abstract class PositionMapper {
         Mapping(target = "fill", source = "fill"),
         Mapping(target = "state", source = "entity.state"),
         Mapping(target = "close", expression = "java(close(entity))"),
+        Mapping(target = "takeProfitPrice", expression = "java(required(entity.getTakeProfitPrice(), entity))"),
+        Mapping(target = "stopLossPrice", expression = "java(required(entity.getStopLossPrice(), entity))"),
+        Mapping(target = "exitTrigger", expression = "java(exitTrigger(entity))"),
     ])
     abstract fun toPosition(entity: PositionEntity, fill: PaperFill): Position
 
@@ -44,10 +53,20 @@ abstract class PositionMapper {
         Mapping(target = "observationId", source = "closeObservationId"),
         Mapping(target = "executionPrice", source = "exitPrice"),
         Mapping(target = "fee", source = "exitFee"),
+        Mapping(target = "feeBps", expression = "java(requiredClose(entity.getCloseFeeBps(), entity))"),
+        Mapping(target = "transactionCost", expression = "java(requiredClose(entity.getCloseTransactionCost(), entity))"),
+        Mapping(target = "priceImpactBps", expression = "java(requiredClose(entity.getClosePriceImpactBps(), entity))"),
         Mapping(target = "reason", source = "closeReason"),
     ])
     abstract fun toClose(entity: PositionEntity): PositionClose
 
     fun pair(entity: PositionEntity): MarketPair = ChainValueMapper.pair(entity.baseMint, entity.quoteMint)
     fun close(entity: PositionEntity): PositionClose? = if (entity.state == PositionState.CLOSED) toClose(entity) else null
+    fun required(value: java.math.BigDecimal?, entity: PositionEntity): java.math.BigDecimal =
+        requireNotNull(value) { "Position without take-profit or stop-loss level id=${entity.id}" }
+    fun <T : Any> requiredClose(value: T?, entity: PositionEntity): T =
+        requireNotNull(value) { "Closed position without curve exit fields id=${entity.id}" }
+    fun exitTrigger(entity: PositionEntity): ExitTrigger? = entity.exitTriggerObservationId?.let { observationId ->
+        ExitTrigger(observationId, Slot.of(requireNotNull(entity.exitTriggerSlot)), requireNotNull(entity.exitTriggerReason))
+    }
 }

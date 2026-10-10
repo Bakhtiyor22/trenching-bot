@@ -2,6 +2,7 @@ import {
   keepPreviousData,
   QueryClient,
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
@@ -9,10 +10,20 @@ import { ApiError } from './client';
 import { api } from './endpoints';
 import type { RunStartRequest } from './types';
 
+/** Runs started from this tab; the new-run watcher skips them, since starting one already notifies. */
+export const locallyStartedRuns = new Set<string>();
+
 /** Dashboard polling interval (plan decision 7). */
 export const DASHBOARD_POLL_MS = 5_000;
 const HEALTH_POLL_MS = 15_000;
+/** How often the shell looks for runs started elsewhere (another tab, or someone on a shared link). */
+export const LATEST_RUNS_POLL_MS = 10_000;
+const LATEST_RUNS_SIZE = 5;
 const SOLANA_STATUS_POLL_MS = 15_000;
+/** Matches the backend's 30-second ticker cache. */
+const SOL_PRICE_POLL_MS = 30_000;
+/** A USDT view can be unavailable for a while (rate limited, unreachable), so it is not kept forever. */
+const USDT_VIEW_STALE_MS = 60_000;
 
 export const queryKeys = {
   datasets: (page: number, size: number) => ['datasets', page, size] as const,
@@ -27,6 +38,8 @@ export const queryKeys = {
   run: (id: string) => ['run', id] as const,
   runRecords: (id: string, kind: 'events' | 'observations' | 'orders' | 'positions') =>
     ['run', id, kind] as const,
+  runUsdt: (id: string) => ['run', id, 'usdt'] as const,
+  solUsdtPrice: ['market', 'sol-usdt'] as const,
   dashboard: ['dashboard'] as const,
   actuatorHealth: ['actuator', 'health'] as const,
   solanaStatus: ['solana', 'status'] as const,
@@ -99,7 +112,8 @@ export function useStartRun() {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (body: RunStartRequest) => api.startRun(body),
-    onSuccess: async () => {
+    onSuccess: async ({ run }) => {
+      locallyStartedRuns.add(run.id);
       await client.invalidateQueries({ queryKey: queryKeys.runsAll });
       await client.invalidateQueries({ queryKey: queryKeys.dashboard });
     },
@@ -111,6 +125,28 @@ export function useRuns(page: number, size: number, datasetId: string | null) {
     queryKey: queryKeys.runs(page, size, datasetId),
     queryFn: ({ signal }) => api.runs(page, size, datasetId, signal),
     placeholderData: keepPreviousData,
+  });
+}
+
+/** The newest runs, polled so the shell can announce runs started elsewhere. */
+export function useLatestRuns() {
+  return useQuery({
+    queryKey: queryKeys.runs(0, LATEST_RUNS_SIZE, null),
+    queryFn: ({ signal }) => api.runs(0, LATEST_RUNS_SIZE, null, signal),
+    refetchInterval: LATEST_RUNS_POLL_MS,
+    refetchIntervalInBackground: false,
+    staleTime: 0,
+  });
+}
+
+/** Several runs at once, for the comparison view. */
+export function useRunsById(ids: string[]) {
+  return useQueries({
+    queries: ids.map((id) => ({
+      queryKey: queryKeys.run(id),
+      queryFn: ({ signal }: { signal: AbortSignal }) => api.run(id, signal),
+      staleTime: Infinity,
+    })),
   });
 }
 
@@ -138,6 +174,25 @@ export function useRunObservations(id: string, enabled = true) {
     queryFn: ({ signal }) => api.runObservations(id, signal),
     enabled,
     staleTime: Infinity,
+  });
+}
+
+export function useRunUsdt(id: string, enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.runUsdt(id),
+    queryFn: ({ signal }) => api.runUsdt(id, signal),
+    enabled,
+    staleTime: USDT_VIEW_STALE_MS,
+  });
+}
+
+export function useSolUsdtPrice(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.solUsdtPrice,
+    queryFn: ({ signal }) => api.solUsdtPrice(signal),
+    enabled,
+    refetchInterval: SOL_PRICE_POLL_MS,
+    refetchIntervalInBackground: false,
   });
 }
 

@@ -2,6 +2,7 @@ package com.trenching.bot.replay.api
 
 import com.trenching.bot.replay.domain.RecordedReplayExport
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
+import com.trenching.bot.replay.domain.ReplayDataset
 import java.io.PrintStream
 
 internal class RecordedReplayCommands(
@@ -25,9 +26,11 @@ internal class RecordedReplayCommands(
         if (options !is CommandArguments.Valid) return CommandArguments.Invalid
         val wallet = CaptureCommandArguments.path(options.value[RecordedReplayCommandOptions.WALLET_CAPTURE_DIRECTORY])
         val market = CaptureCommandArguments.path(options.value[RecordedReplayCommandOptions.MARKET_CAPTURE_DIRECTORY])
+        val rates = CaptureCommandArguments.path(options.value[RecordedReplayCommandOptions.RATES_CAPTURE_DIRECTORY])
         val file = CaptureCommandArguments.path(options.value[RecordedReplayCommandOptions.OUTPUT])
-        if (wallet !is CommandArguments.Valid || market !is CommandArguments.Valid || file !is CommandArguments.Valid) return CommandArguments.Invalid
-        return CommandArguments.Valid(RecordedReplayExportRequest(wallet.value, market.value, file.value))
+        if (wallet !is CommandArguments.Valid || market !is CommandArguments.Valid || rates !is CommandArguments.Valid ||
+            file !is CommandArguments.Valid) return CommandArguments.Invalid
+        return CommandArguments.Valid(RecordedReplayExportRequest(wallet.value, market.value, rates.value, file.value))
     }
 
     private fun summarize(export: RecordedReplayExport) {
@@ -36,7 +39,7 @@ internal class RecordedReplayCommands(
         output.println("trackedWallet=${export.trackedWallet.value}")
         output.println("sourceBuys=${export.sourceBuys} windows=${export.windows} transactions=${export.transactions} " +
             "observations=${export.observations} written=${export.written}")
-        output.println("replayReady=true schemaVersion=1")
+        output.println("replayReady=true schemaVersion=${ReplayDataset.SCHEMA_VERSION}")
         output.println(RecordedReplayCommandOptions.NOTE)
     }
 

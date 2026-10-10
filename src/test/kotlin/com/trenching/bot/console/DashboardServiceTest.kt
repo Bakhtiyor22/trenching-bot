@@ -48,7 +48,7 @@ class DashboardServiceTest {
         assertEquals(PositionCounts(0, 0), snapshot.positions)
         assertEquals(emptyList(), snapshot.realizedPnlByQuoteMint)
         assertEquals(emptyList(), snapshot.recentRuns)
-        assertEquals(RejectionReason.entries.map { RejectionCount(it, 0) }, snapshot.rejections)
+        assertEquals(RejectionReason.ENTRY.map { RejectionCount(it, 0) }, snapshot.rejections)
         assertNull(snapshot.gauges.heapUsedBytes)
         assertNull(snapshot.gauges.httpRequestCount)
     }
@@ -91,14 +91,14 @@ class DashboardServiceTest {
 
     @Test
     fun `rejection counts keep the enum order and fill absent reasons with zero`() {
-        orders.counts = mapOf(RejectionReason.ZERO_QUANTITY to 2, RejectionReason.MISSING_OBSERVATION to 5)
+        orders.counts = mapOf(RejectionReason.ZERO_QUANTITY to 2, RejectionReason.NO_DIP to 5)
 
         val counts = service.snapshot().rejections.associate { it.reason to it.count }
 
-        assertEquals(RejectionReason.entries, counts.keys.toList())
-        assertEquals(5, counts[RejectionReason.MISSING_OBSERVATION])
+        assertEquals(RejectionReason.ENTRY, counts.keys.toList())
+        assertEquals(5, counts[RejectionReason.NO_DIP])
         assertEquals(2, counts[RejectionReason.ZERO_QUANTITY])
-        assertEquals(0, counts[RejectionReason.STALE_OBSERVATION])
+        assertEquals(0, counts[RejectionReason.DIP_BELOW_MIN_MARKET_CAP])
     }
 
     private fun run(id: String, createdAt: Instant) = RunSummary(id, "dataset", "engine", "config", "result",

@@ -48,3 +48,5 @@ values to compare outcomes.
 
 A strategy version 2, editable entry offsets or exit rules, or a live (non-replay) execution mode is
 proposed.
+
+Update 2026-10-08: the [dip-entry strategy decision](20261008-dip-entry-strategy.md) supersedes the entry offsets, fill wait, holding exit and their parameters. Fees, slippage, quantities, rounding and idempotency stand.

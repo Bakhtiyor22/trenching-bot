@@ -8,6 +8,7 @@ import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TokenAmount
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
+import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.walletactivity.application.WalletNormalizer
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
 import com.trenching.bot.walletactivity.domain.TradeSide
@@ -56,6 +57,66 @@ class PumpFunBuyDecoderTest {
     }
 
     @Test
+    fun `decodes the buy's execution facts from its trade event and the transaction's lamport balances`() {
+        val expected = PumpFunBuyFacts(
+            signature = TransactionSignature.of(SIGNATURE),
+            slot = Slot.of(453004996),
+            mint = MintAddress.of(MINT),
+            solAmount = SOL_AMOUNT,
+            tokenAmount = TOKEN_AMOUNT,
+            feeLamports = BigInteger("2322223"),
+            creatorFeeLamports = BigInteger("733334"),
+            feeBps = BigInteger("95"),
+            creatorFeeBps = BigInteger("30"),
+            postReserves = CurveReserves(BigInteger("79829770982"), BigInteger("403233026450985"),
+                BigInteger("49829770982"), BigInteger("123333026450985")),
+            transactionFeeLamports = BigInteger("5005000"),
+            walletLamportDelta = BigInteger("828089968639").subtract(BigInteger("828354973640")),
+            instruction = PumpFunBuyInstruction.BUY,
+        )
+        assertEquals(expected, facts(buy()))
+    }
+
+    @Test
+    fun `lamport facts preserve unsigned balances and fees above Long maximum`() {
+        val transaction = buy()
+        val meta = transaction.path("meta") as ObjectNode
+        val walletIndex = transaction.path("transaction").path("message").path("accountKeys")
+            .withIndex().single { it.value.path("pubkey").asString() == wallet.value }.index
+        (meta.path("preBalances") as ArrayNode).set(walletIndex, mapper.nodeFactory.numberNode(U64_MAX))
+        (meta.path("postBalances") as ArrayNode).set(walletIndex, mapper.nodeFactory.numberNode(U64_MAX.subtract(BigInteger("123"))))
+        meta.put("fee", U64_MAX)
+
+        val facts = facts(transaction)
+
+        assertEquals(U64_MAX, facts.transactionFeeLamports)
+        assertEquals(BigInteger("-123"), facts.walletLamportDelta)
+    }
+
+    @Test
+    fun `missing negative and fractional network fees cannot become execution facts`() {
+        val cases = listOf(
+            buy().also { (it.path("meta") as ObjectNode).remove("fee") },
+            buy().also { (it.path("meta") as ObjectNode).put("fee", -1) },
+            buy().also { (it.path("meta") as ObjectNode).put("fee", java.math.BigDecimal("0.5")) },
+        )
+        cases.forEach { assertEquals(PumpFunBuyRejection.MALFORMED_EVIDENCE, rejection(it)) }
+    }
+    @Test
+    fun `a buy whose wallet lamport balances are missing is ambiguous`() {
+        val transaction = buy().also { buy ->
+            listOf("preBalances", "postBalances").forEach { (buy.path("meta").path(it) as ArrayNode).removeAll() }
+        }
+        assertEquals(PumpFunBuyRejection.MALFORMED_EVIDENCE, rejection(transaction))
+    }
+
+    @Test
+    fun `a buy whose event reserves are not a valid curve is ambiguous`() {
+        val transaction = buy().also { rewrite(instruction(it, EVENT)) { bytes -> writeU64(bytes, EVENT_REAL_SOL_RESERVES, U64_MAX) } }
+        assertEquals(PumpFunBuyRejection.MALFORMED_EVIDENCE, rejection(transaction))
+    }
+
+    @Test
     fun `decoded buy is accepted unchanged by the existing wallet normalizer`() {
         val outcome = WalletNormalizer().normalize(decoded(buy()), wallet, MintAddress.WRAPPED_SOL)
         val trade = assertIs<NormalizationOutcome.Accepted>(outcome).trade
@@ -69,7 +130,7 @@ class PumpFunBuyDecoderTest {
     fun `failed third party sample is not a signer capture and never decodes as a buy`() {
         val failed = fixture("failed-third-party.json").path("result")
         val selection = WalletHistorySelection(failed.path("transaction").path("signatures").path(0).asString(), failed.path("slot").asLong())
-        assertEquals(WalletHistoryOutcome.INVALID_TRANSACTION, WalletTransactionEvidence().classify(failed, selection, wallet.value))
+        assertEquals(WalletHistoryOutcome.INVALID_TRANSACTION, WalletTransactionEvidence().classify(failed, selection, wallet.value, wallet.value))
         assertEquals(WalletHistoryDecodeOutcome.UNSUPPORTED_ROUTE, rejection(failed).outcome)
     }
 
@@ -192,6 +253,9 @@ class PumpFunBuyDecoderTest {
     private fun decoded(transaction: JsonNode): WalletTransaction =
         assertIs<PumpFunBuyDecoding.Decoded>(decoder.decode(transaction, wallet)).transaction
 
+    private fun facts(transaction: JsonNode): PumpFunBuyFacts =
+        assertIs<PumpFunBuyDecoding.Decoded>(decoder.decode(transaction, wallet)).facts
+
     private fun rejection(transaction: JsonNode): PumpFunBuyRejection =
         assertIs<PumpFunBuyDecoding.Rejected>(decoder.decode(transaction, wallet)).reason
 
@@ -249,6 +313,7 @@ class PumpFunBuyDecoderTest {
         const val EVENT_TOKEN_AMOUNT = 56
         const val IS_BUY = 64
         const val USER = 65
+        const val EVENT_REAL_SOL_RESERVES = 121
         const val TRADE_EVENT_PREFIX = 233
         val TOKEN_AMOUNT = BigInteger("1238520682656")
         val SOL_AMOUNT = BigInteger("244444444")

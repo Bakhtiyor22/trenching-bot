@@ -16,12 +16,14 @@ import type {
   RunStart,
   RunStartRequest,
   RunSummary,
+  RunUsdtView,
   SolanaCheck,
   SolanaStatus,
+  SolUsdtPrice,
 } from './types';
 
 /** The bundled sample dataset id in `POST /api/datasets/samples/{sample}`. */
-export const SAMPLE_DATASET = 'weekly-buy-v1';
+export const SAMPLE_DATASET = 'dip-sample-v3';
 
 const enc = encodeURIComponent;
 
@@ -64,6 +66,9 @@ export const api = {
   runPositions: (id: string, signal?: AbortSignal) =>
     getJson<RunPosition[]>(`${API_BASE}/runs/${enc(id)}/positions`, signal),
   runReportUrl: (id: string) => `${API_BASE}/runs/${enc(id)}/report`,
+  runUsdt: (id: string, signal?: AbortSignal) =>
+    getJson<RunUsdtView>(`${API_BASE}/runs/${enc(id)}/usdt`, signal),
+  solUsdtPrice: (signal?: AbortSignal) => getJson<SolUsdtPrice>(`${API_BASE}/market/sol-usdt`, signal),
 
   dashboard: (signal?: AbortSignal) => getJson<Dashboard>(`${API_BASE}/dashboard`, signal),
   actuatorHealth: (signal?: AbortSignal) => getJson<ActuatorHealth>('/actuator/health', signal),

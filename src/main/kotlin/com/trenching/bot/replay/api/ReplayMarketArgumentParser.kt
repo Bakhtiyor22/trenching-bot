@@ -22,8 +22,9 @@ internal object ReplayMarketArgumentParser {
             ReplayMarketCommandOptions.DEFAULT_REQUEST_BUDGET, 1..MarketHistoryCaptureLimits.MAX_REQUESTS) ?: return CommandArguments.Invalid
         val byteBudget = CaptureCommandArguments.long(values, ReplayMarketCommandOptions.BYTE_BUDGET,
             ReplayMarketCommandOptions.DEFAULT_BYTE_BUDGET, 1..MarketHistoryCaptureLimits.MAX_BYTES) ?: return CommandArguments.Invalid
+        val operationTimeout = CaptureCommandArguments.operationTimeout(values) ?: return CommandArguments.Invalid
         return CommandArguments.Valid(ReplayMarketCaptureRequest(walletDirectory.value, directory.value, scanPages, maxTransactions,
-            requestBudget, byteBudget))
+            requestBudget, byteBudget, operationTimeout))
     }
 
     fun inspect(args: Array<String>): CommandArguments<Path> =

@@ -1,0 +1,51 @@
+package com.trenching.bot.replay.application
+
+import com.trenching.bot.chaincapture.CaptureCheckpointObserver
+import com.trenching.bot.marketdata.MarketHistoryCapture
+import com.trenching.bot.marketdata.RecordedMarketHistory
+import com.trenching.bot.marketdata.RecordedReferenceRates
+import com.trenching.bot.marketdata.ReferenceRateCapture
+import com.trenching.bot.marketdata.ReferenceRateCaptureRequest
+import com.trenching.bot.replay.CaptureInspection
+import com.trenching.bot.replay.CapturePaths
+import com.trenching.bot.replay.CaptureStepCommand
+import com.trenching.bot.replay.CaptureStepResult
+import com.trenching.bot.replay.CaptureWorkflow
+import com.trenching.bot.replay.infrastructure.fixture.CalibrationReportWriter
+import com.trenching.bot.walletactivity.RecordedWalletHistory
+import com.trenching.bot.walletactivity.WalletHistoryCapture
+import tools.jackson.databind.ObjectMapper
+
+class CaptureWorkflowService(
+    private val wallets: RecordedWalletHistory,
+    private val markets: RecordedMarketHistory,
+    private val rates: RecordedReferenceRates,
+    private val walletCapture: (CaptureCheckpointObserver) -> WalletHistoryCapture,
+    private val marketCapture: (CaptureCheckpointObserver) -> MarketHistoryCapture,
+    private val rateCapture: (CaptureCheckpointObserver) -> ReferenceRateCapture,
+    private val mapper: ObjectMapper,
+) : CaptureWorkflow {
+    override fun execute(command: CaptureStepCommand, checkpoints: CaptureCheckpointObserver): CaptureStepResult = when (command) {
+        is CaptureStepCommand.Wallet -> CaptureStepResult.Wallet(walletCapture(checkpoints).capture(command.request))
+        is CaptureStepCommand.Markets -> CaptureStepResult.Markets(
+            ReplayMarketCaptureService(wallets, { marketCapture(checkpoints) }).capture(command.request))
+        is CaptureStepCommand.Rates -> {
+            val planned = RecordedWalletPlanning(wallets).plan(command.wallet)
+            val market = markets.decode(command.market)
+            RecordedMarketVerification.requireMatching(planned.plan, market)
+            if (market.observations.isEmpty()) throw com.trenching.bot.chaincapture.CaptureValidationException("NO_OBSERVATIONS")
+            CaptureStepResult.Rates(rateCapture(checkpoints).capture(ReferenceRateCaptureRequest(command.market, command.directory)))
+        }
+        is CaptureStepCommand.Inspect -> CaptureStepResult.Inspected(inspect(command.paths))
+        is CaptureStepCommand.Export -> CaptureStepResult.Exported(
+            RecordedReplayExportService(wallets, markets, rates, mapper).export(command.request))
+        is CaptureStepCommand.Calibrate -> {
+            val report = ExecutionCalibrationService(wallets, markets).calibrate(command.wallet, command.market)
+            val writer = CalibrationReportWriter(mapper)
+            writer.save(command.report, report)
+            CaptureStepResult.Calibrated(report, writer.write(report), command.report)
+        }
+    }
+
+    override fun inspect(paths: CapturePaths): CaptureInspection = CaptureInspectionService(wallets, markets, rates).inspect(paths)
+}

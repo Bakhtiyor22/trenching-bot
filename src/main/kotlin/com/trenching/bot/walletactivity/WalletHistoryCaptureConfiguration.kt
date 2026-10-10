@@ -26,6 +26,16 @@ class WalletHistoryCaptureConfiguration {
         return WalletHistoryCaptureService(HttpSolanaReadRpc(properties, objectMapper, clock), objectMapper, clock)
     }
 
+    fun observedCapture(
+        properties: WalletHistoryCaptureProperties,
+        objectMapper: ObjectMapper,
+        clock: Clock,
+        observer: com.trenching.bot.chaincapture.CaptureCheckpointObserver,
+    ): WalletHistoryCapture {
+        properties.validate()
+        return WalletHistoryCaptureService(HttpSolanaReadRpc(properties, objectMapper, clock), objectMapper, clock, observer)
+    }
+
     @Bean
     fun recordedWalletHistory(objectMapper: ObjectMapper): RecordedWalletHistory =
         RecordedWalletHistoryService(WalletHistoryArtifactStore(objectMapper), PumpFunBuyDecoder())

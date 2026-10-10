@@ -3,12 +3,12 @@ package com.trenching.bot.replay.application
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.ReplayLimits
 import com.trenching.bot.marketdata.MarketHistoryDecodeResult
-import com.trenching.bot.marketdata.MarketObservationExclusion
 import com.trenching.bot.marketdata.RecordedMarketHistory
+import com.trenching.bot.marketdata.RecordedReferenceRates
+import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.replay.domain.RecordedReplayExport
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
 import com.trenching.bot.replay.domain.ReplayDataset
-import com.trenching.bot.replay.domain.ReplayMarketWindowPlan
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetFiles
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetWriter
@@ -17,14 +17,15 @@ import org.slf4j.LoggerFactory
 import tools.jackson.databind.ObjectMapper
 
 /**
- * Exports a recorded wallet capture and the market capture planned from it as one canonical v1 dataset. Both captures are
- * verified offline. The market capture must hold exactly the planned windows, each complete and free of detail gaps and
- * in-window exclusions, so a missing trade can never read as an absence of trades. The JSON is loaded back before it is
- * written.
+ * Exports a recorded wallet capture, the market capture planned from it and the rates recorded for that market capture as
+ * one canonical v3 dataset. All three are verified offline. The market capture must hold exactly the planned windows,
+ * each complete and free of detail gaps and in-window exclusions, so a missing trade can never read as an absence of
+ * trades; every trade's minute must have a rate. The JSON is loaded back before it is written.
  */
 class RecordedReplayExportService(
     walletHistory: RecordedWalletHistory,
     private val marketHistory: RecordedMarketHistory,
+    private val referenceRates: RecordedReferenceRates,
     private val mapper: ObjectMapper,
     planner: ReplayMarketWindowPlanner = ReplayMarketWindowPlanner(),
 ) {
@@ -34,8 +35,9 @@ class RecordedReplayExportService(
     fun export(request: RecordedReplayExportRequest): RecordedReplayExport {
         val planned = planning.plan(request.walletCaptureDirectory)
         val market = marketHistory.decode(request.marketCaptureDirectory)
-        requireMatching(planned.plan, market)
-        val dataset = ReplayDataset(SCHEMA_VERSION, planned.history.wallet, planned.history.transactions, market.observations)
+        RecordedMarketVerification.requireMatching(planned.plan, market)
+        val dataset = ReplayDataset(ReplayDataset.SCHEMA_VERSION, planned.history.wallet, planned.history.transactions,
+            market.observations, rates(request, market))
         if (dataset.transactions.size > ReplayLimits.MAX_INPUT_RECORDS || dataset.observations.size > ReplayLimits.MAX_INPUT_RECORDS) {
             log.warn("recorded_replay_export refused reason=DATASET_BOUNDS transactions={} observations={} max={}",
                 dataset.transactions.size, dataset.observations.size, ReplayLimits.MAX_INPUT_RECORDS)
@@ -51,20 +53,15 @@ class RecordedReplayExportService(
         return export
     }
 
-    private fun requireMatching(plan: ReplayMarketWindowPlan, market: MarketHistoryDecodeResult) {
-        if (market.windowParameters != plan.parameters || market.windows.map { it.window }.toSet() != plan.windows.toSet()) {
-            throw CaptureValidationException("MARKET_CAPTURE_MISMATCH")
+    /** The recorded rate of each minute with a trade; every such minute must have one. */
+    private fun rates(request: RecordedReplayExportRequest, market: MarketHistoryDecodeResult): List<ReferenceRate> {
+        val byMinute = referenceRates.rates(request.ratesCaptureDirectory).associateBy { it.minute }
+        val minutes = market.observations.map { ReferenceRate.minuteOf(it.observedTime) }.toSortedSet()
+        val missing = minutes.count { it !in byMinute }
+        if (missing > 0) {
+            log.warn("recorded_replay_export refused reason=REFERENCE_RATES_INCOMPLETE missingMinutes={}", missing)
+            throw CaptureValidationException("REFERENCE_RATES_INCOMPLETE")
         }
-        if (!market.complete || market.windows.any { !it.yieldsObservations }) throw CaptureValidationException("MARKET_CAPTURE_INCOMPLETE")
-        if (market.exclusions.any { (reason, count) -> reason !in NON_BLOCKING_EXCLUSIONS && count > 0 }) {
-            throw CaptureValidationException("MARKET_CAPTURE_EXCLUSIONS")
-        }
-    }
-
-    private companion object {
-        const val SCHEMA_VERSION = 1
-
-        /** Events no replay window needs. Every other exclusion is a trade a window lost, which could move a fill. */
-        val NON_BLOCKING_EXCLUSIONS = setOf(MarketObservationExclusion.OUT_OF_WINDOW, MarketObservationExclusion.QUOTE_MINT)
+        return minutes.map { byMinute.getValue(it) }
     }
 }

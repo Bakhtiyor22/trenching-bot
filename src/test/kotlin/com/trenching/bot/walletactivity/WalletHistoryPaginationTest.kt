@@ -43,7 +43,7 @@ class WalletHistoryPaginationTest {
         assertEquals(WalletHistoryScanCursor(signature(300), slot(300)), first.scanCursor)
         assertEquals(WalletHistoryDiscoveryStop.LIMIT_REACHED, first.discoveryStop)
         assertEquals(20, first.scanPageLimit)
-        assertEquals(2, first.schemaVersion)
+        assertEquals(3, first.schemaVersion)
         assertTrue(first.complete)
         assertEquals(first, second)
     }
@@ -146,6 +146,57 @@ class WalletHistoryPaginationTest {
     }
 
     @Test
+    fun `accumulator scope lists every page and resumed page from the derived address and stops at the limit mid page`() {
+        var resume = false
+        val listed = mutableListOf<Pair<Any?, Any?>>()
+        val capture = service { method, params, _ ->
+            if (method == "getSignaturesForAddress") {
+                val before = (params[1] as Map<*, *>)["before"]
+                listed += params[0] to before
+                when {
+                    before == null -> mapper.readTree(page(1..pageSize) { true })
+                    !resume -> throw CaptureProviderException("UNAVAILABLE")
+                    else -> mapper.readTree(page(pageSize + 1..2 * pageSize) { it % 2 == 0 })
+                }
+            } else mapper.readTree(when (method) {
+                "getGenesisHash" -> genesis()
+                "getTransaction" -> "null"
+                else -> error("Unexpected method")
+            })
+        }
+        val request = WalletHistoryCaptureRequest(wallet, directory, limit = 2, scope = WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR)
+        assertFalse(capture.capture(request).manifest.discoveryComplete)
+        resume = true
+        val result = capture.capture(request).manifest
+        assertEquals(listOf<Pair<Any?, Any?>>(ACCUMULATOR to null, ACCUMULATOR to signature(pageSize), ACCUMULATOR to signature(pageSize)), listed)
+        assertEquals(listOf(pageSize + 1, pageSize + 3).map(::signature), result.selection.map { it.signature })
+        assertEquals(pageSize + 3, result.scannedSignatures)
+        assertEquals(pageSize + 1, result.skippedFailed)
+        assertEquals(WalletHistoryScanCursor(signature(pageSize + 3), slot(pageSize + 3)), result.scanCursor)
+        assertEquals(WalletHistoryDiscoveryStop.LIMIT_REACHED, result.discoveryStop)
+        assertEquals(ACCUMULATOR, result.listingAddress)
+        assertTrue(result.complete)
+    }
+
+    @Test
+    fun `accumulator scope completes at the page bound with fewer successes than requested`() {
+        val listed = mutableListOf<Any?>()
+        var calls = 0
+        val capture = service { method, params, _ -> mapper.readTree(when (method) {
+            "getGenesisHash" -> genesis()
+            "getSignaturesForAddress" -> { listed += params[0]; calls++; page((calls - 1) * pageSize + 1..calls * pageSize) { it % pageSize != 1 } }
+            "getTransaction" -> "null"
+            else -> error("Unexpected method")
+        }) }
+        val manifest = capture.capture(WalletHistoryCaptureRequest(wallet, directory, scanPages = 2,
+            scope = WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR)).manifest
+        assertEquals(listOf<Any?>(ACCUMULATOR, ACCUMULATOR), listed)
+        assertEquals(listOf(signature(1), signature(1001)), manifest.selection.map { it.signature })
+        assertEquals(WalletHistoryDiscoveryStop.SCAN_BOUND, manifest.discoveryStop)
+        assertTrue(manifest.complete)
+    }
+
+    @Test
     fun `rejects a page newer than the last scanned failed entry even when older than the last selection`() {
         var calls = 0
         val capture = service { method, _, _ -> mapper.readTree(when (method) {
@@ -240,5 +291,10 @@ class WalletHistoryPaginationTest {
         }
         val significantBytes = (BigInteger.valueOf(index.toLong()).bitLength() + 7) / 8
         return "1".repeat(64 - significantBytes) + encoded
+    }
+
+    private companion object {
+        /** PDA(["user_volume_accumulator", 32 zero bytes], Pump.fun), derived offline. */
+        const val ACCUMULATOR = "7GxTMtPtJuY11YEPk9uTXrixjW4XHidUmrWRCSL9VE94"
     }
 }

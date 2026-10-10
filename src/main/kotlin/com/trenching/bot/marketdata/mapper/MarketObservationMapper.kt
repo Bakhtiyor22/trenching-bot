@@ -1,8 +1,10 @@
 package com.trenching.bot.marketdata.mapper
 
 import com.trenching.bot.common.*
+import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.infrastructure.persistence.MarketObservationEntity
+import com.trenching.bot.protocol.pumpfun.CurveReserves
 import org.mapstruct.*
 
 @Mapper(componentModel = MappingConstants.ComponentModel.SPRING, uses = [ChainValueMapper::class],
@@ -25,6 +27,13 @@ abstract class MarketObservationMapper {
         Mapping(target = "sourceEventId", source = "observation.sourceEventId"),
         Mapping(target = "commitment", source = "observation.commitment"),
         Mapping(target = "quality", source = "observation.quality"),
+        Mapping(target = "curveComplete", source = "observation.curveComplete"),
+        Mapping(target = "virtualSolReserves", source = "observation.curve.reserves.virtualSol"),
+        Mapping(target = "virtualTokenReserves", source = "observation.curve.reserves.virtualToken"),
+        Mapping(target = "realSolReserves", source = "observation.curve.reserves.realSol"),
+        Mapping(target = "realTokenReserves", source = "observation.curve.reserves.realToken"),
+        Mapping(target = "feeBps", source = "observation.curve.feeBps"),
+        Mapping(target = "creatorFeeBps", source = "observation.curve.creatorFeeBps"),
         Mapping(target = "version", ignore = true),
     ])
     abstract fun toEntity(runId: String, observation: MarketObservation): MarketObservationEntity
@@ -34,6 +43,8 @@ abstract class MarketObservationMapper {
         Mapping(target = "pair", expression = "java(pair(entity))"),
         Mapping(target = "price", expression = "java(originalPrice(entity))"),
         Mapping(target = "liquidityQuote", expression = "java(originalLiquidity(entity))"),
+        Mapping(target = "curveComplete", expression = "java(curveComplete(entity))"),
+        Mapping(target = "curve", expression = "java(curve(entity))"),
     ])
     abstract fun toObservation(entity: MarketObservationEntity): MarketObservation
 
@@ -41,6 +52,15 @@ abstract class MarketObservationMapper {
     fun pair(entity: MarketObservationEntity): MarketPair = ChainValueMapper.pair(entity.baseMint, entity.quoteMint)
     fun originalPrice(entity: MarketObservationEntity): java.math.BigDecimal =
         ChainValueMapper.originalDecimal(entity.price, entity.priceScale)
+    fun curveComplete(entity: MarketObservationEntity): Boolean = requireCurve(entity.curveComplete, entity)
+    fun curve(entity: MarketObservationEntity): CurveState = CurveState(
+        CurveReserves(requireCurve(entity.virtualSolReserves, entity), requireCurve(entity.virtualTokenReserves, entity),
+            requireCurve(entity.realSolReserves, entity), requireCurve(entity.realTokenReserves, entity)),
+        requireCurve(entity.feeBps, entity), requireCurve(entity.creatorFeeBps, entity))
     fun originalLiquidity(entity: MarketObservationEntity): java.math.BigDecimal? =
         entity.liquidityQuote?.let { ChainValueMapper.originalDecimal(it, requireNotNull(entity.liquidityScale)) }
+
+    /** Only rows stored before curve state existed lack it; they cannot be replayed under the curve model. */
+    private fun <T : Any> requireCurve(value: T?, entity: MarketObservationEntity): T =
+        requireNotNull(value) { "Observation without curve state id=${entity.observationId}" }
 }

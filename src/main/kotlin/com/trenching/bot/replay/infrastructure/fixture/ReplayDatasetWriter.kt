@@ -3,6 +3,7 @@ package com.trenching.bot.replay.infrastructure.fixture
 import com.trenching.bot.common.MarketPair
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.OrderedMarketData
+import com.trenching.bot.marketdata.domain.OrderedReferenceRates
 import com.trenching.bot.replay.application.DatasetFingerprint
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.walletactivity.domain.OrderedWalletTransactions
@@ -10,7 +11,7 @@ import com.trenching.bot.walletactivity.domain.WalletTransaction
 import tools.jackson.databind.ObjectMapper
 import tools.jackson.databind.node.ObjectNode
 
-/** Writes the canonical v1 form that [ReplayDatasetLoader] reads: deduplicated, ordered, exact decimals. */
+/** Writes the canonical v3 form that [ReplayDatasetLoader] reads: deduplicated, ordered, exact decimals. */
 class ReplayDatasetWriter(private val mapper: ObjectMapper) {
     fun write(dataset: ReplayDataset): String {
         val root = mapper.createObjectNode()
@@ -21,6 +22,14 @@ class ReplayDatasetWriter(private val mapper: ObjectMapper) {
         OrderedWalletTransactions.canonical(dataset.transactions).forEach { transactions.add(transaction(it)) }
         val observations = root.putArray("observations")
         OrderedMarketData.canonical(dataset.observations).forEach { observations.add(observation(it)) }
+        val rates = root.putArray("referenceRates")
+        OrderedReferenceRates.canonical(dataset.referenceRates).forEach { rate ->
+            rates.add(mapper.createObjectNode().apply {
+                put("minute", rate.minute.toString())
+                put("rate", rate.rate.toPlainString())
+                put("source", rate.source)
+            })
+        }
         return mapper.writeValueAsString(root)
     }
 
@@ -54,6 +63,15 @@ class ReplayDatasetWriter(private val mapper: ObjectMapper) {
         put("sourceEventId", observation.sourceEventId)
         put("commitment", observation.commitment.name)
         put("quality", observation.quality.name)
+        put("curveComplete", observation.curveComplete)
+        putObject("curve").apply {
+            put(ReplayCurveFields.VIRTUAL_SOL_RESERVES, observation.curve.reserves.virtualSol.toString())
+            put(ReplayCurveFields.VIRTUAL_TOKEN_RESERVES, observation.curve.reserves.virtualToken.toString())
+            put(ReplayCurveFields.REAL_SOL_RESERVES, observation.curve.reserves.realSol.toString())
+            put(ReplayCurveFields.REAL_TOKEN_RESERVES, observation.curve.reserves.realToken.toString())
+            put(ReplayCurveFields.FEE_BPS, observation.curve.feeBps.toString())
+            put(ReplayCurveFields.CREATOR_FEE_BPS, observation.curve.creatorFeeBps.toString())
+        }
     }
 
     private fun pair(node: ObjectNode, pair: MarketPair) {

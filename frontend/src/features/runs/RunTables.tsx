@@ -1,11 +1,13 @@
 import { Badge, Code, ScrollArea, Table, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
-import type { Fill, RunEvent, RunOrder, RunPosition } from '../../api/types';
+import type { Close, Fill, RunEvent, RunOrder, RunPosition } from '../../api/types';
 import { Decimal, PairLabel, Pnl, ShortId, Timestamp } from '../../components/DisplayValues';
+import { MarketLinks } from '../../components/MarketLinks';
 import { PagingFooter } from '../../components/Panels';
 import { useClientPaging } from '../../components/useClientPaging';
 import { EmptyState } from '../../components/StateViews';
-import { formatSlot, humanizeCode, offsetLabel } from '../../lib/format';
+import { formatSlot, humanizeCode, signedBps } from '../../lib/format';
+import { recordedEventSignature, transactionLinks } from '../../lib/marketLinks';
 
 function Flag({ value, label }: { value: boolean; label: string }) {
   return (
@@ -59,6 +61,7 @@ export function EventsTable({ events }: { events: RunEvent[] }) {
               <Table.Td ta="right">{formatSlot(e.slot)}</Table.Td>
               <Table.Td>
                 <ShortId value={e.signature} /> <Text span size="xs" c="dimmed">#{e.instructionIndex}</Text>
+                <MarketLinks links={transactionLinks(recordedEventSignature(e) ?? '')} />
               </Table.Td>
               <Table.Td>
                 {e.outcome === 'ACCEPTED' ? (
@@ -104,6 +107,34 @@ export function EventsTable({ events }: { events: RunEvent[] }) {
   );
 }
 
+/** What one trade paid besides the curve price: the program's fees, our own price impact and the transaction cost. */
+type ExecutionCosts = Pick<Close, 'fee' | 'feeBps' | 'priceImpactBps' | 'transactionCost'>;
+
+function fillCosts(fill: Fill): ExecutionCosts {
+  return { fee: fill.fee, feeBps: fill.feeBps, priceImpactBps: fill.priceImpactBps, transactionCost: fill.priorityFee };
+}
+
+function CostsCell({ costs }: { costs: ExecutionCosts | null }) {
+  if (!costs) {
+    return (
+      <Table.Td ta="right" c="dimmed">
+        —
+      </Table.Td>
+    );
+  }
+  return (
+    <Table.Td ta="right" style={{ whiteSpace: 'nowrap' }}>
+      <Decimal value={costs.fee} />{' '}
+      <Text span size="xs" c="dimmed">
+        fees {costs.feeBps} bps
+      </Text>
+      <Text size="xs" c="dimmed">
+        impact {signedBps(costs.priceImpactBps)} · tx <Decimal value={costs.transactionCost} size="xs" />
+      </Text>
+    </Table.Td>
+  );
+}
+
 function FillCells({ fill }: { fill: Fill | null }) {
   if (!fill) {
     return (
@@ -121,7 +152,7 @@ function FillCells({ fill }: { fill: Fill | null }) {
       <Table.Td ta="right">{formatSlot(fill.actualSlot)}</Table.Td>
       <Table.Td ta="right"><Decimal value={fill.executionPrice} /></Table.Td>
       <Table.Td ta="right"><Decimal value={fill.quantity} /></Table.Td>
-      <Table.Td ta="right"><Decimal value={fill.fee} /></Table.Td>
+      <CostsCell costs={fillCosts(fill)} />
       <Table.Td ta="right"><Decimal value={fill.costBasis} /></Table.Td>
     </>
   );
@@ -132,18 +163,17 @@ export function OrdersTable({ orders }: { orders: RunOrder[] }) {
   if (orders.length === 0) return <EmptyState title="No orders" />;
   return (
     <>
-      <Wrap minWidth={1150}>
+      <Wrap minWidth={1250}>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Order</Table.Th>
-            <Table.Th>Offset</Table.Th>
-            <Table.Th ta="right">Target slot</Table.Th>
+            <Table.Th ta="right">Dip slot</Table.Th>
             <Table.Th>Status</Table.Th>
             <Table.Th>Rejection reason</Table.Th>
             <Table.Th ta="right">Fill slot</Table.Th>
             <Table.Th ta="right">Execution price</Table.Th>
             <Table.Th ta="right">Quantity</Table.Th>
-            <Table.Th ta="right">Fee</Table.Th>
+            <Table.Th ta="right">Fees · impact · tx cost</Table.Th>
             <Table.Th ta="right">Cost basis</Table.Th>
           </Table.Tr>
         </Table.Thead>
@@ -151,7 +181,6 @@ export function OrdersTable({ orders }: { orders: RunOrder[] }) {
           {paging.visible.map((o) => (
             <Table.Tr key={o.orderId}>
               <Table.Td><ShortId value={o.orderId} /></Table.Td>
-              <Table.Td>{offsetLabel(o.entryOffset)}</Table.Td>
               <Table.Td ta="right">{formatSlot(o.targetSlot)}</Table.Td>
               <Table.Td>
                 <Badge color={o.status === 'FILLED' ? 'teal' : 'red'} variant="light">
@@ -171,21 +200,24 @@ export function OrdersTable({ orders }: { orders: RunOrder[] }) {
 
 export function PositionsTable({ positions }: { positions: RunPosition[] }) {
   const paging = useClientPaging(positions, 50);
-  if (positions.length === 0) return <EmptyState title="No positions" description="Rejected scenarios open no position." />;
+  if (positions.length === 0) return <EmptyState title="No positions" description="Cycles without an entry open no position." />;
   return (
     <>
-      <Wrap minWidth={1200}>
+      <Wrap minWidth={1500}>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Position</Table.Th>
-            <Table.Th>Offset</Table.Th>
             <Table.Th>Pair</Table.Th>
             <Table.Th>State</Table.Th>
             <Table.Th ta="right">Entry slot</Table.Th>
             <Table.Th ta="right">Entry price</Table.Th>
             <Table.Th ta="right">Quantity</Table.Th>
+            <Table.Th ta="right">Entry costs</Table.Th>
+            <Table.Th ta="right">Take profit</Table.Th>
+            <Table.Th ta="right">Stop loss</Table.Th>
             <Table.Th ta="right">Exit slot</Table.Th>
             <Table.Th ta="right">Exit price</Table.Th>
+            <Table.Th ta="right">Exit costs</Table.Th>
             <Table.Th ta="right">Net proceeds</Table.Th>
             <Table.Th ta="right">Realized P&amp;L</Table.Th>
             <Table.Th>Exit unavailable</Table.Th>
@@ -195,7 +227,6 @@ export function PositionsTable({ positions }: { positions: RunPosition[] }) {
           {paging.visible.map((p) => (
             <Table.Tr key={p.id}>
               <Table.Td><ShortId value={p.id} /></Table.Td>
-              <Table.Td>{offsetLabel(p.entryOffset)}</Table.Td>
               <Table.Td><PairLabel pair={p.pair} /></Table.Td>
               <Table.Td>
                 <Badge color={p.state === 'OPEN' ? 'yellow' : 'gray'} variant="light">
@@ -205,8 +236,12 @@ export function PositionsTable({ positions }: { positions: RunPosition[] }) {
               <Table.Td ta="right">{formatSlot(p.fill.actualSlot)}</Table.Td>
               <Table.Td ta="right"><Decimal value={p.fill.executionPrice} /></Table.Td>
               <Table.Td ta="right"><Decimal value={p.fill.quantity} /></Table.Td>
+              <CostsCell costs={fillCosts(p.fill)} />
+              <Table.Td ta="right"><Decimal value={p.takeProfitPrice} /></Table.Td>
+              <Table.Td ta="right"><Decimal value={p.stopLossPrice} /></Table.Td>
               <Table.Td ta="right">{p.close ? formatSlot(p.close.slot) : '—'}</Table.Td>
               <Table.Td ta="right">{p.close ? <Decimal value={p.close.executionPrice} /> : '—'}</Table.Td>
+              <CostsCell costs={p.close} />
               <Table.Td ta="right">{p.close ? <Decimal value={p.close.netProceeds} /> : '—'}</Table.Td>
               <Table.Td ta="right">{p.close ? <Pnl value={p.close.realizedPnl} /> : '—'}</Table.Td>
               <Table.Td><ReasonText code={p.exitUnavailableReason} /></Table.Td>

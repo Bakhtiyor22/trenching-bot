@@ -18,6 +18,11 @@ trenching:
   console:
     enabled: true
 
+# Display-only SOL/USDT rates from Binance's public API for the console's USDT view (no key).
+marketdata:
+  reference-rates:
+    enabled: true
+
 management:
   endpoint:
     health:

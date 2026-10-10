@@ -30,7 +30,7 @@ class PositionStoreService(
         }
         positions.forEach { position -> position.close?.let { close ->
             DecimalPolicy.requireExactPrice(close.executionPrice)
-            listOf(close.grossProceeds, close.fee, close.netProceeds, close.realizedPnl).forEach(DecimalPolicy::requireExact)
+            listOf(close.grossProceeds, close.fee, close.transactionCost, close.netProceeds, close.realizedPnl).forEach(DecimalPolicy::requireExact)
         } }
         repository.saveAllAndFlush(positions.map { mapper.toEntity(it, exitUnavailable[it.id]) })
     }

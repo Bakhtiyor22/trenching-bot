@@ -5,9 +5,12 @@ import com.trenching.bot.walletactivity.WalletHistoryManifest
 import com.trenching.bot.walletactivity.WalletHistoryOutcome
 import com.trenching.bot.walletactivity.WalletHistoryRecord
 import com.trenching.bot.walletactivity.WalletHistoryScanCursor
+import com.trenching.bot.walletactivity.WalletHistoryScope
 import com.trenching.bot.walletactivity.WalletHistorySelection
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
+import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import tools.jackson.databind.ObjectMapper
 import tools.jackson.databind.node.ObjectNode
 
@@ -19,8 +22,21 @@ internal object RecordedWalletFixtures {
     const val SLOT = 453004996L
     private const val GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
 
-    /** Saves the buy as [target]'s only selection; [complete] false leaves it pending, [signer] false makes it a non-signer. */
-    fun save(mapper: ObjectMapper, target: Path, complete: Boolean = true, signer: Boolean = true) {
+    /** Decu's Pump.fun user volume accumulator, which the buy passes as Pump.fun account 13. */
+    const val ACCUMULATOR = "Hj2hjN1EAe5pv676kUMf14zbj1ioWEHaiukbHDqw2P3D"
+
+    /**
+     * Saves the buy as [target]'s only selection; [complete] false leaves it pending, [signer] false makes it a non-signer.
+     * [scope] picks the listed address; [versionTwo] writes the manifest as a capture from before scopes existed.
+     */
+    fun save(
+        mapper: ObjectMapper,
+        target: Path,
+        complete: Boolean = true,
+        signer: Boolean = true,
+        scope: WalletHistoryScope = WalletHistoryScope.WALLET_REFERENCES,
+        versionTwo: Boolean = false,
+    ) {
         val store = WalletHistoryArtifactStore(mapper)
         val transaction = javaClass.getResourceAsStream("/walletactivity/decoder/pumpfun-buy.json").use { mapper.readTree(requireNotNull(it)) }
         val outcome = if (signer) WalletHistoryOutcome.UNCLASSIFIED else WalletHistoryOutcome.NON_SIGNER
@@ -32,12 +48,24 @@ internal object RecordedWalletFixtures {
             val artifact = store.writeTransaction(target, SIGNATURE, transaction)
             WalletHistoryRecord(SIGNATURE, SLOT, outcome, artifact.path, artifact.sha256, artifact.bytes)
         } else WalletHistoryRecord(SIGNATURE, SLOT, WalletHistoryOutcome.PENDING)
-        store.save(target, WalletHistoryManifest(
-            schemaVersion = 2, wallet = WALLET, genesisHash = GENESIS,
+        val manifest = WalletHistoryManifest(
+            schemaVersion = 3, wallet = WALLET, scope = scope,
+            listingAddress = if (scope == WalletHistoryScope.WALLET_REFERENCES) WALLET else ACCUMULATOR, genesisHash = GENESIS,
             commitment = "confirmed", capturedAt = "2026-10-03T00:00:00Z", limit = 100, scanPageLimit = 1,
             selection = listOf(WalletHistorySelection(SIGNATURE, SLOT)), records = listOf(record),
             complete = complete, discoveryComplete = true, discoveryStop = WalletHistoryDiscoveryStop.HISTORY_END,
             scannedSignatures = 1, skippedFailed = 0, scanCursor = WalletHistoryScanCursor(SIGNATURE, SLOT),
-            requestsUsed = 3, bytesUsed = record.bytes))
+            requestsUsed = 3, bytesUsed = record.bytes)
+        if (!versionTwo) return store.save(target, manifest)
+        val inner = mapper.valueToTree<ObjectNode>(manifest).apply {
+            put("schemaVersion", 2)
+            remove("scope")
+            remove("listingAddress")
+        }
+        val envelope = mapper.createObjectNode().apply {
+            put("sha256", MessageDigest.getInstance("SHA-256").digest(mapper.writeValueAsBytes(inner)).joinToString("") { "%02x".format(it) })
+            set("manifest", inner)
+        }
+        Files.write(target.resolve("manifest.json"), mapper.writeValueAsBytes(envelope))
     }
 }

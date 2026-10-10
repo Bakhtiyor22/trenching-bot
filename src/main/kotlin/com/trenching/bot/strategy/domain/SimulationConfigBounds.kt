@@ -1,7 +1,22 @@
 package com.trenching.bot.strategy.domain
 
+import com.trenching.bot.protocol.pumpfun.PumpFunLayout
+import java.math.BigDecimal
+
 object SimulationConfigBounds {
-    val BASIS_POINTS: IntRange = 0..9999
-    val SLOT_WINDOW: LongRange = 0L..1000L
-    const val MIN_HOLDING_SLOTS = 1L
+    /** The dip below P0, the take-profit gain and the stop-loss drop: each a real move, below 100%. */
+    val LEVEL_BASIS_POINTS: IntRange = 1..9999
+    val MAX_AGE_SLOTS: LongRange = 0L..1000L
+
+    /** About 30 minutes at 400 ms slots; a market capture records no further. */
+    const val MAX_HORIZON_SLOTS = 4500L
+    val HORIZON_SLOTS: LongRange = 1L..MAX_HORIZON_SLOTS
+    val MAX_MIN_MARKET_CAP_USD: BigDecimal = BigDecimal("1000000000")
+
+    /** A notional is spent as whole lamports. */
+    const val NOTIONAL_DECIMALS = PumpFunLayout.SOL_AMOUNT_DECIMALS
+
+    /** About a minute at 400 ms slots. */
+    val LATENCY_SLOTS: LongRange = 1L..150L
+    val MAX_TRANSACTION_COST_SOL: BigDecimal = BigDecimal("0.1")
 }

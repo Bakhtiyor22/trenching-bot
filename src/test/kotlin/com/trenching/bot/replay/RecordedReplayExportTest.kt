@@ -14,7 +14,9 @@ import com.trenching.bot.marketdata.MarketTransactionOutcome
 import com.trenching.bot.marketdata.MarketTransactionRecord
 import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.marketdata.RecordedMarketHistory
+import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifactStore
+import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.replay.RecordedWalletFixtures.MINT
 import com.trenching.bot.replay.RecordedWalletFixtures.SIGNATURE
 import com.trenching.bot.replay.RecordedWalletFixtures.SLOT
@@ -23,7 +25,12 @@ import com.trenching.bot.replay.application.DatasetFingerprint
 import com.trenching.bot.replay.application.RecordedReplayExportService
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
+import com.trenching.bot.marketdata.RecordedReferenceRates
+import com.trenching.bot.marketdata.ReferenceRate
+import com.trenching.bot.marketdata.ReferenceRateCaptureResult
 import com.trenching.bot.walletactivity.WalletHistoryCaptureConfiguration
+import java.time.Instant
+import com.trenching.bot.walletactivity.WalletHistoryScope
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.nio.file.Files
@@ -42,7 +49,7 @@ class RecordedReplayExportTest {
     private var marketDecodes = 0
 
     @Test
-    fun `exports the real recorded buy and in-window trade as canonical v1 json that the loader round-trips`() {
+    fun `exports the real recorded buy, its in-window trade and that trade's rate as canonical v3 json that the loader round-trips`() {
         RecordedWalletFixtures.save(mapper, wallet())
         saveRealMarketCapture()
 
@@ -60,6 +67,12 @@ class RecordedReplayExportTest {
         assertEquals(Slot.of(SLOT + 1), observation.slot)
         assertEquals(BigDecimal("0.00000019870174082519143559411678139870"), observation.price)
         assertEquals("pumpfun-bonding-curve-trade/v1:$TRADE:4:15:$MINT", observation.id)
+        assertEquals(false, observation.curveComplete)
+        assertEquals(CurveState(
+            CurveReserves(BigInteger("80123104314"), BigInteger("401756777019139"), BigInteger("50123104314"), BigInteger("121856777019139")),
+            feeBps = 95, creatorFeeBps = 30), observation.curve)
+        assertEquals(listOf(RATE), dataset.referenceRates)
+        assertEquals(3, dataset.schemaVersion)
         assertEquals(DatasetFingerprint.checksum(dataset), export.checksum)
         assertEquals(export.checksum, mapper.readTree(json).path("checksum").asString())
         assertEquals(listOf(1, 1, 1, 1), listOf(export.sourceBuys, export.windows, export.transactions, export.observations))
@@ -83,6 +96,26 @@ class RecordedReplayExportTest {
     }
 
     @Test
+    fun `a version two wallet capture and an accumulator scope capture of the same buy export the same dataset`() {
+        saveRealMarketCapture()
+        val exports = listOf(
+            "v3" to { target: Path -> RecordedWalletFixtures.save(mapper, target) },
+            "v2" to { target: Path -> RecordedWalletFixtures.save(mapper, target, versionTwo = true) },
+            "accumulator" to { target: Path -> RecordedWalletFixtures.save(mapper, target, scope = WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR) },
+        ).map { (name, save) ->
+            val target = directory.resolve("wallet-$name")
+            save(target)
+            val decoded = WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper).decode(target, WalletAddress.of(WALLET))
+            val export = service().export(RecordedReplayExportRequest(target, markets(), rates(), directory.resolve("replay-$name.json")))
+            Triple(decoded.transactions, export.checksum, Files.readAllBytes(export.output))
+        }
+        assertEquals(2, WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper).inspect(directory.resolve("wallet-v2")).manifest.schemaVersion)
+        assertEquals(1, exports.map { it.first }.distinct().size)
+        assertEquals(1, exports.map { it.second }.distinct().size)
+        assertTrue(exports.all { it.third.contentEquals(exports.first().third) })
+    }
+
+    @Test
     fun `refuses to replace a different existing file`() {
         RecordedWalletFixtures.save(mapper, wallet())
         saveRealMarketCapture()
@@ -96,11 +129,11 @@ class RecordedReplayExportTest {
     @Test
     fun `refuses a market capture whose windows or parameters differ from the wallet capture's plan`() {
         RecordedWalletFixtures.save(mapper, wallet())
-        val shifted = ReplayMarketFixtures.manifest(listOf(window(SLOT + 2, SLOT + 12)))
+        val shifted = ReplayMarketFixtures.manifest(listOf(window(SLOT + 2, SLOT + 4500)))
         assertCategory("MARKET_CAPTURE_MISMATCH") { service(ReplayMarketFixtures.decoded(markets(), shifted, 1)).export(request()) }
-        val planned = ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 12)))
+        val planned = ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 4500)))
         val otherParameters = ReplayMarketFixtures.decoded(markets(), planned, 1)
-            .copy(windowParameters = ReplayMarketFixtures.PARAMETERS.copy(holdingSlots = 6))
+            .copy(windowParameters = ReplayMarketFixtures.PARAMETERS.copy(horizonSlots = 4499))
         assertCategory("MARKET_CAPTURE_MISMATCH") { service(otherParameters).export(request()) }
         assertFalse(Files.exists(output()))
     }
@@ -108,7 +141,7 @@ class RecordedReplayExportTest {
     @Test
     fun `refuses an incomplete market capture or a window that yields no observations`() {
         RecordedWalletFixtures.save(mapper, wallet())
-        val planned = ReplayMarketFixtures.decoded(markets(), ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 12))), 1)
+        val planned = ReplayMarketFixtures.decoded(markets(), ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 4500))), 1)
         assertCategory("MARKET_CAPTURE_INCOMPLETE") { service(planned.copy(complete = false)).export(request()) }
         val gap = planned.copy(windows = planned.windows.map { it.copy(detailGaps = 1, yieldsObservations = false) })
         assertCategory("MARKET_CAPTURE_INCOMPLETE") { service(gap).export(request()) }
@@ -118,7 +151,7 @@ class RecordedReplayExportTest {
     @Test
     fun `refuses in-window exclusions but not trades outside the window or quoted in the quote mint`() {
         RecordedWalletFixtures.save(mapper, wallet())
-        val planned = ReplayMarketFixtures.decoded(markets(), ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 12))), 1)
+        val planned = ReplayMarketFixtures.decoded(markets(), ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 4500))), 1)
         val blocking = MarketObservationExclusion.entries -
             setOf(MarketObservationExclusion.OUT_OF_WINDOW, MarketObservationExclusion.QUOTE_MINT)
         blocking.forEach { reason ->
@@ -135,7 +168,7 @@ class RecordedReplayExportTest {
     fun `refuses a recorded market directory that is unfinished or stopped at its page bound`() {
         RecordedWalletFixtures.save(mapper, wallet())
         val store = MarketHistoryArtifactStore(mapper)
-        val planned = listOf(window(SLOT + 1, SLOT + 12))
+        val planned = listOf(window(SLOT + 1, SLOT + 4500))
         store.save(markets(), ReplayMarketFixtures.manifest(planned, firstCoverage = MarketWindowCoverage.PENDING))
         assertCategory("CAPTURE_INCOMPLETE") { service().export(request()) }
         store.save(markets(), ReplayMarketFixtures.manifest(planned, firstCoverage = MarketWindowCoverage.COVERAGE_INCOMPLETE))
@@ -147,7 +180,7 @@ class RecordedReplayExportTest {
     fun `refuses an incomplete wallet capture before reading the market capture`() {
         RecordedWalletFixtures.save(mapper, wallet(), complete = false)
         assertCategory("WALLET_CAPTURE_INCOMPLETE") { service(ReplayMarketFixtures.decoded(markets(),
-            ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 12))), 1)).export(request()) }
+            ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 4500))), 1)).export(request()) }
         assertEquals(0, marketDecodes)
         assertFalse(Files.exists(output()))
     }
@@ -155,7 +188,7 @@ class RecordedReplayExportTest {
     @Test
     fun `refuses more observations than the replay format holds instead of truncating them`() {
         RecordedWalletFixtures.save(mapper, wallet())
-        val tooMany = ReplayMarketFixtures.decoded(markets(), ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 12))), 10_001)
+        val tooMany = ReplayMarketFixtures.decoded(markets(), ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 4500))), 100_001)
         assertCategory("DATASET_BOUNDS") { service(tooMany).export(request()) }
         assertFalse(Files.exists(output()))
     }
@@ -165,10 +198,18 @@ class RecordedReplayExportTest {
         val transaction = javaClass.getResourceAsStream("/marketdata/pumpfun-trade-453004997.json").use { mapper.readTree(requireNotNull(it)) }
         val artifact = store.writeTransaction(markets(), TRADE, transaction)
         val record = MarketTransactionRecord(TRADE, SLOT + 1, MarketTransactionOutcome.CAPTURED, artifact.path, artifact.sha256, artifact.bytes)
-        store.save(markets(), ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 12)), listOf(record)))
+        store.save(markets(), ReplayMarketFixtures.manifest(listOf(window(SLOT + 1, SLOT + 4500)), listOf(record)))
     }
 
-    private fun service(market: MarketHistoryDecodeResult? = null): RecordedReplayExportService {
+    @Test
+    fun `refuses a market capture whose trades have a minute without a recorded rate`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveRealMarketCapture()
+        assertCategory("REFERENCE_RATES_INCOMPLETE") { service(rates = emptyList()).export(request()) }
+        assertFalse(Files.exists(output()))
+    }
+
+    private fun service(market: MarketHistoryDecodeResult? = null, rates: List<ReferenceRate> = listOf(RATE)): RecordedReplayExportService {
         val recorded = MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper)
         val markets = object : RecordedMarketHistory {
             override fun inspect(directory: Path): MarketHistoryCaptureResult = recorded.inspect(directory)
@@ -178,10 +219,17 @@ class RecordedReplayExportTest {
                 return market ?: recorded.decode(directory)
             }
         }
-        return RecordedReplayExportService(WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper), markets, mapper)
+        val recordedRates = object : RecordedReferenceRates {
+            override fun inspect(directory: Path): ReferenceRateCaptureResult = error("Export reads rates, not their audit")
+
+            override fun rates(directory: Path): List<ReferenceRate> = rates
+        }
+        return RecordedReplayExportService(WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper), markets, recordedRates, mapper)
     }
 
-    private fun request() = RecordedReplayExportRequest(wallet(), markets(), output())
+    private fun request() = RecordedReplayExportRequest(wallet(), markets(), rates(), output())
+
+    private fun rates(): Path = directory.resolve("rates")
 
     private fun window(from: Long, to: Long) =
         MarketCaptureWindow.of(MintAddress.of(MINT), Slot.of(from), Slot.of(to), TransactionSignature.of(SIGNATURE))
@@ -198,6 +246,8 @@ class RecordedReplayExportTest {
     }
 
     private companion object {
+        /** A synthetic test rate for the minute of the captured trade; never a recorded Binance value. */
+        val RATE = ReferenceRate(Instant.parse("2026-10-03T17:47:00Z"), BigDecimal("150"), "test-fixture:SOLUSDT:1m:open")
         const val TRADE = "2YHkUxxjxax3y2f8efvMgzboRQ6XDMQpqck7pNpBbEawhFhgAzB32Lh7eRX7RhfkvgjARf2kHgQJWz7rZPDnhvxM"
     }
 }

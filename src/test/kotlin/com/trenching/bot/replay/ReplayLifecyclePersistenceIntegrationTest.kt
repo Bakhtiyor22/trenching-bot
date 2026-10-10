@@ -13,6 +13,7 @@ import com.trenching.bot.replay.domain.SimulationRunConflictException
 import java.math.BigDecimal
 import java.sql.SQLException
 import javax.sql.DataSource
+import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import com.trenching.bot.support.runRowCounts
 import kotlin.test.*
@@ -37,7 +38,7 @@ class ReplayLifecyclePersistenceIntegrationTest {
     @Autowired private lateinit var application: PersistedReplayService
     @Autowired private lateinit var dataSource: DataSource
 
-    private fun dataset(): ReplayDataset = javaClass.getResourceAsStream("/replay/samples/weekly-buy-v1.json").use {
+    private fun dataset(): ReplayDataset = javaClass.getResourceAsStream("/replay/samples/dip-sample-v3.json").use {
         ReplayDatasetLoader(json).load(requireNotNull(it))
     }
 
@@ -51,40 +52,43 @@ class ReplayLifecyclePersistenceIntegrationTest {
         val repeated = dataset.copy(transactions = dataset.transactions.reversed() + dataset.transactions,
             observations = dataset.observations.reversed() + dataset.observations)
         assertEquals(first, application.execute(repeated, SimulationConfig.mvp()))
-        assertEquals(listOf(1, 4, 6, 3, 3, 3, 3), counts(report.runId))
+        assertEquals(DIP_SAMPLE_ROWS, counts(report.runId))
         assertEquals(report.scenarios.map { it.intent }, intents.intents(report.runId))
         assertEquals(report.scenarios.map { it.outcome }, orders.outcomes(report.runId))
         assertEquals(report.scenarios.mapNotNull { it.position }, positions.positions(report.runId))
-        assertTrue(orders.outcomes(report.runId).all { it is FillOutcome.Filled })
-        assertEquals("8.696567164180", requireNotNull(positions.positions(report.runId).first().close).realizedPnl.toPlainString())
+        assertEquals(5, orders.outcomes(report.runId).count { it is FillOutcome.Filled })
+        assertEquals(setOf(DipSample.TAKE_PROFIT_PNL, DipSample.STOP_LOSS_PNL),
+            positions.positions(report.runId).mapNotNull { it.close?.realizedPnl?.toPlainString() }.toSet())
     }
 
     @Test
     fun `different configuration has independent intents fills and positions`() {
         val input = dataset()
         val first = application.execute(input, SimulationConfig.mvp())
-        val alternate = application.execute(input, SimulationConfig.of(BigDecimal("102"), 10, 50, 2, 2, 5))
+        val alternate = application.execute(input, SimulationConfig.of(BigDecimal("0.102"), 2, 1500, 3000, 1500, java.math.BigDecimal("10000"), 4500, 1, BigDecimal("0.001")))
         assertNotEquals(first.id, alternate.id)
         assertTrue(intents.intents(first.id).map { it.id }.toSet().intersect(intents.intents(alternate.id).map { it.id }.toSet()).isEmpty())
-        assertEquals(listOf(1, 4, 6, 3, 3, 3, 3), counts(alternate.id))
+        assertEquals(DIP_SAMPLE_ROWS, counts(alternate.id))
     }
 
     @Test
     fun `missing prices retain rejected orders without fills or positions`() {
         val input = dataset().copy(observations = emptyList())
         val run = application.execute(input, SimulationConfig.mvp())
-        assertEquals(listOf(1, 4, 0, 3, 3, 0, 0), counts(run.id))
+        assertEquals(listOf(1, 11, 0, 10, 10, 0, 0), counts(run.id))
         assertTrue(orders.outcomes(run.id).all { it is FillOutcome.Rejected })
     }
 
     @Test
     fun `missing exits retain open positions and explicit reasons`() {
         val original = dataset()
-        val input = original.copy(observations = original.observations.filter { it.slot.value < 106 })
+        // Up to three slots after each buy: every entry fills, and no take-profit or stop-loss exit can follow.
+        val input = original.copy(observations = original.observations.filter { it.slot.value % 1000 <= 3 })
         val run = application.execute(input, SimulationConfig.mvp())
+        assertEquals(5, positions.positions(run.id).size)
         assertTrue(positions.positions(run.id).all { it.state == PositionState.OPEN && it.close == null })
         dataSource.connection.use { connection ->
-            connection.prepareStatement("select count(*) from positions where run_id = ? and exit_unavailable = 'MISSING_OBSERVATION'").use { statement ->
+            connection.prepareStatement("select count(*) from positions where run_id = ? and exit_unavailable = 'HORIZON_REACHED'").use { statement ->
                 statement.setString(1, run.id)
                 statement.executeQuery().use { rows -> assertTrue(rows.next()); assertEquals(3, rows.getInt(1)) }
             }
@@ -129,11 +133,17 @@ class ReplayLifecyclePersistenceIntegrationTest {
     fun `database prevents duplicate event identity`() {
         val run = application.execute(dataset(), SimulationConfig.mvp())
         dataSource.connection.use { connection ->
-            connection.prepareStatement("update wallet_events set instruction_index = 0 where run_id = ? and instruction_index = 1").use { statement ->
+            connection.prepareStatement("update wallet_events set signature = " +
+                "(select signature from wallet_events other where other.run_id = ? and other.slot = 1000) where run_id = ? and slot = 2000").use { statement ->
                 statement.setString(1, run.id)
+                statement.setString(2, run.id)
                 assertEquals("23505", assertFailsWith<SQLException> { statement.executeUpdate() }.sqlState)
             }
         }
     }
 
+    private companion object {
+        /** Runs, wallet events, observations, intents, orders, fills and positions of the dip sample's default run. */
+        val DIP_SAMPLE_ROWS = listOf(1, 11, 31, 10, 10, 5, 5)
+    }
 }

@@ -8,14 +8,14 @@ describe('api client', () => {
     server.use(
       http.get('/api/thing', () =>
         HttpResponse.json(
-          { code: 'CONFIG_INVALID', message: 'bad config', fields: { feeBps: 'too big' } },
+          { code: 'CONFIG_INVALID', message: 'bad config', fields: { latencySlots: 'too big' } },
           { status: 400 },
         ),
       ),
     );
     const error = await getJson('/api/thing').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
-    expect(error).toMatchObject({ status: 400, code: 'CONFIG_INVALID', message: 'bad config', fields: { feeBps: 'too big' } });
+    expect(error).toMatchObject({ status: 400, code: 'CONFIG_INVALID', message: 'bad config', fields: { latencySlots: 'too big' } });
     expect((error as ApiError).isClientError).toBe(true);
   });
 

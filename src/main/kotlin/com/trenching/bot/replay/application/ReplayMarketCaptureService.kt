@@ -22,7 +22,7 @@ class ReplayMarketCaptureService(
     fun capture(request: ReplayMarketCaptureRequest): MarketHistoryCaptureResult {
         val plan = plan(request.walletCaptureDirectory)
         return marketCapture().capture(MarketHistoryCaptureRequest(request.directory, plan.windows, plan.parameters,
-            request.scanPages, request.maxTransactions, request.requestBudget, request.byteBudget))
+            request.scanPages, request.maxTransactions, request.requestBudget, request.byteBudget, request.operationTimeout))
     }
 
     fun plan(walletCaptureDirectory: Path): ReplayMarketWindowPlan = planning.plan(walletCaptureDirectory).plan

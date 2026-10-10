@@ -20,9 +20,8 @@ class RecordedWalletPlanning(
         val history = walletHistory.decode(walletCaptureDirectory, WalletAddress.of(captured.manifest.wallet))
         val plan = planner.plan(history)
         if (plan.windows.isEmpty()) throw CaptureValidationException("NO_SOURCE_BUYS")
-        log.info("replay_market_plan sourceBuys={} windows={} firstEntryOffset={} lastEntryOffset={} maxWaitSlots={} holdingSlots={}",
-            plan.sourceBuys, plan.windows.size, plan.parameters.firstEntryOffset, plan.parameters.lastEntryOffset,
-            plan.parameters.maxWaitSlots, plan.parameters.holdingSlots)
+        log.info("replay_market_plan sourceBuys={} windows={} horizonSlots={} maxAgeSlots={}",
+            plan.sourceBuys, plan.windows.size, plan.parameters.horizonSlots, plan.parameters.maxAgeSlots)
         return PlannedWalletHistory(history, plan)
     }
 }

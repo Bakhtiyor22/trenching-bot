@@ -290,7 +290,7 @@
                 "value": "application/json"
               }
             ],
-            "url": "{{baseUrl}}/api/datasets/samples/weekly-buy-v1",
+            "url": "{{baseUrl}}/api/datasets/samples/dip-sample-v3",
             "description": ""
           },
           "event": [
@@ -323,14 +323,14 @@
               }
             ],
             "url": "{{baseUrl}}/api/datasets",
-            "description": "For Postman desktop choose the bundled sample file and permit file access; Newman resolves this repository-relative path from the repository root. Limit:20MB, UTF-8 JSON.",
+            "description": "For Postman desktop choose the bundled sample file and permit file access; Newman resolves this repository-relative path from the repository root. Limit:100MB, UTF-8 JSON.",
             "body": {
               "mode": "formdata",
               "formdata": [
                 {
                   "key": "file",
                   "type": "file",
-                  "src": "src/main/resources/replay/samples/weekly-buy-v1.json"
+                  "src": "src/main/resources/replay/samples/dip-sample-v3.json"
                 },
                 {
                   "key": "name",
@@ -549,7 +549,7 @@
             "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\"datasetId\":\"{{datasetId}}\",\"config\":{\"feeBps\":10000}}",
+              "raw": "{\"datasetId\":\"{{datasetId}}\",\"config\":{\"latencySlots\":0}}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -566,7 +566,7 @@
                   "pm.test(\"Expected HTTP status\", function () { pm.expect(pm.response.code).to.be.oneOf([400]); });",
                   "pm.test(\"JSON content type\", function () { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"); });",
                   "pm.test(\"JSON object response\", function () { pm.expect(pm.response.json()).to.be.an(\"object\"); });",
-                  "pm.test(\"Field error envelope\", function () { const error = pm.response.json(); pm.expect(error.code).to.equal(\"CONFIG_INVALID\"); pm.expect(error.fields.feeBps).to.be.a(\"string\"); });"
+                  "pm.test(\"Field error envelope\", function () { const error = pm.response.json(); pm.expect(error.code).to.equal(\"CONFIG_INVALID\"); pm.expect(error.fields.latencySlots).to.be.a(\"string\"); });"
                 ]
               }
             }

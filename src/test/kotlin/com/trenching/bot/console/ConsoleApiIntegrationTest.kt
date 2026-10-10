@@ -4,7 +4,10 @@ import com.trenching.bot.console.ConsoleTestData.UNKNOWN_ID
 import com.trenching.bot.console.ConsoleTestData.sampleText
 import com.trenching.bot.console.ConsoleTestData.variant
 import com.trenching.bot.console.application.ConsoleMetrics
+import com.trenching.bot.papertrading.domain.RejectionReason
+import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
+import java.math.BigDecimal
 import com.trenching.bot.support.AdditionalClockConfiguration
 import io.micrometer.core.instrument.MeterRegistry
 import javax.sql.DataSource
@@ -27,8 +30,8 @@ import tools.jackson.databind.ObjectMapper
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     properties = [
         "trenching.console.enabled=true",
-        "spring.servlet.multipart.max-file-size=64KB",
-        "spring.servlet.multipart.max-request-size=64KB",
+        "spring.servlet.multipart.max-file-size=256KB",
+        "spring.servlet.multipart.max-request-size=256KB",
     ],
 )
 @Tag("integration")
@@ -44,8 +47,8 @@ class ConsoleApiIntegrationTest {
 
     @Test
     fun `the sample imports once and its default run is created once`() {
-        val imported = http.post("/api/datasets/samples/weekly-buy-v1")
-        val reimported = http.post("/api/datasets/samples/WEEKLY_BUY_V1")
+        val imported = http.post("/api/datasets/samples/dip-sample-v3")
+        val reimported = http.post("/api/datasets/samples/DIP_SAMPLE_V3")
         val datasetId = imported.body.path("dataset").path("id").asString()
 
         assertEquals(201, imported.status)
@@ -59,32 +62,34 @@ class ConsoleApiIntegrationTest {
         val run = started.body.path("run")
         assertEquals(201, started.status)
         assertTrue(started.body.path("created").asBoolean())
-        assertDecimal("26.089701492540", run.path("realizedPnl"))
-        assertEquals(3, run.path("filledCount").asInt())
-        assertEquals(3, run.path("closedCount").asInt())
+        assertDecimal(DipSample.TOTAL_PNL, run.path("realizedPnl"))
+        assertEquals(5, run.path("filledCount").asInt())
+        assertEquals(2, run.path("closedCount").asInt())
         assertTrue(Regex("""\d{4}-\d{2}-\d{2}T[\d:.]+Z""").matches(run.path("createdAt").asString()), run.toString())
         assertFalse(run.path("createdAt").asString().startsWith("1900-"))
 
-        val restarted = http.post("/api/runs", """{"datasetId":"$datasetId","config":{"notional":"100","feeBps":10}}""")
+        val restarted = http.post("/api/runs", """{"datasetId":"$datasetId","config":{"notional":"0.1","latencySlots":1}}""")
         assertEquals(200, restarted.status)
         assertFalse(restarted.body.path("created").asBoolean())
         assertEquals(run.path("id").asString(), restarted.body.path("run").path("id").asString())
-        assertEquals(3, count("select count(*) from positions where run_id = ?", run.path("id").asString()))
+        assertEquals(5, count("select count(*) from positions where run_id = ?", run.path("id").asString()))
         assertTrue(counter(ConsoleMetrics.RUNS, ConsoleMetrics.CREATED) >= 1)
         assertTrue(counter(ConsoleMetrics.RUNS, ConsoleMetrics.EXISTING) >= 1)
         assertTrue((meterRegistry.find(ConsoleMetrics.RUN_DURATION).timer()?.count() ?: 0) >= 2)
     }
 
     @Test
-    fun `an out-of-range fee is a per-field config error and writes nothing`() {
-        val datasetId = upload(variant(json, "fee"), "fee.json").path("dataset").path("id").asString()
+    fun `an out-of-range latency and the removed fee field are per-field config errors and write nothing`() {
+        val datasetId = upload(variant(json, "latency"), "latency.json").path("dataset").path("id").asString()
         val runsBefore = count("select count(*) from simulation_runs")
 
-        val rejected = http.post("/api/runs", """{"datasetId":"$datasetId","config":{"feeBps":10000,"maxWaitSlots":1001}}""")
+        val rejected = http.post("/api/runs", """{"datasetId":"$datasetId","config":{"latencySlots":151,"horizonSlots":4501,"feeBps":10}}""")
 
         assertEquals(400, rejected.status)
         assertEquals("CONFIG_INVALID", rejected.body.path("code").asString())
-        assertEquals(setOf("feeBps", "maxWaitSlots"), rejected.body.path("fields").propertyNames().toSet())
+        assertEquals(setOf("latencySlots", "horizonSlots", "feeBps"), rejected.body.path("fields").propertyNames().toSet())
+        assertEquals("is not a configuration field", rejected.body.path("fields").path("feeBps").asString())
+        assertEquals(400, http.post("/api/runs", """{"datasetId":"$datasetId","config":{"latencySlots":0}}""").status)
         assertEquals(runsBefore, count("select count(*) from simulation_runs"))
     }
 
@@ -177,7 +182,7 @@ class ConsoleApiIntegrationTest {
 
     @Test
     fun `an upload over the size limit is rejected with 413`() {
-        val rejected = http.upload(ByteArray(70 * 1024) { ' '.code.toByte() }, "large.json")
+        val rejected = http.upload(ByteArray(300 * 1024) { ' '.code.toByte() }, "large.json")
 
         assertEquals(413, rejected.status)
         assertEquals("UPLOAD_TOO_LARGE", rejected.body.path("code").asString())
@@ -202,20 +207,47 @@ class ConsoleApiIntegrationTest {
 
         assertEquals(200, detail.status)
         assertEquals(runId, detail.body.path("run").path("id").asString())
-        assertDecimal("100.000000000000", detail.body.path("config").path("notional"))
-        assertEquals(10, detail.body.path("config").path("feeBps").asInt())
+        assertDecimal("0.100000000000", detail.body.path("config").path("notional"))
+        assertEquals(1, detail.body.path("config").path("latencySlots").asLong())
+        assertDecimal("0.001000000000", detail.body.path("config").path("transactionCostSol"))
+        assertTrue(detail.body.path("config").path("feeBps").isMissingNode)
         val scenarios = detail.body.path("scenarios")
-        assertEquals(listOf(1, 2, 3), scenarios.items().map { it.path("entryOffset").asInt() })
-        assertEquals(listOf(101L, 102L, 103L), scenarios.items().map { it.path("selectedObservation").path("slot").asLong() })
-        scenarios.forEach { scenario ->
-            assertEquals("FILLED", scenario.path("status").asString())
-            assertEquals(100, scenario.path("sourceSlot").asLong())
-            assertTrue(scenario.path("rejectionReason").isNull)
-            assertDecimal("100.100000000000", scenario.path("fill").path("costBasis"))
-            assertEquals("CLOSED", scenario.path("position").path("state").asString())
-            assertDecimal("8.696567164180", scenario.path("position").path("close").path("realizedPnl"))
-            assertTrue(scenario.path("exitUnavailableReason").isNull)
-        }
+        assertEquals(10, scenarios.size())
+        assertTrue(scenarios.all { it.path("entryOffset").asInt() == 0 })
+        val takeProfit = scenario(scenarios, DipSample.TAKE_PROFIT)
+        assertEquals("FILLED", takeProfit.path("status").asString())
+        assertEquals(1000, takeProfit.path("sourceSlot").asLong())
+        assertEquals("TRIGGERED", takeProfit.path("watch").asString())
+        assertSameDecimal("0.0000001", takeProfit.path("referencePrice"))
+        assertSameDecimal("0.000000085", takeProfit.path("dipPrice"))
+        assertEquals(1002, takeProfit.path("trigger").path("slot").asLong())
+        assertDecimal("16800.000000000000", takeProfit.path("trigger").path("marketCapUsd"))
+        assertSameDecimal("200", takeProfit.path("trigger").path("rate"))
+        assertEquals(1003, takeProfit.path("selectedObservation").path("slot").asLong())
+        assertTrue(takeProfit.path("rejectionReason").isNull)
+        val fill = takeProfit.path("fill")
+        assertDecimal("0.102250000000", fill.path("costBasis"))
+        assertDecimal("0.001250000000", fill.path("fee"))
+        assertEquals(125, fill.path("feeBps").asInt())
+        assertEquals(0, fill.path("slippageBps").asInt())
+        assertEquals(19, fill.path("priceImpactBps").asInt())
+        assertDecimal("0.001000000000", fill.path("priorityFee"))
+        assertEquals("CLOSED", takeProfit.path("position").path("state").asString())
+        assertSameDecimal("0.00000011201248686606967374718216755569", takeProfit.path("position").path("takeProfitPrice"))
+        assertSameDecimal("0.00000007323893372012247898854218647872", takeProfit.path("position").path("stopLossPrice"))
+        assertEquals("TAKE_PROFIT", takeProfit.path("position").path("exitTrigger").path("reason").asString())
+        assertEquals(1005, takeProfit.path("position").path("exitTrigger").path("slot").asLong())
+        val close = takeProfit.path("position").path("close")
+        assertDecimal(DipSample.TAKE_PROFIT_PNL, close.path("realizedPnl"))
+        assertDecimal("0.001664690000", close.path("fee"))
+        assertEquals(125, close.path("feeBps").asInt())
+        assertDecimal("0.001000000000", close.path("transactionCost"))
+        assertEquals(-22, close.path("priceImpactBps").asInt())
+        assertTrue(takeProfit.path("exitUnavailableReason").isNull)
+        val noDip = scenario(scenarios, DipSample.NO_DIP)
+        assertEquals("REJECTED", noDip.path("status").asString())
+        assertEquals("NO_DIP", noDip.path("rejectionReason").asString())
+        assertTrue(noDip.path("trigger").isNull)
     }
 
     @Test
@@ -228,16 +260,17 @@ class ConsoleApiIntegrationTest {
         val positions = http.get("/api/runs/$runId/positions").body
         val report = http.get("/api/runs/$runId/report")
 
-        assertEquals(4, events.size())
+        assertEquals(11, events.size())
         assertTrue(events.all { it.path("baseDelta").isString })
         assertEquals("ACCEPTED", events.first().path("outcome").asString())
         assertEquals("BUY", events.first().path("side").asString())
-        assertEquals(6, observations.size())
+        assertEquals(31, observations.size())
         assertTrue(observations.all { it.path("price").isString })
-        assertEquals(3, orders.size())
-        assertTrue(orders.all { it.path("status").asString() == "FILLED" && it.path("fill").path("executionPrice").isString })
-        assertEquals(3, positions.size())
-        assertTrue(positions.all { it.path("close").path("netProceeds").isString })
+        assertEquals(10, orders.size())
+        assertEquals(5, orders.count { it.path("status").asString() == "FILLED" && it.path("fill").path("executionPrice").isString })
+        assertEquals(5, positions.size())
+        assertEquals(2, positions.count { it.path("close").path("netProceeds").isString })
+        assertTrue(positions.all { it.path("takeProfitPrice").isString && it.path("stopLossPrice").isString })
         assertEquals(200, report.status)
         assertTrue(requireNotNull(report.headers.getFirst(HttpHeaders.CONTENT_DISPOSITION)).startsWith("attachment"))
         assertEquals(runId, report.body.path("runId").asString())
@@ -245,9 +278,10 @@ class ConsoleApiIntegrationTest {
 
     @Test
     fun `an open position reports why its exit is unavailable`() {
-        val runId = startRun(variant(json, "open") { it.slot.value < 106 }, "open.json")
+        // Up to three slots after each buy: every entry fills, and no exit can follow.
+        val runId = startRun(variant(json, "open") { it.slot.value % 1000 <= 3 }, "open.json")
         dataSource.connection.use { connection ->
-            connection.prepareStatement("update simulation_runs set report_snapshot = replace(report_snapshot, 'MISSING_OBSERVATION', 'STALE_OBSERVATION') where id = ?").use { statement ->
+            connection.prepareStatement("update simulation_runs set report_snapshot = replace(report_snapshot, 'HORIZON_REACHED', 'NO_EXIT_FILL') where id = ?").use { statement ->
                 statement.setString(1, runId)
                 assertEquals(1, statement.executeUpdate())
             }
@@ -256,22 +290,24 @@ class ConsoleApiIntegrationTest {
         val scenarios = http.get("/api/runs/$runId").body.path("scenarios")
         val positions = http.get("/api/runs/$runId/positions").body
 
-        scenarios.forEach { scenario ->
+        val opened = scenarios.items().filter { !it.path("position").isNull }
+        assertEquals(5, opened.size)
+        opened.forEach { scenario ->
             assertEquals("OPEN", scenario.path("position").path("state").asString())
             assertTrue(scenario.path("position").path("close").isNull)
-            assertEquals("MISSING_OBSERVATION", scenario.path("exitUnavailableReason").asString())
         }
-        assertTrue(positions.all { it.path("exitUnavailableReason").asString() == "MISSING_OBSERVATION" })
+        assertEquals("HORIZON_REACHED", scenario(scenarios, DipSample.TAKE_PROFIT).path("exitUnavailableReason").asString())
+        assertEquals(3, positions.count { it.path("exitUnavailableReason").asString() == "HORIZON_REACHED" })
     }
 
     @Test
     fun `a rejected scenario carries its reason and no fill or position`() {
-        val runId = startRun(variant(json, "rejected") { it.slot.value >= 106 }, "rejected.json")
+        val runId = startRun(variant(json, "rejected") { false }, "rejected.json")
 
         val scenarios = http.get("/api/runs/$runId").body.path("scenarios")
         val orders = http.get("/api/runs/$runId/orders").body
 
-        assertEquals(3, scenarios.size())
+        assertEquals(10, scenarios.size())
         scenarios.forEach { scenario ->
             assertEquals("REJECTED", scenario.path("status").asString())
             assertTrue(scenario.path("rejectionReason").asString().isNotBlank())
@@ -297,10 +333,11 @@ class ConsoleApiIntegrationTest {
         assertEquals(1, page.path("size").asInt())
         assertTrue(page.path("total").asLong() >= 1)
         assertEquals(id, page.path("items").first().path("id").asString())
-        assertEquals(6, found.path("observationCount").asInt())
-        assertEquals(100, found.path("firstSlot").asLong())
-        assertEquals(6, filtered.size())
-        assertEquals(all, filtered)
+        assertEquals(31, found.path("observationCount").asInt())
+        assertEquals(1000, found.path("firstSlot").asLong())
+        assertEquals(31, all.size())
+        assertEquals(8, filtered.size())
+        assertTrue(filtered.all { it.path("pair") == pair })
         assertTrue(filtered.all { it.path("price").isString })
         assertEquals(filtered.items().map { it.path("slot").asLong() }.sorted(), filtered.items().map { it.path("slot").asLong() })
     }
@@ -327,23 +364,30 @@ class ConsoleApiIntegrationTest {
 
         assertEquals(1, page.path("total").asLong())
         assertEquals(runId, page.path("items").first().path("id").asString())
-        assertDecimal("26.089701492540", page.path("items").first().path("realizedPnl"))
+        assertDecimal(DipSample.TOTAL_PNL, page.path("items").first().path("realizedPnl"))
     }
 
     @Test
     fun `config defaults are the mvp values with their allowed ranges`() {
         val defaults = http.get("/api/config/defaults").body
 
-        assertDecimal("100.000000000000", defaults.path("defaults").path("notional"))
-        assertEquals(10, defaults.path("defaults").path("feeBps").asInt())
-        assertEquals(50, defaults.path("defaults").path("slippageBps").asInt())
-        assertEquals(5, defaults.path("defaults").path("holdingSlots").asLong())
-        assertEquals("confirmed-buy", defaults.path("defaults").path("strategyName").asString())
-        assertEquals(9999, defaults.path("limits").path("feeBps").path("max").asLong())
-        assertEquals(1000, defaults.path("limits").path("maxWaitSlots").path("max").asLong())
-        assertEquals(1, defaults.path("limits").path("holdingSlots").path("min").asLong())
-        assertTrue(defaults.path("limits").path("holdingSlots").path("max").isNull)
-        assertEquals(12, defaults.path("limits").path("notionalScale").asInt())
+        assertDecimal("0.100000000000", defaults.path("defaults").path("notional"))
+        assertEquals(1, defaults.path("defaults").path("latencySlots").asLong())
+        assertDecimal("0.001000000000", defaults.path("defaults").path("transactionCostSol"))
+        assertTrue(defaults.path("defaults").path("feeBps").isMissingNode)
+        assertTrue(defaults.path("limits").path("slippageBps").isMissingNode)
+        assertEquals(listOf(1500, 3000, 1500), listOf("dipBps", "takeProfitBps", "stopLossBps").map { defaults.path("defaults").path(it).asInt() })
+        assertDecimal("10000.000000000000", defaults.path("defaults").path("minMarketCapUsd"))
+        assertEquals(4500, defaults.path("defaults").path("horizonSlots").asLong())
+        assertEquals("dip-entry", defaults.path("defaults").path("strategyName").asString())
+        assertEquals(listOf(1L, 150L), listOf("min", "max").map { defaults.path("limits").path("latencySlots").path(it).asLong() })
+        assertEquals(listOf("0", "0.1"), listOf("min", "max").map { defaults.path("limits").path("transactionCostSol").path(it).asString() })
+        assertEquals(12, defaults.path("limits").path("transactionCostScale").asInt())
+        assertEquals(1, defaults.path("limits").path("dipBps").path("min").asLong())
+        assertEquals(4500, defaults.path("limits").path("horizonSlots").path("max").asLong())
+        assertEquals(1000000000, defaults.path("limits").path("minMarketCapUsd").path("max").asLong())
+        assertEquals(9, defaults.path("limits").path("notionalScale").asInt())
+        assertEquals(35, defaults.path("limits").path("notionalPrecision").asInt())
     }
 
     @Test
@@ -361,12 +405,12 @@ class ConsoleApiIntegrationTest {
         listOf("scenarios" to listOf("filled", "rejected"), "positions" to listOf("open", "closed")).forEach { (group, fields) ->
             fields.forEach { assertTrue(dashboard.body.path(group).path(it).isNumber, "$group.$it") }
         }
-        assertTrue(dashboard.body.path("scenarios").path("filled").asLong() >= 3)
+        assertTrue(dashboard.body.path("scenarios").path("filled").asLong() >= 5)
         val pnl = dashboard.body.path("realizedPnlByQuoteMint").items()
         assertTrue(pnl.isNotEmpty())
         assertTrue(pnl.all { it.path("quoteMint").isString && it.path("realizedPnl").isString }, pnl.toString())
         assertEquals(pnl.map { it.path("quoteMint").asString() }.sorted(), pnl.map { it.path("quoteMint").asString() })
-        assertEquals(6, dashboard.body.path("rejectionsByReason").size())
+        assertEquals(RejectionReason.ENTRY.size, dashboard.body.path("rejectionsByReason").size())
         assertTrue(dashboard.body.path("gauges").path("heapUsedBytes").asLong() > 0)
     }
 
@@ -384,6 +428,15 @@ class ConsoleApiIntegrationTest {
     }
 
     private fun JsonNode.items(): List<JsonNode> = (this as Iterable<JsonNode>).toList()
+
+    private fun scenario(scenarios: JsonNode, cycle: Int): JsonNode =
+        scenarios.items().single { it.path("pair").path("base").asString() == DipSample.mint(cycle).value }
+
+    /** Exact as a number; the JSON keeps the stored scale, which these checks do not pin. */
+    private fun assertSameDecimal(expected: String, node: JsonNode) {
+        assertTrue(node.isString, "expected a JSON string but was $node")
+        assertEquals(0, BigDecimal(expected).compareTo(BigDecimal(node.asString())), node.asString())
+    }
 
     private fun assertDecimal(expected: String, node: JsonNode) {
         assertTrue(node.isString, "expected a JSON string but was $node")
