@@ -38,6 +38,17 @@ Project tooling lives in `.claude/`; the developer guide is
 A new feature starts with `backplan`, not code. Small fixes go straight to
 implementation, test first.
 
+## Frontend work belongs to Codex
+
+- Claude and its sub-agents never write or edit anything under `frontend/`:
+  no components, styles, types, mocks or tests, not even a one-line fix.
+- When a plan or task needs frontend changes, write a self-contained brief
+  for Codex in `docs/plans/` instead: files, exact changes, the HTTP
+  contract, test expectations and the verify commands. Then hand it to the
+  user. Backend parts may define the HTTP contract the frontend consumes.
+- Reading frontend code, running its tests/lint/build and checking it in the
+  browser for verification is still allowed.
+
 ## Database schema
 
 - There is no Flyway for now (removed 2026-10-02). The JPA entities are the
