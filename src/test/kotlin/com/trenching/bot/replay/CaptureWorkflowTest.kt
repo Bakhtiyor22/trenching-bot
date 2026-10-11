@@ -8,7 +8,11 @@ import com.trenching.bot.marketdata.*
 import com.trenching.bot.replay.application.CaptureWorkflowService
 import com.trenching.bot.replay.application.ExecutionCalibrationService
 import com.trenching.bot.replay.application.RecordedReplayExportService
+import com.trenching.bot.replay.domain.CaptureVerdict
+import com.trenching.bot.replay.domain.CaptureVerdictState
+import com.trenching.bot.replay.domain.CaseClassification
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
+import com.trenching.bot.replay.domain.ReplayVerdict
 import com.trenching.bot.replay.infrastructure.fixture.CalibrationReportWriter
 import com.trenching.bot.walletactivity.WalletHistoryCaptureConfiguration
 import java.math.BigDecimal
@@ -107,6 +111,30 @@ class CaptureWorkflowTest {
         RecordedReplayExportService(wallets, recordedMarkets(decoded()), recordedRates(rateResult()), mapper)
             .export(command.copy(output = root.resolve("cli.json")))
         assertContentEquals(Files.readAllBytes(root.resolve("cli.json")), Files.readAllBytes(root.resolve("ui.json")))
+        assertEquals(0, providerCalls)
+    }
+
+    @Test
+    fun `qualify replays the exported dataset offline`() {
+        RecordedWalletFixtures.save(mapper, wallet)
+        val workflow = workflow()
+        val exported = workflow.execute(CaptureStepCommand.Export(
+            RecordedReplayExportRequest(wallet, market, rates, root.resolve("dataset.json")))) as CaptureStepResult.Exported
+        val qualified = workflow.execute(CaptureStepCommand.Qualify(exported.export.output, CapturePaths(wallet, market, rates)))
+            as CaptureStepResult.Qualified
+        assertEquals(ReplayVerdict.Ran, qualified.verdict.replay)
+        assertEquals(CaptureVerdict(CaptureVerdictState.COMPLETE), qualified.verdict.capture)
+        assertEquals(exported.export.checksum, qualified.verdict.provenance.datasetChecksum)
+        assertEquals(0, providerCalls)
+    }
+
+    @Test
+    fun `qualify of a capture that is not export ready answers from inspection without replaying`() {
+        RecordedWalletFixtures.save(mapper, wallet, complete = false)
+        val qualified = workflow().execute(CaptureStepCommand.Qualify(root.resolve("dataset.json"), CapturePaths(wallet)))
+            as CaptureStepResult.Qualified
+        assertEquals(CaseClassification.INCOMPLETE_CAPTURE, qualified.verdict.classification)
+        assertEquals(ReplayVerdict.NotRun, qualified.verdict.replay)
         assertEquals(0, providerCalls)
     }
 

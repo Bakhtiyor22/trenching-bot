@@ -1,5 +1,6 @@
 package com.trenching.bot.walletactivity
 
+import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.WalletAddress
 import java.nio.file.Path
 import java.time.Duration
@@ -18,6 +19,8 @@ data class WalletHistoryCaptureRequest(
     val scope: WalletHistoryScope = WalletHistoryScope.WALLET_REFERENCES,
     /** This invocation's deadline, or null for the transport default; not part of the capture's resume identity. */
     val operationTimeout: Duration? = null,
+    /** Required for [WalletHistoryScope.WALLET_TOKEN_ACCOUNT] and refused for every other scope. */
+    val targetMint: MintAddress? = null,
 )
 
 data class WalletHistoryCaptureResult(

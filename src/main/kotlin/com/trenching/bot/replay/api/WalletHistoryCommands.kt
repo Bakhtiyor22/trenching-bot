@@ -66,6 +66,7 @@ internal class WalletHistoryCommands(
     private fun scopeLabel(scope: WalletHistoryScope): String = when (scope) {
         WalletHistoryScope.WALLET_REFERENCES -> "LATEST_SUCCESSFUL_WALLET_REFERENCES"
         WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR -> "LATEST_SUCCESSFUL_PUMPFUN_USER_ACCUMULATOR_REFERENCES"
+        WalletHistoryScope.WALLET_TOKEN_ACCOUNT -> "LATEST_SUCCESSFUL_TOKEN_ACCOUNT_REFERENCES"
     }
 
     private fun decoded(result: WalletHistoryDecodeResult) {

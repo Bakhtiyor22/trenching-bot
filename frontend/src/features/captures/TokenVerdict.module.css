@@ -1,0 +1,26 @@
+.label {
+  width: 40%;
+  white-space: nowrap;
+}
+
+@media (max-width: $mantine-breakpoint-sm) {
+  .table,
+  .table > tbody,
+  .row,
+  .label,
+  .value {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .label,
+  .value {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .row + .row {
+    margin-top: var(--mantine-spacing-sm);
+  }
+}

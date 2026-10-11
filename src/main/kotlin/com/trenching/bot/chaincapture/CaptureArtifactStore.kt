@@ -70,21 +70,22 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
         return parseJson(content)
     }
 
-    fun writeTransaction(directory: Path, signature: String, raw: JsonNode): CaptureArtifact {
+    /** Writes [raw] as `<subdirectory>/<signature>.json`; [subdirectory] defaults to the shared transaction directory. */
+    fun writeTransaction(directory: Path, signature: String, raw: JsonNode, subdirectory: String = TRANSACTIONS_DIRECTORY): CaptureArtifact {
         val root = root(directory, create = true)
-        val transactions = root.resolve(TRANSACTIONS_DIRECTORY)
+        val transactions = root.resolve(subdirectory)
         if (Files.exists(transactions, NOFOLLOW_LINKS)) {
             if (Files.isSymbolicLink(transactions) || !Files.isDirectory(transactions, NOFOLLOW_LINKS)) fail("UNSAFE_PATH")
         } else Files.createDirectory(transactions)
         val bytes = mapper.writeValueAsBytes(raw)
         if (bytes.size.toLong() > ChainCaptureFormat.MAX_RESPONSE_BYTES) fail("ARTIFACT_SIZE")
-        val relative = transactionPath(signature)
+        val relative = transactionPath(signature, subdirectory)
         // Callers only write artifacts their manifest does not reference yet, so an existing file is an unreferenced crash orphan.
         atomicWrite(root, relative, bytes)
         return CaptureArtifact(relative, hash(bytes), bytes.size.toLong())
     }
 
-    fun transactionPath(signature: String): String = "$TRANSACTIONS_DIRECTORY/$signature.json"
+    fun transactionPath(signature: String, subdirectory: String = TRANSACTIONS_DIRECTORY): String = "$subdirectory/$signature.json"
 
     private fun artifactPath(root: Path, relative: String): Path {
         val path = root.resolve(relative).normalize()
@@ -126,9 +127,9 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
 
     private fun fail(category: String): Nothing = throw CaptureValidationException(category)
 
-    private companion object {
-        const val MANIFEST_FIELD = "manifest"
-        const val SHA256_FIELD = "sha256"
+    companion object {
         const val TRANSACTIONS_DIRECTORY = "transactions"
+        private const val MANIFEST_FIELD = "manifest"
+        private const val SHA256_FIELD = "sha256"
     }
 }

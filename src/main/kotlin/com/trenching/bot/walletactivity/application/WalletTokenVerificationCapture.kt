@@ -1,0 +1,270 @@
+package com.trenching.bot.walletactivity.application
+
+import com.trenching.bot.chaincapture.CaptureBudget
+import com.trenching.bot.chaincapture.CaptureBudgetException
+import com.trenching.bot.chaincapture.CaptureProviderException
+import com.trenching.bot.chaincapture.CaptureStop
+import com.trenching.bot.chaincapture.CaptureValidationException
+import com.trenching.bot.chaincapture.ChainCaptureFormat
+import com.trenching.bot.chaincapture.ChainCaptureReads
+import com.trenching.bot.chaincapture.SignatureListing
+import com.trenching.bot.chaincapture.SignatureListingEntry
+import com.trenching.bot.chaincapture.SolanaReadRpc
+import com.trenching.bot.common.WalletAddress
+import com.trenching.bot.walletactivity.AccumulatorScan
+import com.trenching.bot.walletactivity.ActualFirstBuy
+import com.trenching.bot.walletactivity.VerificationListing
+import com.trenching.bot.walletactivity.VerificationOutcome
+import com.trenching.bot.walletactivity.VerificationRecord
+import com.trenching.bot.walletactivity.VerifiedFirstBuy
+import com.trenching.bot.walletactivity.WalletHistoryCaptureLimits
+import com.trenching.bot.walletactivity.WalletHistoryManifest
+import com.trenching.bot.walletactivity.WalletHistoryScanCursor
+import com.trenching.bot.walletactivity.WalletHistorySelection
+import com.trenching.bot.walletactivity.WalletTokenVerification
+import com.trenching.bot.walletactivity.domain.CreationOutcome
+import com.trenching.bot.walletactivity.infrastructure.capture.TokenTarget
+import com.trenching.bot.walletactivity.infrastructure.capture.VerificationSection
+import com.trenching.bot.walletactivity.infrastructure.capture.VerificationStart
+import com.trenching.bot.walletactivity.infrastructure.capture.WalletCaptureFormat
+import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
+import com.trenching.bot.walletactivity.infrastructure.capture.WalletTransactionEvidence
+import java.nio.file.Path
+import org.slf4j.LoggerFactory
+import tools.jackson.databind.JsonNode
+
+/**
+ * Step 2 of a token-account capture, once step 1 resolved: takes B as the creation when it creates the mint, or lists the mint
+ * before B and fetches its oldest successful entries until one creates it; then scans both of the wallet's accumulators from
+ * the head of their listings down to below the creation, and only then fetches the in-range entries once each, oldest first,
+ * until the verdict is reached. Every page and fetch is checkpointed and never repeated. A budget, deadline or provider stop
+ * interrupts the run; a verification cap is a verdict.
+ */
+internal class WalletTokenVerificationCapture(
+    private val rpc: SolanaReadRpc,
+    private val store: WalletHistoryArtifactStore,
+    private val reader: CapturedArtifactReader,
+) {
+    private val log = LoggerFactory.getLogger(WalletTokenVerificationCapture::class.java)
+    private val transactions = WalletTransactionEvidence()
+
+    /** [checkpoint] saves a manifest and returns it as saved. The manifest returned is the last one checkpointed. */
+    fun verify(
+        directory: Path,
+        saved: WalletHistoryManifest,
+        budget: CaptureBudget,
+        stop: CaptureStop,
+        checkpoint: (WalletHistoryManifest) -> WalletHistoryManifest,
+    ): WalletHistoryManifest {
+        val wallet = WalletAddress.of(saved.wallet)
+        val artifacts = reader.read(directory, saved, wallet)
+        val assessment = checkNotNull(artifacts.assessment) { "Verification outside a token-account capture wallet=${saved.wallet}" }
+        val target = checkNotNull(TokenTarget.of(saved)) { "Verification without a target mint wallet=${saved.wallet}" }
+        var manifest = saved
+        val verification = manifest.verification ?: VerificationStart.of(wallet,
+            ActualFirstBuyVerification.target(assessment.tokenAccountFirstBuy(manifest, artifacts.inspected))).also {
+            manifest = checkpoint(manifest.copy(verification = it))
+            log.info("wallet_capture verification_started wallet={} mint={} firstBuy={}", wallet.value, target.mint.value, it.firstBuy?.signature)
+        }
+        val firstBuy = verification.firstBuy ?: return manifest
+        if (verification.result != null) return manifest
+        return Run(directory, manifest, target, firstBuy, assessment, artifacts.kinds, budget, stop, checkpoint).execute()
+    }
+
+    private inner class Run(
+        private val directory: Path,
+        private var manifest: WalletHistoryManifest,
+        private val target: TokenTarget,
+        private val firstBuy: VerifiedFirstBuy,
+        private val assessment: TargetTokenAssessment,
+        private var kinds: VerificationKinds,
+        private val budget: CaptureBudget,
+        private val stop: CaptureStop,
+        private val checkpoint: (WalletHistoryManifest) -> WalletHistoryManifest,
+    ) {
+        private val attempted = mutableSetOf<Pair<VerificationListing, String>>()
+
+        fun execute(): WalletHistoryManifest {
+            while (true) {
+                val verification = current()
+                val verdict = ActualFirstBuyVerification.verdict(verification, firstBuy, kinds)
+                if (verdict != ActualFirstBuy.NotVerified) {
+                    save(verification.copy(result = ActualFirstBuyVerification.stored(verdict)))
+                    log.info("wallet_capture verification_finished wallet={} mint={} fetches={} result={}",
+                        manifest.wallet, target.mint.value, verification.fetches, verdict)
+                    return manifest
+                }
+                val next = try { step(verification) } catch (exception: CaptureProviderException) {
+                    return interrupted(exception.category)
+                } catch (exception: CaptureBudgetException) {
+                    return interrupted(exception.category)
+                } ?: return manifest
+                save(next)
+            }
+        }
+
+        private fun step(verification: WalletTokenVerification): WalletTokenVerification? {
+            return when (val creation = ActualFirstBuyVerification.creation(verification, firstBuy, kinds)) {
+                CreationOutcome.Pending -> if (verification.creation.historyEnd) nextCandidate(verification) else mintPage(verification)
+                is CreationOutcome.Identified -> when {
+                    !verification.pumpAccumulator.complete -> accumulatorPage(verification, VerificationListing.PUMP_ACCUMULATOR, creation.slot.value)
+                    !verification.pumpSwapAccumulator.complete -> accumulatorPage(verification, VerificationListing.PUMPSWAP_ACCUMULATOR, creation.slot.value)
+                    else -> nextEntry(verification)
+                }
+                is CreationOutcome.Decided -> error("Verification has a verdict but was not finished wallet=${manifest.wallet}")
+            }
+        }
+
+        private fun mintPage(verification: WalletTokenVerification): WalletTokenVerification {
+            val creation = verification.creation
+            val start = creation.cursor ?: WalletHistoryScanCursor(firstBuy.signature, firstBuy.slot)
+            val entries = page(target.mint.value, start)
+            var candidates = creation.candidates
+            entries.filterNot { it.failed }.forEach { entry ->
+                if (candidates.any { it.signature == entry.signature }) throw CaptureValidationException("CONFLICTING_SIGNATURE")
+                candidates = (candidates + WalletHistorySelection(entry.signature, entry.slot)).takeLast(WalletHistoryCaptureLimits.CREATION_FETCHES)
+            }
+            val cursor = entries.lastOrNull()?.let { WalletHistoryScanCursor(it.signature, it.slot) } ?: creation.cursor
+            return verification.copy(creation = creation.copy(
+                cursor = cursor, pages = creation.pages + 1, entries = creation.entries + entries.size, oldestSlot = cursor?.slot,
+                historyEnd = entries.size < ChainCaptureFormat.SIGNATURE_PAGE_SIZE, candidates = candidates,
+            ))
+        }
+
+        private fun accumulatorPage(verification: WalletTokenVerification, listing: VerificationListing, creationSlot: Long): WalletTokenVerification {
+            val scan = scan(verification, listing)
+            val records = verification.records.toMutableList()
+            var consumed = 0
+            var skippedFailed = scan.skippedFailed
+            var cursor = scan.cursor
+            var listedFirstBuy = scan.listedFirstBuy
+            for (entry in page(scan.address, scan.cursor)) {
+                consumed++
+                cursor = WalletHistoryScanCursor(entry.signature, entry.slot)
+                if (entry.slot < creationSlot) break
+                if (entry.signature == firstBuy.signature) {
+                    if (entry.slot != firstBuy.slot || entry.failed) throw CaptureValidationException("CONFLICTING_SIGNATURE")
+                    listedFirstBuy = true
+                    continue
+                }
+                if (entry.failed) { skippedFailed++; continue }
+                if (entry.slot > firstBuy.slot) continue
+                val existing = records.firstOrNull { it.listing == listing && it.signature == entry.signature }
+                if (existing == null) records += VerificationRecord(entry.signature, entry.slot, listing, VerificationOutcome.PENDING)
+                else if (existing.slot != entry.slot) throw CaptureValidationException("CONFLICTING_SIGNATURE")
+            }
+            val scanned = scan.copy(cursor = cursor, pages = scan.pages + 1, entries = scan.entries + consumed, skippedFailed = skippedFailed,
+                oldestSlot = cursor?.slot, listedFirstBuy = listedFirstBuy)
+            val updated = verification.copy(records = records.toList())
+            return when (listing) {
+                VerificationListing.PUMP_ACCUMULATOR -> updated.copy(pumpAccumulator = scanned)
+                VerificationListing.PUMPSWAP_ACCUMULATOR -> updated.copy(pumpSwapAccumulator = scanned)
+                VerificationListing.MINT -> error("The mint listing is not an accumulator scan")
+            }
+        }
+
+        /** The oldest candidate not yet resolved; a candidate already tried in this run waits for the next one. */
+        private fun nextCandidate(verification: WalletTokenVerification): WalletTokenVerification? {
+            val fetched = verification.records.filter { it.listing == VerificationListing.MINT }
+            val index = fetched.indexOfFirst { it.outcome in WalletCaptureFormat.UNRESOLVED_VERIFICATION_OUTCOMES }.takeIf { it >= 0 } ?: fetched.size
+            val candidate = verification.creation.candidates.reversed().getOrNull(index) ?: return null
+            return resolve(verification, fetched.getOrNull(index) ?: VerificationRecord(candidate.signature, candidate.slot,
+                VerificationListing.MINT, VerificationOutcome.PENDING))
+        }
+
+        /**
+         * The oldest unresolved entry by slot then signature, each tried once per run, so the earliest decoded wallet buy
+         * settles the verdict before any later entry is fetched.
+         */
+        private fun nextEntry(verification: WalletTokenVerification): WalletTokenVerification? {
+            val record = verification.records
+                .filter {
+                    it.listing != VerificationListing.MINT && it.outcome in WalletCaptureFormat.UNRESOLVED_VERIFICATION_OUTCOMES &&
+                        (it.listing to it.signature) !in attempted
+                }
+                .minWithOrNull(compareBy({ it.slot }, { it.signature }, { it.listing }))
+                ?: return null
+            return resolve(verification, record)
+        }
+
+        private fun resolve(verification: WalletTokenVerification, record: VerificationRecord): WalletTokenVerification? {
+            if (!attempted.add(record.listing to record.signature)) return null
+            val listingAddress = VerificationSection.listingAddress(verification, target, record.listing)
+            val artifact = reusable(verification, record.signature)
+            if (artifact != null) {
+                val node = store.readArtifact(directory, artifact.path, artifact.bytes, artifact.sha256)
+                val outcome = transactions.classifyVerification(node, record.signature, record.slot, listingAddress)
+                return replace(verification, if (outcome == VerificationOutcome.CAPTURED) {
+                    classify(record.listing, record.signature, node)
+                    record.copy(outcome = outcome, artifact = artifact.path, sha256 = artifact.sha256, bytes = artifact.bytes)
+                } else record.copy(outcome = outcome, artifact = null, sha256 = null, bytes = 0))
+            }
+            val raw = try {
+                ChainCaptureReads.transaction(rpc, record.signature, budget)
+            } catch (exception: CaptureProviderException) {
+                if (exception.category != UNSUPPORTED_VERSION) {
+                    save(replace(verification, record.copy(outcome = VerificationOutcome.PROVIDER_UNAVAILABLE)))
+                    throw exception
+                }
+                return replace(verification.copy(fetches = verification.fetches + 1), record.copy(outcome = VerificationOutcome.UNSUPPORTED_VERSION))
+            }
+            val counted = verification.copy(fetches = verification.fetches + 1)
+            val outcome = transactions.classifyVerification(raw, record.signature, record.slot, listingAddress)
+            if (outcome != VerificationOutcome.CAPTURED) return replace(counted, record.copy(outcome = outcome))
+            val written = store.writeVerificationTransaction(directory, record.signature, raw)
+            classify(record.listing, record.signature, raw)
+            return replace(counted, record.copy(outcome = outcome, artifact = written.path, sha256 = written.sha256, bytes = written.bytes))
+        }
+
+        private fun classify(listing: VerificationListing, signature: String, node: JsonNode) {
+            kinds = when (listing) {
+                VerificationListing.MINT -> kinds.copy(candidates = kinds.candidates + (signature to assessment.candidateKind(node)))
+                VerificationListing.PUMP_ACCUMULATOR, VerificationListing.PUMPSWAP_ACCUMULATOR ->
+                    kinds.copy(entries = kinds.entries + (signature to assessment.entryKind(node)))
+            }
+        }
+
+        /** An artifact this capture already holds for [signature]: a token-account record's, or another verification record's. */
+        private fun reusable(verification: WalletTokenVerification, signature: String): StoredArtifact? =
+            manifest.records.firstNotNullOfOrNull { record -> record.takeIf { it.signature == signature }?.let { StoredArtifact.of(it.artifact, it.sha256, it.bytes) } }
+                ?: verification.records.firstNotNullOfOrNull { record ->
+                    record.takeIf { it.signature == signature }?.let { StoredArtifact.of(it.artifact, it.sha256, it.bytes) }
+                }
+
+        private fun replace(verification: WalletTokenVerification, record: VerificationRecord): WalletTokenVerification {
+            val index = verification.records.indexOfFirst { it.listing == record.listing && it.signature == record.signature }
+            val records = if (index < 0) verification.records + record else verification.records.toMutableList().also { it[index] = record }.toList()
+            return verification.copy(records = records)
+        }
+
+        private fun page(address: String, start: WalletHistoryScanCursor?): List<SignatureListingEntry> {
+            val entries = SignatureListing.parse(ChainCaptureReads.signaturePage(rpc, address, before = start?.signature, until = null, budget))
+            if (!SignatureListing.isNewestFirst(entries, start?.slot)) throw CaptureValidationException("SIGNATURE_ORDER")
+            if (entries.any { it.signature == start?.signature }) throw CaptureValidationException("NON_PROGRESSING_PAGE")
+            return entries
+        }
+
+        private fun scan(verification: WalletTokenVerification, listing: VerificationListing): AccumulatorScan = when (listing) {
+            VerificationListing.PUMP_ACCUMULATOR -> verification.pumpAccumulator
+            VerificationListing.PUMPSWAP_ACCUMULATOR -> verification.pumpSwapAccumulator
+            VerificationListing.MINT -> error("The mint listing is not an accumulator scan")
+        }
+
+        private fun current(): WalletTokenVerification =
+            checkNotNull(manifest.verification) { "Verification run without a verification section wallet=${manifest.wallet}" }
+
+        private fun save(verification: WalletTokenVerification) {
+            manifest = checkpoint(manifest.copy(verification = ActualFirstBuyVerification.settled(verification, firstBuy, kinds)))
+        }
+
+        private fun interrupted(category: String): WalletHistoryManifest {
+            log.warn("wallet_capture verification interrupted category={} wallet={}", category, manifest.wallet)
+            stop.record(category)
+            return manifest
+        }
+    }
+
+    private companion object {
+        const val UNSUPPORTED_VERSION = "UNSUPPORTED_VERSION"
+    }
+}

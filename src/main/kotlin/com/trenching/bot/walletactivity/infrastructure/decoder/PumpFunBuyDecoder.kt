@@ -24,9 +24,17 @@ import tools.jackson.databind.JsonNode
  * because only Pump.fun can emit that instruction while any program can write a log line.
  */
 internal class PumpFunBuyDecoder {
-    fun decode(transaction: JsonNode, wallet: WalletAddress): PumpFunBuyDecoding {
+    /** With a [targetMint], a buy of any other mint is rejected as [PumpFunBuyRejection.OTHER_MINT]. */
+    fun decode(transaction: JsonNode, wallet: WalletAddress, targetMint: MintAddress? = null): PumpFunBuyDecoding {
         val instructions = PumpFunInstructionReader.read(transaction)
         val names = names(instructions)
+        val decoding = decodeBuy(transaction, wallet, instructions, names)
+        return if (decoding is PumpFunBuyDecoding.Decoded && targetMint != null && decoding.facts.mint != targetMint) {
+            rejected(PumpFunBuyRejection.OTHER_MINT, names)
+        } else decoding
+    }
+
+    private fun decodeBuy(transaction: JsonNode, wallet: WalletAddress, instructions: List<PumpFunInstruction>, names: Set<String>): PumpFunBuyDecoding {
         if (instructions.any { it is PumpFunInstruction.Malformed }) return rejected(PumpFunBuyRejection.MALFORMED_EVIDENCE, names)
         val buys = instructions.filter { it is PumpFunInstruction.Buy || it is PumpFunInstruction.BuyExactQuoteInV3 }
         val events = instructions.filterIsInstance<PumpFunInstruction.TradeEvent>()

@@ -13,5 +13,6 @@ object ChainCaptureFormat {
     const val GET_GENESIS = "getGenesisHash"
     const val GET_SIGNATURES = "getSignaturesForAddress"
     const val GET_TRANSACTION = "getTransaction"
-    val READ_METHODS = setOf(GET_GENESIS, GET_SIGNATURES, GET_TRANSACTION)
+    const val GET_ACCOUNT_INFO = "getAccountInfo"
+    val READ_METHODS = setOf(GET_GENESIS, GET_SIGNATURES, GET_TRANSACTION, GET_ACCOUNT_INFO)
 }

@@ -7,6 +7,8 @@ import com.trenching.bot.replay.domain.CalibrationReport
 import com.trenching.bot.replay.domain.RecordedReplayExport
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
 import com.trenching.bot.replay.domain.ReplayMarketCaptureRequest
+import com.trenching.bot.replay.domain.TargetTokenVerdict
+import com.trenching.bot.walletactivity.TargetTokenEvidence
 import com.trenching.bot.walletactivity.WalletHistoryCaptureRequest
 import com.trenching.bot.walletactivity.WalletHistoryCaptureResult
 import com.trenching.bot.walletactivity.WalletHistoryDecodeResult
@@ -21,6 +23,9 @@ sealed interface CaptureStepCommand {
     data class Inspect(val paths: CapturePaths) : CaptureStepCommand
     data class Export(val request: RecordedReplayExportRequest) : CaptureStepCommand
     data class Calibrate(val wallet: Path, val market: Path, val report: Path) : CaptureStepCommand
+
+    /** Replays the exported [dataset] offline for a verdict, or answers from inspection when [paths] are not export ready. */
+    data class Qualify(val dataset: Path, val paths: CapturePaths) : CaptureStepCommand
 }
 
 sealed interface CaptureStepResult {
@@ -30,6 +35,7 @@ sealed interface CaptureStepResult {
     data class Inspected(val inspection: CaptureInspection) : CaptureStepResult
     data class Exported(val export: RecordedReplayExport) : CaptureStepResult
     data class Calibrated(val report: CalibrationReport, val json: String, val output: Path) : CaptureStepResult
+    data class Qualified(val verdict: TargetTokenVerdict) : CaptureStepResult
 }
 
 enum class CaptureStageState { NOT_STARTED, INCOMPLETE, READY, UNUSABLE, INVALID }
@@ -53,4 +59,6 @@ data class CaptureInspection(
     val marketCapture: MarketHistoryCaptureResult? = null,
     val marketDecoded: MarketHistoryDecodeResult? = null,
     val ratesCapture: ReferenceRateCaptureResult? = null,
+    /** The decoded wallet + token capture's first-buy evidence; null for the other scopes or before the wallet capture decodes. */
+    val targetToken: TargetTokenEvidence? = null,
 )

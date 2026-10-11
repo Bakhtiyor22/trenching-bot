@@ -58,7 +58,7 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
         store.save(id, attempt, true)
         // A new market attempt gets its own empty rates attempt, so rates can start once its windows complete.
         val ratesId = if (request.stage == MARKET) ids.next().also { store.save(id, CaptureAttemptRecord(it, request.requestId, fingerprint, RATES, attempt.createdAt, "console/$id/rates/$it", false, null, session.walletAttemptId, attempt.id), true) } else attempt.id
-        val updated = if (request.stage == MARKET) session.copy(marketAttemptId = attempt.id, ratesAttemptId = ratesId, inspection = null, exportOperationId = null, calibrationOperationId = null, datasetId = null) else session.copy(ratesAttemptId = attempt.id, inspection = null, exportOperationId = null, datasetId = null)
+        val updated = if (request.stage == MARKET) session.copy(marketAttemptId = attempt.id, ratesAttemptId = ratesId, inspection = null, exportOperationId = null, calibrationOperationId = null, datasetId = null, qualification = null, qualifyOperationId = null) else session.copy(ratesAttemptId = attempt.id, inspection = null, exportOperationId = null, datasetId = null, qualification = null, qualifyOperationId = null)
         store.save(updated)
         inspect(id, updated.marketAttemptId)
         view(store.session(id))
@@ -81,7 +81,7 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
         val all = store.attempts(id).sortedByDescending { it.createdAt }
         CapturePage(all.drop(page * size).take(size),page,size,all.size.toLong())
     }
-    private fun view(record: CaptureSessionRecord): CaptureSessionView = CaptureSessionView(record.id,record.name,record.createdAt,record.wallet,record.walletAttemptId,record.marketAttemptId?.let { store.attempt(record.id,it) },record.ratesAttemptId?.let { store.attempt(record.id,it) },record.inspection,record.operationId?.let { store.operation(record.id,it) }, record.exportOperationId != null,record.calibrationOperationId != null,record.datasetId,record.calibrationOperationId?.let { store.operation(record.id,it).calibration })
+    private fun view(record: CaptureSessionRecord): CaptureSessionView = CaptureSessionView(record.id,record.name,record.createdAt,record.wallet,record.walletAttemptId,record.marketAttemptId?.let { store.attempt(record.id,it) },record.ratesAttemptId?.let { store.attempt(record.id,it) },record.inspection,record.operationId?.let { store.operation(record.id,it) }, record.exportOperationId != null,record.calibrationOperationId != null,record.datasetId,record.calibrationOperationId?.let { store.operation(record.id,it).calibration },record.qualifyOperationId?.let { store.operation(record.id,it).qualification } ?: record.qualification)
     /** Queues the offline inspection, so stage states reflect the evidence on disk without a manual Inspect. */
     private fun inspect(id: String, marketAttemptId: String?) { operations.start(id, CaptureOperationRequest(ids.next(), INSPECT, marketAttemptId)) }
     private fun paging(page: Int, size: Int) { if (page !in 0..100000 || size !in 1..100) CaptureValidation.invalid("page", "page must be nonnegative and size between 1 and 100") }

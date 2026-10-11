@@ -6,6 +6,7 @@ import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.walletactivity.*
 import com.trenching.bot.walletactivity.domain.OrderedWalletTransactions
+import com.trenching.bot.walletactivity.infrastructure.capture.WalletCaptureFormat
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
 import com.trenching.bot.walletactivity.infrastructure.decoder.PumpFunBuyDecoder
 import com.trenching.bot.walletactivity.infrastructure.decoder.PumpFunBuyDecoding
@@ -14,20 +15,29 @@ import org.slf4j.LoggerFactory
 
 internal class RecordedWalletHistoryService(
     private val store: WalletHistoryArtifactStore,
-    private val decoder: PumpFunBuyDecoder,
+    decoder: PumpFunBuyDecoder,
 ) : RecordedWalletHistory {
     private val log = LoggerFactory.getLogger(RecordedWalletHistoryService::class.java)
+    private val reader = CapturedArtifactReader(store, decoder)
+    private val cache = CapturedArtifactsCache()
 
-    override fun inspect(directory: Path): WalletHistoryCaptureResult = store.inspect(directory)
+    /** A token-account capture whose step 1 resolved also has its verification recomputed and checked against its artifacts. */
+    override fun inspect(directory: Path): WalletHistoryCaptureResult {
+        val verified = store.inspect(directory)
+        val manifest = verified.manifest
+        if (manifest.targetMint != null && WalletCaptureFormat.recordsResolved(manifest)) {
+            targetToken(artifacts(directory, manifest, WalletAddress.of(manifest.wallet)))
+        }
+        return verified
+    }
 
     override fun decode(directory: Path, wallet: WalletAddress): WalletHistoryDecodeResult {
         val verified = store.inspect(directory)
         if (!verified.manifest.complete) throw CaptureValidationException("CAPTURE_INCOMPLETE")
         if (verified.manifest.wallet != wallet.value) throw CaptureValidationException("WALLET_MISMATCH")
-        val decodings = mutableMapOf<String, PumpFunBuyDecoding>()
-        val manifest = store.loadIfPresent(directory) { record, transaction ->
-            if (record.outcome == WalletHistoryOutcome.UNCLASSIFIED) decodings[record.signature] = decoder.decode(transaction, wallet)
-        }?.takeIf { it == verified.manifest } ?: throw CaptureValidationException("CAPTURE_CHANGED")
+        val artifacts = artifacts(directory, verified.manifest, wallet)
+        val manifest = artifacts.manifest
+        val decodings = artifacts.decodings
         val records = manifest.records.map { record ->
             WalletHistoryDecodeRecord(TransactionSignature.of(record.signature), Slot.of(record.slot), outcome(record, decodings[record.signature]))
         }
@@ -41,8 +51,21 @@ internal class RecordedWalletHistoryService(
             wallet.value, records.size, transactions.size,
             records.count { it.outcome == WalletHistoryDecodeOutcome.UNSUPPORTED_ROUTE },
             records.count { it.outcome == WalletHistoryDecodeOutcome.AMBIGUOUS }, rejections)
+        val targetToken = targetToken(artifacts)
+        targetToken?.let { log.info("wallet_history_decode target_token mint={} tokenAccount={} tokenAccountFirstBuy={} actualFirstBuy={}",
+            it.mint.value, it.tokenAccount, it.tokenAccountFirstBuy, it.actualFirstBuy) }
         return WalletHistoryDecodeResult(verified.directory, wallet, manifest.selection.size, manifest.complete,
-            WalletHistoryDecoderVersion.PUMPFUN_BONDING_CURVE_BUY_V2, transactions, records, buyFacts, rejectedInstructions, rejections)
+            WalletHistoryDecoderVersion.PUMPFUN_BONDING_CURVE_BUY_V2, transactions, records, buyFacts, rejectedInstructions, rejections,
+            targetToken)
+    }
+
+    /** [manifest] was just verified with every artifact by [WalletHistoryArtifactStore.inspect]. */
+    private fun artifacts(directory: Path, manifest: WalletHistoryManifest, wallet: WalletAddress): CapturedArtifacts =
+        cache.get(manifest) { reader.read(directory, manifest, wallet) }
+
+    private fun targetToken(artifacts: CapturedArtifacts): TargetTokenEvidence? = artifacts.assessment?.let { assessment ->
+        val tokenAccountFirstBuy = assessment.tokenAccountFirstBuy(artifacts.manifest, artifacts.inspected)
+        assessment.evidence(tokenAccountFirstBuy, ActualFirstBuyVerification.check(artifacts.manifest, tokenAccountFirstBuy, artifacts.kinds))
     }
 
     private fun outcome(record: WalletHistoryRecord, decoding: PumpFunBuyDecoding?): WalletHistoryDecodeOutcome = when (record.outcome) {

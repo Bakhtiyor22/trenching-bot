@@ -5,6 +5,7 @@ import com.trenching.bot.console.mapper.CaptureResponseMapper
 import com.trenching.bot.replay.CaptureInspection
 
 class CaptureInspectionMapper(private val mapper: CaptureResponseMapper) {
+    private val targetTokens = CaptureTargetTokenMapper(mapper)
     fun map(value: CaptureInspection): CaptureInspectionResponse {
         val wallet = buildMap {
             value.walletCapture?.manifest?.let { manifest ->
@@ -36,7 +37,7 @@ class CaptureInspectionMapper(private val mapper: CaptureResponseMapper) {
                 manifest.records.filter { it.rate == null }.groupingBy { it.unavailableReason ?: "UNAVAILABLE" }.eachCount().forEach { (key,count) -> put("unavailable.$key", count.toString()) }
             }
         }
-        return mapper.inspection(mapper.stage(value.wallet), mapper.stage(value.market), mapper.stage(value.rates), value.canCalibrate, value.canExport, wallet, market, rates, value.marketCapture?.manifest?.windows.orEmpty().mapIndexed { index, window -> val decoded = value.marketDecoded?.windows?.getOrNull(index); mapper.window(window.baseMint, window.fromSlot, window.toSlot, window.coverage.name, window.scanned, window.selected, decoded?.detailGaps, decoded?.observations) })
+        return mapper.inspection(mapper.stage(value.wallet), mapper.stage(value.market), mapper.stage(value.rates), value.canCalibrate, value.canExport, wallet, market, rates, value.marketCapture?.manifest?.windows.orEmpty().mapIndexed { index, window -> val decoded = value.marketDecoded?.windows?.getOrNull(index); mapper.window(window.baseMint, window.fromSlot, window.toSlot, window.coverage.name, window.scanned, window.selected, decoded?.detailGaps, decoded?.observations) }, value.targetToken?.let(targetTokens::map))
     }
 }
 

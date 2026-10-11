@@ -27,4 +27,7 @@ internal enum class PumpFunBuyRejection(val outcome: WalletHistoryDecodeOutcome)
     MISSING_BALANCE(WalletHistoryDecodeOutcome.AMBIGUOUS),
     BALANCE_MISMATCH(WalletHistoryDecodeOutcome.AMBIGUOUS),
     DECIMALS_MISMATCH(WalletHistoryDecodeOutcome.AMBIGUOUS),
+
+    /** A buy that would decode, of another mint than the one a token-account capture targets. */
+    OTHER_MINT(WalletHistoryDecodeOutcome.UNSUPPORTED_ROUTE),
 }

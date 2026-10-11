@@ -6,7 +6,7 @@ import java.security.MessageDigest
 
 /** Solana program-derived addresses, computed offline: no RPC, no key material. */
 object ProgramAddress {
-    private const val PUBLIC_KEY_BYTES = 32
+    const val PUBLIC_KEY_BYTES = 32
     private const val MAX_SEED_BYTES = 32
     private const val MAX_SEEDS = 16
     private const val MAX_BUMP = 255

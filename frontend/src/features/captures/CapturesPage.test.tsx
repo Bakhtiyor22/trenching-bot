@@ -3,8 +3,8 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { server } from '../../mocks/server';
 import { renderPage } from '../../test/render';
-import { captureConfig, captureOperation, captureSession, readyInspection } from '../../mocks/captureFixtures';
-import { WALLET } from '../../mocks/fixtures';
+import { CAPTURE_ID, captureConfig, captureOperation, captureSession, readyInspection, walletTokenSessions } from '../../mocks/captureFixtures';
+import { BASE_MINT, WALLET } from '../../mocks/fixtures';
 import { CapturesPage } from './CapturesPage';
 import { CaptureDetailPage } from './CaptureDetailPage';
 
@@ -23,7 +23,56 @@ describe('Capture console', () => {
     await user.click(screen.getByRole('button', { name: 'Create session' }));
     expect(await screen.findByText('Created session')).toBeInTheDocument();
     expect(body).toMatchObject({ name: 'First sample', wallet: { wallet: WALLET, scope: 'pumpfun-user-buys', limit: 1, scanPages: 20 } });
+    expect(body?.wallet).not.toHaveProperty('mint');
     expect(body?.requestId).toEqual(expect.any(String));
+  });
+  it('asks for a token mint only for the wallet + token scope and submits its defaults', async () => {
+    let body: Record<string, unknown> | undefined;
+    server.use(http.post('/api/captures', async ({ request }) => {
+      body = await request.json() as Record<string, unknown>;
+      return HttpResponse.json(captureSession);
+    }));
+    const { user } = renderPage(<CapturesPage />, { path: '/captures', url: '/captures', extraRoutes: [{ path: '/captures/:id', element: <div>Created session</div> }] });
+    await user.type(await screen.findByLabelText(/Session name/), 'Token case');
+    await user.type(screen.getByLabelText(/Wallet address/), WALLET);
+    expect(screen.queryByLabelText(/Token mint address/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('combobox', { name: 'Discovery scope' }));
+    await user.click(await screen.findByRole('option', { name: 'Wallet + token' }));
+    expect(screen.getByText(/qualifies is only known after market capture/)).toBeInTheDocument();
+    expect(screen.getByText(/Effective settings: 100 transaction\(s\), 5 scan pages/)).toBeInTheDocument();
+    const mint = screen.getByLabelText(/Token mint address/);
+    await user.type(mint, 'not-a-mint');
+    await user.click(screen.getByRole('button', { name: 'Create session' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a valid token mint address.');
+    await user.clear(mint);
+    await user.type(mint, BASE_MINT);
+    await user.click(screen.getByRole('button', { name: 'Create session' }));
+    expect(await screen.findByText('Created session')).toBeInTheDocument();
+    expect(body).toMatchObject({ name: 'Token case', wallet: { wallet: WALLET, scope: 'wallet-token', limit: 100, scanPages: 5, mint: BASE_MINT } });
+  });
+  it('restores the default sample when leaving the wallet + token scope', async () => {
+    const { user } = renderPage(<CapturesPage />, { path: '/captures', url: '/captures' });
+    const scope = await screen.findByRole('combobox', { name: 'Discovery scope' });
+    await user.click(scope);
+    await user.click(await screen.findByRole('option', { name: 'Wallet + token' }));
+    await user.click(scope);
+    await user.click(await screen.findByRole('option', { name: 'Wallet references' }));
+    expect(screen.queryByLabelText(/Token mint address/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Effective settings: 1 transaction\(s\), 20 scan pages/)).toBeInTheDocument();
+  });
+  it('defaults the wallet budget of a wallet + token session to its larger preset', async () => {
+    let body: Record<string, unknown> | undefined;
+    const session = walletTokenSessions.incomplete;
+    server.use(
+      http.get('/api/captures/capture-demo', () => HttpResponse.json({ ...session, id: CAPTURE_ID, inspection: { ...session.inspection!, wallet: { state: 'INCOMPLETE', reason: 'WALLET_CAPTURE_INCOMPLETE', canStart: false, canResume: true, requiresNewAttempt: false } } })),
+      http.post('/api/captures/:id/operations', async ({ request }) => {
+        body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ ...captureSession.operation, id: 'wallet-op', step: 'WALLET', state: 'RUNNING', endedAt: null }, { status: 202 });
+      }),
+    );
+    const { user } = detail();
+    await user.click(await screen.findByRole('button', { name: 'Resume wallet capture' }));
+    await waitFor(() => expect(body).toMatchObject({ step: 'WALLET', budget: captureConfig.walletTokenBudgetDefaults }));
   });
   it('keeps rates disabled for incomplete market coverage and offers fresh over-cap attempts', async () => {
     server.use(http.get('/api/captures/capture-demo', () => HttpResponse.json({ ...captureSession, marketAttempt: { ...captureSession.marketAttempt!, market: { scanPages: 50, maxTransactions: 300 } }, inspection: { ...readyInspection, market: { state: 'INCOMPLETE', reason: 'OVER_CAP', canStart: false, canResume: false, requiresNewAttempt: true }, rates: { state: 'NOT_STARTED', reason: 'MARKET_CAPTURE_NOT_READY', canStart: false, canResume: false, requiresNewAttempt: false }, canExport: false, canCalibrate: false } })));

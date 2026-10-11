@@ -3,12 +3,14 @@ import type {
   CaptureAttempt,
   CaptureAttemptRequest,
   CaptureCreate,
+  CaptureInspection,
   CaptureOperation,
   CaptureOperationRequest,
   CaptureSession,
 } from '../api/captures';
+import { WALLET_TOKEN_SCOPE } from '../api/captures';
 import type { ApiErrorBody } from '../api/types';
-import { calibrationReport, captureConfig, captureSession, readyInspection } from './captureFixtures';
+import { calibrationReport, captureConfig, captureSession, provenTarget, qualifyingVerdict, readyInspection, walletTokenSessions } from './captureFixtures';
 import { sampleDataset } from './fixtures';
 
 /**
@@ -19,7 +21,7 @@ let sessions = new Map<string, CaptureSession>();
 let operations = new Map<string, CaptureOperation>();
 
 export function resetCaptureMocks(): void {
-  sessions = new Map([[captureSession.id, captureSession]]);
+  sessions = new Map([captureSession, ...Object.values(walletTokenSessions)].map(session => [session.id, session]));
   operations = new Map(captureSession.operation ? [[captureSession.operation.id, captureSession.operation]] : []);
 }
 resetCaptureMocks();
@@ -79,10 +81,16 @@ function completed(session: CaptureSession, request: CaptureOperationRequest): C
     message: null,
   };
   operations.set(operation.id, operation);
+  // A wallet-token session verifies its first buy on inspection and is qualified after export (or an explicit QUALIFY).
+  const walletToken = session.wallet?.scope === WALLET_TOKEN_SCOPE;
+  const inspection: CaptureInspection = session.inspection ?? (walletToken ? { ...readyInspection, targetToken: provenTarget } : readyInspection);
+  const replayed = session.qualification != null && session.qualification.replay.state !== 'NOT_RUN';
+  const qualifies = walletToken && (request.step === 'EXPORT' || request.step === 'QUALIFY');
   return {
     ...session,
     operation,
-    inspection: session.inspection ?? readyInspection,
+    inspection,
+    qualification: qualifies && !replayed ? qualifyingVerdict : session.qualification,
     datasetReady: session.datasetReady || request.step === 'EXPORT',
     calibrationReady: session.calibrationReady || request.step === 'CALIBRATE',
     calibration: request.step === 'CALIBRATE' ? calibrationReport : session.calibration,

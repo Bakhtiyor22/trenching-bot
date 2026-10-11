@@ -6,7 +6,7 @@ This is the first stage of the [approved real replay plan](plans/archive/2026100
 
 Use **Captures** in the local console to manage the same evidence and replay workflow from the browser. The backend must run with the local profile and console enabled. Acquisition uses the backend process's SOLANA_RPC_URL setting; an environment value configured only in a separate capture terminal is not automatically available to the backend. The browser shows configuration availability and never asks for or returns an endpoint or credential. Reference-rate acquisition uses the backend's enabled reference-rate source.
 
-1. Create a named capture session with the wallet and discovery scope. The initial UI sample is one successful reference through the Pump.fun user accumulator. Scope, sample size and wallet scan pages are fixed when acquisition starts. Advanced settings show the effective budgets before each operation.
+1. Create a named capture session with the wallet and discovery scope. The initial UI sample is one successful reference through the Pump.fun user accumulator. To check one known token, use the [Wallet + token](#wallet--token-capture) scope instead. Scope, sample size and wallet scan pages are fixed when acquisition starts. Advanced settings show the effective budgets before each operation.
 2. Alternatively, attach the existing wallet directory and optional market/rates directories using paths relative to the capture root, such as decu-pumpfun-buys and decu-dip-markets. Inspection verifies each stage offline, including valid incomplete captures. Original evidence is retained in place. Mismatching or tampered evidence does not unlock downstream acquisition/export.
 3. Explicitly start wallet acquisition, inspect the result, and start market acquisition when supported buys are available. The market preset is 50 pages per window and capacity for 50000 transactions, with 400 requests and 100 MiB per operation. Capacity is a ceiling, not a target. The CLI defaults remain unchanged.
 4. If request/byte budgets, the deadline or a provider interruption stops acquisition, the latest operation shows why (for example `Stopped: DEADLINE`), and Resume continues the same capture directory with a fresh per-operation allowance. Advanced settings also set the operation deadline, 1–30 minutes (default 10). Budget for this run and Total used for this capture are separate. For incomplete listing coverage, increase market scan pages within its bounds. An OVER_CAP result requires a new market attempt with an appropriate capacity; repeatedly resuming cannot change its frozen transaction cap.
@@ -19,6 +19,79 @@ Only one console operation runs at a time. Refreshing or navigating away does no
 A new market attempt retains the wallet evidence and all prior attempts, comes with its own empty rates attempt, and clears the current export/calibration/dataset readiness. A new rates attempt keeps market and calibration results while clearing current export/dataset readiness. Previously imported datasets remain available in Datasets. New attempts allocate new directories; they never overwrite an old capture or automatically start acquisition. Creating a session or an attempt queues the offline inspection, so stage states are current without clicking Inspect evidence; a new session skips it while another capture runs.
 
 Managed sessions are stored under build/captures/console by default. The validated trenching.console.capture.root-directory property changes the evidence root for both managed sessions and attachment paths. Use an ignored location outside build for evidence that must survive clean. Capture routes are available only locally; they are not available through the public preview tunnel. Delete removes a session and every file the console created for it, including managed evidence and generated exports and calibration reports. Attached directories are never touched, and imported datasets stay in Datasets. Existing CLI commands below remain supported.
+
+## Wallet + token capture
+
+Console only; there is no CLI option for this scope, although CLI inspection, market capture and export read its directories. Use it when you already know a wallet and one token and want to know whether the dip-entry strategy would have qualified on the wallet's first buy of that token. See the [decision](adr/20261010-wallet-token-capture.md) and the [plan](plans/archive/20261010-wallet-token-capture.md).
+
+**Inputs.** Create a session with the scope **Wallet + token**, the wallet and the token's mint (a base58 address). The form defaults are 100 records and 5 listing pages for the token account, with 1,000 requests and 100 MiB per wallet operation. The other scopes take no mint.
+
+### Which first buy the strategy needs
+
+The dip-entry strategy starts one cycle at the wallet's first accepted buy of a token, and takes P0 from that buy ([dip-entry decision](adr/20261008-dip-entry-strategy.md)). The buy it needs is therefore the wallet's **first Pump.fun bonding-curve buy of the mint, by any curve route**, whether or not the decoder can price that route. A later recognised buy is never used instead. Purchases on other venues, such as a third-party pool before migration, are outside the strategy's definition and are not looked for.
+
+The console keeps two results apart and never shows one as the other:
+
+- **Earliest buy through token account** (token-account first buy): the earliest decoded buy among the transactions listed for the wallet's associated token account for the mint. It proves only what happened through that account.
+- **Actual first buy**: the buy the strategy needs, whichever token account received the tokens.
+
+Market capture is offered only when the actual first buy is proven and is the same transaction as the token-account first buy.
+
+### Step 1: the token account
+
+One `getAccountInfo` on the mint records its token program (Token or Token-2022; anything else, or a missing mint, stops before any listing). The wallet's token account is derived from the wallet, that program and the mint, and its signature listing is scanned newest-first like the other scopes (1–100 records, up to 50 pages). Because the listing is by address, it still answers after the account was closed.
+
+- **Found**: discovery reached the end of the account's history and the earliest decoded buy credited the account, with no other decoded buy in its slot and no unrecognised acquisition at or before its slot.
+- **No buy**: the history is complete and holds no buy of the token through this account. This is a valid answer, not a gap.
+- **Not established**, with the reason and the blocking signatures: `HISTORY_NOT_EXHAUSTED` (more than 100 records or more pages than allowed; a reported limitation), `SAME_SLOT_BUY` (another decoded buy of the token in the earliest buy's slot; the order inside a slot is not relied on, so neither can be called first), `EARLIER_UNDECODED_ACQUISITION`, `EARLIER_UNKNOWN_RECORD` or `NON_ATA_CREDIT`.
+
+### Step 2: the actual first buy
+
+Step 2 runs only after **Found**, as part of the same wallet operation, and stops and resumes on budgets and deadlines like discovery.
+
+1. **Creation.** If the buy's own transaction is the Pump.fun `create` or `create_v2` of this mint (the wallet created the token in its first buy), the buy is its own creation: the creation slot is the buy's slot and the mint is not listed at all. Otherwise the mint's listing is scanned back from the buy to the end of its history, then its oldest successful entries are fetched until one is the `create` or `create_v2` of this mint (at most 10 fetches). Transactions older than the creation are ignored: the token could not be bought on a curve that did not exist yet.
+2. **Coverage date.** The creation must be after 2025-08-01 11:31 UTC, when Pump.fun confirmed that every buy passes the buyer's volume accumulator.
+3. **Accumulator scans.** The wallet's Pump and PumpSwap user volume accumulators, both derived from the wallet, are each scanned from the head of their own listing (the newest entry) down to below the creation slot. Every recognised buy passes the Pump accumulator, so the Pump scan must list the buy itself; if it reaches below the creation without listing it, the provider's listing cannot be trusted for this case and the buy is **Unproven** with `FIRST_BUY_NOT_LISTED`.
+4. **Entries.** Only after both scans are complete, the successful entries between the creation slot and the buy's slot are fetched once each, oldest first. An entry without the mint is irrelevant; an earlier decoded buy into another token account gives **Outside token account** as soon as nothing still unfetched is older or in the same slot, and no further entry is fetched; an earlier undecoded acquisition or an entry without evidence leaves the buy **Unproven**. Any other entry in the buy's own slot blocks, because the order inside a slot is not relied on.
+
+Step 2 has shared caps: **50 pages per listing** (mint, Pump accumulator, PumpSwap accumulator) and **500 transaction fetches** in total, creation fetches included. An earlier buy into another token account is reported even when a later entry would have reached the fetch cap. A capped scan is `FIRST_BUY_UNPROVEN` with reason `VERIFICATION_BOUND`. The console shows which cap was reached and, per listing, the pages and entries scanned, the fetches used and the oldest slot reached. A capped result is never shown as complete and never as a negative case; it means the scan stopped before it could prove anything.
+
+### What "proven" means
+
+A proven buy is always shown with its claim, word for word: *actual first Pump.fun curve buy proven for documented routes, for a mint created after 2025-08-01 11:31 UTC*, with the creation transaction and slot and the accumulator scans that reached below it. Four things the public evidence cannot settle limit that claim:
+
+- **G1, enforcement.** The accumulator requirement is documented by Pump.fun's published interfaces and announcements. That old buys could not omit it is the team's statement, not something observed here.
+- **G2, unpublished instructions.** A buy instruction that appears in no published interface and skips both accumulators would be missed. None is known.
+- **G3, other venues.** Buys outside Pump.fun are not part of the strategy and are not checked.
+- **G4, provider index.** The end of a listing trusts the provider's signature index, as every capture scope does.
+
+### Request usage (standard RPC)
+
+| Part | Requests |
+|---|---|
+| Step 1 | 1 genesis + 1 `getAccountInfo` + 1 listing page + 1 detail per successful token-account record; typically about 5–25 |
+| Creation | 1 page per 1,000 mint entries before the buy, failed ones included, plus about 1 fetch. A buy at launch needs 1 page; a buy an hour into a busy token about 30–60; a buy several hours in on a busy token reaches the cap |
+| Accumulator scans | 1 page per 1,000 entries of the wallet's accumulator activity from now back to the creation, at most 50 pages each, plus 1 fetch per wallet Pump/PumpSwap transaction between the creation and the buy. Because the scans start at the head, checking an old buy of a very active wallet can reach the page cap |
+| Market, rates | Unchanged; the market stage still dominates |
+| Qualification | 0 |
+
+### Verdict
+
+Qualification does not screen a token before the market capture: the dip condition needs the trades of the 4,500-slot window, which only the market stage provides. After a successful export, the console queues the offline qualification automatically as the next operation; it replays the exported dataset with the default strategy configuration, makes no provider call and gives the same result for the same dataset. Before that, the verdict comes from inspection alone and the replay row shows `NOT_RUN`. Between the export and its qualification the Capture row shows `COMPLETE` at stage `EXPORT` with reason `QUALIFICATION_PENDING`; if the automatic qualification could not be queued or failed, it stays pending and **Qualify** runs it. Qualify can also be started again on the current export. Before replaying, the console checks the dataset file against the checksum recorded at export; a changed or missing file is refused with `EXPORT_CHANGED`, and the dataset must be exported again.
+
+The verdict panel shows these rows: **Capture** (`COMPLETE`, `INCOMPLETE` or `UNUSABLE`, with the stage and reason), **Earliest buy through token account**, **Actual first buy** (with its claim, or its reason, cap and scanned counts), **Dip condition** (`QUALIFIED` with the trigger, `NOT_QUALIFIED` with the watch outcome, or `NOT_EVALUATED`), the entry and exit when the dip triggered (filled or not, closed with its reason and realised P&L, or still open), and **Replay** (`RAN`, `FAILED` with a category, or `NOT_RUN`). Prices and P&L are exact decimals from the replay report.
+
+| Classification | Meaning |
+|---|---|
+| `QUALIFYING_DIP` | The dip condition triggered for the wallet's first buy |
+| `NEGATIVE_CASE` | The replay ran and the dip condition did not trigger, or no buy started a cycle (dip `NOT_EVALUATED` with the first ingestion reason, such as `NOT_SIGNER`) |
+| `INCOMPLETE_CAPTURE` | A stage is incomplete, the dataset is not exported yet, or its qualification is pending |
+| `FIRST_BUY_UNPROVEN` | The actual first buy could not be proven, including a capped verification |
+| `FIRST_BUY_OUTSIDE_TOKEN_ACCOUNT` | An earlier buy went to another token account; it is reported and capture stops |
+| `NO_TARGET_BUY` | The token account's complete history holds no buy of the token |
+| `REPLAY_FAILED` | The replay of the export failed (category `DATASET_UNREADABLE`, `DATASET_INVALID`, `MULTIPLE_INTENTS`, `FIRST_BUY_MISMATCH` when the cycle started from another buy than the proven first buy, or `REPLAY_ERROR`); the capture keeps its own state |
+
+Only `NEGATIVE_CASE` is a negative strategy result. An incomplete, unproven, outside or failed case says nothing about the strategy. A replay failure still completes the qualification operation; the operation itself fails only when the console cannot run it.
 
 ## Configure the user-run capture
 

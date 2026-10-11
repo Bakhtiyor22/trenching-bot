@@ -25,6 +25,14 @@ object PumpFunLayout {
     const val BUY_EXACT_QUOTE_IN_V3_SPENDABLE_OFFSET = 8
     const val BUY_EXACT_QUOTE_IN_V3_MIN_OUT_OFFSET = 16
 
+    /**
+     * Anchor `global:create` and `global:create_v2`, the only instructions that create a coin, per every published
+     * pump-fun/pump-public-docs `idl/pump.json`. In both, account [CREATE_MINT_ACCOUNT_INDEX] is the mint they initialise.
+     */
+    val CREATE_DISCRIMINATOR: ByteArray = HexFormat.of().parseHex("181ec828051c0777")
+    val CREATE_V2_DISCRIMINATOR: ByteArray = HexFormat.of().parseHex("d6904cec5f8b31b4")
+    const val CREATE_MINT_ACCOUNT_INDEX = 0
+
     /** Recognised Pump.fun instructions that no decoder supports, by Anchor discriminator; named only for capture summaries. */
     val UNSUPPORTED_INSTRUCTIONS: Map<String, PumpFunInstructionName> = mapOf(
         "33e685a4017f83ad" to PumpFunInstructionName.SELL,

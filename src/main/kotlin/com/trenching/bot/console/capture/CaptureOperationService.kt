@@ -1,6 +1,7 @@
 package com.trenching.bot.console.capture
 
 import com.trenching.bot.chaincapture.*
+import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.console.api.dto.*
 import com.trenching.bot.console.mapper.CaptureResponseMapper
@@ -8,7 +9,7 @@ import com.trenching.bot.replay.*
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
 import com.trenching.bot.replay.domain.ReplayMarketCaptureRequest
 import com.trenching.bot.walletactivity.WalletHistoryCaptureRequest
-import com.trenching.bot.walletactivity.WalletHistoryScope
+import com.trenching.bot.walletactivity.WalletHistoryManifest
 import java.nio.file.Files
 import java.time.Clock
 import java.time.Duration
@@ -20,6 +21,7 @@ import org.slf4j.LoggerFactory
 class CaptureOperationService(private val store: CaptureFileStore, private val workflow: CaptureWorkflow, private val mapper: CaptureResponseMapper, private val json: ObjectMapper, private val clock: Clock, private val executor: ExecutorService, private val rpcConfigured: Boolean, private val ratesConfigured: Boolean) : AutoCloseable {
     private val log = LoggerFactory.getLogger(javaClass)
     private val inspectionMapper = CaptureInspectionMapper(mapper)
+    private val qualificationMapper = CaptureQualificationMapper(mapper)
     /** The session whose operation the worker is running, or null when idle. */
     private var activeSession: String? = null
     private var closed = false
@@ -57,7 +59,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         operation
     }
     private fun validate(session: CaptureSessionRecord, request: CaptureOperationRequest) {
-        if (request.step !in setOf(CaptureNames.WALLET,CaptureNames.MARKET,CaptureNames.RATES,CaptureNames.INSPECT,CaptureNames.EXPORT,CaptureNames.CALIBRATE)) CaptureValidation.invalid("step","unsupported operation")
+        if (request.step !in setOf(CaptureNames.WALLET,CaptureNames.MARKET,CaptureNames.RATES,CaptureNames.INSPECT,CaptureNames.EXPORT,CaptureNames.CALIBRATE,CaptureNames.QUALIFY)) CaptureValidation.invalid("step","unsupported operation")
         val selected = when(request.step) { CaptureNames.WALLET -> session.walletAttemptId; CaptureNames.RATES -> session.ratesAttemptId; else -> session.marketAttemptId }
         if (request.attemptId != selected) CaptureValidation.conflict("STALE_ATTEMPT","Select the current capture attempt")
         if (request.step in setOf(CaptureNames.WALLET,CaptureNames.MARKET) && !rpcConfigured) CaptureValidation.conflict("NOT_CONFIGURED","Configure SOLANA_RPC_URL in the backend process")
@@ -73,6 +75,11 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             if(pages < previousPages) CaptureValidation.conflict("RESUME_IDENTITY","Market scan pages cannot decrease")
         }
         if (request.step == CaptureNames.RATES && selected == null) CaptureValidation.conflict("PREREQUISITE","Create a rates attempt")
+        if (request.step == CaptureNames.QUALIFY) {
+            if (!walletToken(session.wallet)) CaptureValidation.conflict("UNSUPPORTED_SCOPE","Qualification needs a wallet + token capture")
+            val exportId = session.exportOperationId ?: CaptureValidation.conflict("EXPORT_REQUIRED","Export a dataset from the current capture attempts before qualifying")
+            if (!exportUnchanged(store.operation(session.id,exportId))) CaptureValidation.conflict("EXPORT_CHANGED","The exported dataset changed since its export; export it again before qualifying")
+        }
     }
     private fun run(id: String, initial: CaptureOperationRecord) {
         var operation = initial
@@ -87,12 +94,17 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                 store.save(id,operation)
             } })
             val inspected = if(result is CaptureStepResult.Inspected) result.inspection else workflow.inspect(paths)
-            val wallet = inspected.walletCapture?.manifest?.let { CaptureWalletSettings(it.wallet,if(it.scope == WalletHistoryScope.WALLET_REFERENCES) "wallet-references" else "pumpfun-user-buys",it.limit,it.scanPageLimit) }
+            val wallet = inspected.walletCapture?.manifest?.let(::walletSettings)
+            val qualification = when {
+                result is CaptureStepResult.Qualified -> qualificationMapper.map(result.verdict)
+                walletToken(wallet ?: session.wallet) -> qualificationMapper.map(workflow.verdict(inspected, result is CaptureStepResult.Exported || session.exportOperationId != null))
+                else -> null
+            }
             val complete = when(result) {
                 is CaptureStepResult.Wallet -> result.capture.manifest.complete
                 is CaptureStepResult.Markets -> result.capture.manifest.complete
                 is CaptureStepResult.Rates -> result.capture.manifest.complete
-                is CaptureStepResult.Inspected, is CaptureStepResult.Exported, is CaptureStepResult.Calibrated -> true
+                is CaptureStepResult.Inspected, is CaptureStepResult.Exported, is CaptureStepResult.Calibrated, is CaptureStepResult.Qualified -> true
             }
             val stopReason = when(result) {
                 is CaptureStepResult.Wallet -> result.capture.stopReason
@@ -104,7 +116,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                 is CaptureStepResult.Calibrated -> generated(session,"calibration.json")
                 else -> null
             }
-            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason,message=stopReason?.let(::stopMessage),inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null)
+            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason,message=stopReason?.let(::stopMessage),inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null,qualification=qualification)
         } catch(exception: Exception) {
             val interrupted = exception is InterruptedException || Thread.currentThread().isInterrupted
             val code = when(exception) {
@@ -121,9 +133,31 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         } finally {
             synchronized(store) {
                 try { store.save(id,operation); store.save(project(store.session(id),operation)) } finally { activeSession=null }
+                if (operation.step == CaptureNames.EXPORT && operation.state == CaptureNames.SUCCEEDED) queueQualification(id, operation)
             }
         }
     }
+    /**
+     * Qualifies a wallet + token export as the worker's next operation, so the verdict needs no click and never runs beside the
+     * export. When it cannot be queued, the session keeps the export's pending verdict and Qualify starts it explicitly.
+     */
+    private fun queueQualification(id: String, export: CaptureOperationRecord) {
+        val session = store.session(id)
+        if (!walletToken(session.wallet)) return
+        if (!idle()) { log.warn("capture qualification not queued sessionId={} category=WORKER_STOPPING", id); return }
+        try {
+            start(id, CaptureOperationRequest("qualify-${hash(export.id.toByteArray()).take(QUALIFY_ID_HASH_LENGTH)}", CaptureNames.QUALIFY, session.marketAttemptId))
+        } catch (exception: CaptureRequestException) {
+            log.warn("capture qualification not queued sessionId={} category={}", id, exception.code)
+        }
+    }
+    private fun exportUnchanged(export: CaptureOperationRecord): Boolean {
+        val artifact = export.artifact ?: return false
+        return Files.isRegularFile(store.paths.resolve(artifact)) && hashFile(artifact) == export.checksum
+    }
+    private fun walletToken(settings: CaptureWalletSettings?): Boolean = settings?.let { CaptureWalletScope.of(it.scope) } == CaptureWalletScope.WALLET_TOKEN
+    private fun walletSettings(manifest: WalletHistoryManifest): CaptureWalletSettings =
+        CaptureWalletSettings(manifest.wallet, CaptureWalletScope.of(manifest.scope).value, manifest.limit, manifest.scanPageLimit, manifest.targetMint)
     private fun requirePrerequisite(step: String, value: CaptureInspection) {
         val eligible = when(step) {
             CaptureNames.WALLET -> value.wallet.canStart || value.wallet.canResume
@@ -145,7 +179,8 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private fun command(session: CaptureSessionRecord, operation: CaptureOperationRecord, paths: CapturePaths): CaptureStepCommand = when(operation.step) {
         CaptureNames.WALLET -> {
             val settings=requireNotNull(session.wallet)
-            CaptureStepCommand.Wallet(WalletHistoryCaptureRequest(WalletAddress.of(settings.wallet),paths.wallet,settings.limit,settings.scanPages,operation.budget.requestBudget,operation.budget.byteBudget,if(settings.scope=="wallet-references") WalletHistoryScope.WALLET_REFERENCES else WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR,timeout(operation)))
+            val scope=requireNotNull(CaptureWalletScope.of(settings.scope)) { "Unsupported wallet scope sessionId=${session.id}" }
+            CaptureStepCommand.Wallet(WalletHistoryCaptureRequest(WalletAddress.of(settings.wallet),paths.wallet,settings.limit,settings.scanPages,operation.budget.requestBudget,operation.budget.byteBudget,scope.historyScope(),timeout(operation),settings.mint?.let(MintAddress::of)))
         }
         CaptureNames.MARKET -> {
             val attempt=store.attempt(session.id,requireNotNull(session.marketAttemptId)); val settings=requireNotNull(attempt.market)
@@ -154,7 +189,12 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         CaptureNames.RATES -> CaptureStepCommand.Rates(paths.wallet,requireNotNull(paths.market),requireNotNull(paths.rates))
         CaptureNames.EXPORT -> CaptureStepCommand.Export(RecordedReplayExportRequest(paths.wallet,requireNotNull(paths.market),requireNotNull(paths.rates),store.paths.resolve(generated(session,"dataset.json"))))
         CaptureNames.CALIBRATE -> CaptureStepCommand.Calibrate(paths.wallet,requireNotNull(paths.market),store.paths.resolve(generated(session,"calibration.json")))
+        CaptureNames.QUALIFY -> CaptureStepCommand.Qualify(store.paths.resolve(exportedDataset(session)),paths)
         else -> CaptureStepCommand.Inspect(paths)
+    }
+    private fun exportedDataset(session: CaptureSessionRecord): String {
+        val exportId=requireNotNull(session.exportOperationId) { "No successful export sessionId=${session.id}" }
+        return requireNotNull(store.operation(session.id,exportId).artifact) { "Export has no artifact sessionId=${session.id} operationId=$exportId" }
     }
     private fun timeout(operation: CaptureOperationRecord): Duration = Duration.ofMinutes(operation.budget.operationTimeoutMinutes.toLong())
     private fun generated(session: CaptureSessionRecord, name: String): String = "console/${session.id}/generated/${session.marketAttemptId ?: "none"}/${if(name=="calibration.json") "calibration" else session.ratesAttemptId ?: "none"}/$name"
@@ -162,7 +202,9 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         if(operation.walletAttemptId!=session.walletAttemptId || operation.marketAttemptId!=session.marketAttemptId) return session
         if(operation.ratesAttemptId!=session.ratesAttemptId && operation.step!=CaptureNames.CALIBRATE) return session
         val success=operation.state==CaptureNames.SUCCEEDED
-        return session.copy(operationId=operation.id,inspection=operation.inspection ?: session.inspection,wallet=operation.walletSettings ?: session.wallet,exportOperationId=if(success && operation.step==CaptureNames.EXPORT) operation.id else session.exportOperationId,calibrationOperationId=if(success && operation.step==CaptureNames.CALIBRATE) operation.id else session.calibrationOperationId)
+        val qualifyOperationId=when { success && operation.step==CaptureNames.QUALIFY -> operation.id; success && operation.step==CaptureNames.EXPORT -> null; else -> session.qualifyOperationId }
+        val qualification=if(operation.step==CaptureNames.QUALIFY) session.qualification else operation.qualification ?: session.qualification
+        return session.copy(operationId=operation.id,inspection=operation.inspection ?: session.inspection,wallet=operation.walletSettings ?: session.wallet,exportOperationId=if(success && operation.step==CaptureNames.EXPORT) operation.id else session.exportOperationId,calibrationOperationId=if(success && operation.step==CaptureNames.CALIBRATE) operation.id else session.calibrationOperationId,qualification=qualification,qualifyOperationId=qualifyOperationId)
     }
     fun artifact(id: String, kind: String): ByteArray = synchronized(store) {
         val session=store.session(id)
@@ -185,5 +227,8 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         executor.shutdownNow()
         if(!executor.awaitTermination(20,TimeUnit.SECONDS)) log.warn("capture worker shutdown category=WAITING_FOR_BOUNDED_PROVIDER_TIMEOUT")
     }
-    private companion object { const val DEADLINE = "DEADLINE" }
+    private companion object {
+        const val DEADLINE = "DEADLINE"
+        const val QUALIFY_ID_HASH_LENGTH = 32
+    }
 }

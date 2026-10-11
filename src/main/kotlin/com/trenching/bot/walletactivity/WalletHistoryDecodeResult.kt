@@ -24,6 +24,8 @@ data class WalletHistoryDecodeResult(
     val rejectedInstructions: Map<String, Int> = emptyMap(),
     /** For rejected signer transactions: how many were rejected for each reason, sorted by reason. */
     val rejections: Map<String, Int> = emptyMap(),
+    /** Set exactly for a [WalletHistoryScope.WALLET_TOKEN_ACCOUNT] capture. */
+    val targetToken: TargetTokenEvidence? = null,
 )
 
 data class WalletHistoryDecodeRecord(

@@ -4,14 +4,22 @@ import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.console.api.dto.CaptureBudget
 import com.trenching.bot.console.api.dto.CaptureOperationRequest
 import com.trenching.bot.console.mapper.CaptureResponseMapperImpl
+import com.trenching.bot.common.MintAddress
+import com.trenching.bot.console.api.dto.CaptureAttemptRequest
+import com.trenching.bot.console.api.dto.CaptureCreateRequest
+import com.trenching.bot.console.api.dto.CaptureWalletSettings
 import com.trenching.bot.replay.CaptureStageState
 import com.trenching.bot.replay.CaptureStageSummary
+import com.trenching.bot.replay.CaptureStepCommand
+import com.trenching.bot.walletactivity.WalletHistoryCaptureResult
+import com.trenching.bot.walletactivity.WalletHistoryScope
 import java.nio.file.Path
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -155,5 +163,198 @@ class CaptureOperationServiceTest {
         operations.close()
 
         assertEquals("CAPTURE_BUSY", failure { operations.requireIdle() }.code)
+    }
+
+    private fun CaptureConsoleFixture.export(requestId: String = "export-1") =
+        operations.start("session-1", CaptureOperationRequest(requestId, CaptureNames.EXPORT, store.session("session-1").marketAttemptId))
+
+    private fun CaptureConsoleFixture.qualify(requestId: String = "qualify-1") =
+        operations.start("session-1", CaptureOperationRequest(requestId, CaptureNames.QUALIFY, store.session("session-1").marketAttemptId))
+
+    private fun CaptureConsoleFixture.qualifications() = store.operations("session-1").filter { it.step == CaptureNames.QUALIFY }
+
+    private val verdicts = CaptureQualificationMapper(CaptureResponseMapperImpl())
+
+    @Test
+    fun `each console scope maps to its wallet capture request and only the token scope passes its mint`() {
+        val fixture = CaptureConsoleFixture(root)
+        val cases = listOf(
+            CaptureWalletSettings(CaptureConsoleFixture.WALLET, "pumpfun-user-buys", 3, 7) to WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR,
+            CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-references", 4, 8) to WalletHistoryScope.WALLET_REFERENCES,
+            CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-token", 100, 5, CaptureTokenFixtures.MINT) to WalletHistoryScope.WALLET_TOKEN_ACCOUNT,
+        )
+
+        cases.forEachIndexed { index, (settings, scope) ->
+            val session = fixture.sessions.create(CaptureCreateRequest("session-$index", "Scope", wallet = settings))
+            fixture.settle()
+            fixture.operations.start(session.id, CaptureOperationRequest("wallet-$index", CaptureNames.WALLET, session.walletAttemptId))
+            fixture.executor.runAll()
+
+            val request = (fixture.workflow.executed.single() as CaptureStepCommand.Wallet).request
+            assertEquals(scope, request.scope)
+            assertEquals(settings.limit, request.limit)
+            assertEquals(settings.scanPages, request.scanPages)
+            assertEquals(settings.mint?.let(MintAddress::of), request.targetMint)
+            fixture.settle()
+        }
+    }
+
+    @Test
+    fun `each recorded scope maps back to its console settings with the manifest mint`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val cases = listOf(
+            CaptureTokenFixtures.manifest(WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR, limit = 1, scanPages = 20) to
+                CaptureWalletSettings(CaptureConsoleFixture.WALLET, "pumpfun-user-buys", 1, 20),
+            CaptureTokenFixtures.manifest(WalletHistoryScope.WALLET_REFERENCES, limit = 50, scanPages = 10) to
+                CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-references", 50, 10),
+            CaptureTokenFixtures.manifest(WalletHistoryScope.WALLET_TOKEN_ACCOUNT, CaptureTokenFixtures.MINT) to
+                CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-token", 100, 5, CaptureTokenFixtures.MINT),
+        )
+
+        cases.forEachIndexed { index, (manifest, expected) ->
+            fixture.workflow.inspection = CaptureTokenFixtures.exportReady().copy(walletCapture = WalletHistoryCaptureResult(root, manifest))
+            fixture.inspect("inspect-$index")
+            fixture.executor.runAll()
+            assertEquals(expected, fixture.sessions.find("session-1").wallet)
+        }
+    }
+
+    @Test
+    fun `a successful wallet-token export queues the offline qualification after it and shows its verdict`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = CaptureTokenFixtures.exportReady()
+
+        fixture.export()
+        assertEquals(1, fixture.executor.queued.size)
+        fixture.executor.runAll()
+
+        val commands = fixture.workflow.executed
+        assertEquals(listOf(CaptureStepCommand.Export::class, CaptureStepCommand.Qualify::class), commands.map { it::class })
+        val export = fixture.operations.find("session-1", "export-1")
+        assertEquals(CaptureNames.SUCCEEDED, export.state)
+        assertEquals(root.resolve(requireNotNull(export.artifact)).toAbsolutePath().normalize(), (commands[1] as CaptureStepCommand.Qualify).dataset.toAbsolutePath().normalize())
+        val qualification = fixture.qualifications().single()
+        assertEquals(CaptureNames.SUCCEEDED, qualification.state)
+        assertEquals(fixture.store.session("session-1").marketAttemptId, qualification.attemptId)
+        val session = fixture.sessions.find("session-1")
+        assertEquals(verdicts.map(CaptureTokenFixtures.takeProfit), session.qualification)
+        assertEquals(CaptureNames.QUALIFY, session.operation?.step)
+    }
+
+    @Test
+    fun `an export of another scope queues no qualification and qualifying it is refused`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        fixture.workflow.inspection = CaptureTokenFixtures.exportReady(WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR)
+
+        fixture.export()
+        fixture.executor.runAll()
+
+        assertEquals(listOf(CaptureStepCommand.Export::class), fixture.workflow.executed.map { it::class })
+        assertTrue(fixture.qualifications().isEmpty())
+        assertNull(fixture.sessions.find("session-1").qualification)
+        assertTrue(fixture.workflow.verdicts.isEmpty())
+        assertEquals("UNSUPPORTED_SCOPE", failure { fixture.qualify() }.code)
+    }
+
+    @Test
+    fun `qualifying without a successful export of the current attempts is a conflict`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+
+        val missing = failure { fixture.qualify() }
+        assertEquals(409, missing.status)
+        assertEquals("EXPORT_REQUIRED", missing.code)
+        assertTrue(fixture.executor.queued.isEmpty())
+
+        fixture.workflow.inspection = CaptureTokenFixtures.exportReady()
+        fixture.export()
+        fixture.settle()
+        fixture.sessions.newAttempt("session-1", CaptureAttemptRequest("market-2", CaptureNames.MARKET))
+        fixture.settle()
+
+        assertEquals("EXPORT_REQUIRED", failure { fixture.qualify("qualify-2") }.code)
+        assertEquals(verdicts.map(CaptureTokenFixtures.inspectionOnly()), fixture.sessions.find("session-1").qualification)
+    }
+
+    @Test
+    fun `an explicit qualification with the current market attempt replays again without acquisition`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = CaptureTokenFixtures.exportReady()
+        fixture.export()
+        fixture.settle()
+
+        assertEquals(CaptureNames.RUNNING, fixture.qualify().state)
+        fixture.executor.runAll()
+
+        assertEquals(CaptureNames.SUCCEEDED, fixture.operations.find("session-1", "qualify-1").state)
+        assertTrue(fixture.workflow.executed.single() is CaptureStepCommand.Qualify)
+    }
+
+    @Test
+    fun `until its qualification runs an exported session shows the qualification pending, never not exported`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = CaptureTokenFixtures.exportReady()
+
+        fixture.export()
+        fixture.executor.queued.removeFirst().run()
+
+        assertEquals(1, fixture.executor.queued.size)
+        assertEquals(CaptureNames.RUNNING, fixture.qualifications().single().state)
+        assertEquals(CaptureTokenFixtures.exportReady() to true, fixture.workflow.verdicts.last())
+        val session = fixture.sessions.find("session-1")
+        assertTrue(session.datasetReady)
+        assertEquals(verdicts.map(CaptureTokenFixtures.inspectionOnly(datasetExported = true)), session.qualification)
+        assertEquals("QUALIFICATION_PENDING", session.qualification?.capture?.reason)
+    }
+
+    @Test
+    fun `a failed automatic qualification leaves the verdict pending and an explicit qualify recovers it`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = CaptureTokenFixtures.exportReady()
+        fixture.export()
+        fixture.executor.queued.removeFirst().run()
+
+        fixture.workflow.failure = IllegalStateException("replay worker failed")
+        fixture.executor.runAll()
+        assertEquals(CaptureNames.FAILED, fixture.qualifications().single().state)
+        assertEquals("QUALIFICATION_PENDING", fixture.sessions.find("session-1").qualification?.capture?.reason)
+
+        fixture.workflow.failure = null
+        fixture.qualify("qualify-2")
+        fixture.executor.runAll()
+        assertEquals(verdicts.map(CaptureTokenFixtures.takeProfit), fixture.sessions.find("session-1").qualification)
+    }
+
+    @Test
+    fun `qualifying an export whose file changed since it was exported is a conflict and runs nothing`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = CaptureTokenFixtures.exportReady()
+        fixture.export()
+        fixture.settle()
+        val dataset = root.resolve(requireNotNull(fixture.operations.find("session-1", "export-1").artifact))
+        java.nio.file.Files.writeString(dataset, FakeCaptureWorkflow.EXPORTED.replace("3", "4"))
+
+        val changed = failure { fixture.qualify("qualify-2") }
+
+        assertEquals(409, changed.status)
+        assertEquals("EXPORT_CHANGED", changed.code)
+        assertTrue(fixture.executor.queued.isEmpty())
+        java.nio.file.Files.delete(dataset)
+        assertEquals("EXPORT_CHANGED", failure { fixture.qualify("qualify-3") }.code)
+    }
+
+    @Test
+    fun `a replay failure is a verdict and the qualification operation still succeeds`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = CaptureTokenFixtures.exportReady()
+        fixture.workflow.qualifyVerdict = CaptureTokenFixtures.replayFailed
+
+        fixture.export()
+        fixture.executor.runAll()
+
+        assertEquals(CaptureNames.SUCCEEDED, fixture.qualifications().single().state)
+        val verdict = requireNotNull(fixture.sessions.find("session-1").qualification)
+        assertEquals("REPLAY_FAILED", verdict.classification)
+        assertEquals("FAILED", verdict.replay.state)
+        assertEquals("COMPLETE", verdict.capture.state)
     }
 }

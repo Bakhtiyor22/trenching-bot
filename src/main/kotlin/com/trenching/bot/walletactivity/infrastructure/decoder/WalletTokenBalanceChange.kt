@@ -30,10 +30,24 @@ internal object WalletTokenBalances {
         return WalletTokenBalanceChange.Measured(post.values.sumOf { it.amount } - pre.values.sumOf { it.amount }, decimals)
     }
 
-    private fun owned(balances: JsonNode, wallet: WalletAddress, mint: MintAddress): Map<Int, TokenBalance>? {
+    /**
+     * Post minus pre balance of [mint] in the token account at [accountIndex]. An account absent from the pre balances counts
+     * from zero; one absent from the post balances, or malformed evidence, gives null.
+     */
+    fun accountDelta(meta: JsonNode, accountIndex: Int, mint: MintAddress): BigInteger? {
+        val pre = ofMint(meta.path("preTokenBalances"), mint) { true } ?: return null
+        val post = ofMint(meta.path("postTokenBalances"), mint) { true } ?: return null
+        val after = post[accountIndex] ?: return null
+        return after.amount - (pre[accountIndex]?.amount ?: BigInteger.ZERO)
+    }
+
+    private fun owned(balances: JsonNode, wallet: WalletAddress, mint: MintAddress): Map<Int, TokenBalance>? =
+        ofMint(balances, mint) { isText(it.path("owner"), wallet.value) }
+
+    private fun ofMint(balances: JsonNode, mint: MintAddress, include: (JsonNode) -> Boolean): Map<Int, TokenBalance>? {
         if (balances.isMissingNode || balances.isNull) return emptyMap()
         if (!balances.isArray) return null
-        val parsed = balances.filter { isText(it.path("owner"), wallet.value) && isText(it.path("mint"), mint.value) }
+        val parsed = balances.filter { isText(it.path("mint"), mint.value) && include(it) }
             .map { balance -> parse(balance) ?: return null }
         return if (parsed.distinctBy { it.accountIndex }.size == parsed.size) parsed.associateBy { it.accountIndex } else null
     }

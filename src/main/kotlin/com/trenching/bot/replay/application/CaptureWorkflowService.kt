@@ -11,7 +11,9 @@ import com.trenching.bot.replay.CapturePaths
 import com.trenching.bot.replay.CaptureStepCommand
 import com.trenching.bot.replay.CaptureStepResult
 import com.trenching.bot.replay.CaptureWorkflow
+import com.trenching.bot.replay.domain.TargetTokenVerdict
 import com.trenching.bot.replay.infrastructure.fixture.CalibrationReportWriter
+import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.walletactivity.RecordedWalletHistory
 import com.trenching.bot.walletactivity.WalletHistoryCapture
 import tools.jackson.databind.ObjectMapper
@@ -45,7 +47,13 @@ class CaptureWorkflowService(
             writer.save(command.report, report)
             CaptureStepResult.Calibrated(report, writer.write(report), command.report)
         }
+        is CaptureStepCommand.Qualify -> CaptureStepResult.Qualified(qualification().qualify(command.dataset, command.paths))
     }
 
     override fun inspect(paths: CapturePaths): CaptureInspection = CaptureInspectionService(wallets, markets, rates).inspect(paths)
+
+    override fun verdict(inspection: CaptureInspection, datasetExported: Boolean): TargetTokenVerdict =
+        qualification().fromInspection(inspection, datasetExported)
+
+    private fun qualification() = TargetTokenQualificationService(ReplayDatasetLoader(mapper), ::inspect)
 }

@@ -1,6 +1,10 @@
 package com.trenching.bot.walletactivity
 
-/** [listingAddress] is the address whose signature listing discovery scanned, derived from [scope] and [wallet]. */
+/**
+ * [listingAddress] is the address whose signature listing discovery scanned, derived from [scope] and [wallet], and for
+ * [WalletHistoryScope.WALLET_TOKEN_ACCOUNT] also from [targetMint] and [tokenProgram], the program that owned the mint when the
+ * capture started. The three token fields are set exactly for that scope.
+ */
 data class WalletHistoryManifest(
     val schemaVersion: Int,
     val wallet: String,
@@ -21,6 +25,9 @@ data class WalletHistoryManifest(
     val scanCursor: WalletHistoryScanCursor?,
     val requestsUsed: Int,
     val bytesUsed: Long,
+    val targetMint: String? = null,
+    val tokenProgram: String? = null,
+    val verification: WalletTokenVerification? = null,
 )
 
 data class WalletHistorySelection(val signature: String, val slot: Long)

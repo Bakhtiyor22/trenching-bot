@@ -308,4 +308,67 @@ class CaptureSessionServiceTest {
         }
         fixture.store.save(session.copy(exportOperationId = "export-1", calibrationOperationId = "calibrate-1", datasetId = "dataset-1"))
     }
+
+    @Test
+    fun `a wallet-token session's identity includes its mint and settings without a mint keep their legacy form`() {
+        val fixture = CaptureConsoleFixture(root)
+        val token = CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-token", 100, 5, CaptureTokenFixtures.MINT)
+        fixture.sessions.create(CaptureCreateRequest("session-1", "Token", wallet = token))
+        fixture.settle()
+
+        conflict("REQUEST_CONFLICT") {
+            fixture.sessions.create(CaptureCreateRequest("session-1", "Token", wallet = token.copy(mint = CaptureConsoleFixture.WALLET)))
+        }
+        assertEquals(token, fixture.sessions.create(CaptureCreateRequest("session-1", "Token", wallet = token)).wallet)
+        assertEquals("""{"wallet":"${CaptureConsoleFixture.WALLET}","scope":"pumpfun-user-buys","limit":1,"scanPages":20}""",
+            fixture.json.writeValueAsString(CaptureWalletSettings(CaptureConsoleFixture.WALLET)))
+    }
+
+    @Test
+    fun `session and operation files written before the mint and the verdict existed load unchanged`() {
+        val fixture = CaptureConsoleFixture(root)
+        val stage = """{"state":"READY","reason":null,"canStart":false,"canResume":false,"requiresNewAttempt":false}"""
+        val inspection = """{"wallet":$stage,"market":$stage,"rates":$stage,"canCalibrate":false,"canExport":false,"walletSummary":{},"marketSummary":{},"ratesSummary":{},"marketWindows":[]}"""
+        val wallet = """{"wallet":"${CaptureConsoleFixture.WALLET}","scope":"wallet-references","limit":5,"scanPages":2}"""
+        Files.createDirectories(root.resolve("console/legacy-1"))
+        Files.writeString(root.resolve("console/legacy-1/session.json"), """{"version":1,"id":"legacy-1","requestId":"legacy-1","fingerprint":"f","name":"Old",""" +
+            """"createdAt":"2026-10-09T09:00:00Z","wallet":$wallet,"walletAttemptId":"w1","marketAttemptId":null,"ratesAttemptId":null,"inspection":$inspection,""" +
+            """"operationId":"op-1","exportOperationId":null,"calibrationOperationId":null,"datasetId":null}""")
+        Files.writeString(root.resolve("console/legacy-1/operation-op-1.json"), """{"id":"op-1","requestId":"op-1","fingerprint":"f","step":"INSPECT",""" +
+            """"attemptId":null,"state":"SUCCEEDED","startedAt":"2026-10-09T09:00:00Z","updatedAt":"2026-10-09T09:00:00Z","endedAt":"2026-10-09T09:00:00Z",""" +
+            """"budget":{"requestBudget":400,"byteBudget":104857600,"operationTimeoutMinutes":10},"scanPages":null,"progress":null,"code":null,"message":null,""" +
+            """"walletAttemptId":"w1","marketAttemptId":null,"ratesAttemptId":null,"inspection":$inspection,"walletSettings":$wallet,"artifact":null,"checksum":null,"calibration":null}""")
+
+        val session = fixture.sessions.find("legacy-1")
+
+        assertEquals(CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-references", 5, 2), session.wallet)
+        assertNull(session.qualification)
+        assertNull(session.inspection?.targetToken)
+        assertNull(session.operation?.qualification)
+        assertEquals(CaptureNames.SUCCEEDED, session.operation?.state)
+    }
+
+    @Test
+    fun `attaching a wallet + token capture shows its scope, its manifest mint and its inspection verdict`() {
+        val fixture = CaptureConsoleFixture(root)
+        fixture.workflow.inspection = CaptureTokenFixtures.exportReady()
+
+        fixture.sessions.create(CaptureCreateRequest("session-1", "Attached", attach = CaptureAttachment("token-wallet")))
+        fixture.executor.runAll()
+
+        val session = fixture.sessions.find("session-1")
+        assertEquals(CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-token", 100, 5, CaptureTokenFixtures.MINT), session.wallet)
+        assertEquals(CaptureTokenFixtures.MINT, session.inspection?.targetToken?.mint)
+        assertEquals("INCOMPLETE_CAPTURE", session.qualification?.classification)
+        assertEquals(CaptureTokenFixtures.exportReady() to false, fixture.workflow.verdicts.single())
+    }
+
+    @Test
+    fun `before export only a wallet-token session shows a verdict, from inspection alone`() {
+        val fixture = CaptureConsoleFixture(root)
+
+        assertEquals("NOT_RUN", fixture.createToken("session-1").qualification?.replay?.state)
+        assertNull(fixture.create("session-2").qualification)
+        assertEquals(1, fixture.workflow.verdicts.size)
+    }
 }

@@ -11,11 +11,15 @@ import com.trenching.bot.chaincapture.SignatureListing
 import com.trenching.bot.chaincapture.SignatureListingEntry
 import com.trenching.bot.chaincapture.SolanaReadRpc
 import com.trenching.bot.chaincapture.SolanaRpcSettings
+import com.trenching.bot.common.MintAddress
+import com.trenching.bot.protocol.solana.SolanaPrograms
 import com.trenching.bot.walletactivity.*
+import com.trenching.bot.walletactivity.infrastructure.capture.TokenTarget
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletCaptureFormat
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryListing
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletTransactionEvidence
+import com.trenching.bot.walletactivity.infrastructure.decoder.PumpFunBuyDecoder
 import java.time.Clock
 import org.slf4j.LoggerFactory
 import tools.jackson.databind.ObjectMapper
@@ -29,29 +33,22 @@ internal class WalletHistoryCaptureService(
     private val log = LoggerFactory.getLogger(WalletHistoryCaptureService::class.java)
     private val store = WalletHistoryArtifactStore(objectMapper)
     private val evidence = WalletTransactionEvidence()
+    private val verification = WalletTokenVerificationCapture(rpc, store, CapturedArtifactReader(store, PumpFunBuyDecoder()))
 
     override fun capture(request: WalletHistoryCaptureRequest): WalletHistoryCaptureResult {
         validate(request)
-        val listingAddress = WalletHistoryListing.address(request.scope, request.wallet)
-        return store.lock(request.directory).use { acquire(request, listingAddress) }
+        return store.lock(request.directory).use { acquire(request) }
     }
 
-    private fun acquire(request: WalletHistoryCaptureRequest, listingAddress: String): WalletHistoryCaptureResult {
-        val saved = store.loadIfPresent(request.directory)?.copy(schemaVersion = WalletCaptureFormat.VERSION)
+    private fun acquire(request: WalletHistoryCaptureRequest): WalletHistoryCaptureResult {
+        val saved = store.loadIfPresent(request.directory)?.copy(schemaVersion = WalletCaptureFormat.version(request.scope))
         if (saved != null && (saved.wallet != request.wallet.value || saved.scope != request.scope ||
-                saved.limit != request.limit || saved.scanPageLimit != request.scanPages)) {
+                saved.limit != request.limit || saved.scanPageLimit != request.scanPages || saved.targetMint != request.targetMint?.value)) {
             throw CaptureValidationException("RESUME_IDENTITY")
         }
         val budget = CaptureBudget(request.requestBudget, request.byteBudget, saved?.requestsUsed ?: 0, saved?.bytesUsed ?: 0, request.operationTimeout)
         val genesis = ChainCaptureReads.requireMainnet(rpc, budget)
-        var manifest = saved ?: WalletHistoryManifest(
-            schemaVersion = WalletCaptureFormat.VERSION, wallet = request.wallet.value, scope = request.scope,
-            listingAddress = listingAddress, genesisHash = genesis,
-            commitment = ChainCaptureFormat.COMMITMENT, capturedAt = clock.instant().toString(), limit = request.limit,
-            scanPageLimit = request.scanPages, selection = emptyList(), records = emptyList(), complete = false,
-            discoveryComplete = false, discoveryStop = null, scannedSignatures = 0, skippedFailed = 0, scanCursor = null,
-            requestsUsed = 0, bytesUsed = 0,
-        )
+        var manifest = saved ?: started(request, genesis, budget)
         checkpoint(request, manifest, budget)
         val stop = CaptureStop()
         if (!manifest.discoveryComplete) {
@@ -85,7 +82,34 @@ internal class WalletHistoryCaptureService(
             manifest = manifest.copy(records = records.toList())
             checkpoint(request, usage(manifest, budget), budget)
         }
-        return finish(request, manifest.copy(records = records.toList()), budget, stop)
+        manifest = usage(manifest.copy(records = records.toList()), budget)
+        if (manifest.targetMint != null && stop.reason == null && WalletCaptureFormat.recordsResolved(manifest)) {
+            checkpoint(request, manifest, budget)
+            manifest = verification.verify(request.directory, manifest, budget, stop) { next ->
+                usage(next, budget).also { checkpoint(request, it, budget) }
+            }
+        }
+        return finish(request, manifest, budget, stop)
+    }
+
+    /** A new capture; a token-account capture first learns which token program owns the mint, before any listing. */
+    private fun started(request: WalletHistoryCaptureRequest, genesis: String, budget: CaptureBudget): WalletHistoryManifest {
+        val token = request.targetMint?.let { TokenTarget(it, tokenProgram(it, budget)) }
+        return WalletHistoryManifest(
+            schemaVersion = WalletCaptureFormat.version(request.scope), wallet = request.wallet.value, scope = request.scope,
+            listingAddress = WalletHistoryListing.address(request.scope, request.wallet, token), genesisHash = genesis,
+            commitment = ChainCaptureFormat.COMMITMENT, capturedAt = clock.instant().toString(), limit = request.limit,
+            scanPageLimit = request.scanPages, selection = emptyList(), records = emptyList(), complete = false,
+            discoveryComplete = false, discoveryStop = null, scannedSignatures = 0, skippedFailed = 0, scanCursor = null,
+            requestsUsed = 0, bytesUsed = 0, targetMint = token?.mint?.value, tokenProgram = token?.tokenProgram,
+        )
+    }
+
+    private fun tokenProgram(mint: MintAddress, budget: CaptureBudget): String {
+        val owner = ChainCaptureReads.mintOwner(rpc, mint.value, budget)
+        if (owner !in SolanaPrograms.TOKEN_PROGRAMS) throw CaptureValidationException("MINT_PROGRAM_UNSUPPORTED")
+        log.info("wallet_capture token_program mint={} tokenProgram={}", mint.value, owner)
+        return owner
     }
 
     private fun discover(request: WalletHistoryCaptureRequest, saved: WalletHistoryManifest, budget: CaptureBudget, stop: CaptureStop): WalletHistoryManifest {
@@ -141,8 +165,8 @@ internal class WalletHistoryCaptureService(
         manifest.copy(discoveryComplete = true, discoveryStop = stop)
 
     private fun finish(request: WalletHistoryCaptureRequest, saved: WalletHistoryManifest, budget: CaptureBudget, stop: CaptureStop): WalletHistoryCaptureResult {
-        val complete = saved.discoveryComplete && saved.records.none { it.outcome in WalletCaptureFormat.UNRESOLVED_OUTCOMES }
-        val manifest = usage(saved.copy(complete = complete), budget)
+        val manifest = usage(saved, budget)
+        val complete = manifest.complete
         checkpoint(request, manifest, budget)
         log.info("wallet_capture finished scope={} selected={} scanned={} skippedFailed={} discoveryStop={} complete={} requests={} bytes={} stopReason={}",
             manifest.scope, manifest.selection.size, manifest.scannedSignatures, manifest.skippedFailed, manifest.discoveryStop, complete, budget.requestsUsed, budget.bytesUsed,
@@ -151,22 +175,29 @@ internal class WalletHistoryCaptureService(
     }
 
     private fun usage(manifest: WalletHistoryManifest, budget: CaptureBudget): WalletHistoryManifest =
-        manifest.copy(requestsUsed = budget.cumulativeRequests(), bytesUsed = budget.cumulativeBytes(),
-            complete = manifest.discoveryComplete && manifest.records.none { it.outcome in WalletCaptureFormat.UNRESOLVED_OUTCOMES })
+        manifest.copy(requestsUsed = budget.cumulativeRequests(), bytesUsed = budget.cumulativeBytes()).let { it.copy(complete = WalletCaptureFormat.isComplete(it)) }
 
     private fun checkpoint(request: WalletHistoryCaptureRequest, manifest: WalletHistoryManifest, budget: CaptureBudget) {
         store.save(request.directory, manifest)
         observer.checkpoint(com.trenching.bot.chaincapture.CaptureCheckpoint(
-            phase = if (manifest.complete) "WALLET_COMPLETE" else if (manifest.discoveryComplete) "WALLET_DETAILS" else "WALLET_DISCOVERY",
+            phase = phase(manifest),
             at = clock.instant(), operationRequests = budget.requestsUsed, operationBytes = budget.bytesUsed,
             cumulativeRequests = budget.cumulativeRequests(), cumulativeBytes = budget.cumulativeBytes(),
             processed = manifest.records.count { it.outcome !in WalletCaptureFormat.UNRESOLVED_OUTCOMES }, selected = manifest.selection.size))
     }
 
+    private fun phase(manifest: WalletHistoryManifest): String = when {
+        manifest.complete -> "WALLET_COMPLETE"
+        !manifest.discoveryComplete -> "WALLET_DISCOVERY"
+        !WalletCaptureFormat.recordsResolved(manifest) -> "WALLET_DETAILS"
+        else -> "WALLET_VERIFICATION"
+    }
+
     private fun validate(request: WalletHistoryCaptureRequest) {
         if (request.limit !in 1..WalletCaptureFormat.MAX_SELECTION || request.scanPages !in 1..WalletCaptureFormat.MAX_SCAN_PAGES ||
             request.requestBudget !in 1..WalletCaptureFormat.MAX_REQUESTS || request.byteBudget !in 1..WalletCaptureFormat.MAX_CAPTURE_BYTES ||
-            request.operationTimeout?.let { SolanaRpcSettings.isInvocationTimeoutValid(it) } == false) {
+            request.operationTimeout?.let { SolanaRpcSettings.isInvocationTimeoutValid(it) } == false ||
+            (request.targetMint != null) != (request.scope == WalletHistoryScope.WALLET_TOKEN_ACCOUNT)) {
             throw CaptureValidationException("REQUEST_BOUNDS")
         }
     }

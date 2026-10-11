@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.*
 @Profile("local & !prod")
 @ConditionalOnConsoleEnabled
 class CaptureController(private val sessions: CaptureSessionService, private val operations: CaptureOperationService, private val catalog: CaptureCatalogService, private val mapper: CaptureResponseMapper, private val datasets: DatasetResponseMapper, private val rpc: SolanaRpcProperties, private val rates: ReferenceRateProperties) {
-    @GetMapping("/config") fun config(): CaptureConfigResponse = mapper.config(!rpc.rpcUrl.isNullOrBlank(),rates.enabled,CaptureWalletSettings(""),CaptureMarketSettings(),CaptureBudget(),CaptureValidation.bounds,4500)
+    @GetMapping("/config") fun config(): CaptureConfigResponse = mapper.config(!rpc.rpcUrl.isNullOrBlank(),rates.enabled,CaptureWalletSettings(""),CaptureDefaults.walletToken,CaptureDefaults.walletTokenBudget,CaptureMarketSettings(),CaptureBudget(),CaptureValidation.bounds,4500)
     @GetMapping fun page(@RequestParam(defaultValue="0") page: Int,@RequestParam(defaultValue="20") size: Int): CaptureSessionPageResponse = mapper.sessions(sessions.page(page,size))
     @PostMapping fun create(@RequestBody request: CaptureCreateRequest): CaptureSessionResponse = mapper.session(sessions.create(request))
     @DeleteMapping("/{id}") @ResponseStatus(HttpStatus.NO_CONTENT) fun delete(@PathVariable id: String) = sessions.delete(id)
