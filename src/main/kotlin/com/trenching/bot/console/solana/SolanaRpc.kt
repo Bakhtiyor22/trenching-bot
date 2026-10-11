@@ -12,6 +12,6 @@ object SolanaRpc {
     const val COMMITMENT = "commitment"
     const val CONFIRMED = "confirmed"
     const val HEALTHY = "ok"
-    const val SIGNATURE_LIMIT = 5
+    const val SIGNATURE_LIMIT = 10
     const val MAX_SUPPORTED_TRANSACTION_VERSION = 1
 }

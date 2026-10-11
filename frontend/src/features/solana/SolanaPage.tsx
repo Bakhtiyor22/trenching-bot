@@ -169,7 +169,7 @@ function AddressCheckForm({ configured }: { configured: boolean }) {
   return (
     <Stack gap="md">
       <Text size="sm" c="dimmed">
-        Fetches the newest 5 signatures of an address and the newest successful transaction, then
+        Fetches the newest 10 signatures of an address and the newest successful transaction, then
         reports whether the fields the wallet normalizer needs are present. Read-only.
       </Text>
       <form onSubmit={submit} noValidate>

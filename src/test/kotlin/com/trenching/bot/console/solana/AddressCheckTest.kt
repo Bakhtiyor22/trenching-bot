@@ -25,10 +25,10 @@ class AddressCheckTest {
     private val address = WalletAddress.of(TRACKED_WALLET)
 
     @Test
-    fun `asks for the five newest confirmed signatures and the newest successful jsonParsed version 1 transaction`() {
+    fun `asks for the ten newest confirmed signatures and the newest successful jsonParsed version 1 transaction`() {
         server.expectCall("getSignaturesForAddress")
             .andExpect(jsonPath("$.params[0]").value(TRACKED_WALLET))
-            .andExpect(jsonPath("$.params[1].limit").value(5))
+            .andExpect(jsonPath("$.params[1].limit").value(10))
             .andExpect(jsonPath("$.params[1].commitment").value("confirmed"))
             .andRespond(json(signatures(failed("sig-newest-failed"), succeeded("sig-success"), succeeded("sig-older"))))
         server.expectCall("getTransaction")
@@ -81,14 +81,14 @@ class AddressCheckTest {
     }
 
     @Test
-    fun `five failed signatures give no successful transaction without fetching one`() {
+    fun `ten failed signatures give no successful transaction without fetching one`() {
         server.expectCall("getSignaturesForAddress")
-            .andRespond(json(signatures(*(1..5).map { failed("sig-failed-$it") }.toTypedArray())))
+            .andRespond(json(signatures(*(1..10).map { failed("sig-failed-$it") }.toTypedArray())))
 
         val outcome = probe.checkAddress(address)
 
         server.verify()
-        assertEquals(AddressCheckOutcome.NoSuccessfulTransaction(signaturesExamined = 5), outcome)
+        assertEquals(AddressCheckOutcome.NoSuccessfulTransaction(signaturesExamined = 10), outcome)
     }
 
     @Test

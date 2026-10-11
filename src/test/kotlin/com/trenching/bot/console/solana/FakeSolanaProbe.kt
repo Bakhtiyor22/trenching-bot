@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicInteger
 class FakeSolanaProbe(
     override val host: String?,
     private val outcome: ProbeOutcome = ProbeOutcome.RateLimited,
-    private val addressOutcome: AddressCheckOutcome = AddressCheckOutcome.NoSuccessfulTransaction(5),
+    private val addressOutcome: AddressCheckOutcome = AddressCheckOutcome.NoSuccessfulTransaction(10),
 ) : SolanaProbe {
     private val checks = AtomicInteger()
     private val addressChecks = AtomicInteger()
