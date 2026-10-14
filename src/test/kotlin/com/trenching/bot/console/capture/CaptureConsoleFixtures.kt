@@ -19,6 +19,7 @@ import com.trenching.bot.replay.domain.TargetTokenVerdict
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.concurrent.AbstractExecutorService
@@ -39,18 +40,27 @@ class ManualExecutor : AbstractExecutorService() {
     override fun awaitTermination(timeout: Long, unit: TimeUnit) = true
 }
 
+class ManualCaptureRetryScheduler : CaptureRetryScheduler {
+    data class Pending(val delay: Duration, val action: () -> Unit)
+    val pending = ArrayDeque<Pending>()
+    override fun schedule(delay: Duration, action: () -> Unit) { pending.addLast(Pending(delay, action)) }
+    fun runNext() { pending.removeFirst().action() }
+}
+
 /** A workflow whose inspection result is set by the test; it records every command it receives. */
 class FakeCaptureWorkflow : CaptureWorkflow {
     val executed = mutableListOf<CaptureStepCommand>()
     var inspections = 0
     var inspection = inspection(CaptureStageSummary(CaptureStageState.NOT_STARTED, canStart = true))
     var failure: Exception? = null
+    var checkpointBeforeFailure: CaptureCheckpoint? = null
     var qualifyVerdict: TargetTokenVerdict = CaptureTokenFixtures.takeProfit
     /** Each inspection-only verdict asked for, with whether a dataset was exported; it answers with [CaptureTokenFixtures.inspectionOnly]. */
     val verdicts = mutableListOf<Pair<CaptureInspection, Boolean>>()
 
     override fun execute(command: CaptureStepCommand, checkpoints: CaptureCheckpointObserver): CaptureStepResult {
         executed += command
+        checkpointBeforeFailure?.let(checkpoints::checkpoint)
         failure?.let { throw it }
         checkpoints.checkpoint(CaptureCheckpoint("FAKE", AT, operationRequests = 3, cumulativeRequests = 5))
         return when (command) {
@@ -61,6 +71,7 @@ class FakeCaptureWorkflow : CaptureWorkflow {
                 CaptureStepResult.Exported(RecordedReplayExport(command.request.output, "checksum", WalletAddress.of(CaptureConsoleFixture.WALLET), 1, 1, 1, 1, true))
             }
             is CaptureStepCommand.Qualify -> CaptureStepResult.Qualified(qualifyVerdict)
+            is CaptureStepCommand.CaseRates, is CaptureStepCommand.ExportCase -> throw CaptureValidationException("UNSUPPORTED_IN_FAKE")
             else -> throw CaptureValidationException("UNSUPPORTED_IN_FAKE")
         }
     }
@@ -81,14 +92,14 @@ class FakeCaptureWorkflow : CaptureWorkflow {
     }
 }
 
-class CaptureConsoleFixture(root: Path, rpcConfigured: Boolean = true, ratesConfigured: Boolean = true) {
+class CaptureConsoleFixture(root: Path, rpcConfigured: Boolean = true, ratesConfigured: Boolean = true, retryScheduler: CaptureRetryScheduler = CaptureRetryScheduler.NONE) {
     val json: JsonMapper = JsonMapper.builder().addModule(kotlinModule()).build()
     val clock: Clock = Clock.fixed(FakeCaptureWorkflow.AT, ZoneOffset.UTC)
     val workflow = FakeCaptureWorkflow()
     val executor = ManualExecutor()
     val store = CaptureFileStore(CapturePathPolicy(root), json).also { it.initialize() }
     private var nextId = 0
-    val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured)
+    val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured, retryScheduler)
     val sessions = CaptureSessionService(store, operations, clock) { "id-${++nextId}" }
 
     /** Creates a wallet session and runs its automatic offline inspection, leaving the worker idle and the log empty. */

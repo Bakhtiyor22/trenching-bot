@@ -25,6 +25,8 @@ data class MarketHistoryCaptureResult(
     val manifest: MarketHistoryManifest,
     /** Why this invocation stopped early (a capture budget or provider category), or null; never set by inspection. */
     val stopReason: String? = null,
+    /** Provider Retry-After supplied with [stopReason], preserved for bounded capture recovery. */
+    val stopRetryAfter: Duration? = null,
 ) {
     val manifestFile: Path get() = directory.resolve(MarketCaptureFormat.MANIFEST)
 }

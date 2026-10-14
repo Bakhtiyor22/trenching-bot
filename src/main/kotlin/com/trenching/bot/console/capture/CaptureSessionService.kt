@@ -8,7 +8,7 @@ import com.trenching.bot.console.capture.CaptureNames.INSPECT
 import java.time.Clock
 import org.slf4j.LoggerFactory
 
-class CaptureSessionService(private val store: CaptureFileStore, private val operations: CaptureOperationService, private val clock: Clock, private val ids: CaptureIds) {
+class CaptureSessionService(private val store: CaptureFileStore, private val operations: CaptureOperationService, private val clock: Clock, private val ids: CaptureIds, private val cases: CaptureCaseActivity = CaptureCaseActivity.NONE) {
     private val log = LoggerFactory.getLogger(CaptureSessionService::class.java)
     fun create(request: CaptureCreateRequest): CaptureSessionView = synchronized(store) {
         store.id(request.requestId)
@@ -50,6 +50,7 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
             return@synchronized view(session)
         }
         operations.requireIdle()
+        cases.requireIdle()
         if (request.stage !in setOf(MARKET, RATES)) CaptureValidation.invalid("stage", "must be MARKET or RATES")
         val settings = if (request.stage == MARKET) request.market ?: CaptureMarketSettings() else null
         settings?.let(CaptureValidation::market)
@@ -67,6 +68,7 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
     fun delete(id: String) = synchronized(store) {
         store.session(id)
         operations.requireNotRunning(id)
+        cases.requireNotRunning(id)
         val files = store.remove(id, ids.next())
         log.info("capture_deleted sessionId={} managedFiles={}", id, files)
     }

@@ -4,11 +4,22 @@ import { ApiError, BAD_RESPONSE } from '../../api/client';
 import { capturesApi, type CaptureSession } from '../../api/captures';
 
 export const CAPTURE_POLL_MS = 2000;
-export const captureKeys = { all: ['captures'] as const, session: (id: string) => ['captures', id] as const, config: ['capture-config'] as const };
-export const capturePollInterval = (session?: CaptureSession) => session?.operation?.state === 'RUNNING' ? CAPTURE_POLL_MS : false;
+export const captureKeys = { all: ['captures'] as const, session: (id: string) => ['captures', id] as const, cases: (id: string) => ['captures', id, 'cases'] as const, config: ['capture-config'] as const };
+export const isCaptureOperationActive = (state?: string | null) => state === 'RUNNING' || state === 'WAITING_RETRY';
+export const isCaptureOperationOpen = (state?: string | null) => isCaptureOperationActive(state) || state === 'PAUSED';
+export const capturePollInterval = (session?: CaptureSession) => isCaptureOperationActive(session?.operation?.state) ? CAPTURE_POLL_MS : false;
 export function useCaptureConfig() { return useQuery({ queryKey: captureKeys.config, queryFn: ({signal}) => capturesApi.config(signal) }); }
 export function useCapture(id: string) { return useQuery({ queryKey: captureKeys.session(id), queryFn: ({signal}) => capturesApi.session(id, signal), refetchInterval: query => capturePollInterval(query.state.data), refetchIntervalInBackground: false, staleTime: 0 }); }
-export function useCaptures(page: number) { return useQuery({ queryKey: [...captureKeys.all, 'list', page], queryFn: ({signal}) => capturesApi.list(page, signal), placeholderData: keepPreviousData, refetchInterval: query => query.state.data?.items.some(item => item.operation?.state === 'RUNNING') ? CAPTURE_POLL_MS : false, refetchIntervalInBackground: false }); }
+export function useCaptureCases(id: string, mainOperationState?: string) {
+  return useQuery({
+    queryKey: captureKeys.cases(id),
+    queryFn: ({signal}) => capturesApi.cases(id, signal),
+    refetchInterval: query => isCaptureOperationActive(mainOperationState) || query.state.data?.items.some(item => isCaptureOperationActive(item.readiness) || isCaptureOperationActive(item.operationState)) ? CAPTURE_POLL_MS : false,
+    refetchIntervalInBackground: false,
+    staleTime: 0,
+  });
+}
+export function useCaptures(page: number) { return useQuery({ queryKey: [...captureKeys.all, 'list', page], queryFn: ({signal}) => capturesApi.list(page, signal), placeholderData: keepPreviousData, refetchInterval: query => query.state.data?.items.some(item => isCaptureOperationActive(item.operation?.state)) ? CAPTURE_POLL_MS : false, refetchIntervalInBackground: false }); }
 
 /** Deletes a capture session and refreshes the capture lists; its detail cache is dropped. */
 export function useDeleteCapture() {

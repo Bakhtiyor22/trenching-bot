@@ -17,14 +17,14 @@ class CaptureBudget(
         private set
 
     fun request() {
-        if (requestsUsed >= maxRequests) throw CaptureBudgetException("REQUESTS")
+        if (requestsUsed >= maxRequests) throw CaptureBudgetException("REQUESTS", requestsUsed, bytesUsed)
         requestsUsed++
     }
 
     fun bytes(count: Long) {
-        if (count < 0) throw CaptureBudgetException("BYTES")
+        if (count < 0) throw CaptureBudgetException("BYTES", requestsUsed, bytesUsed)
         bytesUsed += count
-        if (bytesUsed > maxBytes) throw CaptureBudgetException("BYTES")
+        if (bytesUsed > maxBytes) throw CaptureBudgetException("BYTES", requestsUsed, bytesUsed)
     }
 
     fun remainingBytes(): Long = maxOf(0, maxBytes - bytesUsed)
@@ -39,7 +39,7 @@ class CaptureBudget(
     }
 
     fun checkDeadline(nowNanos: Long) {
-        if (remainingNanos(nowNanos) <= 0) throw CaptureBudgetException("DEADLINE")
+        if (remainingNanos(nowNanos) <= 0) throw CaptureBudgetException("DEADLINE", requestsUsed, bytesUsed)
     }
 
     fun remainingNanos(nowNanos: Long): Long = (deadlineNanos ?: Long.MAX_VALUE) - nowNanos

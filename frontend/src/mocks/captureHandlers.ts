@@ -2,6 +2,7 @@ import { http, HttpResponse } from 'msw';
 import type {
   CaptureAttempt,
   CaptureAttemptRequest,
+  CaptureCase,
   CaptureCreate,
   CaptureInspection,
   CaptureOperation,
@@ -19,11 +20,14 @@ import { sampleDataset } from './fixtures';
  */
 let sessions = new Map<string, CaptureSession>();
 let operations = new Map<string, CaptureOperation>();
+let caseResponses = new Map<string, CaptureCase[]>();
 
 export function resetCaptureMocks(): void {
   sessions = new Map([captureSession, ...Object.values(walletTokenSessions)].map(session => [session.id, session]));
   operations = new Map(captureSession.operation ? [[captureSession.operation.id, captureSession.operation]] : []);
+  caseResponses = new Map();
 }
+export function setCaptureCases(id: string, items: CaptureCase[]): void { caseResponses.set(id, items); }
 resetCaptureMocks();
 
 function error(status: number, code: string, message: string) {
@@ -168,6 +172,19 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       await wait();
       const operation = operations.get(String(params.operationId));
       return operation ? HttpResponse.json(operation) : error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
+    }),
+    http.get('/api/captures/:id/cases', async ({ params }) => {
+      await wait();
+      return HttpResponse.json({ items: caseResponses.get(String(params.id)) ?? [] });
+    }),
+    http.post('/api/captures/:id/cases/:caseId/dataset', async ({ params }) => {
+      await wait();
+      const id = String(params.id);
+      const caseId = String(params.caseId);
+      const items = caseResponses.get(id) ?? [];
+      if (!items.some(item => item.caseId === caseId)) return error(404, 'CASE_NOT_FOUND', 'Capture case was not found');
+      caseResponses.set(id, items.map(item => item.caseId === caseId ? { ...item, datasetId: sampleDataset.id } : item));
+      return HttpResponse.json({ dataset: sampleDataset, created: false });
     }),
     http.post('/api/captures/:id/dataset', async ({ params }) => {
       await wait();

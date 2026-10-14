@@ -24,7 +24,13 @@ internal class ReferenceRateCaptureService(
     override fun capture(request: ReferenceRateCaptureRequest): ReferenceRateCaptureResult {
         val directory = request.directory.toAbsolutePath().normalize()
         if (directory == request.marketCaptureDirectory.toAbsolutePath().normalize()) throw CaptureValidationException("SAME_DIRECTORY")
-        val minutes = markets.decode(request.marketCaptureDirectory).observations
+        val marketObservations = request.caseId?.let { caseId ->
+            markets.decodeCase(request.marketCaptureDirectory, caseId).let { decoded ->
+                if (!decoded.ready) throw CaptureValidationException(decoded.blocker ?: "MARKET_CASE_INCOMPLETE")
+                decoded.observations
+            }
+        } ?: markets.decode(request.marketCaptureDirectory).observations
+        val minutes = marketObservations
             .map { ReferenceRate.minuteOf(it.observedTime) }.toSortedSet().toList()
         if (minutes.isEmpty()) throw CaptureValidationException("NO_OBSERVATIONS")
         return store.lock(request.directory).use {

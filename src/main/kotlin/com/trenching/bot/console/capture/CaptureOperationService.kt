@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 import tools.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 
-class CaptureOperationService(private val store: CaptureFileStore, private val workflow: CaptureWorkflow, private val mapper: CaptureResponseMapper, private val json: ObjectMapper, private val clock: Clock, private val executor: ExecutorService, private val rpcConfigured: Boolean, private val ratesConfigured: Boolean) : AutoCloseable {
+class CaptureOperationService(private val store: CaptureFileStore, private val workflow: CaptureWorkflow, private val mapper: CaptureResponseMapper, private val json: ObjectMapper, private val clock: Clock, private val executor: ExecutorService, private val rpcConfigured: Boolean, private val ratesConfigured: Boolean, private val retryScheduler: CaptureRetryScheduler = CaptureRetryScheduler.NONE) : AutoCloseable {
     private val log = LoggerFactory.getLogger(javaClass)
     private val inspectionMapper = CaptureInspectionMapper(mapper)
     private val qualificationMapper = CaptureQualificationMapper(mapper)
@@ -29,18 +29,184 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     fun requireIdle() { if (!idle()) CaptureValidation.conflict("CAPTURE_BUSY", "Capture worker is busy or stopping") }
     /** Rejects a change to [sessionId] while its own operation runs; other sessions may change meanwhile. */
     fun requireNotRunning(sessionId: String) { if (activeSession == sessionId) CaptureValidation.conflict("CAPTURE_BUSY", "This capture has a running operation") }
-    fun recover() = synchronized(store) {
-        store.sessions().forEach { id ->
-            var session = store.session(id)
-            store.operations(id).sortedWith(compareBy<CaptureOperationRecord> { it.startedAt }.thenBy { it.id }).forEach { original ->
-                val operation = if (original.state == CaptureNames.RUNNING) original.copy(state = CaptureNames.INTERRUPTED, updatedAt = clock.instant(), endedAt = clock.instant(), code = "PROCESS_RESTART", message = "Operation interrupted; inspect or explicitly resume") else original
-                if (operation != original) store.save(id, operation)
-                session = project(session, operation)
+    fun recover() {
+        val retries = synchronized(store) {
+            store.sessions().flatMap { id ->
+                var session = store.session(id)
+                val pending = mutableListOf<Pair<String, CaptureOperationRecord>>()
+                store.operations(id).filter { it.caseId == null }.sortedWith(compareBy<CaptureOperationRecord> { it.startedAt }.thenBy { it.id }).forEach { original ->
+                    val recovered = if (original.state in setOf(CaptureNames.RUNNING, CaptureNames.WAITING_RETRY)) settleUnknownReservation(original) else original
+                    val latest = when {
+                        recovered.state == CaptureNames.RUNNING && recovered.recovery != null && !matchesCurrentAttempts(session, recovered) -> recovered.copy(state = CaptureNames.BLOCKED, updatedAt = clock.instant(), endedAt = clock.instant(), code = "STALE_ATTEMPT", message = "Saved operation belongs to attempts that are no longer selected")
+                        recovered.state == CaptureNames.RUNNING && recovered.control == CaptureNames.PAUSE_REQUESTED -> recovered.copy(state = CaptureNames.PAUSED, control = null, updatedAt = clock.instant(), endedAt = clock.instant(), code = "PAUSED_BY_USER", message = "Capture paused after restart")
+                        recovered.state == CaptureNames.RUNNING && recovered.control == CaptureNames.CANCEL_REQUESTED -> recovered.copy(state = CaptureNames.CANCELLED, control = null, updatedAt = clock.instant(), endedAt = clock.instant(), code = "CANCELLED_BY_USER", message = "Remaining capture work was cancelled")
+                        recovered.state in setOf(CaptureNames.RUNNING, CaptureNames.WAITING_RETRY) && recovered.recovery != null && recovered.recovery.attemptsUsed >= recovered.recovery.maxAttempts -> recovered.copy(state = CaptureNames.FAILED, updatedAt = clock.instant(), endedAt = clock.instant(), code = "RETRY_EXHAUSTED", message = "The capture reached its configured attempt limit", recovery = recovered.recovery.copy(nextRetryAt = null))
+                        recovered.state in setOf(CaptureNames.RUNNING, CaptureNames.WAITING_RETRY) && recovered.recovery != null && budgetExhausted(recovered.recovery) -> recovered.copy(state = CaptureNames.FAILED, updatedAt = clock.instant(), endedAt = clock.instant(), code = "BUDGET_EXHAUSTED", message = "The capture reached its total request or byte budget", recovery = recovered.recovery.copy(nextRetryAt = null))
+                        recovered.state == CaptureNames.RUNNING && recovered.recovery != null -> recovered.copy(state = CaptureNames.WAITING_RETRY, updatedAt = clock.instant(), endedAt = null, code = "PROCESS_RESTART", message = "Resuming the saved capture after restart", recovery = recovered.recovery.copy(nextRetryAt = recovered.recovery.nextRetryAt ?: clock.instant()))
+                        recovered.state == CaptureNames.WAITING_RETRY && recovered.recovery != null -> recovered
+                        original.state == CaptureNames.RUNNING -> original.copy(state = CaptureNames.INTERRUPTED, updatedAt = clock.instant(), endedAt = clock.instant(), code = "PROCESS_RESTART", message = "Operation interrupted; inspect or explicitly resume")
+                        else -> original
+                    }
+                    if (latest != original) store.save(id, latest)
+                    session = project(session, latest)
+                    if (latest.state == CaptureNames.WAITING_RETRY && latest.recovery != null && latest.recovery.attemptsUsed < latest.recovery.maxAttempts && !budgetExhausted(latest.recovery)) pending += id to latest
+                }
+                store.save(session)
+                pending
             }
-            store.save(session)
+        }
+        retries.forEach { (id, operation) ->
+            val at = operation.recovery?.nextRetryAt ?: clock.instant()
+            scheduleRetry(id, operation, Duration.between(clock.instant(), at).coerceAtLeast(Duration.ZERO))
         }
     }
     fun find(id: String, operationId: String): CaptureOperationRecord = synchronized(store) { store.session(id); store.operation(id,operationId) }
+    fun control(id: String, operationId: String, action: String, requestId: String): CaptureOperationRecord = synchronized(store) {
+        store.id(requestId)
+        if (action !in setOf("pause", "resume", "cancel", "retry")) CaptureValidation.invalid("action", "unsupported operation control")
+        store.session(id)
+        val original = store.operation(id, operationId)
+        if (original.caseId != null) CaptureValidation.conflict("CASE_CONTROL_UNSUPPORTED", "Case operations do not use main capture controls")
+        val key = "$action:$requestId"
+        if (original.controlRequestIds.any { it.substringAfter(':') == requestId && it != key }) CaptureValidation.conflict("REQUEST_CONFLICT", "Control request id is already bound to another action")
+        if (key in original.controlRequestIds) return@synchronized original
+        val updatedIds = original.controlRequestIds + key
+        val now = clock.instant()
+        val updated = when (action) {
+            "pause" -> when (original.state) {
+                CaptureNames.RUNNING -> original.copy(control = CaptureNames.PAUSE_REQUESTED, controlRequestIds = updatedIds, updatedAt = now)
+                CaptureNames.WAITING_RETRY -> original.copy(state = CaptureNames.PAUSED, endedAt = now, controlRequestIds = updatedIds, recovery = original.recovery?.copy(nextRetryAt = null), updatedAt = now)
+                CaptureNames.PAUSED, CaptureNames.CANCELLED -> original.copy(controlRequestIds = updatedIds)
+                else -> CaptureValidation.conflict("OPERATION_TERMINAL", "Operation cannot be paused in its current state")
+            }
+            "cancel" -> when (original.state) {
+                CaptureNames.RUNNING -> original.copy(control = CaptureNames.CANCEL_REQUESTED, controlRequestIds = updatedIds, updatedAt = now)
+                CaptureNames.WAITING_RETRY, CaptureNames.PAUSED -> original.copy(state = CaptureNames.CANCELLED, code = "CANCELLED_BY_USER", message = "Remaining capture work was cancelled", endedAt = now, controlRequestIds = updatedIds, recovery = original.recovery?.copy(nextRetryAt = null), updatedAt = now)
+                CaptureNames.CANCELLED -> original.copy(controlRequestIds = updatedIds)
+                else -> CaptureValidation.conflict("OPERATION_TERMINAL", "Operation cannot be cancelled in its current state")
+            }
+            "resume", "retry" -> {
+                val allowed = if (action == "resume") setOf(CaptureNames.PAUSED) else setOf(CaptureNames.WAITING_RETRY, CaptureNames.FAILED, CaptureNames.INCOMPLETE, CaptureNames.INTERRUPTED)
+                if (original.state !in allowed) CaptureValidation.conflict("OPERATION_STATE", "Operation cannot be $action in its current state")
+                if (action == "retry" && original.state == CaptureNames.WAITING_RETRY && original.recovery?.nextRetryAt?.isAfter(now) == true) {
+                    CaptureValidation.conflict("RETRY_COOLDOWN", "The provider retry cooldown lasts until ${original.recovery.nextRetryAt}")
+                }
+                if (!matchesCurrentAttempts(store.session(id), original)) CaptureValidation.conflict("STALE_ATTEMPT", "Select the current capture attempt")
+                requireIdle()
+                val next = reserve(original.copy(state = CaptureNames.RUNNING, control = null, updatedAt = now, endedAt = null, controlRequestIds = updatedIds, code = null, message = null), firstAttempt = false)
+                store.save(id, next)
+                project(store.session(id), next).also(store::save)
+                activeSession = id
+                executor.execute { run(id, next) }
+                return@synchronized next
+            }
+            else -> error("Exhaustive action check")
+        }
+        store.save(id, updated)
+        project(store.session(id), updated).also(store::save)
+        updated
+    }
+    private fun reserve(operation: CaptureOperationRecord, firstAttempt: Boolean): CaptureOperationRecord {
+        val recovery = operation.recovery ?: return operation
+        if (!firstAttempt && recovery.attemptsUsed >= recovery.maxAttempts) CaptureValidation.conflict("RETRY_EXHAUSTED", "The capture reached its configured attempt limit")
+        val availableRequests = recovery.totalRequestBudget - recovery.requestsUsed - recovery.reservedRequests
+        val availableBytes = recovery.totalByteBudget - recovery.bytesUsed - recovery.reservedBytes
+        if (availableRequests < 1 || availableBytes < 1) CaptureValidation.conflict("BUDGET_EXHAUSTED", "The capture reached its total request or byte budget")
+        val reservedRequests = minOf(operation.budget.requestBudget, availableRequests)
+        val reservedBytes = minOf(operation.budget.byteBudget, availableBytes)
+        return operation.copy(
+            budget = operation.budget.copy(requestBudget = reservedRequests, byteBudget = reservedBytes),
+            progress = null,
+            recovery = recovery.copy(
+                attemptsUsed = recovery.attemptsUsed + 1,
+                reservedRequests = recovery.reservedRequests + reservedRequests,
+                reservedBytes = recovery.reservedBytes + reservedBytes,
+                nextRetryAt = null,
+            ),
+        )
+    }
+
+    private fun matchesCurrentAttempts(session: CaptureSessionRecord, operation: CaptureOperationRecord): Boolean =
+        session.walletAttemptId == operation.walletAttemptId && session.marketAttemptId == operation.marketAttemptId && session.ratesAttemptId == operation.ratesAttemptId
+
+    private fun scheduleRetry(id: String, operation: CaptureOperationRecord, delay: Duration) {
+        retryScheduler.schedule(delay) {
+            synchronized(store) {
+                if (closed) return@schedule
+                val current = store.operationOrNull(id, operation.id) ?: return@schedule
+                if (current.state != CaptureNames.WAITING_RETRY || !matchesCurrentAttempts(store.session(id), current)) return@schedule
+                if (!idle()) {
+                    scheduleRetry(id, current, Duration.ofSeconds(1))
+                    return@schedule
+                }
+                val next = try {
+                    reserve(current.copy(state = CaptureNames.RUNNING, updatedAt = clock.instant(), endedAt = null), firstAttempt = false)
+                } catch (exception: CaptureRequestException) {
+                    val blocked = current.copy(state = CaptureNames.FAILED, updatedAt = clock.instant(), endedAt = clock.instant(), code = exception.code, message = exception.message, recovery = current.recovery?.copy(nextRetryAt = null))
+                    store.save(id, blocked)
+                    store.save(project(store.session(id), blocked))
+                    return@schedule
+                }
+                store.save(id, next)
+                store.save(project(store.session(id), next))
+                activeSession = id
+                executor.execute { run(id, next) }
+            }
+        }
+    }
+
+    private fun retryDelay(operation: CaptureOperationRecord, retryAfter: Duration?): Duration {
+        val attempt = operation.recovery?.attemptsUsed ?: 1
+        val baseSeconds = (1L shl (attempt - 1).coerceIn(0, 8)).coerceAtMost(MAX_RETRY_SECONDS)
+        val jitterMillis = Math.floorMod(operation.id.hashCode().toLong() * attempt, RETRY_JITTER_MILLIS + 1)
+        val backoff = Duration.ofSeconds(baseSeconds).plusMillis(jitterMillis)
+        return maxOf(backoff, retryAfter ?: Duration.ZERO)
+    }
+
+    private fun retryable(operation: CaptureOperationRecord): Boolean = when {
+        operation.recovery == null -> false
+        operation.recovery.attemptsUsed >= operation.recovery.maxAttempts -> false
+        operation.recovery.requestsUsed + operation.recovery.reservedRequests >= operation.recovery.totalRequestBudget -> false
+        operation.recovery.bytesUsed + operation.recovery.reservedBytes >= operation.recovery.totalByteBudget -> false
+        operation.control != null -> false
+        operation.state !in setOf(CaptureNames.FAILED, CaptureNames.INCOMPLETE) -> false
+        operation.code in RETRYABLE_PROVIDER_CATEGORIES -> true
+        operation.code?.removePrefix("BUDGET_EXHAUSTED_") in RETRYABLE_BUDGET_CATEGORIES -> true
+        else -> false
+    }
+
+    private fun accountCheckpoint(operation: CaptureOperationRecord, progress: CaptureProgressResponse): CaptureOperationRecord =
+        accountUsage(operation, progress.operationRequests ?: 0, progress.operationBytes ?: 0)
+
+    private fun accountUsage(operation: CaptureOperationRecord, requests: Int, bytes: Long): CaptureOperationRecord {
+        val recovery = operation.recovery ?: return operation
+        val previousRequests = operation.progress?.operationRequests ?: 0
+        val previousBytes = operation.progress?.operationBytes ?: 0L
+        val requestDelta = (requests - previousRequests).coerceAtLeast(0)
+        val byteDelta = (bytes - previousBytes).coerceAtLeast(0)
+        return operation.copy(recovery = recovery.copy(
+            requestsUsed = Math.addExact(recovery.requestsUsed, requestDelta),
+            bytesUsed = Math.addExact(recovery.bytesUsed, byteDelta),
+            reservedRequests = (recovery.reservedRequests - requestDelta).coerceAtLeast(0),
+            reservedBytes = (recovery.reservedBytes - byteDelta).coerceAtLeast(0),
+        ))
+    }
+
+    private fun releaseReservation(recovery: CaptureRecoveryRecord?): CaptureRecoveryRecord? =
+        recovery?.copy(reservedRequests = 0, reservedBytes = 0, nextRetryAt = null)
+
+    private fun settleUnknownReservation(operation: CaptureOperationRecord): CaptureOperationRecord {
+        val recovery = operation.recovery ?: return operation
+        return operation.copy(recovery = recovery.copy(
+            requestsUsed = Math.addExact(recovery.requestsUsed, recovery.reservedRequests),
+            bytesUsed = Math.addExact(recovery.bytesUsed, recovery.reservedBytes),
+            reservedRequests = 0,
+            reservedBytes = 0,
+        ))
+    }
+
+    private fun budgetExhausted(recovery: CaptureRecoveryRecord): Boolean =
+        recovery.requestsUsed >= recovery.totalRequestBudget || recovery.bytesUsed >= recovery.totalByteBudget
     fun start(id: String, request: CaptureOperationRequest): CaptureOperationRecord = synchronized(store) {
         val session = store.session(id)
         val fingerprint = store.fingerprint(request)
@@ -50,13 +216,16 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         }
         requireIdle()
         validate(session,request)
+        request.recovery?.let { CaptureValidation.recovery(it, request.step) }
         val at = clock.instant()
-        val operation = CaptureOperationRecord(store.id(request.requestId),request.requestId,fingerprint,request.step,request.attemptId,CaptureNames.RUNNING,at,at,budget=request.budget,scanPages=request.scanPages,walletAttemptId=session.walletAttemptId,marketAttemptId=session.marketAttemptId,ratesAttemptId=session.ratesAttemptId)
-        store.save(id,operation,true)
-        store.save(session.copy(operationId=operation.id))
+        val recovery = request.recovery?.let { CaptureRecoveryRecord(it.totalRequestBudget, it.totalByteBudget, it.maxAttempts) }
+        val operation = CaptureOperationRecord(store.id(request.requestId),request.requestId,fingerprint,request.step,request.attemptId,CaptureNames.RUNNING,at,at,budget=request.budget,scanPages=request.scanPages,walletAttemptId=session.walletAttemptId,marketAttemptId=session.marketAttemptId,ratesAttemptId=session.ratesAttemptId,recovery=recovery)
+        val reserved = reserve(operation, firstAttempt = true)
+        store.save(id,reserved,true)
+        store.save(session.copy(operationId=reserved.id))
         activeSession=id
-        executor.execute { run(id,operation) }
-        operation
+        executor.execute { run(id,reserved) }
+        reserved
     }
     private fun validate(session: CaptureSessionRecord, request: CaptureOperationRequest) {
         if (request.step !in setOf(CaptureNames.WALLET,CaptureNames.MARKET,CaptureNames.RATES,CaptureNames.INSPECT,CaptureNames.EXPORT,CaptureNames.CALIBRATE,CaptureNames.QUALIFY)) CaptureValidation.invalid("step","unsupported operation")
@@ -83,6 +252,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     }
     private fun run(id: String, initial: CaptureOperationRecord) {
         var operation = initial
+        var retryAfter: Duration? = null
         try {
             val session = synchronized(store) { store.session(id) }
             val paths = paths(session)
@@ -90,9 +260,29 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             requirePrerequisite(initial.step,verified)
             val command = command(session,initial,paths)
             val result = workflow.execute(command, CaptureCheckpointObserver { checkpoint -> synchronized(store) {
-                operation = operation.copy(updatedAt=checkpoint.at,progress=mapper.progress(checkpoint))
-                store.save(id,operation)
+                val progress = mapper.progress(checkpoint)
+                operation = accountCheckpoint(operation, progress).copy(updatedAt=checkpoint.at, progress=progress)
+                val saved = store.operation(id, operation.id)
+                operation = operation.copy(control = saved.control, controlRequestIds = saved.controlRequestIds)
+                when (saved.control) {
+                    CaptureNames.PAUSE_REQUESTED -> {
+                        operation = operation.copy(state = CaptureNames.PAUSED, control = null, endedAt = checkpoint.at, recovery = releaseReservation(operation.recovery))
+                        store.save(id, operation)
+                        throw CaptureOperationStop()
+                    }
+                    CaptureNames.CANCEL_REQUESTED -> {
+                        operation = operation.copy(state = CaptureNames.CANCELLED, control = null, code = "CANCELLED_BY_USER", message = "Remaining capture work was cancelled", endedAt = checkpoint.at, recovery = releaseReservation(operation.recovery))
+                        store.save(id, operation)
+                        throw CaptureOperationStop()
+                    }
+                    else -> store.save(id,operation)
+                }
             } })
+            retryAfter = when (result) {
+                is CaptureStepResult.Wallet -> result.capture.stopRetryAfter
+                is CaptureStepResult.Markets -> result.capture.stopRetryAfter
+                else -> null
+            }
             val inspected = if(result is CaptureStepResult.Inspected) result.inspection else workflow.inspect(paths)
             val wallet = inspected.walletCapture?.manifest?.let(::walletSettings)
             val qualification = when {
@@ -104,7 +294,8 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                 is CaptureStepResult.Wallet -> result.capture.manifest.complete
                 is CaptureStepResult.Markets -> result.capture.manifest.complete
                 is CaptureStepResult.Rates -> result.capture.manifest.complete
-                is CaptureStepResult.Inspected, is CaptureStepResult.Exported, is CaptureStepResult.Calibrated, is CaptureStepResult.Qualified -> true
+                is CaptureStepResult.CaseRates -> result.capture.manifest.complete
+                is CaptureStepResult.Inspected, is CaptureStepResult.Exported, is CaptureStepResult.CaseExported, is CaptureStepResult.Calibrated, is CaptureStepResult.Qualified -> true
             }
             val stopReason = when(result) {
                 is CaptureStepResult.Wallet -> result.capture.stopReason
@@ -116,8 +307,11 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                 is CaptureStepResult.Calibrated -> generated(session,"calibration.json")
                 else -> null
             }
-            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason,message=stopReason?.let(::stopMessage),inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null,qualification=qualification)
+            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason,message=stopReason?.let(::stopMessage),inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null,qualification=qualification,recovery=releaseReservation(operation.recovery))
         } catch(exception: Exception) {
+            if (exception is CaptureOperationStop) {
+                operation = store.operation(id, operation.id)
+            } else {
             val interrupted = exception is InterruptedException || Thread.currentThread().isInterrupted
             val code = when(exception) {
                 is CaptureRequestException -> exception.code
@@ -129,12 +323,37 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             // Only a fixed replacement exception reaches logs: provider exception text can contain credentials.
             if(code == "CAPTURE_FAILED") log.error("capture operation failed operationId={} category={}",operation.id,code,IllegalStateException("Capture operation failed").apply { stackTrace=exception.stackTrace })
             else log.warn("capture operation stopped operationId={} category={}",operation.id,code)
-            operation = operation.copy(state=if(interrupted) CaptureNames.INTERRUPTED else CaptureNames.FAILED,updatedAt=clock.instant(),endedAt=clock.instant(),code=code,message="Capture operation stopped: $code. Inspect saved evidence before retrying.")
-        } finally {
-            synchronized(store) {
-                try { store.save(id,operation); store.save(project(store.session(id),operation)) } finally { activeSession=null }
-                if (operation.step == CaptureNames.EXPORT && operation.state == CaptureNames.SUCCEEDED) queueQualification(id, operation)
+            val provider = exception as? CaptureProviderException
+            retryAfter = provider?.retryAfter
+            val budgetFailure = exception as? CaptureBudgetException
+            val usedRequests = provider?.requestsUsed ?: budgetFailure?.requestsUsed
+            val usedBytes = provider?.bytesUsed ?: budgetFailure?.bytesUsed
+            val accounted = if (usedRequests != null && usedBytes != null) accountUsage(operation, usedRequests, usedBytes) else operation
+            val settled = if (usedRequests != null && usedBytes != null) accounted.copy(recovery = releaseReservation(accounted.recovery)) else settleUnknownReservation(accounted)
+            operation = settled.copy(state=if(interrupted) CaptureNames.INTERRUPTED else CaptureNames.FAILED,updatedAt=clock.instant(),endedAt=clock.instant(),code=code,message="Capture operation stopped: $code. Inspect saved evidence before retrying.")
             }
+        } finally {
+            var followUp: CaptureOperationRecord? = null
+            synchronized(store) {
+                try {
+                    val saved = store.operation(id, operation.id)
+                    operation = operation.copy(controlRequestIds = saved.controlRequestIds)
+                    operation = when {
+                        saved.control == CaptureNames.PAUSE_REQUESTED && operation.state in setOf(CaptureNames.RUNNING, CaptureNames.FAILED, CaptureNames.INCOMPLETE) -> operation.copy(state = CaptureNames.PAUSED, control = null, code = "PAUSED_BY_USER", message = "Capture paused at its last durable checkpoint", endedAt = clock.instant(), recovery = releaseReservation(operation.recovery))
+                        saved.control == CaptureNames.CANCEL_REQUESTED && operation.state in setOf(CaptureNames.RUNNING, CaptureNames.FAILED, CaptureNames.INCOMPLETE) -> operation.copy(state = CaptureNames.CANCELLED, control = null, code = "CANCELLED_BY_USER", message = "Remaining capture work was cancelled", endedAt = clock.instant(), recovery = releaseReservation(operation.recovery))
+                        else -> operation.copy(control = null)
+                    }
+                    if (retryable(operation)) {
+                        val nextAt = clock.instant().plus(retryDelay(operation, retryAfter))
+                        operation = operation.copy(state = CaptureNames.WAITING_RETRY, endedAt = null, updatedAt = clock.instant(), recovery = operation.recovery?.copy(nextRetryAt = nextAt))
+                        followUp = operation
+                    }
+                    store.save(id,operation)
+                    store.save(project(store.session(id),operation))
+                } finally { activeSession=null }
+            }
+            followUp?.let { scheduleRetry(id, it, Duration.between(clock.instant(), it.recovery?.nextRetryAt ?: clock.instant()).coerceAtLeast(Duration.ZERO)) }
+            if (operation.step == CaptureNames.EXPORT && operation.state == CaptureNames.SUCCEEDED) synchronized(store) { queueQualification(id, operation) }
         }
     }
     /**
@@ -199,6 +418,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private fun timeout(operation: CaptureOperationRecord): Duration = Duration.ofMinutes(operation.budget.operationTimeoutMinutes.toLong())
     private fun generated(session: CaptureSessionRecord, name: String): String = "console/${session.id}/generated/${session.marketAttemptId ?: "none"}/${if(name=="calibration.json") "calibration" else session.ratesAttemptId ?: "none"}/$name"
     private fun project(session: CaptureSessionRecord, operation: CaptureOperationRecord): CaptureSessionRecord {
+        if (operation.caseId != null) return session
         if(operation.walletAttemptId!=session.walletAttemptId || operation.marketAttemptId!=session.marketAttemptId) return session
         if(operation.ratesAttemptId!=session.ratesAttemptId && operation.step!=CaptureNames.CALIBRATE) return session
         val success=operation.state==CaptureNames.SUCCEEDED
@@ -224,11 +444,24 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private fun safeCategory(value: String): String = if(value.matches(Regex("[A-Z][A-Z0-9_]{0,63}"))) value else "CAPTURE_FAILED"
     override fun close() {
         synchronized(store) { closed=true }
+        retryScheduler.close()
         executor.shutdownNow()
-        if(!executor.awaitTermination(20,TimeUnit.SECONDS)) log.warn("capture worker shutdown category=WAITING_FOR_BOUNDED_PROVIDER_TIMEOUT")
+        var interrupted = false
+        while (true) {
+            try {
+                if (executor.awaitTermination(1, TimeUnit.MINUTES)) break
+            } catch (_: InterruptedException) {
+                interrupted = true
+            }
+        }
+        if (interrupted) Thread.currentThread().interrupt()
     }
     private companion object {
         const val DEADLINE = "DEADLINE"
         const val QUALIFY_ID_HASH_LENGTH = 32
+        const val MAX_RETRY_SECONDS = 300L
+        const val RETRY_JITTER_MILLIS = 1000L
+        val RETRYABLE_PROVIDER_CATEGORIES = setOf("IO", "TIMEOUT", "RATE_LIMITED", "UNAVAILABLE")
+        val RETRYABLE_BUDGET_CATEGORIES = setOf("REQUESTS", "BYTES", "RESPONSE_BYTES", DEADLINE)
     }
 }

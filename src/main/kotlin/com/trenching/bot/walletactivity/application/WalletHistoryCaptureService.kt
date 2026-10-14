@@ -68,7 +68,7 @@ internal class WalletHistoryCaptureService(
                 manifest = manifest.copy(records = records.toList())
                 log.warn("wallet_capture interrupted category={} signature={}", exception.category, selection.signature)
                 checkpoint(request, usage(manifest, budget), budget)
-                if (outcome == WalletHistoryOutcome.PROVIDER_UNAVAILABLE) { stop.record(exception.category); break } else continue
+                if (outcome == WalletHistoryOutcome.PROVIDER_UNAVAILABLE) { stop.record(exception.category, exception.retryAfter); break } else continue
             } catch (exception: CaptureBudgetException) {
                 log.warn("wallet_capture interrupted category={} signature={}", exception.category, selection.signature)
                 stop.record(exception.category)
@@ -119,7 +119,7 @@ internal class WalletHistoryCaptureService(
                 ChainCaptureReads.signaturePage(rpc, manifest.listingAddress, before = manifest.scanCursor?.signature, until = null, budget)
             } catch (exception: CaptureProviderException) {
                 log.warn("wallet_capture discovery interrupted category={}", exception.category)
-                stop.record(exception.category)
+                stop.record(exception.category, exception.retryAfter)
                 return manifest
             } catch (exception: CaptureBudgetException) {
                 log.warn("wallet_capture discovery interrupted category={}", exception.category)
@@ -171,7 +171,7 @@ internal class WalletHistoryCaptureService(
         log.info("wallet_capture finished scope={} selected={} scanned={} skippedFailed={} discoveryStop={} complete={} requests={} bytes={} stopReason={}",
             manifest.scope, manifest.selection.size, manifest.scannedSignatures, manifest.skippedFailed, manifest.discoveryStop, complete, budget.requestsUsed, budget.bytesUsed,
             stop.reason)
-        return WalletHistoryCaptureResult(request.directory.toAbsolutePath().normalize(), manifest, stop.reason)
+        return WalletHistoryCaptureResult(request.directory.toAbsolutePath().normalize(), manifest, stop.reason, stop.retryAfter)
     }
 
     private fun usage(manifest: WalletHistoryManifest, budget: CaptureBudget): WalletHistoryManifest =

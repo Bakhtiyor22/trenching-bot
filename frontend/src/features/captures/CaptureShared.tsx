@@ -6,8 +6,8 @@ import { reasonText } from './captureReasons';
 
 const QUALIFICATION_ERRORS = new Set(['EXPORT_CHANGED', 'EXPORT_REQUIRED', 'UNSUPPORTED_SCOPE']);
 
-export function CaptureStatus({ state }: { state: string }) {
-  return <Badge variant="light" color={state === 'READY' || state === 'SUCCEEDED' ? 'teal' : state === 'FAILED' || state === 'INVALID' ? 'red' : state === 'NOT_STARTED' ? 'gray' : 'amber'}>{state.replaceAll('_', ' ')}</Badge>;
+export function CaptureStatus({ state, label }: { state: string; label?: string }) {
+  return <Badge variant="light" color={state === 'READY' || state === 'SUCCEEDED' ? 'teal' : state === 'FAILED' || state === 'INVALID' ? 'red' : state === 'NOT_STARTED' ? 'gray' : 'amber'}>{label ?? state.replaceAll('_', ' ')}</Badge>;
 }
 export function CommandError({ error, uncertain, retry }: { error: unknown; uncertain: boolean; retry: () => void }) {
   if (error == null && !uncertain) return null;

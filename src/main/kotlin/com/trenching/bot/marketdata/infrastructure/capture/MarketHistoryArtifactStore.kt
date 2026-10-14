@@ -10,6 +10,7 @@ import com.trenching.bot.chaincapture.ManifestFields.integer
 import com.trenching.bot.chaincapture.ManifestFields.optionalString
 import com.trenching.bot.chaincapture.ManifestFields.smallInteger
 import com.trenching.bot.chaincapture.ManifestFields.string
+import com.trenching.bot.marketdata.MarketCaseId
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.marketdata.*
 import com.trenching.bot.marketdata.domain.MarketWindowRules
@@ -27,21 +28,47 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         MarketHistoryCaptureResult(directory.toAbsolutePath().normalize(), loadIfPresent(directory)
             ?: throw CaptureValidationException("MANIFEST_MISSING"))
 
-    /** Verifies the manifest and every artifact; [onArtifact] receives each artifact only after its hash and identity check. */
-    fun loadIfPresent(directory: Path, onArtifact: (MarketTransactionRecord, JsonNode) -> Unit = { _, _ -> }): MarketHistoryManifest? {
+    fun loadManifest(directory: Path): MarketHistoryManifest? {
         val root = files.root(directory, create = false)
         val inner = files.readManifest(root, MarketCaptureFormat.MANIFEST) ?: return null
         ManifestFields.requireVersion(inner, MarketCaptureFormat.VERSION)
-        val manifest = parse(inner)
-        validate(manifest)
-        manifest.records.forEach { record ->
+        return parse(inner).also(::validate)
+    }
+
+    fun loadCaseIfPresent(
+        directory: Path,
+        caseId: MarketCaseId,
+        onArtifact: (MarketTransactionRecord, JsonNode, MarketWindowRecord) -> Unit,
+    ): MarketHistoryManifest? {
+        val manifest = loadManifest(directory) ?: return null
+        val record = manifest.windows.singleOrNull { MarketCaseId.from(MarketWindowRecords.window(it)) == caseId }
+            ?: throw CaptureValidationException("MARKET_CASE_NOT_FOUND")
+        val signatures = record.selection.mapTo(HashSet()) { it.signature }
+        verifyArtifacts(directory, manifest, signatures) { transaction, node -> onArtifact(transaction, node, record) }
+        return manifest
+    }
+
+    /** Verifies the manifest and every artifact; [onArtifact] receives each artifact only after its hash and identity check. */
+    fun loadIfPresent(directory: Path, onArtifact: (MarketTransactionRecord, JsonNode) -> Unit = { _, _ -> }): MarketHistoryManifest? {
+        val manifest = loadManifest(directory) ?: return null
+        verifyArtifacts(directory, manifest, null, onArtifact)
+        return manifest
+    }
+
+    private fun verifyArtifacts(
+        directory: Path,
+        manifest: MarketHistoryManifest,
+        signatures: Set<String>?,
+        onArtifact: (MarketTransactionRecord, JsonNode) -> Unit,
+    ) {
+        val root = files.root(directory, create = false)
+        manifest.records.filter { signatures == null || it.signature in signatures }.forEach { record ->
             val artifact = record.artifact ?: return@forEach
             val sha256 = checkNotNull(record.sha256) { "Validated record has an artifact without a hash signature=${record.signature}" }
             val node = files.readArtifact(root, artifact, record.bytes, sha256)
             if (evidence.classify(node, record.signature, record.slot) != record.outcome) fail("ARTIFACT_IDENTITY")
             onArtifact(record, node)
         }
-        return manifest
     }
 
     fun save(directory: Path, manifest: MarketHistoryManifest) {

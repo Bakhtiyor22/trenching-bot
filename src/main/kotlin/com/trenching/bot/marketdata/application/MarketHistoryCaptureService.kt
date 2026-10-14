@@ -48,7 +48,6 @@ internal class MarketHistoryCaptureService(
         checkpoint(request, usage(manifest, budget), budget)
         val stop = CaptureStop()
         manifest = discover(request, manifest, budget, stop)
-        if (manifest.windows.none { it.coverage == MarketWindowCoverage.PENDING }) manifest = fetchDetails(request, manifest, budget, stop)
         return finish(request, manifest, budget, stop)
     }
 
@@ -61,7 +60,7 @@ internal class MarketHistoryCaptureService(
                     ChainCaptureReads.signaturePage(rpc, window.baseMint, window.scanCursor?.signature, window.untilSignature, budget)
                 } catch (exception: CaptureProviderException) {
                     log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
-                    stop.record(exception.category)
+                    stop.record(exception.category, exception.retryAfter)
                     return manifest
                 } catch (exception: CaptureBudgetException) {
                     log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
@@ -79,6 +78,11 @@ internal class MarketHistoryCaptureService(
             }
             log.info("market_capture window mint={} fromSlot={} toSlot={} coverage={} scanned={} skippedFailed={} skippedNewer={} selected={}",
                 window.baseMint, window.fromSlot, window.toSlot, window.coverage, window.scanned, window.skippedFailed, window.skippedNewer, window.selected)
+            if (window.coverage == MarketWindowCoverage.COMPLETE) {
+                manifest = fetchDetails(request, manifest, budget, stop, window.selection.mapTo(HashSet()) { it.signature })
+                checkpoint(request, usage(manifest, budget), budget)
+                if (stop.reason != null) return manifest
+            }
         }
         return manifest
     }
@@ -98,11 +102,18 @@ internal class MarketHistoryCaptureService(
         return manifest.copy(windows = windows, records = records)
     }
 
-    private fun fetchDetails(request: MarketHistoryCaptureRequest, saved: MarketHistoryManifest, budget: CaptureBudget, stop: CaptureStop): MarketHistoryManifest {
+    private fun fetchDetails(
+        request: MarketHistoryCaptureRequest,
+        saved: MarketHistoryManifest,
+        budget: CaptureBudget,
+        stop: CaptureStop,
+        selectedSignatures: Set<String>,
+    ): MarketHistoryManifest {
         var manifest = saved
         val records = manifest.records.toMutableList()
         var fetched = 0
         for ((index, record) in manifest.records.withIndex()) {
+            if (record.signature !in selectedSignatures) continue
             if (record.outcome !in MarketCaptureFormat.UNRESOLVED_OUTCOMES) continue
             val raw = try {
                 ChainCaptureReads.transaction(rpc, record.signature, budget)
@@ -113,7 +124,7 @@ internal class MarketHistoryCaptureService(
                 manifest = manifest.copy(records = records.toList())
                 log.warn("market_capture interrupted category={} signature={}", exception.category, record.signature)
                 checkpoint(request, usage(manifest, budget), budget)
-                if (outcome == MarketTransactionOutcome.PROVIDER_UNAVAILABLE) { stop.record(exception.category); break } else continue
+                if (outcome == MarketTransactionOutcome.PROVIDER_UNAVAILABLE) { stop.record(exception.category, exception.retryAfter); break } else continue
             } catch (exception: CaptureBudgetException) {
                 log.warn("market_capture interrupted category={} signature={}", exception.category, record.signature)
                 stop.record(exception.category)
@@ -139,7 +150,7 @@ internal class MarketHistoryCaptureService(
         log.info("market_capture finished windows={} transactions={} acquisitionComplete={} complete={} requests={} bytes={} stopReason={}",
             manifest.windows.size, manifest.records.size, manifest.acquisitionComplete, manifest.complete, budget.requestsUsed, budget.bytesUsed,
             stop.reason)
-        return MarketHistoryCaptureResult(request.directory.toAbsolutePath().normalize(), manifest, stop.reason)
+        return MarketHistoryCaptureResult(request.directory.toAbsolutePath().normalize(), manifest, stop.reason, stop.retryAfter)
     }
 
     private fun usage(manifest: MarketHistoryManifest, budget: CaptureBudget): MarketHistoryManifest {

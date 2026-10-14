@@ -3,6 +3,8 @@ package com.trenching.bot.console.api
 import com.trenching.bot.common.PageResult
 import com.trenching.bot.console.capture.CaptureCatalogService
 import com.trenching.bot.console.capture.CaptureConsoleFixture
+import com.trenching.bot.console.capture.CaptureCaseService
+import com.trenching.bot.console.capture.ManualExecutor
 import com.trenching.bot.console.config.SolanaRpcProperties
 import com.trenching.bot.console.mapper.CaptureResponseMapperImpl
 import com.trenching.bot.console.mapper.DatasetResponseMapperImpl
@@ -33,8 +35,10 @@ class CaptureControllerTest {
     @Test
     fun `the capture config always sends the wallet-token defaults and their budget`() {
         val fixture = CaptureConsoleFixture(root)
-        val controller = CaptureController(fixture.sessions, fixture.operations, CaptureCatalogService(fixture.store, fixture.operations, UnusedCatalog),
-            CaptureResponseMapperImpl(), DatasetResponseMapperImpl(), SolanaRpcProperties(), ReferenceRateProperties())
+        val mapper = CaptureResponseMapperImpl()
+        val cases = CaptureCaseService(fixture.store, fixture.workflow, mapper, DatasetResponseMapperImpl(), UnusedCatalog, fixture.clock, ManualExecutor())
+        val controller = CaptureController(fixture.sessions, fixture.operations, cases, CaptureCatalogService(fixture.store, fixture.operations, UnusedCatalog),
+            mapper, DatasetResponseMapperImpl(), SolanaRpcProperties(), ReferenceRateProperties())
 
         val config = fixture.json.readTree(fixture.json.writeValueAsString(controller.config()))
 

@@ -6,6 +6,7 @@ import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.marketdata.MarketCaptureWindow
+import com.trenching.bot.marketdata.MarketCaseId
 import com.trenching.bot.marketdata.MarketHistoryCaptureConfiguration
 import com.trenching.bot.marketdata.MarketHistoryCaptureResult
 import com.trenching.bot.marketdata.MarketHistoryDecodeResult
@@ -24,11 +25,13 @@ import com.trenching.bot.replay.RecordedWalletFixtures.WALLET
 import com.trenching.bot.replay.application.DatasetFingerprint
 import com.trenching.bot.replay.application.RecordedReplayExportService
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
+import com.trenching.bot.replay.application.RecordedCaseReplayExportService
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.marketdata.RecordedReferenceRates
 import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.marketdata.ReferenceRateCaptureResult
 import com.trenching.bot.walletactivity.WalletHistoryCaptureConfiguration
+import com.trenching.bot.walletactivity.RecordedWalletHistory
 import java.time.Instant
 import com.trenching.bot.walletactivity.WalletHistoryScope
 import java.math.BigDecimal
@@ -79,6 +82,73 @@ class RecordedReplayExportTest {
         assertEquals(output(), export.output)
         assertEquals(WalletAddress.of(WALLET), export.trackedWallet)
         assertTrue(export.written)
+    }
+
+    @Test
+    fun `case export carries exact wallet anchor provenance and only the selected case data`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveRealMarketCapture()
+        val window = window(SLOT + 1, SLOT + 4500)
+        val planning = com.trenching.bot.replay.application.RecordedWalletPlanning(
+            WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper))
+        val planned = planning.plan(wallet())
+        val anchor = planning.anchor(planned, window)
+        val recordedMarkets = MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper)
+        val recordedRates = object : RecordedReferenceRates {
+            override fun inspect(directory: Path): ReferenceRateCaptureResult = error("Export reads rates, not their audit")
+            override fun rates(directory: Path): List<ReferenceRate> = listOf(RATE)
+        }
+        val request = CaptureCaseExportRequest(wallet(), markets(), rates(), MarketCaseId.from(window), WalletAddress.of(WALLET), MintAddress.of(MINT),
+            anchor.signature, anchor.slot.value, anchor.instructionIndex, window.fromSlot.value, window.toSlot.value,
+            ReplayMarketFixtures.PARAMETERS, directory.resolve("case.json"))
+
+        val result = RecordedCaseReplayExportService(
+            WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper), recordedMarkets, recordedRates, mapper,
+        ).export(request)
+        val dataset = Files.newInputStream(result.output).use { ReplayDatasetLoader(mapper).load(it) }
+
+        assertEquals(MarketCaseId.from(window), result.caseId)
+        assertEquals(WALLET, result.trackedWallet.value)
+        assertEquals(MINT, result.mint.value)
+        assertEquals(SIGNATURE, result.anchorSignature.value)
+        assertEquals(SLOT, result.anchorSlot)
+        assertEquals(dataset.transactions.single().instructionIndex, result.instructionIndex)
+        assertEquals(window.fromSlot.value, result.fromSlot)
+        assertEquals(window.toSlot.value, result.toSlot)
+        assertEquals(ReplayMarketFixtures.PARAMETERS, result.windowParameters)
+        assertEquals(listOf(SIGNATURE), dataset.transactions.map { it.signature.value })
+        assertEquals(1, dataset.observations.size)
+        assertEquals(listOf(RATE), dataset.referenceRates)
+    }
+
+    @Test
+    fun `case export refuses a request whose mint differs from the selected case`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveRealMarketCapture()
+
+        val request = caseRequest().copy(mint = MintAddress.of("11111111111111111111111111111112"))
+
+        assertCategory("MARKET_CASE_IDENTITY_MISMATCH") { caseService().export(request) }
+        assertFalse(Files.exists(request.output))
+    }
+
+    @Test
+    fun `case export refuses two normalized wallet trades from the anchor transaction`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveRealMarketCapture()
+        val delegate = WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper)
+        val ambiguous = object : RecordedWalletHistory {
+            override fun inspect(directory: Path) = delegate.inspect(directory)
+
+            override fun decode(directory: Path, wallet: WalletAddress) = delegate.decode(directory, wallet).let { decoded ->
+                decoded.copy(transactions = decoded.transactions + decoded.transactions.single().copy(instructionIndex = 99))
+            }
+        }
+
+        assertCategory("CASE_ANCHOR_MULTITRADE_TRANSACTION") {
+            caseService(ambiguous).export(caseRequest())
+        }
+        assertFalse(Files.exists(caseRequest().output))
     }
 
     @Test
@@ -225,6 +295,34 @@ class RecordedReplayExportTest {
             override fun rates(directory: Path): List<ReferenceRate> = rates
         }
         return RecordedReplayExportService(WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper), markets, recordedRates, mapper)
+    }
+
+    private fun caseService(
+        walletHistory: RecordedWalletHistory = WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper),
+    ): RecordedCaseReplayExportService {
+        val recordedRates = object : RecordedReferenceRates {
+            override fun inspect(directory: Path): ReferenceRateCaptureResult = error("Export reads rates, not their audit")
+            override fun rates(directory: Path): List<ReferenceRate> = listOf(RATE)
+        }
+        return RecordedCaseReplayExportService(
+            walletHistory,
+            MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper),
+            recordedRates,
+            mapper,
+        )
+    }
+
+    private fun caseRequest(): CaptureCaseExportRequest {
+        val window = window(SLOT + 1, SLOT + 4500)
+        val planning = com.trenching.bot.replay.application.RecordedWalletPlanning(
+            WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper),
+        )
+        val anchor = planning.plan(wallet()).let { planning.anchor(it, window) }
+        return CaptureCaseExportRequest(
+            wallet(), markets(), rates(), MarketCaseId.from(window), WalletAddress.of(WALLET), MintAddress.of(MINT),
+            anchor.signature, anchor.slot.value, anchor.instructionIndex, window.fromSlot.value, window.toSlot.value,
+            ReplayMarketFixtures.PARAMETERS, directory.resolve("case.json"),
+        )
     }
 
     private fun request() = RecordedReplayExportRequest(wallet(), markets(), rates(), output())

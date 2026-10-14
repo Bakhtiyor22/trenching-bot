@@ -16,6 +16,21 @@ interface CaptureResponseMapper {
     fun session(value: CaptureSessionView): CaptureSessionResponse
     fun attempt(value: CaptureAttemptRecord): CaptureAttemptResponse
     fun operation(value: CaptureOperationRecord): CaptureOperationResponse
+    fun captureCase(value: CaptureCaseView): CaptureCaseResponse
+    fun cases(value: CaptureCasesView): CaptureCasesResponse
+    fun caseProgress(value: CaptureProgressResponse): CaptureCaseProgressResponse
+    fun recovery(value: CaptureRecoveryRecord): CaptureRecoveryResponse = CaptureRecoveryResponse(
+        enabled = true,
+        totalRequestBudget = value.totalRequestBudget,
+        totalByteBudget = value.totalByteBudget,
+        maxAttempts = value.maxAttempts,
+        attemptsUsed = value.attemptsUsed,
+        requestsUsed = value.requestsUsed,
+        bytesUsed = value.bytesUsed,
+        reservedRequests = value.reservedRequests,
+        reservedBytes = value.reservedBytes,
+        nextRetryAt = value.nextRetryAt,
+    )
     fun progress(value: CaptureCheckpoint): CaptureProgressResponse
     fun stage(value: CaptureStageSummary): CaptureStageResponse
     fun sessions(value: CapturePage<CaptureSessionView>): CaptureSessionPageResponse

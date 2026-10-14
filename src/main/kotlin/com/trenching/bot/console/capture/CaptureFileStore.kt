@@ -86,6 +86,10 @@ class CaptureFileStore(val paths: CapturePathPolicy, private val json: ObjectMap
     fun operationOrNull(session: String, id: String): CaptureOperationRecord? = if (Files.exists(paths.resolve("console/${id(session)}/operation-${id(id)}.json"))) operation(session,id) else null
     fun save(session: String, operation: CaptureOperationRecord, create: Boolean = false) = write("console/${id(session)}/operation-${id(operation.id)}.json", operation, create)
     fun operations(session: String): List<CaptureOperationRecord> = names(session, "operation-").map { read(it, CaptureOperationRecord::class.java) }
+    fun captureCase(session: String, caseId: String): CaptureCaseRecord = read("console/${id(session)}/case-${id(caseId)}.json", CaptureCaseRecord::class.java)
+    fun captureCaseOrNull(session: String, caseId: String): CaptureCaseRecord? = if (Files.exists(paths.resolve("console/${id(session)}/case-${id(caseId)}.json"))) captureCase(session, caseId) else null
+    fun save(session: String, record: CaptureCaseRecord) = write("console/${id(session)}/case-${id(record.caseId)}.json", record, false)
+    fun saveCaseProvenance(path: String, record: CaptureCaseExportRecord) = write(path, record, false)
     fun fingerprint(value: Any): String = java.security.MessageDigest.getInstance("SHA-256").digest(json.writeValueAsBytes(value)).joinToString("") { "%02x".format(it) }
     private fun names(session: String, prefix: String): List<String> = Files.list(paths.resolve("console/${id(session)}")).use { stream -> stream.map { it.fileName.toString() }.filter { it.startsWith(prefix) && it.endsWith(".json") }.sorted().map { "console/$session/$it" }.toList() }
     private fun <T> read(path: String, type: Class<T>): T {

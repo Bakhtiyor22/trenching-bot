@@ -35,6 +35,17 @@ class RecordedWalletPlanningTest {
     }
 
     @Test
+    fun `case anchor resolves the exact wallet instruction that created its window`() {
+        val planning = RecordedWalletPlanning(recorded)
+        val planned = planning.plan(directory)
+        val anchor = planning.anchor(planned, planned.plan.windows.single())
+
+        assertEquals(TransactionSignature.of(SIGNATURE), anchor.signature)
+        assertEquals(Slot.of(SLOT), anchor.slot)
+        assertEquals(planned.history.transactions.single().instructionIndex, anchor.instructionIndex)
+    }
+
+    @Test
     fun `a proven first buy equal to the token-account first buy plans one window from it`() {
         val evidence = TargetTokenFixtures.provenEvidence(MINT, SIGNATURE, SLOT)
         val planned = planning(evidence).plan(directory)

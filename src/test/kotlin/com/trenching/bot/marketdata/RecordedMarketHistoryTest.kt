@@ -201,6 +201,61 @@ class RecordedMarketHistoryTest {
     }
 
     @Test
+    fun `decoding one ready case ignores a corrupt captured sibling`() {
+        val selected = artifact(fixture())
+        val sibling = artifact(fixture(signature(2), SLOT + 31))
+        val selectedWindow = complete(MINT, listOf(selected))
+        val siblingWindow = complete(OTHER_MINT, listOf(sibling)).copy(fromSlot = FROM + 30, toSlot = TO + 30)
+        save(listOf(selectedWindow, siblingWindow), listOf(selected, sibling))
+        Files.writeString(directory.resolve(requireNotNull(sibling.artifact)), "corrupt sibling")
+
+        val result = recorded.decodeCase(directory, MarketCaseId.from(windowValue(MINT)))
+
+        assertTrue(result.ready)
+        assertEquals(1, result.observations.size)
+        assertCategory("ARTIFACT_BYTES") { recorded.decode(directory) }
+    }
+
+    @Test
+    fun `one case can validate while its sibling discovery is pending`() {
+        val record = artifact(fixture())
+        val readyWindow = complete(MINT, listOf(record))
+        val pendingWindow = MarketWindowRecord(OTHER_MINT, MintAddress.WRAPPED_SOL.value, FROM + 30, TO + 30, UNTIL,
+            MarketWindowCoverage.PENDING, 0, 0, 0, 0, 0, emptyList(), null)
+        save(listOf(readyWindow, pendingWindow), listOf(record))
+
+        val result = recorded.decodeCase(directory, MarketCaseId.from(windowValue(MINT)))
+
+        assertTrue(result.ready)
+        assertEquals(MarketCaseStage.DISCOVERY_PENDING, recorded.inspectCases(directory).cases.last().stage)
+    }
+
+    @Test
+    fun `a shared missing transaction blocks every case that selected it`() {
+        val gap = MarketTransactionRecord(signature(3), SLOT, MarketTransactionOutcome.WITHHELD_UNSAFE_TEXT)
+        save(listOf(complete(MINT, listOf(gap)), complete(OTHER_MINT, listOf(gap))), listOf(gap))
+
+        val affected = listOf(MINT, OTHER_MINT).map { mint ->
+            recorded.decodeCase(directory, MarketCaseId.from(windowValue(mint)))
+        }
+
+        assertTrue(affected.all { !it.ready })
+        assertTrue(affected.all { it.blocker == "MARKET_DETAIL_GAPS" })
+    }
+
+    @Test
+    fun `case inventory preserves the selected count when an over cap window retains no selection`() {
+        save(listOf(incomplete(MINT, MarketWindowCoverage.OVER_CAP)), emptyList())
+
+        val progress = recorded.inspectCases(directory).cases.single()
+
+        assertEquals(5, progress.selected)
+        assertEquals(0, progress.captured)
+        assertEquals(5, progress.unresolved)
+        assertEquals(MarketCaseStage.DISCOVERY_INCOMPLETE, progress.stage)
+    }
+
+    @Test
     fun `inspection and decoding verify manifest and artifact hashes`() {
         val record = artifact(fixture())
         save(listOf(complete(MINT, listOf(record))), listOf(record))

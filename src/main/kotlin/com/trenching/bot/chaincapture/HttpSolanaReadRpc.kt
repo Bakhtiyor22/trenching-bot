@@ -65,7 +65,7 @@ class HttpSolanaReadRpc(
                 }
             }
         }
-        throw CaptureProviderException(last.category)
+        throw CaptureProviderException(last.category, last.retryAfter, budget.requestsUsed, budget.bytesUsed)
     }
 
     private fun request(uri: URI, method: String, params: List<Any>, budget: CaptureBudget): CaptureHttpReply =
@@ -92,7 +92,7 @@ class HttpSolanaReadRpc(
             val count = input.read(buffer, 0, maxOf(1, readLimit))
             if (count < 0) break
             budget.bytes(count.toLong())
-            if (output.size().toLong() + count > ChainCaptureFormat.MAX_RESPONSE_BYTES) throw CaptureBudgetException("RESPONSE_BYTES")
+            if (output.size().toLong() + count > ChainCaptureFormat.MAX_RESPONSE_BYTES) throw CaptureBudgetException("RESPONSE_BYTES", budget.requestsUsed, budget.bytesUsed)
             output.write(buffer, 0, count)
         }
         return output.toByteArray()
@@ -141,7 +141,7 @@ class HttpSolanaReadRpc(
 
     private fun pause(duration: Duration, budget: CaptureBudget) {
         if (duration.isZero) return
-        if (duration.toNanos() >= budget.remainingNanos(timing.nanoTime())) throw CaptureBudgetException("DEADLINE")
+        if (duration.toNanos() >= budget.remainingNanos(timing.nanoTime())) throw CaptureBudgetException("DEADLINE", budget.requestsUsed, budget.bytesUsed)
         try { timing.pause(duration) } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
             throw CaptureProviderException("INTERRUPTED")

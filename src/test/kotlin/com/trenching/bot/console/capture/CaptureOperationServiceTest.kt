@@ -1,8 +1,10 @@
 package com.trenching.bot.console.capture
 
 import com.trenching.bot.chaincapture.CaptureProviderException
+import com.trenching.bot.chaincapture.CaptureCheckpoint
 import com.trenching.bot.console.api.dto.CaptureBudget
 import com.trenching.bot.console.api.dto.CaptureOperationRequest
+import com.trenching.bot.console.api.dto.CaptureRecoveryConfig
 import com.trenching.bot.console.mapper.CaptureResponseMapperImpl
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.console.api.dto.CaptureAttemptRequest
@@ -14,6 +16,7 @@ import com.trenching.bot.replay.CaptureStepCommand
 import com.trenching.bot.walletactivity.WalletHistoryCaptureResult
 import com.trenching.bot.walletactivity.WalletHistoryScope
 import java.nio.file.Path
+import java.time.Duration
 import java.util.concurrent.Executors
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -73,6 +76,156 @@ class CaptureOperationServiceTest {
         val busy = failure { fixture.operations.start("session-2", CaptureOperationRequest("inspect-2", CaptureNames.INSPECT, other.marketAttemptId)) }
         assertEquals(409, busy.status)
         assertEquals("CAPTURE_BUSY", busy.code)
+    }
+
+    @Test
+    fun `a transient provider failure schedules one bounded retry with its retry after delay`() {
+        val scheduler = ManualCaptureRetryScheduler()
+        val fixture = CaptureConsoleFixture(root, retryScheduler = scheduler).apply { create() }
+        fixture.workflow.failure = CaptureProviderException("RATE_LIMITED", Duration.ofSeconds(40), requestsUsed = 1, bytesUsed = 12)
+        val session = fixture.store.session("session-1")
+
+        val accepted = fixture.operations.start("session-1", CaptureOperationRequest(
+            "wallet-recovery", CaptureNames.WALLET, session.walletAttemptId,
+            CaptureBudget(requestBudget = 2, byteBudget = 100),
+            recovery = CaptureRecoveryConfig(totalRequestBudget = 6, totalByteBudget = 300, maxAttempts = 2),
+        ))
+        assertEquals(1, accepted.recovery?.attemptsUsed)
+        assertEquals(2, accepted.recovery?.reservedRequests)
+        fixture.executor.runAll()
+
+        val waiting = fixture.operations.find("session-1", accepted.id)
+        assertEquals(CaptureNames.WAITING_RETRY, waiting.state)
+        assertEquals(1, waiting.recovery?.requestsUsed)
+        assertEquals(0, waiting.recovery?.reservedRequests)
+        assertEquals(1, scheduler.pending.size)
+        assertTrue(scheduler.pending.first().delay >= Duration.ofSeconds(40))
+        assertEquals("RETRY_COOLDOWN", failure { fixture.operations.control("session-1", accepted.id, "retry", "retry-now") }.code)
+
+        fixture.workflow.failure = null
+        scheduler.runNext()
+        val second = fixture.operations.find("session-1", accepted.id)
+        assertEquals(CaptureNames.RUNNING, second.state)
+        assertEquals(2, second.recovery?.attemptsUsed)
+        assertEquals(1, fixture.executor.queued.size)
+        fixture.executor.runAll()
+
+        assertEquals(CaptureNames.FAILED, fixture.operations.find("session-1", accepted.id).state)
+        assertTrue(scheduler.pending.isEmpty())
+    }
+
+    @Test
+    fun `recovery charges each retry slice against the total request ceiling`() {
+        val scheduler = ManualCaptureRetryScheduler()
+        val fixture = CaptureConsoleFixture(root, retryScheduler = scheduler).apply { create() }
+        val session = fixture.store.session("session-1")
+        fixture.workflow.checkpointBeforeFailure = CaptureCheckpoint("FAILED_SLICE", FakeCaptureWorkflow.AT, operationRequests = 2, operationBytes = 20)
+        fixture.workflow.failure = CaptureProviderException("RATE_LIMITED", requestsUsed = 2, bytesUsed = 20)
+
+        val accepted = fixture.operations.start("session-1", CaptureOperationRequest(
+            "bounded-recovery", CaptureNames.WALLET, session.walletAttemptId,
+            CaptureBudget(requestBudget = 2, byteBudget = 100),
+            recovery = CaptureRecoveryConfig(totalRequestBudget = 3, totalByteBudget = 200, maxAttempts = 3),
+        ))
+        fixture.executor.runAll()
+        assertEquals(2, fixture.operations.find("session-1", accepted.id).recovery?.requestsUsed)
+
+        fixture.workflow.checkpointBeforeFailure = CaptureCheckpoint("FAILED_SLICE", FakeCaptureWorkflow.AT, operationRequests = 1, operationBytes = 10)
+        fixture.workflow.failure = CaptureProviderException("RATE_LIMITED", requestsUsed = 1, bytesUsed = 10)
+        scheduler.runNext()
+        val retry = fixture.operations.find("session-1", accepted.id)
+        assertEquals(1, retry.budget.requestBudget)
+        assertNull(retry.progress)
+        fixture.executor.runAll()
+
+        val exhausted = fixture.operations.find("session-1", accepted.id)
+        assertEquals(3, exhausted.recovery?.requestsUsed)
+        assertEquals(CaptureNames.FAILED, exhausted.state)
+        assertTrue(scheduler.pending.isEmpty())
+    }
+
+    @Test
+    fun `restart charges an uncheckpointed reservation and never grants it again`() {
+        val scheduler = ManualCaptureRetryScheduler()
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val session = fixture.store.session("session-1")
+        val accepted = fixture.operations.start("session-1", CaptureOperationRequest(
+            "crashed-recovery", CaptureNames.WALLET, session.walletAttemptId,
+            CaptureBudget(requestBudget = 2, byteBudget = 100),
+            recovery = CaptureRecoveryConfig(totalRequestBudget = 3, totalByteBudget = 150, maxAttempts = 3),
+        ))
+
+        val restartedExecutor = ManualExecutor()
+        val restarted = CaptureOperationService(fixture.store, fixture.workflow, CaptureResponseMapperImpl(), fixture.json,
+            fixture.clock, restartedExecutor, true, true, scheduler)
+        restarted.recover()
+
+        val waiting = restarted.find("session-1", accepted.id)
+        assertEquals(CaptureNames.WAITING_RETRY, waiting.state)
+        assertEquals(2, waiting.recovery?.requestsUsed)
+        assertEquals(100L, waiting.recovery?.bytesUsed)
+        assertEquals(0, waiting.recovery?.reservedRequests)
+        assertEquals(0, waiting.recovery?.reservedBytes)
+
+        scheduler.runNext()
+        val retry = restarted.find("session-1", accepted.id)
+        assertEquals(1, retry.budget.requestBudget)
+        assertEquals(50L, retry.budget.byteBudget)
+    }
+
+    @Test
+    fun `pause control remains idempotent after its checkpoint and request ids cannot change action`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val accepted = fixture.inspect()
+
+        fixture.operations.control("session-1", accepted.id, "pause", "control-1")
+        fixture.executor.runAll()
+
+        val paused = fixture.operations.find("session-1", accepted.id)
+        assertEquals(CaptureNames.PAUSED, paused.state)
+        assertEquals(paused, fixture.operations.control("session-1", accepted.id, "pause", "control-1"))
+        assertEquals("REQUEST_CONFLICT", failure { fixture.operations.control("session-1", accepted.id, "cancel", "control-1") }.code)
+        assertEquals(CaptureNames.RUNNING, fixture.operations.control("session-1", accepted.id, "resume", "control-2").state)
+        fixture.executor.runAll()
+        assertEquals(CaptureNames.SUCCEEDED, fixture.operations.find("session-1", accepted.id).state)
+    }
+
+    @Test
+    fun `a pending pause remains stopped after recovery`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val session = fixture.store.session("session-1")
+        val accepted = fixture.operations.start("session-1", CaptureOperationRequest("pause-recovery", CaptureNames.WALLET,
+            session.walletAttemptId, CaptureBudget(requestBudget = 2, byteBudget = 100),
+            recovery = CaptureRecoveryConfig(6, 300, 3)))
+        fixture.operations.control("session-1", accepted.id, "pause", "pause-control")
+
+        val restarted = CaptureOperationService(fixture.store, fixture.workflow, CaptureResponseMapperImpl(), fixture.json,
+            fixture.clock, ManualExecutor(), true, true, ManualCaptureRetryScheduler())
+        restarted.recover()
+
+        val paused = restarted.find("session-1", accepted.id)
+        assertEquals(CaptureNames.PAUSED, paused.state)
+        assertEquals(2, paused.recovery?.requestsUsed)
+        assertEquals(listOf("pause:pause-control"), paused.controlRequestIds)
+    }
+
+    @Test
+    fun `a pending cancel remains cancelled after recovery`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val session = fixture.store.session("session-1")
+        val accepted = fixture.operations.start("session-1", CaptureOperationRequest("cancel-recovery", CaptureNames.WALLET,
+            session.walletAttemptId, CaptureBudget(requestBudget = 2, byteBudget = 100),
+            recovery = CaptureRecoveryConfig(6, 300, 3)))
+        fixture.operations.control("session-1", accepted.id, "cancel", "cancel-control")
+
+        val restarted = CaptureOperationService(fixture.store, fixture.workflow, CaptureResponseMapperImpl(), fixture.json,
+            fixture.clock, ManualExecutor(), true, true, ManualCaptureRetryScheduler())
+        restarted.recover()
+
+        val cancelled = restarted.find("session-1", accepted.id)
+        assertEquals(CaptureNames.CANCELLED, cancelled.state)
+        assertEquals(2, cancelled.recovery?.requestsUsed)
+        assertEquals(listOf("cancel:cancel-control"), cancelled.controlRequestIds)
     }
 
     @Test

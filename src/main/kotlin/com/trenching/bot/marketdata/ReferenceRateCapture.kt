@@ -21,6 +21,7 @@ interface RecordedReferenceRates {
 data class ReferenceRateCaptureRequest(
     val marketCaptureDirectory: Path,
     val directory: Path,
+    val caseId: MarketCaseId? = null,
 )
 
 data class ReferenceRateCaptureResult(

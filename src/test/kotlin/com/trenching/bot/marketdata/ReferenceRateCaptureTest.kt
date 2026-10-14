@@ -40,6 +40,17 @@ class ReferenceRateCaptureTest {
     }
 
     @Test
+    fun `case rates request only minutes used by the selected case`() {
+        val window = MarketCaptureWindow.of(MintAddress.of("11111111111111111111111111111112"), Slot.of(1001), Slot.of(5500),
+            TransactionSignature.of("1".repeat(64)))
+
+        val result = service().capture(ReferenceRateCaptureRequest(markets(), directory.resolve("case-rates"), MarketCaseId.from(window)))
+
+        assertEquals(listOf(setOf(FIRST)), requested)
+        assertEquals(listOf(FIRST.toString()), result.manifest.records.map { it.minute })
+    }
+
+    @Test
     fun `keeps an unavailable minute with its reason and asks only for it on the next run`() {
         available = setOf(FIRST)
         val first = service().capture(request())
@@ -109,6 +120,16 @@ class ReferenceRateCaptureTest {
                 TransactionSignature.of("1".repeat(64)))
             val decoded = ReplayMarketFixtures.decoded(directory, ReplayMarketFixtures.manifest(listOf(window)), tradeTimes.size)
             return decoded.copy(observations = decoded.observations.zip(tradeTimes) { observation, time -> observation.copy(observedTime = time) })
+        }
+
+        override fun inspectCases(directory: Path): MarketCaseInventory = error("Rates capture decodes one requested case")
+
+        override fun decodeCase(directory: Path, caseId: MarketCaseId): MarketCaseDecodeResult {
+            val full = decode(directory)
+            val window = full.windows.single().window
+            return MarketCaseDecodeResult(MarketCaseProgress(caseId, window, MarketWindowCoverage.COMPLETE,
+                MarketCaseStage.READY_TO_VALIDATE, 3, 3, 0, null), full.windowParameters, full.extractor,
+                full.observations.take(1), MarketObservationExclusion.entries.associateWith { 0 }, 0, true, null)
         }
     }
 

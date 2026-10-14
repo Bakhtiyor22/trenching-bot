@@ -28,4 +28,5 @@ data class WalletHistoryCaptureResult(
     val manifest: WalletHistoryManifest,
     /** Why this invocation stopped early (a capture budget or provider category), or null; never set by inspection. */
     val stopReason: String? = null,
+    val stopRetryAfter: Duration? = null,
 )

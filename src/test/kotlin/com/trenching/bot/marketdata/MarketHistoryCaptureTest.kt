@@ -236,6 +236,24 @@ class MarketHistoryCaptureTest {
     }
 
     @Test
+    fun `checkpoints a completed window before listing the next one`() {
+        val windows = listOf(window(MINT, 1001, 1012, SOURCE), window(OTHER_MINT, 1001, 1012, SOURCE))
+        val ordered = windows.sortedBy { it.baseMint.value }
+        var laterListingSawCapturedDetails = false
+
+        capture(request(windows)) { address, _ ->
+            if (address == ordered[1].baseMint.value) {
+                val saved = recorded().inspect(directory).manifest
+                assertEquals(MarketTransactionOutcome.CAPTURED, saved.records.single().outcome)
+                laterListingSawCapturedDetails = true
+            }
+            listOf(entry(if (address == ordered[0].baseMint.value) 1 else 2, 1010))
+        }
+
+        assertTrue(laterListingSawCapturedDetails)
+    }
+
+    @Test
     fun `rejects listing pages out of order with conflicting duplicates or repeating the cursor`() {
         val cases = mapOf(
             "SIGNATURE_ORDER" to listOf(entry(1, 1003), entry(2, 1004)),
@@ -323,16 +341,18 @@ class MarketHistoryCaptureTest {
                 "getTransaction" -> {
                     val signature = params[0] as String
                     fetched += signature
-                    if (signature == signature(2) && !available) throw CaptureProviderException("UNAVAILABLE")
+                    if (signature == signature(2) && !available) throw CaptureProviderException("UNAVAILABLE", Duration.ofSeconds(17))
                     transaction(signature, slotOf.getValue(signature))
                 }
                 else -> error("Unexpected method")
             }
         }
         val request = request(listOf(window(MINT, 1001, 1012, SOURCE)))
-        val first = service.capture(request).manifest
+        val stopped = service.capture(request)
+        val first = stopped.manifest
         assertEquals(listOf(MarketTransactionOutcome.CAPTURED, MarketTransactionOutcome.PROVIDER_UNAVAILABLE, MarketTransactionOutcome.PENDING),
             first.records.map { it.outcome })
+        assertEquals(Duration.ofSeconds(17), stopped.stopRetryAfter)
         available = true
         val second = service.capture(request).manifest
         assertEquals(listOf(1, 2, 2, 3).map(::signature), fetched)

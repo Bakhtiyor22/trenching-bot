@@ -34,6 +34,9 @@ export const captureConfig: CaptureConfig = {
     marketRequestsMax: 60000,
     marketBytesMax: 4294967296,
     operationTimeoutMinutesMax: 30,
+    recoveryRequestsMax: 60000,
+    recoveryBytesMax: 4294967296,
+    recoveryAttemptsMax: 8,
   },
   windowSlots: 4500,
 };
