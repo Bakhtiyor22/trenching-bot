@@ -143,7 +143,9 @@ On Bash, set `JAVA_HOME` to your JDK 21 before `./gradlew build -PwithConsole`. 
 | Property / variable | Default | Purpose |
 | --- | --- | --- |
 | `TRENCHING_CONSOLE_ENABLED` (`trenching.console.enabled`) | `false`; local profile `true` | Gates the console API and bundled UI; keep disabled in production |
-| `trenching.console.capture.root-directory` | `build/captures` | Root for managed capture sessions and root-relative attachment paths; use an ignored directory outside build for retained evidence |
+| `trenching.console.capture.root-directory` | `build/captures` | Root for managed capture sessions and root-relative attachment paths; `transaction-cache` under it holds the shared transaction cache; use an ignored directory outside build for retained evidence |
+| `marketdata.capture.max-concurrent-requests` / `walletactivity.capture.max-concurrent-requests` | `4` (1 to 16) | Capture requests in flight per RPC endpoint across the whole process; the first capture to use an endpoint fixes its pacing |
+| `marketdata.capture.min-request-interval` / `walletactivity.capture.min-request-interval` | `125ms` (20ms to 10s) | Minimum time between two capture request starts on an endpoint; `1` request with `500ms` reproduces the old pacing |
 | `SOLANA_RPC_URL` (`trenching.solana.rpc-url`) | Unset (optional) | Secret, environment only; responses expose the host only |
 | `trenching.solana.connect-timeout` | `5s` | RPC connection timeout |
 | `trenching.solana.read-timeout` | `10s` | RPC response timeout |

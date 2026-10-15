@@ -110,6 +110,24 @@ $env:JAVA_HOME = 'C:/Users/user/.jdks/ms-21.0.10'
 
 Do not print the environment variable. The capture process consumes it without exposing the endpoint. No browser variable, provider SDK, wallet connection or private key is needed.
 
+## Provider pacing and the transaction cache
+
+Every capture in one process that talks to the same RPC endpoint (the console's operation worker, its case worker and a command) shares one limiter. It allows at most `max-concurrent-requests` requests in flight and starts no two requests closer than `min-request-interval`. A rate-limit answer (HTTP 429, or JSON-RPC error `-32005`) holds new starts for every worker on that endpoint until the retry time, the larger of `Retry-After` and the backoff, instead of each worker retrying alone. The three-attempt cap, the request and byte budgets and the operation deadline are unchanged; a wait that would pass the deadline ends the operation with `DEADLINE`.
+
+| Property (same keys under `marketdata.capture` and `walletactivity.capture`) | Default | Bounds |
+| --- | --- | --- |
+| `max-concurrent-requests` | `4` | 1 to 16 |
+| `min-request-interval` | `125ms` | 20ms to 10s |
+
+The defaults (4 in flight, 8 starts per second) stay below the 10 requests per second free tier in the [provider spike](PROVIDER_SPIKE.md); raise them only for a paid tier. To reproduce the earlier pacing exactly, one request at a time and 500 ms between starts, set both keys to `1` and `500ms`. The first capture to use an endpoint fixes that endpoint's pacing for the process; a later capture asking for different values is logged as `limiter_settings_ignored` and uses the existing limiter. The console reads the keys from its configuration (for example `MARKETDATA_CAPTURE_MAX_CONCURRENT_REQUESTS` in the environment); the commands do not start Spring and always use the defaults above.
+
+The shared transaction cache stores successful, non-null `getTransaction` results by signature and by the exact request parameters (encoding, commitment, maximum supported version), so a signature one capture downloaded is not requested again by another. A hit sends no request and spends no request or byte budget, and the capture copies it into its own `transactions/` directory, so the capture stays self-contained and its manifest, artifact hashes and exported checksums are exactly those of a capture that downloaded the transaction. Each entry records the SHA-256 of the bytes a capture writes. An entry whose signature, request or hash does not verify is deleted, logged as a `transaction_cache_corrupt` warning with its signature and path, and downloaded again. A missing (null) transaction, a failure and a provider error are never cached.
+
+- Console: `<capture root>/transaction-cache`, created on first use.
+- Commands: pass `--transaction-cache-directory <path>` to `captureWalletHistory` or `captureReplayMarkets`. Without it, nothing is cached. The Gradle tasks do not forward the option yet; run the command's main class with the argument or add a task property.
+
+The cache is local data and can be deleted at any time. It is never read by inspection, decoding or export.
+
 ## Capture the selected sample
 
 Only the user runs this command against a live provider. The default build and test tasks never run it. It does not start the backend, bind a port or connect to PostgreSQL, so the existing backend can stay running.
@@ -120,7 +138,7 @@ Only the user runs this command against a live provider. The default build and t
 
 From Git Bash, first `export JAVA_HOME="C:/Users/user/.jdks/ms-21.0.10"`, then use `./gradlew` with the same task/properties. Run one Gradle command at a time.
 
-The per-command request budget bounds provider reads, including retries; the per-command byte budget here is 100 MiB. The manifest retains cumulative acquisition usage across resumes. Capture uses one request at a time with conservative rate limiting. Requests are not a billing-credit estimate: verify your account entitlement and remaining budget locally. No automatic paid upgrade or second-provider fallback occurs.
+The per-command request budget bounds provider reads, including retries; the per-command byte budget here is 100 MiB. The manifest retains cumulative acquisition usage across resumes. Provider requests are paced by the shared limiter described in [Provider pacing and the transaction cache](#provider-pacing-and-the-transaction-cache). Requests are not a billing-credit estimate: verify your account entitlement and remaining budget locally. No automatic paid upgrade or second-provider fallback occurs.
 
 The command verifies mainnet genesis, then selects the latest `limit` (1–100, default 100) distinct **successful** transactions referencing the wallet, at confirmed commitment. It scans the wallet's signature listing newest-first in pages of 1,000 entries. Entries whose listing reports an error are skipped: their details are never requested or stored, and the audit keeps only how many were skipped. Successful transactions signed by other accounts are still selected and recorded as `NON_SIGNER`, so the audit shows how many selected transactions the wallet actually signed.
 

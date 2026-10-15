@@ -1,5 +1,6 @@
 package com.trenching.bot.console.config
 
+import com.trenching.bot.chaincapture.SharedTransactionCache
 import com.trenching.bot.console.capture.*
 import com.trenching.bot.console.mapper.CaptureResponseMapper
 import com.trenching.bot.marketdata.*
@@ -29,7 +30,13 @@ class CaptureProperties(val rootDirectory: String = "build/captures") {
 @ConditionalOnConsoleEnabled
 @EnableConfigurationProperties(CaptureProperties::class)
 class CaptureConfiguration {
-    @Bean fun captureWorkflow(properties: SolanaRpcProperties, rateSource: SolUsdtRateSource, mapper: ObjectMapper, clock: Clock): CaptureWorkflow = CaptureWorkflows.create(WalletHistoryCaptureProperties(endpoint=properties.rpcUrl),MarketHistoryCaptureProperties(endpoint=properties.rpcUrl),rateSource,mapper,clock)
+    private companion object {
+        const val TRANSACTION_CACHE_DIRECTORY = "transaction-cache"
+    }
+
+
+    @Bean fun captureWorkflow(properties: SolanaRpcProperties, wallet: WalletHistoryCaptureProperties, market: MarketHistoryCaptureProperties, capture: CaptureProperties, rateSource: SolUsdtRateSource, mapper: ObjectMapper, clock: Clock): CaptureWorkflow =
+        CaptureWorkflows.create(wallet.withEndpoint(properties.rpcUrl),market.withEndpoint(properties.rpcUrl),rateSource,mapper,clock,SharedTransactionCache(capture.validatedRoot().resolve(TRANSACTION_CACHE_DIRECTORY),mapper))
     @Bean(destroyMethod="close") fun captureFileStore(properties: CaptureProperties, mapper: ObjectMapper): CaptureFileStore = CaptureFileStore(CapturePathPolicy(properties.validatedRoot()),mapper).also { it.initialize() }
     @Bean(destroyMethod="close") fun captureOperationService(store: CaptureFileStore, workflow: CaptureWorkflow, mapper: CaptureResponseMapper, json: ObjectMapper, clock: Clock, rpc: SolanaRpcProperties, rates: ReferenceRateProperties): CaptureOperationService =
         CaptureOperationService(store,workflow,mapper,json,clock,Executors.newSingleThreadExecutor { task -> Thread(task,"capture-console-worker").apply { isDaemon=true } },!rpc.rpcUrl.isNullOrBlank(),rates.enabled,ExecutorCaptureRetryScheduler()).also { it.recover() }

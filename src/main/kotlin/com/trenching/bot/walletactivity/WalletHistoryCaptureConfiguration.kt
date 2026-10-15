@@ -1,6 +1,8 @@
 package com.trenching.bot.walletactivity
 
-import com.trenching.bot.chaincapture.HttpSolanaReadRpc
+import com.trenching.bot.chaincapture.CaptureCheckpointObserver
+import com.trenching.bot.chaincapture.CaptureRpcs
+import com.trenching.bot.chaincapture.SharedTransactionCache
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.walletactivity.application.RecordedWalletHistoryService
 import com.trenching.bot.walletactivity.application.WalletHistoryCaptureService
@@ -21,19 +23,24 @@ class WalletHistoryCaptureConfiguration {
         properties: WalletHistoryCaptureProperties,
         objectMapper: ObjectMapper,
         @Qualifier(SimulationClock.NAME) clock: Clock,
-    ): WalletHistoryCapture {
-        properties.validate()
-        return WalletHistoryCaptureService(HttpSolanaReadRpc(properties, objectMapper, clock), objectMapper, clock)
-    }
+    ): WalletHistoryCapture = observedCapture(properties, objectMapper, clock, CaptureCheckpointObserver.NONE)
+
+    fun cachedCapture(
+        properties: WalletHistoryCaptureProperties,
+        objectMapper: ObjectMapper,
+        clock: Clock,
+        transactionCache: SharedTransactionCache?,
+    ): WalletHistoryCapture = observedCapture(properties, objectMapper, clock, CaptureCheckpointObserver.NONE, transactionCache)
 
     fun observedCapture(
         properties: WalletHistoryCaptureProperties,
         objectMapper: ObjectMapper,
         clock: Clock,
-        observer: com.trenching.bot.chaincapture.CaptureCheckpointObserver,
+        observer: CaptureCheckpointObserver,
+        transactionCache: SharedTransactionCache? = null,
     ): WalletHistoryCapture {
         properties.validate()
-        return WalletHistoryCaptureService(HttpSolanaReadRpc(properties, objectMapper, clock), objectMapper, clock, observer)
+        return WalletHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache), objectMapper, clock, observer)
     }
 
     @Bean

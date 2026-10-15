@@ -15,6 +15,18 @@ trenching:
     # Secret (may embed an API key): environment only; blank means not configured.
     rpc-url: ${SOLANA_RPC_URL:}
 
+# Provider pacing is shared by every capture against the same RPC endpoint in this process. 4 requests in flight with
+# a start every 125 ms (8 per second) stays below the 10 requests per second free tier; 1 and 500ms reproduce the old pacing.
+marketdata:
+  capture:
+    max-concurrent-requests: 4
+    min-request-interval: 125ms
+
+walletactivity:
+  capture:
+    max-concurrent-requests: 4
+    min-request-interval: 125ms
+
 server:
   port: ${SERVER_PORT:8081}
 

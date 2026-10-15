@@ -9,7 +9,6 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.nio.file.StandardOpenOption
-import java.security.MessageDigest
 import tools.jackson.core.JacksonException
 import tools.jackson.databind.DeserializationFeature
 import tools.jackson.databind.JsonNode
@@ -113,7 +112,7 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
 
     private fun parseJson(bytes: ByteArray): JsonNode = try { mapper.reader().with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS).readTree(bytes) } catch (_: JacksonException) { fail("JSON") }
 
-    private fun atomicWrite(root: Path, relative: String, bytes: ByteArray) {
+    internal fun atomicWrite(root: Path, relative: String, bytes: ByteArray) {
         val target = root.resolve(relative).normalize()
         if (!target.startsWith(root) || Files.isSymbolicLink(target)) fail("UNSAFE_PATH")
         val pending = Files.createTempFile(target.parent, ".capture-", ".pending")
@@ -123,7 +122,7 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
         } finally { Files.deleteIfExists(pending) }
     }
 
-    private fun hash(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+    private fun hash(bytes: ByteArray): String = Sha256.hex(bytes)
 
     private fun fail(category: String): Nothing = throw CaptureValidationException(category)
 

@@ -1,8 +1,14 @@
 package com.trenching.bot.chaincapture
 
 import java.time.Duration
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
-/** One invocation's allowance. [operationTimeout] overrides the transport's default deadline for this invocation only. */
+/**
+ * One invocation's allowance, safe to share between the threads of one capture. [operationTimeout] overrides the
+ * transport's default deadline for this invocation only.
+ */
 class CaptureBudget(
     val maxRequests: Int,
     val maxBytes: Long,
@@ -10,21 +16,28 @@ class CaptureBudget(
     val initialBytes: Long = 0,
     val operationTimeout: Duration? = null,
 ) {
-    private var deadlineNanos: Long? = null
-    var requestsUsed: Int = 0
-        private set
-    var bytesUsed: Long = 0
-        private set
+    private val deadlineNanos = AtomicReference<Long?>(null)
+    private val requests = AtomicInteger()
+    private val bytes = AtomicLong()
+
+    /** What this invocation did besides sending requests, for throughput measurements. */
+    val counters = CaptureCounters()
+
+    val requestsUsed: Int get() = requests.get()
+    val bytesUsed: Long get() = bytes.get()
 
     fun request() {
-        if (requestsUsed >= maxRequests) throw CaptureBudgetException("REQUESTS", requestsUsed, bytesUsed)
-        requestsUsed++
+        while (true) {
+            val used = requests.get()
+            if (used >= maxRequests) throw CaptureBudgetException("REQUESTS", used, bytesUsed)
+            if (requests.compareAndSet(used, used + 1)) return
+        }
     }
 
     fun bytes(count: Long) {
         if (count < 0) throw CaptureBudgetException("BYTES", requestsUsed, bytesUsed)
-        bytesUsed += count
-        if (bytesUsed > maxBytes) throw CaptureBudgetException("BYTES", requestsUsed, bytesUsed)
+        val total = bytes.addAndGet(count)
+        if (total > maxBytes) throw CaptureBudgetException("BYTES", requestsUsed, total)
     }
 
     fun remainingBytes(): Long = maxOf(0, maxBytes - bytesUsed)
@@ -35,12 +48,12 @@ class CaptureBudget(
     fun cumulativeBytes(): Long = Math.addExact(initialBytes, bytesUsed)
 
     fun startDeadline(nowNanos: Long, timeout: Duration) {
-        if (deadlineNanos == null) deadlineNanos = nowNanos + timeout.toNanos()
+        deadlineNanos.compareAndSet(null, nowNanos + timeout.toNanos())
     }
 
     fun checkDeadline(nowNanos: Long) {
         if (remainingNanos(nowNanos) <= 0) throw CaptureBudgetException("DEADLINE", requestsUsed, bytesUsed)
     }
 
-    fun remainingNanos(nowNanos: Long): Long = (deadlineNanos ?: Long.MAX_VALUE) - nowNanos
+    fun remainingNanos(nowNanos: Long): Long = (deadlineNanos.get() ?: Long.MAX_VALUE) - nowNanos
 }

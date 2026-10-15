@@ -28,6 +28,7 @@ class HttpSolanaReadRpc(
     private val mapper: ObjectMapper,
     private val clock: Clock,
     private val timing: CaptureTiming = SystemCaptureTiming,
+    private val limiter: ProviderRequestLimiter = ProviderRequestLimiter.of(settings, timing),
 ) : SolanaReadRpc {
     private val log = LoggerFactory.getLogger(HttpSolanaReadRpc::class.java)
     private val endpoint = endpoint(settings.endpoint)
@@ -36,36 +37,36 @@ class HttpSolanaReadRpc(
         .version(HttpClient.Version.HTTP_1_1).connectTimeout(settings.connectTimeout).build()).apply {
         setReadTimeout(settings.readTimeout)
     }).build()
-    private var nextRequestNanos = 0L
 
-    @Synchronized
     override fun call(method: String, params: List<Any>, budget: CaptureBudget): JsonNode {
         if (method !in ChainCaptureFormat.READ_METHODS) throw CaptureValidationException("RPC_METHOD")
         val uri = endpoint ?: throw CaptureProviderException("NOT_CONFIGURED")
         budget.startDeadline(timing.nanoTime(), budget.operationTimeout ?: settings.operationTimeout)
         var last = CaptureHttpReply.Failed("UNAVAILABLE", true)
         for (attempt in 1..MAX_ATTEMPTS) {
-            val waitNanos = maxOf(0, nextRequestNanos - timing.nanoTime())
-            pause(Duration.ofNanos(waitNanos), budget)
-            budget.checkDeadline(timing.nanoTime())
-            budget.request()
-            nextRequestNanos = timing.nanoTime() + RATE_INTERVAL.toNanos()
-            val reply = try { request(uri, method, params, budget) } catch (_: RestClientException) {
-                CaptureHttpReply.Failed("IO", true)
-            } catch (_: IOException) { CaptureHttpReply.Failed("IO", true) }
-            when (reply) {
+            when (val reply = limiter.withStart(budget) { send(uri, method, params, budget) }) {
                 is CaptureHttpReply.Success -> return reply.result
                 is CaptureHttpReply.Failed -> {
                     last = reply
+                    if (reply.rateLimited) budget.counters.rateLimited()
                     if (!reply.retryable || attempt == MAX_ATTEMPTS) break
+                    budget.counters.retry()
                     val backoff = Duration.ofMillis((BASE_BACKOFF_MILLIS shl (attempt - 1)) + timing.jitterMillis(attempt))
                     val delay = maxOf(backoff, reply.retryAfter ?: Duration.ZERO)
                     log.warn("chain_capture rpc_retry operation={} category={} attempt={}", method, reply.category, attempt)
-                    pause(delay, budget)
+                    if (reply.rateLimited) limiter.holdStarts(delay, budget) else pause(delay, budget)
                 }
             }
         }
         throw CaptureProviderException(last.category, last.retryAfter, budget.requestsUsed, budget.bytesUsed)
+    }
+
+    private fun send(uri: URI, method: String, params: List<Any>, budget: CaptureBudget): CaptureHttpReply {
+        budget.checkDeadline(timing.nanoTime())
+        budget.request()
+        return try { request(uri, method, params, budget) } catch (_: RestClientException) {
+            CaptureHttpReply.Failed("IO", true)
+        } catch (_: IOException) { CaptureHttpReply.Failed("IO", true) }
     }
 
     private fun request(uri: URI, method: String, params: List<Any>, budget: CaptureBudget): CaptureHttpReply =
@@ -76,7 +77,7 @@ class HttpSolanaReadRpc(
                 val bytes = readBounded(response.body, budget)
                 when {
                     status == 401 || status == 403 -> CaptureHttpReply.Failed("AUTHENTICATION", false)
-                    status == 429 -> CaptureHttpReply.Failed("RATE_LIMITED", true, retryAfter(response.headers.getFirst("Retry-After")))
+                    status == 429 -> CaptureHttpReply.Failed("RATE_LIMITED", true, retryAfter(response.headers.getFirst("Retry-After")), rateLimited = true)
                     status in 500..599 -> CaptureHttpReply.Failed("UNAVAILABLE", true)
                     status !in 200..299 -> CaptureHttpReply.Failed("HTTP", false)
                     else -> parse(bytes)
@@ -108,7 +109,7 @@ class HttpSolanaReadRpc(
         if (node.hasNonNull("error")) {
             val code = node.path("error").path("code")
             return when (if (code.isIntegralNumber && code.canConvertToInt()) code.asInt() else null) {
-                -32005 -> CaptureHttpReply.Failed("UNAVAILABLE", true)
+                -32005 -> CaptureHttpReply.Failed("UNAVAILABLE", true, rateLimited = true)
                 -32015 -> CaptureHttpReply.Failed("UNSUPPORTED_VERSION", false)
                 else -> CaptureHttpReply.Failed("RPC_ERROR", false)
             }
@@ -167,7 +168,6 @@ class HttpSolanaReadRpc(
     private companion object {
         const val MAX_ATTEMPTS = 3
         const val BASE_BACKOFF_MILLIS = 500L
-        val RATE_INTERVAL: Duration = Duration.ofMillis(500)
         const val MIN_CREDENTIAL_FRAGMENT_LENGTH = 8
     }
 }

@@ -7,6 +7,7 @@ import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.chaincapture.CaptureTiming
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.chaincapture.HttpSolanaReadRpc
+import com.trenching.bot.chaincapture.ProviderRequestLimiter
 import java.net.InetSocketAddress
 import java.time.Clock
 import java.time.Duration
@@ -116,7 +117,8 @@ class HttpSolanaReadRpcTest {
 
     @Test
     fun `permits only the explicit read method allowlist without contacting a server`() {
-        val client = HttpSolanaReadRpc(WalletHistoryCaptureProperties(), mapper, clock, FakeTiming())
+        val timing = FakeTiming()
+        val client = HttpSolanaReadRpc(WalletHistoryCaptureProperties(), mapper, clock, timing, legacyPacing(timing))
         assertFailsWith<CaptureValidationException> { client.call("forbidden", emptyList(), CaptureBudget(1, 1024)) }
         val failure = assertFailsWith<CaptureProviderException> { client.call("getGenesisHash", emptyList(), CaptureBudget(1, 1024)) }
         assertEquals("NOT_CONFIGURED", failure.category)
@@ -341,9 +343,10 @@ class HttpSolanaReadRpcTest {
         }.use { server ->
             val budget = CaptureBudget(10, 1024)
             try {
+                val timing = FakeTiming()
                 val client = HttpSolanaReadRpc(WalletHistoryCaptureProperties(
                     endpoint = "http://127.0.0.1:${server.server.address.port}/", readTimeout = Duration.ofMillis(50),
-                ), mapper, clock, FakeTiming())
+                ), mapper, clock, timing, legacyPacing(timing))
                 assertFailsWith<CaptureProviderException> { client.call("getGenesisHash", emptyList(), budget) }
                 assertEquals(3, budget.requestsUsed)
             } finally { release.countDown() }
@@ -353,7 +356,10 @@ class HttpSolanaReadRpcTest {
     private fun rpc(server: Server, timing: FakeTiming = FakeTiming()) = rpc("http://127.0.0.1:${server.server.address.port}/", timing)
 
     private fun rpc(endpoint: String, timing: FakeTiming = FakeTiming()) =
-        HttpSolanaReadRpc(WalletHistoryCaptureProperties(endpoint = endpoint), mapper, clock, timing)
+        HttpSolanaReadRpc(WalletHistoryCaptureProperties(endpoint = endpoint), mapper, clock, timing, legacyPacing(timing))
+
+    /** One request at a time with 500 ms between starts: the pacing these tests were written against. */
+    private fun legacyPacing(timing: CaptureTiming) = ProviderRequestLimiter(1, Duration.ofMillis(500), timing)
 
     private fun transactionJson(signature: String = "1".repeat(64), slot: Long = 100, logs: String = "[]") =
         """{"slot":$slot,"blockTime":1790985600,"version":0,"meta":{"err":null,"fee":5000,"preBalances":[1000000],"postBalances":[995000],"logMessages":$logs},""" +

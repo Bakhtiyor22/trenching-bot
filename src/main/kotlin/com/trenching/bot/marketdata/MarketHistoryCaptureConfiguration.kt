@@ -1,6 +1,8 @@
 package com.trenching.bot.marketdata
 
-import com.trenching.bot.chaincapture.HttpSolanaReadRpc
+import com.trenching.bot.chaincapture.CaptureCheckpointObserver
+import com.trenching.bot.chaincapture.CaptureRpcs
+import com.trenching.bot.chaincapture.SharedTransactionCache
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.marketdata.application.MarketHistoryCaptureService
 import com.trenching.bot.marketdata.application.RecordedMarketHistoryService
@@ -21,19 +23,24 @@ class MarketHistoryCaptureConfiguration {
         properties: MarketHistoryCaptureProperties,
         objectMapper: ObjectMapper,
         @Qualifier(SimulationClock.NAME) clock: Clock,
-    ): MarketHistoryCapture {
-        properties.validate()
-        return MarketHistoryCaptureService(HttpSolanaReadRpc(properties, objectMapper, clock), MarketHistoryArtifactStore(objectMapper), clock)
-    }
+    ): MarketHistoryCapture = observedCapture(properties, objectMapper, clock, CaptureCheckpointObserver.NONE)
+
+    fun cachedCapture(
+        properties: MarketHistoryCaptureProperties,
+        objectMapper: ObjectMapper,
+        clock: Clock,
+        transactionCache: SharedTransactionCache?,
+    ): MarketHistoryCapture = observedCapture(properties, objectMapper, clock, CaptureCheckpointObserver.NONE, transactionCache)
 
     fun observedCapture(
         properties: MarketHistoryCaptureProperties,
         objectMapper: ObjectMapper,
         clock: Clock,
-        observer: com.trenching.bot.chaincapture.CaptureCheckpointObserver,
+        observer: CaptureCheckpointObserver,
+        transactionCache: SharedTransactionCache? = null,
     ): MarketHistoryCapture {
         properties.validate()
-        return MarketHistoryCaptureService(HttpSolanaReadRpc(properties, objectMapper, clock), MarketHistoryArtifactStore(objectMapper), clock, observer)
+        return MarketHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache), MarketHistoryArtifactStore(objectMapper), clock, observer)
     }
 
     @Bean
