@@ -1,12 +1,16 @@
 package com.trenching.bot.marketdata.application
 
+import com.trenching.bot.chaincapture.BoundedParallelFetch
 import com.trenching.bot.chaincapture.CaptureBudget
 import com.trenching.bot.chaincapture.CaptureBudgetException
+import com.trenching.bot.chaincapture.CaptureCheckpointObserver
+import com.trenching.bot.chaincapture.CaptureMeasurements
 import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.chaincapture.CaptureStop
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.chaincapture.ChainCaptureFormat
 import com.trenching.bot.chaincapture.ChainCaptureReads
+import com.trenching.bot.chaincapture.FetchedItem
 import com.trenching.bot.chaincapture.SignatureListing
 import com.trenching.bot.chaincapture.SolanaReadRpc
 import com.trenching.bot.chaincapture.SolanaRpcSettings
@@ -23,10 +27,12 @@ internal class MarketHistoryCaptureService(
     private val rpc: SolanaReadRpc,
     private val store: MarketHistoryArtifactStore,
     private val clock: Clock,
-    private val observer: com.trenching.bot.chaincapture.CaptureCheckpointObserver = com.trenching.bot.chaincapture.CaptureCheckpointObserver.NONE,
+    private val concurrency: Int = 1,
+    private val observer: CaptureCheckpointObserver = CaptureCheckpointObserver.NONE,
 ) : MarketHistoryCapture {
     private val log = LoggerFactory.getLogger(MarketHistoryCaptureService::class.java)
     private val evidence = MarketTransactionEvidence()
+    private val parallelFetch = BoundedParallelFetch()
 
     override fun capture(request: MarketHistoryCaptureRequest): MarketHistoryCaptureResult {
         val windows = validate(request)
@@ -79,7 +85,7 @@ internal class MarketHistoryCaptureService(
             log.info("market_capture window mint={} fromSlot={} toSlot={} coverage={} scanned={} skippedFailed={} skippedNewer={} selected={}",
                 window.baseMint, window.fromSlot, window.toSlot, window.coverage, window.scanned, window.skippedFailed, window.skippedNewer, window.selected)
             if (window.coverage == MarketWindowCoverage.COMPLETE) {
-                manifest = fetchDetails(request, manifest, budget, stop, window.selection.mapTo(HashSet()) { it.signature })
+                manifest = fetchDetails(request, manifest, budget, stop, window)
                 checkpoint(request, usage(manifest, budget), budget)
                 if (stop.reason != null) return manifest
             }
@@ -107,43 +113,81 @@ internal class MarketHistoryCaptureService(
         saved: MarketHistoryManifest,
         budget: CaptureBudget,
         stop: CaptureStop,
-        selectedSignatures: Set<String>,
+        window: MarketWindowRecord,
     ): MarketHistoryManifest {
         var manifest = saved
-        val records = manifest.records.toMutableList()
-        var fetched = 0
-        for ((index, record) in manifest.records.withIndex()) {
-            if (record.signature !in selectedSignatures) continue
-            if (record.outcome !in MarketCaptureFormat.UNRESOLVED_OUTCOMES) continue
-            val raw = try {
-                ChainCaptureReads.transaction(rpc, record.signature, budget)
-            } catch (exception: CaptureProviderException) {
-                val outcome = if (exception.category == UNSUPPORTED_VERSION) MarketTransactionOutcome.UNSUPPORTED_VERSION
-                else MarketTransactionOutcome.PROVIDER_UNAVAILABLE
-                records[index] = MarketTransactionRecord(record.signature, record.slot, outcome)
-                manifest = manifest.copy(records = records.toList())
-                log.warn("market_capture interrupted category={} signature={}", exception.category, record.signature)
+        val phase = DetailMeasurements()
+        val selected = window.selection.mapTo(HashSet()) { it.signature }
+        val unresolved = manifest.records.withIndex()
+            .filter { (_, record) -> record.signature in selected && record.outcome in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
+        try {
+            for (batch in unresolved.chunked(MarketCaptureFormat.DETAIL_CHECKPOINT_INTERVAL)) {
+                val fetched = parallelFetch.fetch(batch, concurrency, budget, observer::stopRequested) { fetchDetail(it.value, budget) }
+                phase.add(fetched.measurements)
+                val done = fetched.completed.mapTo(HashSet()) { it.index }
+                val failed = batch.withIndex().firstOrNull { (position, _) -> position !in done }?.value
+                manifest = withDetails(request, manifest, fetched.completed, failed.takeIf { fetched.failure is CaptureProviderException })
+                when (val failure = fetched.failure) {
+                    null -> if (fetched.stopped) stop.record(STOP_REQUESTED)
+                    is CaptureProviderException -> {
+                        log.warn("market_capture interrupted category={} signature={}", failure.category, failed?.value?.signature)
+                        stop.record(failure.category, failure.retryAfter)
+                    }
+                    is CaptureBudgetException -> {
+                        log.warn("market_capture interrupted category={} signature={}", failure.category, failed?.value?.signature)
+                        stop.record(failure.category)
+                    }
+                    else -> {
+                        checkpoint(request, usage(manifest, budget), budget)
+                        throw failure
+                    }
+                }
                 checkpoint(request, usage(manifest, budget), budget)
-                if (outcome == MarketTransactionOutcome.PROVIDER_UNAVAILABLE) { stop.record(exception.category, exception.retryAfter); break } else continue
-            } catch (exception: CaptureBudgetException) {
-                log.warn("market_capture interrupted category={} signature={}", exception.category, record.signature)
-                stop.record(exception.category)
-                break
+                if (stop.reason != null) break
             }
-            val outcome = evidence.classify(raw, record.signature, record.slot)
-            records[index] = if (outcome == MarketTransactionOutcome.CAPTURED) {
-                val artifact = store.writeTransaction(request.directory, record.signature, raw)
-                MarketTransactionRecord(record.signature, record.slot, outcome, artifact.path, artifact.sha256, artifact.bytes)
-            } else MarketTransactionRecord(record.signature, record.slot, outcome)
-            fetched++
-            if (fetched % MarketCaptureFormat.DETAIL_CHECKPOINT_INTERVAL == 0) {
-                manifest = manifest.copy(records = records.toList())
-                checkpoint(request, usage(manifest, budget), budget)
-            }
+        } finally {
+            if (phase.batches > 0) logPhase(window, phase.total)
         }
-        return manifest.copy(records = records.toList())
+        return manifest
     }
 
+    private fun fetchDetail(record: MarketTransactionRecord, budget: CaptureBudget): MarketDetailFetch = try {
+        val raw = ChainCaptureReads.transaction(rpc, record.signature, budget)
+        MarketDetailFetch.Fetched(raw, evidence.classify(raw, record.signature, record.slot))
+    } catch (exception: CaptureProviderException) {
+        if (exception.category == UNSUPPORTED_VERSION) MarketDetailFetch.UnsupportedVersion else throw exception
+    }
+
+    /** Applies the completed details to their records in listing order; the record that failed on the provider stays retryable. */
+    private fun withDetails(
+        request: MarketHistoryCaptureRequest,
+        saved: MarketHistoryManifest,
+        completed: List<FetchedItem<IndexedValue<MarketTransactionRecord>, MarketDetailFetch>>,
+        unavailable: IndexedValue<MarketTransactionRecord>?,
+    ): MarketHistoryManifest {
+        val records = saved.records.toMutableList()
+        for (done in completed) {
+            val (index, record) = done.item
+            records[index] = detail(request, record, done.result)
+        }
+        unavailable?.let { (index, record) -> records[index] = MarketTransactionRecord(record.signature, record.slot, MarketTransactionOutcome.PROVIDER_UNAVAILABLE) }
+        return saved.copy(records = records.toList())
+    }
+
+    private fun detail(request: MarketHistoryCaptureRequest, record: MarketTransactionRecord, fetched: MarketDetailFetch): MarketTransactionRecord = when (fetched) {
+        MarketDetailFetch.UnsupportedVersion -> MarketTransactionRecord(record.signature, record.slot, MarketTransactionOutcome.UNSUPPORTED_VERSION)
+        is MarketDetailFetch.Fetched ->
+            if (fetched.outcome == MarketTransactionOutcome.CAPTURED) {
+                val artifact = store.writeTransaction(request.directory, record.signature, fetched.raw)
+                MarketTransactionRecord(record.signature, record.slot, fetched.outcome, artifact.path, artifact.sha256, artifact.bytes)
+            } else MarketTransactionRecord(record.signature, record.slot, fetched.outcome)
+    }
+
+    private fun logPhase(window: MarketWindowRecord, measurements: CaptureMeasurements) {
+        log.info("market_capture details mint={} fromSlot={} toSlot={} requestsSent={} cacheHits={} rateLimitedResponses={} retries={} elapsedMs={} concurrency={}",
+            window.baseMint, window.fromSlot, window.toSlot, measurements.requestsSent, measurements.cacheHits, measurements.rateLimitedResponses,
+            measurements.retries, measurements.elapsed.toMillis(), concurrency)
+    }
     private fun finish(request: MarketHistoryCaptureRequest, saved: MarketHistoryManifest, budget: CaptureBudget, stop: CaptureStop): MarketHistoryCaptureResult {
         val manifest = usage(saved, budget)
         checkpoint(request, manifest, budget)
@@ -188,5 +232,6 @@ internal class MarketHistoryCaptureService(
 
     private companion object {
         const val UNSUPPORTED_VERSION = "UNSUPPORTED_VERSION"
+        const val STOP_REQUESTED = "STOP_REQUESTED"
     }
 }

@@ -1,6 +1,9 @@
 package com.trenching.bot.walletactivity
 
+import com.trenching.bot.chaincapture.CaptureCheckpoint
+import com.trenching.bot.chaincapture.CaptureCheckpointObserver
 import com.trenching.bot.chaincapture.CaptureValidationException
+import com.trenching.bot.chaincapture.Sha256
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
@@ -365,8 +368,114 @@ class WalletTokenVerificationTest {
         assertEquals(ActualFirstBuy.NotVerified, recorded().decode(directory, wallet).targetToken?.actualFirstBuy)
     }
 
-    private fun capture(target: Path = directory, requestBudget: Int = 1000): WalletHistoryCaptureResult =
-        WalletHistoryCaptureService(chain.rpc(), mapper, Clock.fixed(Instant.parse("2026-10-10T00:00:00Z"), ZoneOffset.UTC)).capture(
+    @Test
+    fun `entries fetched at concurrency 4 give the same manifest bytes and verification artifacts as concurrency 1`() {
+        verifyingChain()
+        withExtraEntries(20)
+        chain.delay = { signature -> if (signature in EXTRA) (signature.hashCode() and 7).toLong() else 0 }
+
+        val sequential = capture(directory.resolve("one"), concurrency = 1)
+        val sequentialPeak = chain.peakInFlight
+        val parallel = capture(directory.resolve("four"), concurrency = 4)
+
+        assertEquals(Files.readAllBytes(directory.resolve("one/manifest.json")).toList(), Files.readAllBytes(directory.resolve("four/manifest.json")).toList())
+        assertEquals(verificationHashes(directory.resolve("one")), verificationHashes(directory.resolve("four")))
+        assertTrue(verificationHashes(directory.resolve("four")).keys.containsAll(EXTRA.map { "$it.json" }))
+        assertEquals(sequential.manifest, parallel.manifest)
+        assertEquals(1, sequentialPeak)
+        assertTrue(chain.peakInFlight in 2..4, "peak in flight ${chain.peakInFlight}")
+    }
+
+    @Test
+    fun `a verdict reached mid batch discards the later fetched entries so the records match concurrency 1`() {
+        verifyingChain()
+        withExtraEntries(20)
+        chain.add(chain.buy(EARLIER_BUY, MIDDLE_SLOT - 5), chain.transaction(AFTER_EARLIER_BUY, MIDDLE_SLOT - 2, listOf(WALLET to true, PUMP_ACCUMULATOR to false)))
+        chain.listing(PUMP_ACCUMULATOR, *(chain.listings.getValue(PUMP_ACCUMULATOR) + Entry(AFTER_EARLIER_BUY, MIDDLE_SLOT - 2) + Entry(EARLIER_BUY, MIDDLE_SLOT - 5))
+            .sortedByDescending { it.slot }.toTypedArray())
+
+        val sequential = capture(directory.resolve("one"), concurrency = 1)
+        val parallel = capture(directory.resolve("four"), concurrency = 4)
+
+        val settled = checkNotNull(parallel.manifest.verification)
+        assertEquals(VerificationResultKind.OUTSIDE_TOKEN_ACCOUNT, settled.result?.kind)
+        assertEquals(VerificationOutcome.PENDING, settled.records.single { it.signature == AFTER_EARLIER_BUY }.outcome)
+        assertEquals(sequential.manifest.copy(requestsUsed = 0, bytesUsed = 0), parallel.manifest.copy(requestsUsed = 0, bytesUsed = 0))
+        assertEquals(verificationHashes(directory.resolve("one")), verificationHashes(directory.resolve("four")))
+        assertTrue(parallel.manifest.requestsUsed > sequential.manifest.requestsUsed)
+    }
+
+    @Test
+    fun `a provider failure mid batch saves the entries before it and a resume fetches only the unresolved ones`() {
+        verifyingChain()
+        withExtraEntries(20)
+        capture(directory.resolve("reference"), concurrency = 1)
+        chain.calls.clear()
+        chain.failing += EXTRA[9]
+
+        val first = capture(directory.resolve("interrupted"), concurrency = 4)
+        assertEquals("HTTP_ERROR", first.stopReason)
+        val verification = checkNotNull(first.manifest.verification)
+        assertEquals(VerificationOutcome.PROVIDER_UNAVAILABLE, verification.records.single { it.signature == EXTRA[9] }.outcome)
+        assertTrue(EXTRA.take(9).all { signature -> verification.records.single { it.signature == signature }.outcome == VerificationOutcome.CAPTURED })
+        val resolved = verification.records.filter { it.artifact != null }.map { it.signature }.toSet()
+        chain.failing.clear()
+        chain.calls.clear()
+
+        val resumed = capture(directory.resolve("interrupted"), concurrency = 4)
+
+        val refetched = chain.work().filter { it.method == "getTransaction" }.map { it.subject }
+        assertEquals(emptySet(), refetched.toSet().intersect(resolved))
+        assertTrue(resumed.manifest.complete)
+        val expected = store.inspect(directory.resolve("reference")).manifest
+        assertEquals(expected.copy(requestsUsed = 0, bytesUsed = 0), resumed.manifest.copy(requestsUsed = 0, bytesUsed = 0))
+        assertEquals(verificationHashes(directory.resolve("reference")), verificationHashes(directory.resolve("interrupted")))
+    }
+
+    @Test
+    fun `a stop requested during the entry fetches starts no further request and saves the entries that completed`() {
+        listOf(1, 4).forEach { concurrency ->
+            chain.calls.clear()
+            verifyingChain()
+            withExtraEntries(20)
+            val observer = object : CaptureCheckpointObserver {
+                @Volatile var stop = false
+                override fun checkpoint(checkpoint: CaptureCheckpoint) { if (stop) throw IllegalStateException("stopped") }
+                override fun stopRequested(): Boolean = stop
+            }
+            val transactionsSeen = java.util.concurrent.atomic.AtomicInteger()
+            chain.onTransaction = { if (transactionsSeen.incrementAndGet() == 10) observer.stop = true }
+            val target = directory.resolve("stop-$concurrency")
+
+            val failure = assertFailsWith<IllegalStateException> { capture(target, concurrency = concurrency, observer = observer) }
+
+            assertEquals("stopped", failure.message)
+            val requested = chain.work().count { it.method == "getTransaction" }
+            assertTrue(requested in 10..(10 + concurrency - 1), "concurrency $concurrency requested $requested")
+            val saved = checkNotNull(store.inspect(target).manifest.verification)
+            val fetchedEntries = chain.work().filter { it.method == "getTransaction" }.map { it.subject }.filter { it in EXTRA }
+            assertEquals(fetchedEntries.toSet(), saved.records.filter { it.signature in EXTRA && it.artifact != null }.map { it.signature }.toSet())
+        }
+    }
+
+    private fun verificationHashes(root: Path): Map<String, String> = Files.list(root.resolve("verification")).use { paths ->
+        paths.toList().associate { it.fileName.toString() to Sha256.hex(Files.readAllBytes(it)) }
+    }
+
+    /** Extra in-range Pump accumulator entries, each a plain accumulator transaction that settles nothing by itself. */
+    private fun withExtraEntries(count: Int) {
+        val extras = EXTRA.take(count).mapIndexed { index, signature -> Entry(signature, CREATION_SLOT + 1 + index) }
+        chain.listing(PUMP_ACCUMULATOR, *(pumpListing() + extras).sortedByDescending { it.slot }.toTypedArray())
+        extras.forEach { chain.add(chain.transaction(it.signature, it.slot, listOf(WALLET to true, PUMP_ACCUMULATOR to false))) }
+    }
+
+    private fun capture(
+        target: Path = directory,
+        requestBudget: Int = 1000,
+        concurrency: Int = 1,
+        observer: CaptureCheckpointObserver = CaptureCheckpointObserver.NONE,
+    ): WalletHistoryCaptureResult =
+        WalletHistoryCaptureService(chain.rpc(), mapper, Clock.fixed(Instant.parse("2026-10-10T00:00:00Z"), ZoneOffset.UTC), concurrency, observer).capture(
             WalletHistoryCaptureRequest(wallet, target, limit = 100, scanPages = 5, requestBudget = requestBudget,
                 scope = WalletHistoryScope.WALLET_TOKEN_ACCOUNT, targetMint = MintAddress.of(MINT)))
 
@@ -420,5 +529,6 @@ class WalletTokenVerificationTest {
         val MULTI_HOP = WalletTokenChain.signature(100_012)
         val AFTER_EARLIER_BUY = WalletTokenChain.signature(100_013)
         val SAME_SLOT = WalletTokenChain.signature(100_014)
+        val EXTRA = (0 until 20).map { WalletTokenChain.signature(100_100 + it) }
     }
 }

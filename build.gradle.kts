@@ -146,6 +146,7 @@ tasks.register<JavaExec>("persistedReplay") {
 }
 
 val walletHistoryDirectory = providers.gradleProperty("captureDirectory").orElse("build/captures/wallet-history")
+val transactionCacheDirectory = providers.gradleProperty("transactionCacheDirectory")
 
 tasks.register<JavaExec>("captureWalletHistory") {
     description = "Explicit user-run read-only mainnet wallet history capture; never part of build"
@@ -160,6 +161,7 @@ tasks.register<JavaExec>("captureWalletHistory") {
     args("--byte-budget", providers.gradleProperty("byteBudget").orElse("104857600").get())
     args("--scope", providers.gradleProperty("scope").orElse("wallet-references").get())
     args("--operation-timeout-minutes", providers.gradleProperty("operationTimeoutMinutes").orElse("10").get())
+    transactionCacheDirectory.orNull?.let { args("--transaction-cache-directory", it) }
 }
 
 tasks.register<JavaExec>("inspectWalletHistory") {
@@ -184,6 +186,7 @@ tasks.register<JavaExec>("captureReplayMarkets") {
     args("--request-budget", providers.gradleProperty("requestBudget").orElse("400").get())
     args("--byte-budget", providers.gradleProperty("byteBudget").orElse("104857600").get())
     args("--operation-timeout-minutes", providers.gradleProperty("operationTimeoutMinutes").orElse("10").get())
+    transactionCacheDirectory.orNull?.let { args("--transaction-cache-directory", it) }
 }
 
 tasks.register<JavaExec>("inspectReplayMarkets") {

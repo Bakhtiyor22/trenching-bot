@@ -40,7 +40,7 @@ class MarketHistoryCaptureConfiguration {
         transactionCache: SharedTransactionCache? = null,
     ): MarketHistoryCapture {
         properties.validate()
-        return MarketHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache), MarketHistoryArtifactStore(objectMapper), clock, observer)
+        return MarketHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache), MarketHistoryArtifactStore(objectMapper), clock, properties.maxConcurrentRequests, observer)
     }
 
     @Bean

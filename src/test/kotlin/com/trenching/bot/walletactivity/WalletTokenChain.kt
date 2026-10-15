@@ -17,10 +17,20 @@ internal class WalletTokenChain(private val mapper: JsonMapper) {
 
     data class Call(val method: String, val subject: String?, val before: String?)
 
-    val calls = mutableListOf<Call>()
+    val calls: MutableList<Call> = java.util.Collections.synchronizedList(mutableListOf())
     val listings = mutableMapOf<String, List<Entry>>()
     val transactions = mutableMapOf<String, JsonNode>()
     var owner: String? = TOKEN_2022
+
+    /** Transactions whose request fails at the provider, and a hook that sees every transaction request when it starts. */
+    val failing = mutableSetOf<String>()
+    var onTransaction: (String) -> Unit = {}
+
+    /** Milliseconds a transaction request takes, so concurrent replies can complete out of order. */
+    var delay: (String) -> Long = { 0 }
+    private val inFlight = java.util.concurrent.atomic.AtomicInteger()
+    private val peak = java.util.concurrent.atomic.AtomicInteger()
+    val peakInFlight: Int get() = peak.get()
 
     fun rpc() = SolanaReadRpc { method, params, budget ->
         budget.request()
@@ -32,9 +42,19 @@ internal class WalletTokenChain(private val mapper: JsonMapper) {
                 """{"context":{"slot":1},"value":{"data":["","base64"],"executable":false,"lamports":1461600,"owner":"$it"}}"""
             } ?: """{"context":{"slot":1},"value":null}""")
             "getSignaturesForAddress" -> page(params[0] as String, options?.get("before") as? String)
-            "getTransaction" -> transactions[params[0] as String] ?: mapper.nullNode()
+            "getTransaction" -> transaction(params[0] as String)
             else -> error("Unexpected method $method")
         }
+    }
+
+    private fun transaction(signature: String): JsonNode {
+        peak.accumulateAndGet(inFlight.incrementAndGet()) { a, b -> maxOf(a, b) }
+        try {
+            onTransaction(signature)
+            if (signature in failing) throw com.trenching.bot.chaincapture.CaptureProviderException("HTTP_ERROR")
+            Thread.sleep(delay(signature))
+            return transactions[signature] ?: mapper.nullNode()
+        } finally { inFlight.decrementAndGet() }
     }
 
     fun listing(address: String, vararg entries: Entry) {

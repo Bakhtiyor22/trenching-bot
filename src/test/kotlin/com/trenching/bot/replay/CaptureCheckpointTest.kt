@@ -47,5 +47,5 @@ class CaptureCheckpointTest {
             "getSignaturesForAddress" -> mapper.readTree("[]")
             else -> error("Unexpected provider method")
         }
-    }, mapper, clock, observer)
+    }, mapper, clock, observer = observer)
 }

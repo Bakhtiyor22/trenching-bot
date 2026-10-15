@@ -21,6 +21,9 @@ internal object WalletCaptureFormat {
     const val MAX_CAPTURE_BYTES = WalletHistoryCaptureLimits.MAX_BYTES
     const val MAX_REQUESTS = WalletHistoryCaptureLimits.MAX_REQUESTS
     const val MANIFEST = "manifest.json"
+
+    /** Detail fetches between manifest checkpoints; a resume refetches any newer, unreferenced artifact. */
+    const val DETAIL_CHECKPOINT_INTERVAL = 25
     val UNRESOLVED_OUTCOMES = setOf(WalletHistoryOutcome.PENDING, WalletHistoryOutcome.PROVIDER_UNAVAILABLE, WalletHistoryOutcome.INVALID_TRANSACTION)
     val ARTIFACT_OUTCOMES = setOf(WalletHistoryOutcome.FAILED, WalletHistoryOutcome.NON_SIGNER, WalletHistoryOutcome.UNCLASSIFIED)
 

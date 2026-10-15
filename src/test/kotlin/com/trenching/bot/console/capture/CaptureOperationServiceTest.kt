@@ -15,6 +15,7 @@ import com.trenching.bot.replay.CaptureStageSummary
 import com.trenching.bot.replay.CaptureStepCommand
 import com.trenching.bot.walletactivity.WalletHistoryCaptureResult
 import com.trenching.bot.walletactivity.WalletHistoryScope
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.Executors
@@ -188,6 +189,24 @@ class CaptureOperationServiceTest {
         assertEquals(CaptureNames.RUNNING, fixture.operations.control("session-1", accepted.id, "resume", "control-2").state)
         fixture.executor.runAll()
         assertEquals(CaptureNames.SUCCEEDED, fixture.operations.find("session-1", accepted.id).state)
+    }
+
+    @Test
+    fun `the observer reports a pause or cancel request to the capture before its next checkpoint`() {
+        val running = CaptureConsoleFixture(Files.createDirectories(root.resolve("running"))).apply { create() }
+        val runningBefore = running.workflow.stopRequestedAtStart.size
+        running.inspect()
+        running.executor.runAll()
+        assertEquals(listOf(false), running.workflow.stopRequestedAtStart.drop(runningBefore))
+
+        listOf("pause", "cancel").forEach { action ->
+            val fixture = CaptureConsoleFixture(Files.createDirectories(root.resolve(action))).apply { create() }
+            val before = fixture.workflow.stopRequestedAtStart.size
+            val accepted = fixture.inspect()
+            fixture.operations.control("session-1", accepted.id, action, "control-1")
+            fixture.executor.runAll()
+            assertEquals(listOf(true), fixture.workflow.stopRequestedAtStart.drop(before), action)
+        }
     }
 
     @Test

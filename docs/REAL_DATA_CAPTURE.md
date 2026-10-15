@@ -124,9 +124,18 @@ The defaults (4 in flight, 8 starts per second) stay below the 10 requests per s
 The shared transaction cache stores successful, non-null `getTransaction` results by signature and by the exact request parameters (encoding, commitment, maximum supported version), so a signature one capture downloaded is not requested again by another. A hit sends no request and spends no request or byte budget, and the capture copies it into its own `transactions/` directory, so the capture stays self-contained and its manifest, artifact hashes and exported checksums are exactly those of a capture that downloaded the transaction. Each entry records the SHA-256 of the bytes a capture writes. An entry whose signature, request or hash does not verify is deleted, logged as a `transaction_cache_corrupt` warning with its signature and path, and downloaded again. A missing (null) transaction, a failure and a provider error are never cached.
 
 - Console: `<capture root>/transaction-cache`, created on first use.
-- Commands: pass `--transaction-cache-directory <path>` to `captureWalletHistory` or `captureReplayMarkets`. Without it, nothing is cached. The Gradle tasks do not forward the option yet; run the command's main class with the argument or add a task property.
+- Commands: pass `--transaction-cache-directory <path>` to `captureWalletHistory` or `captureReplayMarkets`, or give the Gradle tasks `-PtransactionCacheDirectory=<path>`, which forwards it. Without either, nothing is cached.
 
 The cache is local data and can be deleted at any time. It is never read by inspection, decoding or export.
+
+### Parallel detail fetching
+
+The detail requests of a capture (one `getTransaction` per selected market or wallet signature, and the verification fetches of a token-account capture) run up to `max-concurrent-requests` at a time, started in listing order. The result does not depend on the order the replies arrive in: records are applied to the manifest in listing order, so the manifest, artifacts, hashes, decoded datasets and exported v3 checksums are identical to a capture that fetched one request at a time, including after an interrupted run is resumed.
+
+- The manifest is saved after every batch of applied details (25 for wallets, 100 for markets) and always before a stop or a failure ends the run, so every completed artifact is recorded. A resume fetches only the records still unresolved.
+- Pause and cancel in the console stop new detail requests at once; the requests already in flight finish and are saved before the operation stops, so stop latency is bounded by the in-flight count, not by the batch size.
+- Token-account verification applies its entries oldest first and stops at the first verdict. Entries fetched in the same round after the verdict, or after a failed entry, are discarded and not recorded, so the manifest matches a sequential capture. Those requests still count against the request and byte budgets, so `requestsUsed` can exceed a sequential capture's when a verdict is reached mid round.
+- Each detail phase logs one INFO line (`market_capture details`, `wallet_capture details` or `wallet_capture verification_details`) with `requestsSent`, `cacheHits`, `rateLimitedResponses`, `retries`, `elapsedMs` and `concurrency`, to compare throughput before and after a change of the pacing keys.
 
 ## Capture the selected sample
 

@@ -250,6 +250,12 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             if (!exportUnchanged(store.operation(session.id,exportId))) CaptureValidation.conflict("EXPORT_CHANGED","The exported dataset changed since its export; export it again before qualifying")
         }
     }
+    /** Lets the capture see a saved pause or cancel request between detail requests instead of only at its next checkpoint. */
+    private fun stoppable(id: String, operationId: String, delegate: CaptureCheckpointObserver) = object : CaptureCheckpointObserver {
+        override fun checkpoint(checkpoint: CaptureCheckpoint) = delegate.checkpoint(checkpoint)
+
+        override fun stopRequested(): Boolean = synchronized(store) { store.operation(id, operationId).control } in STOP_CONTROLS
+    }
     private fun run(id: String, initial: CaptureOperationRecord) {
         var operation = initial
         var retryAfter: Duration? = null
@@ -259,7 +265,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             val verified = workflow.inspect(paths)
             requirePrerequisite(initial.step,verified)
             val command = command(session,initial,paths)
-            val result = workflow.execute(command, CaptureCheckpointObserver { checkpoint -> synchronized(store) {
+            val result = workflow.execute(command, stoppable(id, initial.id, CaptureCheckpointObserver { checkpoint -> synchronized(store) {
                 val progress = mapper.progress(checkpoint)
                 operation = accountCheckpoint(operation, progress).copy(updatedAt=checkpoint.at, progress=progress)
                 val saved = store.operation(id, operation.id)
@@ -277,7 +283,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                     }
                     else -> store.save(id,operation)
                 }
-            } })
+            } }))
             retryAfter = when (result) {
                 is CaptureStepResult.Wallet -> result.capture.stopRetryAfter
                 is CaptureStepResult.Markets -> result.capture.stopRetryAfter
@@ -457,6 +463,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         if (interrupted) Thread.currentThread().interrupt()
     }
     private companion object {
+        val STOP_CONTROLS = setOf(CaptureNames.PAUSE_REQUESTED, CaptureNames.CANCEL_REQUESTED)
         const val DEADLINE = "DEADLINE"
         const val QUALIFY_ID_HASH_LENGTH = 32
         const val MAX_RETRY_SECONDS = 300L

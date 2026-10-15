@@ -1,12 +1,15 @@
 package com.trenching.bot.walletactivity.application
 
+import com.trenching.bot.chaincapture.BoundedParallelFetch
 import com.trenching.bot.chaincapture.CaptureBudget
 import com.trenching.bot.chaincapture.CaptureBudgetException
+import com.trenching.bot.chaincapture.CaptureCheckpointObserver
 import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.chaincapture.CaptureStop
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.chaincapture.ChainCaptureFormat
 import com.trenching.bot.chaincapture.ChainCaptureReads
+import com.trenching.bot.chaincapture.ParallelFetchResult
 import com.trenching.bot.chaincapture.SignatureListing
 import com.trenching.bot.chaincapture.SignatureListingEntry
 import com.trenching.bot.chaincapture.SolanaReadRpc
@@ -44,9 +47,12 @@ internal class WalletTokenVerificationCapture(
     private val rpc: SolanaReadRpc,
     private val store: WalletHistoryArtifactStore,
     private val reader: CapturedArtifactReader,
+    private val concurrency: Int = 1,
+    private val observer: CaptureCheckpointObserver = CaptureCheckpointObserver.NONE,
 ) {
     private val log = LoggerFactory.getLogger(WalletTokenVerificationCapture::class.java)
     private val transactions = WalletTransactionEvidence()
+    private val parallelFetch = BoundedParallelFetch()
 
     /** [checkpoint] saves a manifest and returns it as saved. The manifest returned is the last one checkpointed. */
     fun verify(
@@ -83,8 +89,18 @@ internal class WalletTokenVerificationCapture(
         private val checkpoint: (WalletHistoryManifest) -> WalletHistoryManifest,
     ) {
         private val attempted = mutableSetOf<Pair<VerificationListing, String>>()
+        private val measurements = DetailMeasurements()
+        private var halted: String? = null
 
-        fun execute(): WalletHistoryManifest {
+        fun execute(): WalletHistoryManifest = try { loop() } finally {
+            if (measurements.batches > 0) {
+                log.info("wallet_capture verification_details wallet={} mint={} requestsSent={} cacheHits={} rateLimitedResponses={} retries={} elapsedMs={} concurrency={}",
+                    manifest.wallet, target.mint.value, measurements.total.requestsSent, measurements.total.cacheHits, measurements.total.rateLimitedResponses,
+                    measurements.total.retries, measurements.total.elapsed.toMillis(), concurrency)
+            }
+        }
+
+        private fun loop(): WalletHistoryManifest {
             while (true) {
                 val verification = current()
                 val verdict = ActualFirstBuyVerification.verdict(verification, firstBuy, kinds)
@@ -100,6 +116,7 @@ internal class WalletTokenVerificationCapture(
                     return interrupted(exception.category)
                 } ?: return manifest
                 save(next)
+                halted?.let { return interrupted(it) }
             }
         }
 
@@ -109,7 +126,7 @@ internal class WalletTokenVerificationCapture(
                 is CreationOutcome.Identified -> when {
                     !verification.pumpAccumulator.complete -> accumulatorPage(verification, VerificationListing.PUMP_ACCUMULATOR, creation.slot.value)
                     !verification.pumpSwapAccumulator.complete -> accumulatorPage(verification, VerificationListing.PUMPSWAP_ACCUMULATOR, creation.slot.value)
-                    else -> nextEntry(verification)
+                    else -> nextEntries(verification)
                 }
                 is CreationOutcome.Decided -> error("Verification has a verdict but was not finished wallet=${manifest.wallet}")
             }
@@ -173,47 +190,108 @@ internal class WalletTokenVerificationCapture(
         }
 
         /**
-         * The oldest unresolved entry by slot then signature, each tried once per run, so the earliest decoded wallet buy
-         * settles the verdict before any later entry is fetched.
+         * The oldest unresolved entries by slot then signature, each tried once per run, fetched together and applied oldest first,
+         * so the earliest decoded wallet buy settles the verdict before any later entry is recorded. Entries that arrive after
+         * the verdict, or after a failed or unstarted one, are discarded and fetched again by a later run if still needed.
          */
-        private fun nextEntry(verification: WalletTokenVerification): WalletTokenVerification? {
-            val record = verification.records
+        private fun nextEntries(verification: WalletTokenVerification): WalletTokenVerification? {
+            val planned = plan(verification)
+            if (planned.isEmpty()) return null
+            val toFetch = planned.filter { it.artifact == null }
+            val fetched = parallelFetch.fetch(toFetch, concurrency, budget, observer::stopRequested) { fetchOne(it.record, VerificationSection.listingAddress(verification, target, it.record.listing)) }
+            measurements.add(fetched.measurements)
+            val results = fetched.completed.associateBy { it.index }
+            var current = verification
+            var fetchPosition = 0
+            for (entry in planned) {
+                attempted += entry.record.listing to entry.record.signature
+                val updated = if (entry.artifact != null) reuse(current, entry.record, entry.artifact) else {
+                    val done = results[fetchPosition++] ?: return unfinished(current, entry.record, fetched)
+                    apply(current, entry.record, done.result)
+                }
+                current = ActualFirstBuyVerification.settled(updated, firstBuy, kinds)
+                if (ActualFirstBuyVerification.verdict(current, firstBuy, kinds) != ActualFirstBuy.NotVerified) break
+            }
+            return current
+        }
+
+        /** The oldest entries to resolve next: as many fetches as the concurrency and the fetch cap allow, with the artifact-reusing ones between them. */
+        private fun plan(verification: WalletTokenVerification): List<PlannedEntry> {
+            val allowance = (WalletHistoryCaptureLimits.VERIFICATION_FETCHES - verification.fetches).coerceIn(1, concurrency)
+            val oldestFirst = verification.records
                 .filter {
                     it.listing != VerificationListing.MINT && it.outcome in WalletCaptureFormat.UNRESOLVED_VERIFICATION_OUTCOMES &&
                         (it.listing to it.signature) !in attempted
                 }
-                .minWithOrNull(compareBy({ it.slot }, { it.signature }, { it.listing }))
-                ?: return null
-            return resolve(verification, record)
+                .sortedWith(compareBy({ it.slot }, { it.signature }, { it.listing }))
+            val planned = mutableListOf<PlannedEntry>()
+            val signatures = HashSet<String>()
+            for (record in oldestFirst) {
+                // A second listing of one signature reuses the first one's artifact, so it waits for the next round.
+                if (!signatures.add(record.signature)) break
+                val artifact = reusable(verification, record.signature)
+                if (artifact == null && planned.count { it.artifact == null } == allowance) break
+                planned += PlannedEntry(record, artifact)
+            }
+            return planned
+        }
+
+        /** Saves what was applied before the first entry that has no result, then ends the run for the reason that entry has none. */
+        private fun unfinished(
+            applied: WalletTokenVerification,
+            record: VerificationRecord,
+            fetched: ParallelFetchResult<PlannedEntry, DetailFetch<VerificationOutcome>>,
+        ): WalletTokenVerification {
+            val failure = fetched.failure
+            if (failure == null) {
+                halted = STOP_REQUESTED
+                return applied
+            }
+            save(if (failure is CaptureProviderException) replace(applied, record.copy(outcome = VerificationOutcome.PROVIDER_UNAVAILABLE)) else applied)
+            throw failure
         }
 
         private fun resolve(verification: WalletTokenVerification, record: VerificationRecord): WalletTokenVerification? {
             if (!attempted.add(record.listing to record.signature)) return null
-            val listingAddress = VerificationSection.listingAddress(verification, target, record.listing)
             val artifact = reusable(verification, record.signature)
-            if (artifact != null) {
-                val node = store.readArtifact(directory, artifact.path, artifact.bytes, artifact.sha256)
-                val outcome = transactions.classifyVerification(node, record.signature, record.slot, listingAddress)
-                return replace(verification, if (outcome == VerificationOutcome.CAPTURED) {
-                    classify(record.listing, record.signature, node)
-                    record.copy(outcome = outcome, artifact = artifact.path, sha256 = artifact.sha256, bytes = artifact.bytes)
-                } else record.copy(outcome = outcome, artifact = null, sha256 = null, bytes = 0))
-            }
-            val raw = try {
-                ChainCaptureReads.transaction(rpc, record.signature, budget)
+            if (artifact != null) return reuse(verification, record, artifact)
+            val fetched = try {
+                fetchOne(record, VerificationSection.listingAddress(verification, target, record.listing))
             } catch (exception: CaptureProviderException) {
-                if (exception.category != UNSUPPORTED_VERSION) {
-                    save(replace(verification, record.copy(outcome = VerificationOutcome.PROVIDER_UNAVAILABLE)))
-                    throw exception
-                }
-                return replace(verification.copy(fetches = verification.fetches + 1), record.copy(outcome = VerificationOutcome.UNSUPPORTED_VERSION))
+                save(replace(verification, record.copy(outcome = VerificationOutcome.PROVIDER_UNAVAILABLE)))
+                throw exception
             }
+            return apply(verification, record, fetched)
+        }
+
+        private fun fetchOne(record: VerificationRecord, listingAddress: String): DetailFetch<VerificationOutcome> = try {
+            val raw = ChainCaptureReads.transaction(rpc, record.signature, budget)
+            DetailFetch.Fetched(raw, transactions.classifyVerification(raw, record.signature, record.slot, listingAddress))
+        } catch (exception: CaptureProviderException) {
+            if (exception.category == UNSUPPORTED_VERSION) DetailFetch.UnsupportedVersion else throw exception
+        }
+
+        private fun reuse(verification: WalletTokenVerification, record: VerificationRecord, artifact: StoredArtifact): WalletTokenVerification {
+            val listingAddress = VerificationSection.listingAddress(verification, target, record.listing)
+            val node = store.readArtifact(directory, artifact.path, artifact.bytes, artifact.sha256)
+            val outcome = transactions.classifyVerification(node, record.signature, record.slot, listingAddress)
+            return replace(verification, if (outcome == VerificationOutcome.CAPTURED) {
+                classify(record.listing, record.signature, node)
+                record.copy(outcome = outcome, artifact = artifact.path, sha256 = artifact.sha256, bytes = artifact.bytes)
+            } else record.copy(outcome = outcome, artifact = null, sha256 = null, bytes = 0))
+        }
+
+        private fun apply(verification: WalletTokenVerification, record: VerificationRecord, fetched: DetailFetch<VerificationOutcome>): WalletTokenVerification {
             val counted = verification.copy(fetches = verification.fetches + 1)
-            val outcome = transactions.classifyVerification(raw, record.signature, record.slot, listingAddress)
-            if (outcome != VerificationOutcome.CAPTURED) return replace(counted, record.copy(outcome = outcome))
-            val written = store.writeVerificationTransaction(directory, record.signature, raw)
-            classify(record.listing, record.signature, raw)
-            return replace(counted, record.copy(outcome = outcome, artifact = written.path, sha256 = written.sha256, bytes = written.bytes))
+            return when (fetched) {
+                DetailFetch.UnsupportedVersion -> replace(counted, record.copy(outcome = VerificationOutcome.UNSUPPORTED_VERSION))
+                is DetailFetch.Fetched -> {
+                    if (fetched.outcome != VerificationOutcome.CAPTURED) return replace(counted, record.copy(outcome = fetched.outcome))
+                    val written = store.writeVerificationTransaction(directory, record.signature, fetched.raw)
+                    classify(record.listing, record.signature, fetched.raw)
+                    replace(counted, record.copy(outcome = fetched.outcome, artifact = written.path, sha256 = written.sha256, bytes = written.bytes))
+                }
+            }
         }
 
         private fun classify(listing: VerificationListing, signature: String, node: JsonNode) {
@@ -264,7 +342,11 @@ internal class WalletTokenVerificationCapture(
         }
     }
 
+    /** An entry to resolve, with the artifact it can reuse instead of a fetch, if any. */
+    private data class PlannedEntry(val record: VerificationRecord, val artifact: StoredArtifact?)
+
     private companion object {
         const val UNSUPPORTED_VERSION = "UNSUPPORTED_VERSION"
+        const val STOP_REQUESTED = "STOP_REQUESTED"
     }
 }

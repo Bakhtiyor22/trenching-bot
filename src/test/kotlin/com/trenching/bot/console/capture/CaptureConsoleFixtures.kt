@@ -58,8 +58,12 @@ class FakeCaptureWorkflow : CaptureWorkflow {
     /** Each inspection-only verdict asked for, with whether a dataset was exported; it answers with [CaptureTokenFixtures.inspectionOnly]. */
     val verdicts = mutableListOf<Pair<CaptureInspection, Boolean>>()
 
+    /** What the observer reported about a stop request when each command started, before any checkpoint. */
+    val stopRequestedAtStart = mutableListOf<Boolean>()
+
     override fun execute(command: CaptureStepCommand, checkpoints: CaptureCheckpointObserver): CaptureStepResult {
         executed += command
+        stopRequestedAtStart += checkpoints.stopRequested()
         checkpointBeforeFailure?.let(checkpoints::checkpoint)
         failure?.let { throw it }
         checkpoints.checkpoint(CaptureCheckpoint("FAKE", AT, operationRequests = 3, cumulativeRequests = 5))

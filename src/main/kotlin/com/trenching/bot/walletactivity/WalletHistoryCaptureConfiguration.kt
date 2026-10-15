@@ -40,7 +40,7 @@ class WalletHistoryCaptureConfiguration {
         transactionCache: SharedTransactionCache? = null,
     ): WalletHistoryCapture {
         properties.validate()
-        return WalletHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache), objectMapper, clock, observer)
+        return WalletHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache), objectMapper, clock, properties.maxConcurrentRequests, observer)
     }
 
     @Bean
