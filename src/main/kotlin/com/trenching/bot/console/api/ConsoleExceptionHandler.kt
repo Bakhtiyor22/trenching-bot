@@ -25,7 +25,7 @@ import org.springframework.web.multipart.support.MissingServletRequestPartExcept
  * One error envelope for the dataset, run, config and dashboard endpoints. Multipart is resolved
  * lazily (`application.yml`) so an oversized upload fails inside a handler and reaches this advice.
  */
-@RestControllerAdvice(assignableTypes = [DatasetController::class, RunController::class, ConfigController::class,
+@RestControllerAdvice(assignableTypes = [DatasetController::class, RunController::class, ChartController::class, ConfigController::class,
     DashboardController::class])
 @ConditionalOnConsoleEnabled
 class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper) {

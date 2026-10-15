@@ -26,7 +26,7 @@ class ConsoleApiDisabledIntegrationTest {
         val http = ConsoleHttp(port, json)
 
         listOf(
-            "/api/runs", "/api/datasets", "/api/dashboard", "/api/config/defaults",
+            "/api/runs", "/api/datasets", "/api/dashboard", "/api/config/defaults", "/api/runs/any/chart", "/api/datasets/any/chart",
             "/console", "/console/", "/console/index.html", "/console/assets/console-test.js", "/console/runs/sample",
         ).forEach { path ->
             assertEquals(404, http.get(path).status, path)

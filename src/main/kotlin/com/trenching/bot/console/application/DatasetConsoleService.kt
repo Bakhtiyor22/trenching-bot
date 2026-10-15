@@ -1,9 +1,7 @@
 package com.trenching.bot.console.application
 
-import com.trenching.bot.common.MarketPair
 import com.trenching.bot.common.PageResult
 import com.trenching.bot.console.domain.EmptyDatasetUploadException
-import com.trenching.bot.console.domain.InvalidConsoleRequestException
 import com.trenching.bot.console.domain.SampleDatasetNotFoundException
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.OrderedMarketData
@@ -65,27 +63,12 @@ class DatasetConsoleService(
 
     /** [pair] is `<baseMint>/<quoteMint>`; without it every pair's observations are returned, slot-ordered. */
     fun observations(id: String, pair: String?): List<MarketObservation> {
-        val filter = pair?.let(::parsePair)
+        val filter = pair?.let(ConsolePairs::parse)
         val observations = OrderedMarketData.canonical(catalog.load(id).observations)
         return if (filter == null) observations else observations.filter { it.pair == filter }
     }
 
-    private fun parsePair(value: String): MarketPair {
-        val mints = value.split(PAIR_SEPARATOR).map(ConsoleAddresses::mintOrNull)
-        val base = mints.getOrNull(0)
-        val quote = mints.getOrNull(1)
-        if (mints.size != 2 || base == null || quote == null || base == quote) {
-            throw InvalidConsoleRequestException(PAIR, "must be <baseMint>/<quoteMint> with two different base58 mints")
-        }
-        return MarketPair.of(base, quote)
-    }
-
     private fun countUpload(outcome: String) {
         meterRegistry.counter(ConsoleMetrics.DATASET_UPLOADS, ConsoleMetrics.OUTCOME, outcome).increment()
-    }
-
-    private companion object {
-        const val PAIR = "pair"
-        const val PAIR_SEPARATOR = "/"
     }
 }

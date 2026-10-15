@@ -194,9 +194,10 @@ class ConsoleApiIntegrationTest {
         assertError(404, "DATASET_NOT_FOUND", http.get("/api/datasets/$UNKNOWN_ID/observations"))
         assertError(404, "SAMPLE_NOT_FOUND", http.post("/api/datasets/samples/no-such-sample"))
         assertError(404, "DATASET_NOT_FOUND", http.post("/api/runs", """{"datasetId":"$UNKNOWN_ID"}"""))
-        listOf("", "/events", "/observations", "/orders", "/positions", "/report").forEach { suffix ->
+        listOf("", "/events", "/observations", "/orders", "/positions", "/report", "/chart").forEach { suffix ->
             assertError(404, "RUN_NOT_FOUND", http.get("/api/runs/$UNKNOWN_ID$suffix"))
         }
+        assertError(404, "DATASET_NOT_FOUND", http.get("/api/datasets/$UNKNOWN_ID/chart?pair=${DipSample.pair(DipSample.TAKE_PROFIT).let { "${it.base.value}/${it.quote.value}" }}"))
     }
 
     @Test
@@ -266,6 +267,7 @@ class ConsoleApiIntegrationTest {
         assertEquals("BUY", events.first().path("side").asString())
         assertEquals(31, observations.size())
         assertTrue(observations.all { it.path("price").isString })
+        assertTrue(observations.all { it.has("trade") && it.path("trade").isNull })
         assertEquals(10, orders.size())
         assertEquals(5, orders.count { it.path("status").asString() == "FILLED" && it.path("fill").path("executionPrice").isString })
         assertEquals(5, positions.size())
