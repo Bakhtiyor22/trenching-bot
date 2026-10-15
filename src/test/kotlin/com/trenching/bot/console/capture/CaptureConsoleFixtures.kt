@@ -100,7 +100,7 @@ class CaptureConsoleFixture(root: Path, rpcConfigured: Boolean = true, ratesConf
     val store = CaptureFileStore(CapturePathPolicy(root), json).also { it.initialize() }
     private var nextId = 0
     val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured, retryScheduler)
-    val sessions = CaptureSessionService(store, operations, clock) { "id-${++nextId}" }
+    val sessions = CaptureSessionService(store, operations, clock, CaptureIds { "id-${++nextId}" })
 
     /** Creates a wallet session and runs its automatic offline inspection, leaving the worker idle and the log empty. */
     fun create(requestId: String = "session-1"): CaptureSessionView {

@@ -17,7 +17,7 @@ interface CaptureResponseMapper {
     fun attempt(value: CaptureAttemptRecord): CaptureAttemptResponse
     fun operation(value: CaptureOperationRecord): CaptureOperationResponse
     fun captureCase(value: CaptureCaseView): CaptureCaseResponse
-    fun cases(value: CaptureCasesView): CaptureCasesResponse
+    fun cases(value: CaptureCasesView): CaptureCasesResponse = CaptureCasesResponse(items = value.items.map(::captureCase))
     fun caseProgress(value: CaptureProgressResponse): CaptureCaseProgressResponse
     fun recovery(value: CaptureRecoveryRecord): CaptureRecoveryResponse = CaptureRecoveryResponse(
         enabled = true,
