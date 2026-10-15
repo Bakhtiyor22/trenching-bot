@@ -2,7 +2,7 @@
 
 Status: Delivered 2026-10-15 — see Delivered below.
 
-Milestone 2 of the approved capture and paper improvement plan (milestone 1: [independent market cases](20261012-capture-paper-implementation.md)). It removes the throughput bottlenecks found in the review: one `@Synchronized` RPC call at a time behind a hard-coded 500 ms interval, strictly sequential `getTransaction` detail loops, per-worker retry storms after HTTP 429, and the same signature being downloaded again by every capture directory.
+Milestone 2 of the approved capture and paper improvement plan (milestone 1: [independent market cases](../20261012-capture-paper-implementation.md)). It removes the throughput bottlenecks found in the review: one `@Synchronized` RPC call at a time behind a hard-coded 500 ms interval, strictly sequential `getTransaction` detail loops, per-worker retry storms after HTTP 429, and the same signature being downloaded again by every capture directory.
 
 Out of scope: the Helius filtered-history method (waits on the provider entitlement and budget decision), the new strategy, chart work, live trading.
 
