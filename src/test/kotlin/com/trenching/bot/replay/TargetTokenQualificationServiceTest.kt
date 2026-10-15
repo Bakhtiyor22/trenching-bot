@@ -22,6 +22,7 @@ import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetWriter
 import com.trenching.bot.strategy.domain.DipWatchOutcome
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.DipSample
+import com.trenching.bot.support.DipSampleV5
 import com.trenching.bot.walletactivity.TargetTokenEvidence
 import com.trenching.bot.walletactivity.domain.WalletTransaction
 import java.nio.file.Files
@@ -184,6 +185,35 @@ class TargetTokenQualificationServiceTest {
     }
 
     @Test
+    fun `a v5 dataset decided at the take profit close qualifies exactly like the full window`() {
+        val full = qualify(DipSample.TAKE_PROFIT)
+        val decided = qualify(DipSample.TAKE_PROFIT, datasetV5(DipSample.TAKE_PROFIT, throughSlot = 1006))
+
+        assertEquals(CaseClassification.QUALIFYING_DIP, decided.classification)
+        assertEquals(listOf(full.capture, full.dip, full.entry, full.exit, full.replay),
+            listOf(decided.capture, decided.dip, decided.entry, decided.exit, decided.replay))
+        assertEquals(full.provenance.copy(datasetChecksum = null, runId = null), decided.provenance.copy(datasetChecksum = null, runId = null))
+    }
+
+    @Test
+    fun `a scenario decided beyond the coverage is an incomplete market capture, never a negative case or a replay failure`() {
+        mapOf(DipSample.TAKE_PROFIT to 1005L, DipSample.NO_DIP to 5000L).forEach { (cycle, throughSlot) ->
+            val buy = firstBuy(cycle)
+
+            val verdict = qualify(cycle, datasetV5(cycle, throughSlot))
+
+            assertEquals(CaseClassification.INCOMPLETE_CAPTURE, verdict.classification, "cycle=$cycle")
+            assertEquals(CaptureVerdict(CaptureVerdictState.INCOMPLETE, CaptureVerdictStage.MARKET, "MARKET_COVERAGE_ENDED"), verdict.capture)
+            assertEquals(ReplayVerdict.NotRun, verdict.replay)
+            assertEquals(DipVerdict.NotEvaluated("REPLAY_NOT_RUN"), verdict.dip)
+            assertNull(verdict.entry)
+            assertNull(verdict.exit)
+            assertEquals(evidence(cycle).actualFirstBuy, verdict.actualFirstBuy)
+            assertEquals(VerdictProvenance(firstBuySignature = buy.signature, firstBuySlot = buy.slot), verdict.provenance)
+        }
+    }
+
+    @Test
     fun `an exported capture still awaiting qualification says the qualification is pending, never not exported`() {
         val inspection = ready(evidence(DipSample.TAKE_PROFIT))
 
@@ -280,6 +310,14 @@ class TargetTokenQualificationServiceTest {
         val pair = DipSample.pair(cycle)
         return write("cycle-$cycle", edit(sample.copy(transactions = sample.transactions.filter { it.pair == pair },
             observations = sample.observations.filter { it.pair == pair })))
+    }
+
+    /** The cycle's mint alone as schema v5, its window observed through [throughSlot]. */
+    private fun datasetV5(cycle: Int, throughSlot: Long): Path {
+        val pair = DipSample.pair(cycle)
+        val v5 = DipSampleV5.dataset(mapOf(pair to throughSlot))
+        return write("cycle-$cycle-v5-$throughSlot", v5.copy(transactions = v5.transactions.filter { it.pair == pair },
+            observations = v5.observations.filter { it.pair == pair }, coverage = v5.coverage.filter { it.pair == pair }))
     }
 
     private fun write(name: String, dataset: ReplayDataset): Path =

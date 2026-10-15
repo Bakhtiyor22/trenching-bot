@@ -7,6 +7,7 @@ import com.trenching.bot.marketdata.RecordedMarketHistory
 import com.trenching.bot.marketdata.RecordedReferenceRates
 import com.trenching.bot.marketdata.ReferenceRateCapture
 import com.trenching.bot.marketdata.ReferenceRateCaptureRequest
+import com.trenching.bot.marketdata.SolUsdtRateSource
 import com.trenching.bot.replay.CaptureInspection
 import com.trenching.bot.replay.CaptureCaseInventory
 import com.trenching.bot.replay.CaptureCaseInspection
@@ -29,11 +30,13 @@ class CaptureWorkflowService(
     private val marketCapture: (CaptureCheckpointObserver) -> MarketHistoryCapture,
     private val rateCapture: (CaptureCheckpointObserver) -> ReferenceRateCapture,
     private val mapper: ObjectMapper,
+    /** The rate source a decided market capture replays with; null when rates are not configured. */
+    private val cutoffRates: SolUsdtRateSource?,
 ) : CaptureWorkflow {
     override fun execute(command: CaptureStepCommand, checkpoints: CaptureCheckpointObserver): CaptureStepResult = when (command) {
         is CaptureStepCommand.Wallet -> CaptureStepResult.Wallet(walletCapture(checkpoints).capture(command.request))
         is CaptureStepCommand.Markets -> CaptureStepResult.Markets(
-            ReplayMarketCaptureService(wallets, { marketCapture(checkpoints) }).capture(command.request))
+            ReplayMarketCaptureService(wallets, { marketCapture(checkpoints) }, cutoffRates).capture(command.request))
         is CaptureStepCommand.Rates -> {
             val planned = RecordedWalletPlanning(wallets).plan(command.wallet)
             val market = markets.decode(command.market)

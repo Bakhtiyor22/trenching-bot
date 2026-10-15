@@ -17,11 +17,13 @@ import com.trenching.bot.chaincapture.SignatureListing
 import com.trenching.bot.chaincapture.SolanaReadRpc
 import com.trenching.bot.chaincapture.SolanaRpcSettings
 import com.trenching.bot.marketdata.*
+import com.trenching.bot.marketdata.domain.MarketCutoffRules
 import com.trenching.bot.marketdata.domain.MarketWindowRules
 import com.trenching.bot.marketdata.infrastructure.capture.MarketCaptureFormat
 import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifactStore
 import com.trenching.bot.marketdata.infrastructure.capture.MarketTransactionEvidence
 import com.trenching.bot.marketdata.infrastructure.capture.MarketWindowRecords
+import com.trenching.bot.marketdata.infrastructure.extraction.PumpFunTradeObservationExtractor
 import java.time.Clock
 import org.slf4j.LoggerFactory
 
@@ -34,6 +36,7 @@ internal class MarketHistoryCaptureService(
 ) : MarketHistoryCapture {
     private val log = LoggerFactory.getLogger(MarketHistoryCaptureService::class.java)
     private val evidence = MarketTransactionEvidence()
+    private val extractor = PumpFunTradeObservationExtractor()
     private val detailBatches = DetailBatches(BoundedParallelFetch(), observer, concurrency, MarketCaptureFormat.DETAIL_CHECKPOINT_INTERVAL, "market_capture")
 
     override fun capture(request: MarketHistoryCaptureRequest): MarketHistoryCaptureResult {
@@ -53,7 +56,8 @@ internal class MarketHistoryCaptureService(
             acquisitionComplete = false, complete = false, requestsUsed = 0, bytesUsed = 0,
         )
         if (request.scanPages > manifest.scanPageLimit) manifest = extend(manifest, request.scanPages)
-        checkpoint(request, usage(manifest, budget), budget)
+        manifest = reopenUnaccepted(manifest, request)
+        checkpoint(request, summarized(manifest, budget), budget)
         val stop = CaptureStop()
         manifest = discover(request, manifest, budget, stop)
         return finish(request, manifest, budget, stop)
@@ -82,13 +86,13 @@ internal class MarketHistoryCaptureService(
                     MarketWindowScan.boundReached(scanned)
                 } else scanned
                 manifest = withWindow(manifest, index, window)
-                checkpoint(request, usage(manifest, budget), budget)
+                checkpoint(request, summarized(manifest, budget), budget)
             }
             log.info("market_capture window mint={} fromSlot={} toSlot={} coverage={} scanned={} skippedFailed={} skippedNewer={} selected={}",
                 window.baseMint, window.fromSlot, window.toSlot, window.coverage, window.scanned, window.skippedFailed, window.skippedNewer, window.selected)
             if (window.coverage == MarketWindowCoverage.COMPLETE) {
-                manifest = fetchDetails(request, manifest, budget, stop, window)
-                checkpoint(request, usage(manifest, budget), budget)
+                manifest = fetchDetails(request, manifest, budget, stop, index)
+                checkpoint(request, summarized(manifest, budget), budget)
                 if (stop.reason != null) return manifest
             }
         }
@@ -100,34 +104,79 @@ internal class MarketHistoryCaptureService(
         return manifest.copy(scanPageLimit = scanPages, windows = manifest.windows.map(MarketWindowScan::extended))
     }
 
-    /** Admits a completed window's selection, keeping records in window order and each existing record's state. */
+    /**
+     * Reopens each decided window this request does not accept, a full capture or a cutoff of another identity: its
+     * `NOT_NEEDED` records become pending again and are fetched from the saved listing.
+     */
+    private fun reopenUnaccepted(manifest: MarketHistoryManifest, request: MarketHistoryCaptureRequest): MarketHistoryManifest =
+        manifest.windows.indices.fold(manifest) { current, index ->
+            val cutoff = current.windows[index].cutoff
+            if (cutoff == null || accepts(request, cutoff)) current else {
+                log.info("market_capture cutoff reopened mint={} throughSlot={} outcome={} configurationHash={} mode={}",
+                    current.windows[index].baseMint, cutoff.throughSlot, cutoff.outcome, cutoff.configurationHash, request.cutoffMode)
+                MarketCutoffRules.reopened(current, index)
+            }
+        }
+
+    private fun accepts(request: MarketHistoryCaptureRequest, cutoff: MarketWindowCutoff): Boolean = when (request.cutoffMode) {
+        MarketCutoffMode.FULL -> false
+        MarketCutoffMode.DECIDED -> request.cutoffIdentity == CutoffIdentity(cutoff.engineVersion, cutoff.configurationHash)
+    }
+
+    /** Admits a completed window's selection, keeping records in window order and each existing record's state unless it is needed again. */
     private fun withWindow(manifest: MarketHistoryManifest, index: Int, window: MarketWindowRecord): MarketHistoryManifest {
         val windows = manifest.windows.toMutableList().apply { set(index, window) }
         if (window.coverage != MarketWindowCoverage.COMPLETE) return manifest.copy(windows = windows)
         val existing = manifest.records.associateBy { it.signature }
         val records = MarketWindowRecords.admitted(windows)
             .map { existing[it.signature] ?: MarketTransactionRecord(it.signature, it.slot, MarketTransactionOutcome.PENDING) }
-        return manifest.copy(windows = windows, records = records)
+        return MarketCutoffRules.reconciled(manifest.copy(windows = windows, records = records))
     }
 
+    /**
+     * Fetches a complete, undecided window's unresolved records oldest first. In decided mode the cutoff is asked before
+     * the first fetch and with each batch whose prefix advanced; a decision is saved with that batch and ends the phase.
+     */
     private fun fetchDetails(
         request: MarketHistoryCaptureRequest,
         saved: MarketHistoryManifest,
         budget: CaptureBudget,
         stop: CaptureStop,
-        window: MarketWindowRecord,
+        index: Int,
     ): MarketHistoryManifest {
-        val selected = window.selection.mapTo(HashSet()) { it.signature }
-        val unresolved = saved.records.withIndex()
-            .filter { (_, record) -> record.signature in selected && record.outcome in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
+        val window = saved.windows[index]
+        val unresolved = unresolved(saved, window)
+        if (window.cutoff != null || unresolved.isEmpty()) return saved
+        val evaluator = evaluator(request, index)
+        val initial = evaluator?.evaluate(saved) ?: saved
+        if (evaluator?.decided(initial) == true) return initial
         return detailBatches.run(
-            items = unresolved, initial = saved, budget = budget, stop = stop,
+            items = unresolved, initial = initial, budget = budget, stop = stop,
             signatureOf = { it.value.signature },
             fetchOne = { fetchDetail(it.value, budget) },
-            apply = { manifest, batch -> withDetails(request, manifest, batch.completed, batch.unavailable) },
-            checkpoint = { checkpoint(request, usage(it, budget), budget) },
+            apply = { manifest, batch ->
+                val applied = withDetails(request, manifest, batch.completed, batch.unavailable)
+                evaluator?.evaluate(applied) ?: applied
+            },
+            checkpoint = { checkpoint(request, summarized(it, budget), budget) },
             report = { logPhase(window, it) },
+            until = { evaluator?.decided(it) == true },
         )
+    }
+
+    /** The window's records still to fetch, in ascending (slot, signature) order; their indexes keep the manifest's order. */
+    private fun unresolved(manifest: MarketHistoryManifest, window: MarketWindowRecord): List<IndexedValue<MarketTransactionRecord>> {
+        val selected = window.selection.mapTo(HashSet()) { it.signature }
+        return manifest.records.withIndex()
+            .filter { (_, record) -> record.signature in selected && record.outcome in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
+            .sortedWith(compareBy({ it.value.slot }, { it.value.signature }))
+    }
+
+    private fun evaluator(request: MarketHistoryCaptureRequest, index: Int): WindowCutoffEvaluator? = when (request.cutoffMode) {
+        MarketCutoffMode.FULL -> null
+        MarketCutoffMode.DECIDED -> WindowCutoffEvaluator(request.directory, index,
+            requireNotNull(request.cutoff) { "A decided capture was validated with a cutoff" },
+            requireNotNull(request.cutoffIdentity) { "A decided capture was validated with a cutoff identity" }, store, extractor)
     }
 
     private fun fetchDetail(record: MarketTransactionRecord, budget: CaptureBudget): DetailFetch<MarketTransactionOutcome> =
@@ -164,7 +213,7 @@ internal class MarketHistoryCaptureService(
             measurements.retries, measurements.elapsed.toMillis(), concurrency)
     }
     private fun finish(request: MarketHistoryCaptureRequest, saved: MarketHistoryManifest, budget: CaptureBudget, stop: CaptureStop): MarketHistoryCaptureResult {
-        val manifest = usage(saved, budget)
+        val manifest = summarized(saved, budget)
         checkpoint(request, manifest, budget)
         log.info("market_capture finished windows={} transactions={} acquisitionComplete={} complete={} requests={} bytes={} stopReason={}",
             manifest.windows.size, manifest.records.size, manifest.acquisitionComplete, manifest.complete, budget.requestsUsed, budget.bytesUsed,
@@ -172,10 +221,12 @@ internal class MarketHistoryCaptureService(
         return MarketHistoryCaptureResult(request.directory.toAbsolutePath().normalize(), manifest, stop.reason, stop.retryAfter)
     }
 
-    private fun usage(manifest: MarketHistoryManifest, budget: CaptureBudget): MarketHistoryManifest {
+    /** Sets the cumulative usage, the completion flags and the schema version the manifest's content needs. */
+    private fun summarized(manifest: MarketHistoryManifest, budget: CaptureBudget): MarketHistoryManifest {
         val acquired = manifest.windows.none { it.coverage == MarketWindowCoverage.PENDING } &&
             manifest.records.none { it.outcome in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
-        return manifest.copy(requestsUsed = budget.cumulativeRequests(), bytesUsed = budget.cumulativeBytes(), acquisitionComplete = acquired,
+        return manifest.copy(schemaVersion = MarketCaptureFormat.versionFor(manifest.windows),
+            requestsUsed = budget.cumulativeRequests(), bytesUsed = budget.cumulativeBytes(), acquisitionComplete = acquired,
             complete = acquired && manifest.windows.all { it.coverage == MarketWindowCoverage.COMPLETE })
     }
 
@@ -199,9 +250,16 @@ internal class MarketHistoryCaptureService(
             request.requestBudget !in 1..MarketCaptureFormat.MAX_REQUESTS || request.byteBudget !in 1..MarketCaptureFormat.MAX_CAPTURE_BYTES ||
             windows.size !in 1..MarketCaptureFormat.MAX_WINDOWS || !MarketWindowRules.isDisjoint(windows) ||
             !MarketWindowRules.isValid(request.windowParameters) ||
-            request.operationTimeout?.let { SolanaRpcSettings.isInvocationTimeoutValid(it) } == false) {
+            request.operationTimeout?.let { SolanaRpcSettings.isInvocationTimeoutValid(it) } == false || !isCutoffValid(request)) {
             throw CaptureValidationException("REQUEST_BOUNDS")
         }
         return windows
+    }
+
+    private fun isCutoffValid(request: MarketHistoryCaptureRequest): Boolean = when (request.cutoffMode) {
+        MarketCutoffMode.FULL -> true
+        MarketCutoffMode.DECIDED -> request.cutoff != null && request.cutoffIdentity?.let { identity ->
+            MarketCaptureFormat.isCutoffText(identity.engineVersion) && MarketCaptureFormat.isCutoffText(identity.configurationHash)
+        } == true
     }
 }

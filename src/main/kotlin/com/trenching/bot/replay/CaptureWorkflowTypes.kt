@@ -70,6 +70,8 @@ data class CaptureCaseInspection(
     val ready: Boolean,
     val blocker: String?,
     val observations: Int,
+    /** The window's last observed slot, earlier than its end when its outcome was decided; null before market capture. */
+    val observedThrough: Long? = null,
 )
 
 enum class CaptureStageState { NOT_STARTED, INCOMPLETE, READY, UNUSABLE, INVALID }

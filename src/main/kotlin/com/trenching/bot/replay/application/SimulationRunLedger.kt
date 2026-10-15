@@ -23,10 +23,16 @@ class SimulationRunLedger(
 
     fun persist(dataset: ReplayDataset, report: SimulationReport): SimulationRunRecord = persistWithOutcome(dataset, report).record
 
+    /** Refuses, before anything is stored, a report with a scenario decided beyond its dataset's coverage. */
     fun persistWithOutcome(dataset: ReplayDataset, report: SimulationReport): RunPersistence {
         require(DatasetFingerprint.checksum(dataset) == report.datasetChecksum) { "Report does not belong to dataset" }
         require(StableHash.of(listOf(report.engineVersion, report.datasetChecksum, report.configurationHash)) == report.runId) {
             "Invalid simulation run identity"
+        }
+        DatasetCoverage.undecided(report, dataset).firstOrNull()?.let { shortfall ->
+            log.warn("simulation run refused reason={} runId={} mint={} decidedAt={} throughSlot={}", VerdictReasons.MARKET_COVERAGE_ENDED,
+                report.runId, shortfall.pair.base.value, shortfall.decidedAt.value, shortfall.throughSlot?.value)
+            throw MarketCoverageEndedException(shortfall)
         }
         val createdAt = clock.instant().truncatedTo(ChronoUnit.MICROS)
         val record = records.record(report.runId, report.engineVersion, report.datasetChecksum, report.configurationHash,

@@ -13,6 +13,7 @@ import com.trenching.bot.marketdata.application.MarketHistoryCaptureService
 import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifactStore
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -78,7 +79,7 @@ class MarketHistoryParallelCaptureTest {
 
         assertEquals(7, chain.started.size)
         val saved = recorded().inspect(directory).manifest
-        assertEquals((1..7).map(::signature), saved.records.filter { it.artifact != null }.map { it.signature })
+        assertEquals((34..40).map(::signature), saved.records.filter { it.artifact != null }.map { it.signature })
         assertEquals(7, saved.records.count { it.outcome == MarketTransactionOutcome.CAPTURED })
     }
 
@@ -113,6 +114,41 @@ class MarketHistoryParallelCaptureTest {
     }
 
     @Test
+    fun `a decided capture at concurrency 4 writes the same manifest bytes as at concurrency 1 and fetches at most one batch past the decision`() {
+        val sequential = Chain(250).also { capture(it, directory.resolve("one"), concurrency = 1, cutoff = DecideAtSlot(DECISION_SLOT)) }
+        val parallel = Chain(250).also { capture(it, directory.resolve("four"), concurrency = 4, cutoff = DecideAtSlot(DECISION_SLOT)) }
+
+        assertEquals(manifestBytes(directory.resolve("one")).toList(), manifestBytes(directory.resolve("four")).toList())
+        val manifest = recorded().inspect(directory.resolve("four")).manifest
+        assertEquals(DECISION_SLOT, manifest.windows.single().cutoff?.throughSlot)
+        assertEquals(3, manifest.schemaVersion)
+        assertTrue(manifest.records.filter { it.slot > DECISION_SLOT }.all { it.outcome == MarketTransactionOutcome.NOT_NEEDED && it.artifact == null })
+        assertTrue(manifest.records.filter { it.slot <= DECISION_SLOT }.all { it.outcome == MarketTransactionOutcome.CAPTURED })
+        listOf(sequential, parallel).forEach { chain ->
+            val slots = chain.started.map { slot(indexOf(it)) }
+            assertTrue(slots.containsAll((1750L..DECISION_SLOT).toList()))
+            assertTrue(slots.count { it > DECISION_SLOT } <= 99, "fetched past the decision ${slots.count { it > DECISION_SLOT }}")
+        }
+        assertEquals((1750L..1849L).toList(), sequential.started.map { slot(indexOf(it)) })
+    }
+
+    @Test
+    fun `an interrupted decided capture resumed later ends as the uninterrupted decided capture`() {
+        val reference = capture(Chain(250), directory.resolve("reference"), concurrency = 1, cutoff = DecideAtSlot(DECISION_SLOT)).manifest
+        val interrupted = directory.resolve("interrupted")
+        val first = capture(Chain(250).apply { failFromRequest = 30 }, interrupted, concurrency = 4, cutoff = DecideAtSlot(DECISION_SLOT))
+        assertEquals("HTTP_ERROR", first.stopReason)
+        assertNull(first.manifest.windows.single().cutoff)
+
+        val resumedChain = Chain(250)
+        val resumed = capture(resumedChain, interrupted, concurrency = 4, cutoff = DecideAtSlot(DECISION_SLOT))
+
+        assertNull(resumed.stopReason)
+        assertEquals(emptySet(), resumedChain.started.toSet().intersect(first.manifest.records.filter { it.artifact != null }.map { it.signature }.toSet()))
+        assertEquals(reference.copy(requestsUsed = 0, bytesUsed = 0), resumed.manifest.copy(requestsUsed = 0, bytesUsed = 0))
+    }
+
+    @Test
     fun `a transaction shared by two windows is fetched once at concurrency 4`() {
         val chain = Chain(0).apply { listing = { address -> if (address == MINT) listOf(1, 2, 3, 4) else listOf(4, 5) } }
         val windows = listOf(window(MINT), window(OTHER_MINT))
@@ -132,8 +168,11 @@ class MarketHistoryParallelCaptureTest {
         requestBudget: Int = 1000,
         windows: List<MarketCaptureWindow> = listOf(window(MINT)),
         maxTransactions: Int = 300,
+        cutoff: MarketCaptureCutoff? = null,
     ): MarketHistoryCaptureResult = MarketHistoryCaptureService(chain.rpc(), MarketHistoryArtifactStore(mapper), CLOCK, concurrency, observer)
-        .capture(MarketHistoryCaptureRequest(target, windows, PARAMETERS, 20, maxTransactions, requestBudget, 104_857_600))
+        .capture(MarketHistoryCaptureRequest(target, windows, PARAMETERS, 20, maxTransactions, requestBudget, 104_857_600,
+            cutoffMode = if (cutoff == null) MarketCutoffMode.FULL else MarketCutoffMode.DECIDED, cutoff = cutoff,
+            cutoffIdentity = cutoff?.let { IDENTITY }))
 
     private fun artifactHashes(root: Path): Map<String, String> = Files.list(root.resolve("transactions")).use { paths ->
         paths.toList().associate { it.fileName.toString() to Sha256.hex(Files.readAllBytes(it)) }
@@ -185,11 +224,9 @@ class MarketHistoryParallelCaptureTest {
                 onStart(number)
                 if (number >= failFromRequest) throw CaptureProviderException("HTTP_ERROR")
                 Thread.sleep(((number % 5) * 3).toLong())
-                return mapper.readTree(transactionJson(signature, slot(indexOf.getValue(signature))))
+                return mapper.readTree(transactionJson(signature, slot(indexOf(signature))))
             } finally { inFlight.decrementAndGet() }
         }
-
-        private val indexOf = (1..MAX_INDEX).associateBy(::signature)
 
         private fun entry(index: Int) =
             """{"signature":"${signature(index)}","slot":${slot(index)},"err":null,"memo":null,"blockTime":1791049629}"""
@@ -197,20 +234,29 @@ class MarketHistoryParallelCaptureTest {
 
     private fun slot(index: Int): Long = 2000L - index
 
+    private val indexes = (1..MAX_INDEX).associateBy(::signature)
+
+    private fun indexOf(signature: String): Int = indexes.getValue(signature)
+
     private fun transactionJson(signature: String, slot: Long) =
         """{"slot":$slot,"blockTime":1791049629,"version":1,"meta":{"err":null,"fee":5000,"preBalances":[1000000],"postBalances":[995000],"logMessages":[]},""" +
             """"transaction":{"signatures":["$signature"],"message":{"accountKeys":[{"pubkey":"$OTHER_MINT","signer":true,"writable":true}],""" +
             """"instructions":[{"programId":"$OTHER_MINT","accounts":[],"data":""}],"recentBlockhash":"$OTHER_MINT"}}}"""
 
-    private fun signature(index: Int): String =
-        Base58.encode(ByteArray(64).also { bytes -> bytes[61] = (index shr 16).toByte(); bytes[62] = (index shr 8).toByte(); bytes[63] = index.toByte() })
+    /** Hash-derived, so no two signatures differ only in letter case and collide as artifact files on a case-insensitive file system. */
+    private fun signature(index: Int): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        return Base58.encode(digest.digest("a$index".toByteArray()) + digest.digest("b$index".toByteArray()))
+    }
 
     private companion object {
         const val GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
         const val MINT = "5bYUihkPWGph9BLyG4uUbNV634UTwjf3Ly5JEsnokbDs"
         const val OTHER_MINT = "4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9"
         const val SOURCE = 77_777
-        const val MAX_INDEX = 200
+        const val MAX_INDEX = 300
+        const val DECISION_SLOT = 1800L
+        val IDENTITY = CutoffIdentity("engine-v1", "a".repeat(64))
         val PARAMETERS = MarketCaptureWindowParameters(horizonSlots = 4500, maxAgeSlots = 2)
         val CLOCK: Clock = Clock.fixed(Instant.parse("2026-10-04T00:00:00Z"), ZoneOffset.UTC)
     }

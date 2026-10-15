@@ -4,6 +4,7 @@ import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.marketdata.*
+import com.trenching.bot.marketdata.domain.MarketCutoffRules
 import com.trenching.bot.marketdata.domain.OrderedMarketData
 import com.trenching.bot.marketdata.infrastructure.capture.MarketCaptureFormat
 import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifactStore
@@ -25,11 +26,12 @@ internal class RecordedMarketHistoryService(
         val verified = store.inspect(directory)
         if (!verified.manifest.acquisitionComplete) throw CaptureValidationException("CAPTURE_INCOMPLETE")
         val outcomes = verified.manifest.records.associate { it.signature to it.outcome }
-        val usable = verified.manifest.windows.filter { yieldsObservations(it, outcomes) }.map(MarketWindowRecords::window)
+        val usable = verified.manifest.windows.filter { yieldsObservations(it, outcomes) }
+            .map { MarketWindowRecords.window(it) to MarketCutoffRules.observedThrough(it) }
         val extractions = mutableMapOf<String, List<TradeExtraction>>()
         val manifest = store.loadIfPresent(directory) { record, transaction ->
             extractions[record.signature] = extractor.extract(transaction, TransactionSignature.of(record.signature), Slot.of(record.slot)) { mint, slot ->
-                usable.any { it.contains(mint, slot) }
+                usable.any { (window, observedThrough) -> window.contains(mint, slot) && slot.value <= observedThrough }
             }
         }?.takeIf { it == verified.manifest } ?: throw CaptureValidationException("CAPTURE_CHANGED")
         val observations = OrderedMarketData.canonical(extractions.values.flatten().filterIsInstance<TradeExtraction.Observed>().map { it.observation })
@@ -37,7 +39,7 @@ internal class RecordedMarketHistoryService(
         val windows = manifest.windows.map { record ->
             val window = MarketWindowRecords.window(record)
             MarketWindowDecodeRecord(window, record.coverage, record.selected, detailGaps(record, outcomes), yieldsObservations(record, outcomes),
-                observations.count { window.contains(it.pair.base, it.slot) })
+                observations.count { window.contains(it.pair.base, it.slot) }, Slot.of(MarketCutoffRules.observedThrough(record)))
         }
         val transactions = manifest.records.map { record ->
             val extracted = extractions[record.signature].orEmpty()
@@ -88,11 +90,16 @@ internal class RecordedMarketHistoryService(
             current.unresolved, blocker == null, blocker)
     }
 
+    /** Counts only the selection through the window's observed end; a decided window needs nothing after its cutoff. */
     private fun progress(window: MarketWindowRecord, records: Map<String, MarketTransactionRecord>): MarketCaseProgress {
         val selected = window.selected
-        val captured = window.selection.count { records[it.signature]?.outcome == MarketTransactionOutcome.CAPTURED }
-        val unresolved = selected - captured
-        val unresolvedOutcomes = window.selection.mapNotNull { records[it.signature]?.outcome }
+        val observed = MarketCutoffRules.observedSelection(window)
+        val captured = observed.count { records[it.signature]?.outcome == MarketTransactionOutcome.CAPTURED }
+        val unresolved = when (window.coverage) {
+            MarketWindowCoverage.COMPLETE -> observed.size - captured
+            MarketWindowCoverage.PENDING, MarketWindowCoverage.COVERAGE_INCOMPLETE, MarketWindowCoverage.OVER_CAP -> selected - captured
+        }
+        val unresolvedOutcomes = observed.mapNotNull { records[it.signature]?.outcome }
             .filter { it in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
         val stage = when {
             window.coverage == MarketWindowCoverage.PENDING -> MarketCaseStage.DISCOVERY_PENDING
@@ -108,8 +115,9 @@ internal class RecordedMarketHistoryService(
             MarketCaseStage.DETAILS_INCOMPLETE -> "MARKET_DETAIL_GAPS"
             MarketCaseStage.READY_TO_VALIDATE -> null
         }
-        return MarketCaseProgress(MarketCaseId.from(MarketWindowRecords.window(window)), MarketWindowRecords.window(window),
-            window.coverage, stage, selected, captured, unresolved, blocker)
+        val captureWindow = MarketWindowRecords.window(window)
+        return MarketCaseProgress(MarketCaseId.from(captureWindow), captureWindow, window.coverage, stage, selected, captured, unresolved,
+            blocker, Slot.of(MarketCutoffRules.observedThrough(window)))
     }
 
     private companion object {
@@ -117,9 +125,9 @@ internal class RecordedMarketHistoryService(
     }
 
     private fun detailGaps(window: MarketWindowRecord, outcomes: Map<String, MarketTransactionOutcome>): Int =
-        window.selection.count { outcomes[it.signature] != MarketTransactionOutcome.CAPTURED }
+        MarketCutoffRules.observedSelection(window).count { outcomes[it.signature] != MarketTransactionOutcome.CAPTURED }
 
-    /** A missing in-window transaction could hide an earlier trade, so its whole window yields nothing. */
+    /** A missing transaction through the observed end could hide an earlier trade, so its whole window yields nothing. */
     private fun yieldsObservations(window: MarketWindowRecord, outcomes: Map<String, MarketTransactionOutcome>): Boolean =
         window.coverage == MarketWindowCoverage.COMPLETE && detailGaps(window, outcomes) == 0
 }

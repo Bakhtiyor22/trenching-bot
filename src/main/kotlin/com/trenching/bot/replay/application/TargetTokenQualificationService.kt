@@ -9,6 +9,8 @@ import com.trenching.bot.replay.domain.CaptureVerdict
 import com.trenching.bot.replay.domain.CaptureVerdictStage
 import com.trenching.bot.replay.domain.CaptureVerdictState
 import com.trenching.bot.replay.domain.CaseClassification
+import com.trenching.bot.replay.domain.CoverageShortfall
+import com.trenching.bot.replay.domain.DatasetCoverage
 import com.trenching.bot.replay.domain.DipVerdict
 import com.trenching.bot.replay.domain.EntryVerdict
 import com.trenching.bot.replay.domain.ExitVerdict
@@ -40,6 +42,7 @@ import tools.jackson.core.JacksonException
  * the same dataset always gives the same run and verdict. A replay failure is its own classification, never a negative case;
  * a capture that is not export ready is classified from inspection alone. For a wallet + token capture, a cycle that starts
  * from another buy than the proven actual first buy is a replay failure, since its P0 would not be the buy the strategy requires.
+ * A replay decided beyond the dataset's market coverage is an incomplete market capture and is not interpreted.
  */
 class TargetTokenQualificationService(
     private val loader: ReplayDatasetLoader,
@@ -53,7 +56,9 @@ class TargetTokenQualificationService(
         if (!inspection.canExport) return fromInspection(inspection, datasetExported = true)
         val evidence = inspection.targetToken
         val verdict = try {
-            replayed(runner.run(load(dataset), SimulationConfig.mvp()), evidence)
+            val loaded = load(dataset)
+            val report = runner.run(loaded, SimulationConfig.mvp())
+            DatasetCoverage.undecided(report, loaded).firstOrNull()?.let { coverageEnded(it, evidence) } ?: replayed(report, evidence)
         } catch (exception: Exception) {
             val category = failureCategory(exception)
             log.error("target_token_qualification replay_failed category={} dataset={}", category, dataset.fileName, exception)
@@ -72,12 +77,24 @@ class TargetTokenQualificationService(
             is TargetFirstBuyAssessment.Proven -> CaseClassification.INCOMPLETE_CAPTURE to assessment.firstBuy
             null -> CaseClassification.INCOMPLETE_CAPTURE to null
         }
-        return TargetTokenVerdict(classification, capture(inspection, datasetExported), evidence?.tokenAccountFirstBuy, evidence?.actualFirstBuy,
-            DipVerdict.NotEvaluated(VerdictReasons.REPLAY_NOT_RUN), null, null, ReplayVerdict.NotRun,
-            VerdictProvenance(firstBuySignature = proven?.signature, firstBuySlot = proven?.slot))
+        return notRun(classification, capture(inspection, datasetExported), evidence, proven)
     }
 
     private fun load(dataset: Path): ReplayDataset = Files.newInputStream(dataset).use(loader::load)
+
+    /** The replay read past the market capture's coverage, so its outcome is not a verdict: the capture needs extending. */
+    private fun coverageEnded(shortfall: CoverageShortfall, evidence: TargetTokenEvidence?): TargetTokenVerdict {
+        log.warn("target_token_qualification refused reason={} mint={} decidedAt={} throughSlot={}", VerdictReasons.MARKET_COVERAGE_ENDED,
+            shortfall.pair.base.value, shortfall.decidedAt.value, shortfall.throughSlot?.value)
+        val proven = (evidence?.let(TargetFirstBuyGate::assess) as? TargetFirstBuyAssessment.Proven)?.firstBuy
+        return notRun(CaseClassification.INCOMPLETE_CAPTURE,
+            CaptureVerdict(CaptureVerdictState.INCOMPLETE, CaptureVerdictStage.MARKET, VerdictReasons.MARKET_COVERAGE_ENDED), evidence, proven)
+    }
+
+    private fun notRun(classification: CaseClassification, capture: CaptureVerdict, evidence: TargetTokenEvidence?, proven: ActualFirstBuy.Proven?) =
+        TargetTokenVerdict(classification, capture, evidence?.tokenAccountFirstBuy, evidence?.actualFirstBuy,
+            DipVerdict.NotEvaluated(VerdictReasons.REPLAY_NOT_RUN), null, null, ReplayVerdict.NotRun,
+            VerdictProvenance(firstBuySignature = proven?.signature, firstBuySlot = proven?.slot))
 
     private fun replayed(report: SimulationReport, evidence: TargetTokenEvidence?): TargetTokenVerdict {
         val provenance = VerdictProvenance(report.datasetChecksum, report.runId, report.configurationHash, report.engineVersion)

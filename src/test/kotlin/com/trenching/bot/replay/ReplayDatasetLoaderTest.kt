@@ -1,13 +1,16 @@
 package com.trenching.bot.replay
 
+import com.trenching.bot.common.Slot
 import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.domain.ObservedTrade
 import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.replay.application.DatasetFingerprint
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV4
+import com.trenching.bot.support.DipSampleV5
 import java.math.BigInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -18,6 +21,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import tools.jackson.databind.json.JsonMapper
+import tools.jackson.databind.node.ArrayNode
 import tools.jackson.databind.node.ObjectNode
 
 class ReplayDatasetLoaderTest {
@@ -50,8 +54,8 @@ class ReplayDatasetLoaderTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = [1, 2, 5])
-    fun `earlier schema versions are refused`(version: Int) {
+    @ValueSource(ints = [1, 2, 6])
+    fun `unsupported schema versions are refused`(version: Int) {
         val error = refusal { it.put("schemaVersion", version) }
 
         assertTrue(error.contains("UNSUPPORTED_SCHEMA"), error)
@@ -261,10 +265,116 @@ class ReplayDatasetLoaderTest {
         assertTrue(error.startsWith(CHECKSUM_MISMATCH), error)
     }
 
+    @Test
+    fun `the v4 twin keeps the checksum it had before schema v5`() {
+        assertEquals(PINNED_V4_CHECKSUM, DatasetFingerprint.checksum(DipSampleV4.dataset()))
+    }
+
+    @Test
+    fun `a v5 dataset loads each pair's coverage`() {
+        val dataset = loadV5 { }
+
+        assertEquals(ReplayDataset.SCHEMA_V5, dataset.schemaVersion)
+        assertEquals(DipSampleV5.dataset().coverage.toSet(), dataset.coverage.toSet())
+        val takeProfit = dataset.coverage.single { it.pair == DipSample.pair(DipSample.TAKE_PROFIT) }
+        assertEquals(Slot.of(1001), takeProfit.fromSlot)
+        assertEquals(Slot.of(5500), takeProfit.throughSlot)
+    }
+
+    @Test
+    fun `a v5 observation whose pair has no coverage entry is refused`() {
+        val takeProfit = DipSample.mint(DipSample.TAKE_PROFIT).value
+
+        val error = refusalV5 { root ->
+            val coverage = root.path("coverage") as ArrayNode
+            coverage.remove(coverage.indexOfFirst { it.path("baseMint").asString() == takeProfit })
+        }
+
+        assertTrue(error.contains(COVERAGE_MISSING) && error.contains(takeProfit), error)
+    }
+
+    @Test
+    fun `a v5 dataset without a coverage array is refused`() {
+        assertTrue(refusalV5 { it.remove("coverage") }.contains(COVERAGE_MISSING))
+        assertTrue(refusalV5 { it.putNull("coverage") }.contains(COVERAGE_INVALID))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["baseMint", "quoteMint", "fromSlot", "throughSlot"])
+    fun `a coverage entry without one of its fields is refused`(field: String) {
+        assertTrue(refusalV5 { coverage(it).remove(field) }.contains(COVERAGE_INVALID))
+    }
+
+    @Test
+    fun `a malformed coverage entry is refused`() {
+        val malformed: List<(ObjectNode) -> Unit> = listOf(
+            { it.put("fromSlot", "1001") },
+            { it.put("fromSlot", -1) },
+            { it.put("throughSlot", 999) },
+            { it.put("quoteMint", it.path("baseMint").asString()) },
+            { it.put("baseMint", "not-a-mint") },
+        )
+
+        malformed.forEach { change -> assertTrue(refusalV5 { change(coverage(it)) }.contains(COVERAGE_INVALID)) }
+    }
+
+    @Test
+    fun `two coverage entries for one pair are refused`() {
+        val error = refusalV5 { root -> (root.path("coverage") as ArrayNode).add(coverage(root).deepCopy()) }
+
+        assertTrue(error.contains(COVERAGE_INVALID), error)
+    }
+
+    @Test
+    fun `a window decided at its buy covers no slot and still loads`() {
+        val dataset = loadV5 { coverage(it).put("throughSlot", 1000) }
+
+        assertEquals(Slot.of(1000), dataset.coverage.single { it.pair == DipSample.pair(DipSample.TAKE_PROFIT) }.throughSlot)
+    }
+
+    @Test
+    fun `coverage in a v3 or v4 dataset is refused, so their meaning cannot change`() {
+        val entry = mapper.readTree(DipSampleV5.json()).path("coverage")
+
+        assertTrue(refusal { it.replace("coverage", entry.deepCopy()) }.contains(COVERAGE_BEFORE_V5))
+        assertTrue(refusalV4 { it.replace("coverage", entry.deepCopy()) }.contains(COVERAGE_BEFORE_V5))
+    }
+
+    @Test
+    fun `the v5 checksum covers every coverage field and differs from the v4 checksum`() {
+        val dataset = DipSampleV5.dataset()
+        val first = dataset.coverage.first()
+        val other = dataset.coverage.last().pair
+        val variants = listOf(
+            MarketCoverage.of(other, first.fromSlot, first.throughSlot),
+            MarketCoverage.of(first.pair, first.fromSlot.plus(1), first.throughSlot),
+            MarketCoverage.of(first.pair, first.fromSlot, first.throughSlot.plus(1)),
+        )
+        val original = DatasetFingerprint.checksum(dataset)
+
+        val checksums = variants.map { DatasetFingerprint.checksum(dataset.copy(coverage = listOf(it) + dataset.coverage.drop(1))) }
+
+        checksums.forEach { assertNotEquals(original, it) }
+        assertEquals(variants.size, checksums.toSet().size)
+        assertNotEquals(DatasetFingerprint.checksum(DipSampleV4.dataset()), original)
+    }
+
+    @Test
+    fun `a v5 file whose coverage was edited without recomputing the checksum is refused`() {
+        val root = mapper.readTree(DipSampleV5.json()) as ObjectNode
+        coverage(root).put("throughSlot", 1006)
+
+        val error = requireNotNull(assertFailsWith<IllegalArgumentException> { loader.load(mapper.writeValueAsString(root).byteInputStream()) }.message)
+
+        assertTrue(error.startsWith(CHECKSUM_MISMATCH), error)
+    }
+
     /** Loads the sample after [change], with its checksum recomputed so only the change itself can fail the load. */
     private fun load(change: (ObjectNode) -> Unit): ReplayDataset = load(DipSample.json(), change)
 
     private fun loadV4(change: (ObjectNode) -> Unit): ReplayDataset = load(DipSampleV4.json(), change)
+
+    private fun loadV5(change: (ObjectNode) -> Unit): ReplayDataset = load(DipSampleV5.json(), change)
 
     private fun load(base: String, change: (ObjectNode) -> Unit): ReplayDataset {
         val root = mapper.readTree(base) as ObjectNode
@@ -284,6 +394,13 @@ class ReplayDatasetLoaderTest {
     private fun refusalV4(change: (ObjectNode) -> Unit): String =
         requireNotNull(assertFailsWith<IllegalArgumentException> { loadV4(change) }.message)
 
+    private fun refusalV5(change: (ObjectNode) -> Unit): String =
+        requireNotNull(assertFailsWith<IllegalArgumentException> { loadV5(change) }.message)
+
+    /** The take-profit mint's coverage entry. */
+    private fun coverage(root: ObjectNode): ObjectNode =
+        root.path("coverage").single { it.path("baseMint").asString() == DipSample.mint(DipSample.TAKE_PROFIT).value } as ObjectNode
+
     private fun trade(root: ObjectNode): ObjectNode = observation(root).path("trade") as ObjectNode
 
     private fun observation(root: ObjectNode): ObjectNode =
@@ -298,6 +415,10 @@ class ReplayDatasetLoaderTest {
         const val TRADE_FIELDS_IN_V3 = "TRADE_FIELDS_IN_V3"
         const val TRADE_FIELDS_MISSING = "TRADE_FIELDS_MISSING"
         const val TRADE_FIELDS_INVALID = "TRADE_FIELDS_INVALID"
+        const val COVERAGE_MISSING = "COVERAGE_MISSING"
+        const val COVERAGE_INVALID = "COVERAGE_INVALID"
+        const val COVERAGE_BEFORE_V5 = "COVERAGE_BEFORE_V5"
+        const val PINNED_V4_CHECKSUM = "a12a9079ba8e992bea3d9b01be8b50ae195f25ac36bcbec588c08cafdca4126f"
         const val PINNED_V3_CHECKSUM = "06103b0faebf5d3e95468fc250232c333a0e6b665612c977fc76441883eac765"
         const val CHECKSUM_MISMATCH = "Replay checksum mismatch computed="
     }

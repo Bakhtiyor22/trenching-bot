@@ -5,7 +5,9 @@ import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.marketdata.domain.*
 import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.replay.application.DatasetFingerprint
+import com.trenching.bot.replay.domain.DatasetCoverage
 import com.trenching.bot.replay.domain.DatasetTrades
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.walletactivity.domain.WalletTransaction
 import java.io.InputStream
@@ -60,10 +62,36 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
                 "No reference rate for observation id=${observation.id} minute=${ReferenceRate.minuteOf(observation.observedTime)} (REFERENCE_RATE_MISSING)"
             }
         }
-        val dataset = ReplayDataset(version, wallet, transactions, observations, rates)
+        val dataset = ReplayDataset(version, wallet, transactions, observations, rates, coverage(root, version, observations))
         val checksum = DatasetFingerprint.checksum(dataset)
         require(string(root, "checksum") == checksum) { "Replay checksum mismatch computed=$checksum" }
         return dataset
+    }
+
+    /** A v5 dataset covers every observed pair exactly once; a v3 or v4 one has no coverage, so editing one in cannot change it. */
+    private fun coverage(root: JsonNode, version: Int, observations: List<MarketObservation>): List<MarketCoverage> {
+        val node = root.path(COVERAGE)
+        if (!ReplayDataset.recordsCoverage(version)) {
+            require(node.isMissingNode) { "Unexpected coverage in a schema v$version dataset (${DatasetCoverage.BEFORE_V5})" }
+            return emptyList()
+        }
+        require(!node.isMissingNode) { "Missing coverage in a schema v$version dataset (${DatasetCoverage.MISSING})" }
+        require(node.isArray && node.size() <= ReplayLimits.MAX_INPUT_RECORDS) { "Expected bounded coverage array (${DatasetCoverage.INVALID})" }
+        val coverage = node.toList().map(::coverageEntry)
+        coverage.groupBy { it.pair }.forEach { (pair, entries) ->
+            require(entries.size == 1) { "Repeated coverage baseMint=${pair.base.value} quoteMint=${pair.quote.value} (${DatasetCoverage.INVALID})" }
+        }
+        val covered = coverage.map { it.pair }.toSet()
+        observations.map { it.pair }.distinct().forEach { pair ->
+            require(pair in covered) { "No coverage for observed baseMint=${pair.base.value} quoteMint=${pair.quote.value} (${DatasetCoverage.MISSING})" }
+        }
+        return coverage
+    }
+
+    private fun coverageEntry(node: JsonNode): MarketCoverage = try {
+        MarketCoverage.of(pair(node), Slot.of(integer(node, "fromSlot")), Slot.of(integer(node, "throughSlot")))
+    } catch (invalid: IllegalArgumentException) {
+        throw IllegalArgumentException("Invalid coverage entry: ${invalid.message} (${DatasetCoverage.INVALID})", invalid)
     }
 
     private fun curve(node: JsonNode, observationId: String, curveComplete: Boolean): CurveState {
@@ -162,6 +190,7 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
     }
 
     private companion object {
+        const val COVERAGE = "coverage"
         const val CURVE_STATE_INVALID = "CURVE_STATE_INVALID"
         val RAW_INTEGER = Regex("[0-9]{1,20}")
     }

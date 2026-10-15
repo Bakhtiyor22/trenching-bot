@@ -1,5 +1,6 @@
 package com.trenching.bot.replay.api
 
+import com.trenching.bot.marketdata.MarketCutoffMode
 import com.trenching.bot.marketdata.MarketHistoryCaptureLimits
 import com.trenching.bot.replay.domain.ReplayMarketCaptureRequest
 import java.nio.file.Path
@@ -23,9 +24,14 @@ internal object ReplayMarketArgumentParser {
         val byteBudget = CaptureCommandArguments.long(values, ReplayMarketCommandOptions.BYTE_BUDGET,
             ReplayMarketCommandOptions.DEFAULT_BYTE_BUDGET, 1..MarketHistoryCaptureLimits.MAX_BYTES) ?: return CommandArguments.Invalid
         val operationTimeout = CaptureCommandArguments.operationTimeout(values) ?: return CommandArguments.Invalid
+        val cutoffMode = cutoffMode(values[ReplayMarketCommandOptions.CUTOFF_MODE]) ?: return CommandArguments.Invalid
         return CommandArguments.Valid(ReplayMarketCaptureRequest(walletDirectory.value, directory.value, scanPages, maxTransactions,
-            requestBudget, byteBudget, operationTimeout))
+            requestBudget, byteBudget, operationTimeout, cutoffMode))
     }
+
+    /** [MarketCutoffMode.FULL] when absent, the mode named exactly by [value], or null for any other value. */
+    private fun cutoffMode(value: String?): MarketCutoffMode? =
+        if (value == null) MarketCutoffMode.FULL else MarketCutoffMode.entries.firstOrNull { it.name == value }
 
     fun inspect(args: Array<String>): CommandArguments<Path> =
         when (val options = CaptureCommandArguments.options(args, setOf(ReplayMarketCommandOptions.DIRECTORY))) {

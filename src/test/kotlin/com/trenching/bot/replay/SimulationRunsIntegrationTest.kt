@@ -6,6 +6,8 @@ import com.trenching.bot.replay.domain.*
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetWriter
 import com.trenching.bot.strategy.domain.SimulationConfig
+import com.trenching.bot.support.DipSample
+import com.trenching.bot.support.DipSampleV5
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import com.trenching.bot.support.runRowCounts
 import java.math.BigDecimal
@@ -121,4 +123,33 @@ class SimulationRunsIntegrationTest {
         assertTrue(runs.page(0, 10, null).total >= 2)
     }
 
+    @Test
+    fun `a v5 dataset runs the configurations decided within its coverage and refuses the rest, storing nothing`() {
+        val takeProfit = DipSample.pair(DipSample.TAKE_PROFIT)
+        val noDip = DipSample.pair(DipSample.NO_DIP)
+        val decided = DipSampleV5.dataset(mapOf(takeProfit to 1006, noDip to 5000))
+        val datasetId = catalog.register("decided-v5", DipSampleV5.json(decided).byteInputStream()).dataset.id
+        val runsBefore = runCount()
+        val wideTakeProfit = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 5000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"))
+
+        val refused = assertFailsWith<MarketCoverageEndedException> { runs.start(datasetId, wideTakeProfit) }
+
+        assertTrue(refused.message.orEmpty().contains(takeProfit.base.value), refused.message)
+        assertTrue(refused.message.orEmpty().contains("decidedAt=5500") && refused.message.orEmpty().contains("throughSlot=1006"), refused.message)
+        assertFailsWith<MarketCoverageEndedException> { runs.start(datasetId, SimulationConfig.mvp()) }
+        assertEquals(runsBefore, runCount())
+        val covered = catalog.register("decided-v5-tp", DipSampleV5.json(decided.copy(
+            transactions = decided.transactions.filter { it.pair == takeProfit },
+            observations = decided.observations.filter { it.pair == takeProfit },
+            coverage = decided.coverage.filter { it.pair == takeProfit }))
+            .byteInputStream()).dataset.id
+        assertTrue(runs.start(covered, SimulationConfig.mvp()).created)
+        assertEquals(runsBefore + 1, runCount())
+    }
+
+    private fun runCount(): Int = dataSource.connection.use { connection ->
+        connection.prepareStatement("select count(*) from simulation_runs").use { statement ->
+            statement.executeQuery().use { rows -> assertTrue(rows.next()); rows.getInt(1) }
+        }
+    }
 }

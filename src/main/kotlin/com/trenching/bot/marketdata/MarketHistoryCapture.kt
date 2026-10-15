@@ -18,6 +18,10 @@ data class MarketHistoryCaptureRequest(
     val byteBudget: Long = MarketHistoryCaptureLimits.DEFAULT_BYTES,
     /** This invocation's deadline, or null for the transport default; not part of the capture's resume identity. */
     val operationTimeout: Duration? = null,
+    /** Not part of the resume identity; [MarketCutoffMode.DECIDED] requires [cutoff] and [cutoffIdentity]. */
+    val cutoffMode: MarketCutoffMode = MarketCutoffMode.FULL,
+    val cutoff: MarketCaptureCutoff? = null,
+    val cutoffIdentity: CutoffIdentity? = null,
 )
 
 data class MarketHistoryCaptureResult(

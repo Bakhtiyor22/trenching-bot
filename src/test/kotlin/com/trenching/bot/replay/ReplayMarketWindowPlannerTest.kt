@@ -10,9 +10,13 @@ import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.marketdata.MarketCaptureWindow
 import com.trenching.bot.marketdata.MarketCaptureWindowParameters
+import com.trenching.bot.marketdata.MarketCutoffMode
 import com.trenching.bot.marketdata.MarketHistoryCapture
 import com.trenching.bot.marketdata.MarketHistoryCaptureRequest
 import com.trenching.bot.marketdata.MarketHistoryCaptureResult
+import com.trenching.bot.marketdata.SolUsdtRateSource
+import com.trenching.bot.marketdata.infrastructure.rates.DisabledSolUsdtRateSource
+import com.trenching.bot.replay.application.DipOutcomeCutoff
 import com.trenching.bot.replay.application.ReplayMarketCaptureService
 import com.trenching.bot.replay.application.ReplayMarketWindowPlanner
 import com.trenching.bot.replay.domain.ReplayMarketCaptureRequest
@@ -94,8 +98,33 @@ class ReplayMarketWindowPlannerTest {
         assertEquals(directory.resolve("markets"), request.directory)
         assertEquals(listOf(7, 30, 70), listOf(request.scanPages, request.maxTransactions, request.requestBudget))
         assertEquals(1_000_000L, request.byteBudget)
+        assertEquals(MarketCutoffMode.FULL, request.cutoffMode)
+        assertEquals(null, request.cutoff)
+        assertEquals(null, request.cutoffIdentity)
         assertEquals(1, factoryCalls)
         assertEquals(directory.resolve("markets"), result.directory)
+    }
+
+    @Test
+    fun `a decided capture passes the dip outcome cutoff and its identity to the market capture`() {
+        saveWalletCapture(complete = true)
+
+        service(rates = DisabledSolUsdtRateSource()).capture(ReplayMarketCaptureRequest(directory, directory.resolve("markets"), 7, 30, 70,
+            1_000_000, cutoffMode = MarketCutoffMode.DECIDED))
+
+        val request = requireNotNull(captured)
+        assertEquals(MarketCutoffMode.DECIDED, request.cutoffMode)
+        assertTrue(request.cutoff is DipOutcomeCutoff)
+        assertEquals(DipOutcomeCutoff.IDENTITY, request.cutoffIdentity)
+    }
+
+    @Test
+    fun `a decided capture without a rate source is refused before planning or creating the market capture adapter`() {
+        assertCategory("RATES_NOT_CONFIGURED") {
+            service().capture(ReplayMarketCaptureRequest(directory.resolve("missing"), directory.resolve("markets"), 20, 300, 400, 104857600,
+                cutoffMode = MarketCutoffMode.DECIDED))
+        }
+        assertEquals(0, factoryCalls)
     }
 
     @Test
@@ -115,7 +144,7 @@ class ReplayMarketWindowPlannerTest {
         assertEquals(0, factoryCalls)
     }
 
-    private fun service() = ReplayMarketCaptureService(
+    private fun service(rates: SolUsdtRateSource? = null) = ReplayMarketCaptureService(
         walletHistory = WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper),
         marketCapture = {
             factoryCalls++
@@ -126,6 +155,7 @@ class ReplayMarketWindowPlannerTest {
                 }
             }
         },
+        cutoffRates = rates,
     )
 
     private fun saveWalletCapture(complete: Boolean, target: Path = directory, signer: Boolean = true) =

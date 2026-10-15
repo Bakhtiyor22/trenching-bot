@@ -2,8 +2,6 @@ package com.trenching.bot.replay
 
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.papertrading.domain.FillOutcome
-import com.trenching.bot.replay.domain.ScenarioResult
-import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.DipSample
@@ -42,19 +40,11 @@ class ReplayV3V4EquivalenceTest {
     fun `every scenario has the same economics apart from the ids that embed the dataset hash`() {
         assertEquals(v3.scenarios.size, v4.scenarios.size)
         v3.scenarios.indices.forEach { index ->
-            assertEquals(economics(v3, v3.scenarios[index]), economics(v4, v4.scenarios[index]),
+            assertEquals(ScenarioEconomics.of(v3, v3.scenarios[index]), ScenarioEconomics.of(v4, v4.scenarios[index]),
                 "pair=${v3.scenarios[index].intent.pair.base.value}")
         }
         assertTrue(v3.scenarios.any { it.position?.close != null })
         assertTrue(v3.scenarios.any { it.outcome is FillOutcome.Rejected })
         assertTrue(v3.scenarios.any { it.exitUnavailable != null })
-    }
-
-    /** The scenario's full state with the run id, intent id and position id, which derive from the dataset hash, named. */
-    private fun economics(report: SimulationReport, scenario: ScenarioResult): String {
-        val ids = listOfNotNull(report.runId to "<run>", scenario.intent.id to "<intent>", scenario.position?.id?.let { it to "<position>" })
-        return ids.fold(scenario.toString()) { text, (id, label) -> text.replace(id, label) }.also { text ->
-            assertTrue(ids.none { (id, _) -> id in text }, "an id survived the substitution")
-        }
     }
 }

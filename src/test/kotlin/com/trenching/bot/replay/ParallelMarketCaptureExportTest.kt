@@ -38,7 +38,7 @@ class ParallelMarketCaptureExportTest {
     private val mapper = JsonMapper.builder().build()
 
     @Test
-    fun `a market capture fetched at concurrency 4 exports the same v4 dataset and checksum as one fetched at concurrency 1`() {
+    fun `a market capture fetched at concurrency 4 exports the same v5 dataset and checksum as one fetched at concurrency 1`() {
         RecordedWalletFixtures.save(mapper, directory.resolve("wallet"))
         val sequential = captureAndExport("one", concurrency = 1)
         val parallel = captureAndExport("four", concurrency = 4)

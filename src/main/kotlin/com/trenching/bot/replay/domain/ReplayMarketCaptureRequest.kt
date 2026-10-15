@@ -1,5 +1,6 @@
 package com.trenching.bot.replay.domain
 
+import com.trenching.bot.marketdata.MarketCutoffMode
 import java.nio.file.Path
 import java.time.Duration
 
@@ -12,4 +13,6 @@ data class ReplayMarketCaptureRequest(
     val byteBudget: Long,
     /** This invocation's deadline, or null for the transport default. */
     val operationTimeout: Duration? = null,
+    /** [MarketCutoffMode.DECIDED] stops each window once its dip-entry outcome under `SimulationConfig.mvp()` is decided. */
+    val cutoffMode: MarketCutoffMode = MarketCutoffMode.FULL,
 )

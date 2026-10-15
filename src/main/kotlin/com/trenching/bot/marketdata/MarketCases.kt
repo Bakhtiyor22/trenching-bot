@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.common.Slot
 import com.trenching.bot.marketdata.domain.MarketObservation
 import java.nio.file.Path
 import java.nio.charset.StandardCharsets
@@ -27,6 +28,7 @@ data class MarketCaseId private constructor(val value: String) {
 
 data class MarketCaseInventory(val directory: Path, val cases: List<MarketCaseProgress>)
 
+/** [captured] and [unresolved] count only the selected transactions through [observedThrough]. */
 data class MarketCaseProgress(
     val caseId: MarketCaseId,
     val window: MarketCaptureWindow,
@@ -36,6 +38,7 @@ data class MarketCaseProgress(
     val captured: Int,
     val unresolved: Int,
     val blocker: String?,
+    val observedThrough: Slot = window.toSlot,
 )
 
 enum class MarketCaseStage {

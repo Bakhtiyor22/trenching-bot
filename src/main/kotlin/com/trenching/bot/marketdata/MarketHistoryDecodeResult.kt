@@ -21,8 +21,9 @@ data class MarketHistoryDecodeResult(
 )
 
 /**
- * [yieldsObservations] holds only for a complete window whose every in-window transaction was captured; [detailGaps]
- * counts the in-window transactions that were not, so a gap is never read as an absence of trades.
+ * [yieldsObservations] holds only for a complete window whose every transaction through [observedThrough] was captured;
+ * [detailGaps] counts those that were not, so a gap is never read as an absence of trades. [observedThrough] is the
+ * window's end, or its cutoff slot when its outcome was decided earlier.
  */
 data class MarketWindowDecodeRecord(
     val window: MarketCaptureWindow,
@@ -31,6 +32,7 @@ data class MarketWindowDecodeRecord(
     val detailGaps: Int,
     val yieldsObservations: Boolean,
     val observations: Int,
+    val observedThrough: Slot = window.toSlot,
 )
 
 data class MarketTransactionDecodeRecord(
