@@ -5,6 +5,7 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.console.api.dto.*
 import com.trenching.bot.console.mapper.CaptureResponseMapper
+import com.trenching.bot.marketdata.MarketCutoffMode
 import com.trenching.bot.replay.*
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
 import com.trenching.bot.replay.domain.ReplayMarketCaptureRequest
@@ -217,9 +218,10 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         requireIdle()
         validate(session,request)
         request.recovery?.let { CaptureValidation.recovery(it, request.step) }
+        val cutoffMode = marketCutoffMode(session, request)
         val at = clock.instant()
         val recovery = request.recovery?.let { CaptureRecoveryRecord(it.totalRequestBudget, it.totalByteBudget, it.maxAttempts) }
-        val operation = CaptureOperationRecord(store.id(request.requestId),request.requestId,fingerprint,request.step,request.attemptId,CaptureNames.RUNNING,at,at,budget=request.budget,scanPages=request.scanPages,walletAttemptId=session.walletAttemptId,marketAttemptId=session.marketAttemptId,ratesAttemptId=session.ratesAttemptId,recovery=recovery)
+        val operation = CaptureOperationRecord(store.id(request.requestId),request.requestId,fingerprint,request.step,request.attemptId,CaptureNames.RUNNING,at,at,budget=request.budget,scanPages=request.scanPages,walletAttemptId=session.walletAttemptId,marketAttemptId=session.marketAttemptId,ratesAttemptId=session.ratesAttemptId,recovery=recovery,cutoffMode=cutoffMode?.name)
         val reserved = reserve(operation, firstAttempt = true)
         store.save(id,reserved,true)
         store.save(session.copy(operationId=reserved.id))
@@ -229,6 +231,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     }
     private fun validate(session: CaptureSessionRecord, request: CaptureOperationRequest) {
         if (request.step !in setOf(CaptureNames.WALLET,CaptureNames.MARKET,CaptureNames.RATES,CaptureNames.INSPECT,CaptureNames.EXPORT,CaptureNames.CALIBRATE,CaptureNames.QUALIFY)) CaptureValidation.invalid("step","unsupported operation")
+        if (request.cutoffMode != null && request.step != CaptureNames.MARKET) CaptureValidation.invalid(CaptureCutoffModes.FIELD,"only a MARKET operation takes a cutoff mode")
         val selected = when(request.step) { CaptureNames.WALLET -> session.walletAttemptId; CaptureNames.RATES -> session.ratesAttemptId; else -> session.marketAttemptId }
         if (request.attemptId != selected) CaptureValidation.conflict("STALE_ATTEMPT","Select the current capture attempt")
         if (request.step in setOf(CaptureNames.WALLET,CaptureNames.MARKET) && !rpcConfigured) CaptureValidation.conflict("NOT_CONFIGURED","Configure SOLANA_RPC_URL in the backend process")
@@ -250,6 +253,11 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             if (!exportUnchanged(store.operation(session.id,exportId))) CaptureValidation.conflict("EXPORT_CHANGED","The exported dataset changed since its export; export it again before qualifying")
         }
     }
+    private fun marketCutoffMode(session: CaptureSessionRecord, request: CaptureOperationRequest): MarketCutoffMode? {
+        if (request.step != CaptureNames.MARKET) return null
+        val settings = requireNotNull(store.attempt(session.id, requireNotNull(session.marketAttemptId)).market) { "Market attempt has no settings sessionId=${session.id}" }
+        return CaptureCutoffModes.forOperation(request.cutoffMode, settings, ratesConfigured)
+    }
     /** Lets the capture see a saved pause or cancel request between detail requests instead of only at its next checkpoint. */
     private fun stoppable(id: String, operationId: String, delegate: CaptureCheckpointObserver) = object : CaptureCheckpointObserver {
         override fun checkpoint(checkpoint: CaptureCheckpoint) = delegate.checkpoint(checkpoint)
@@ -263,7 +271,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             val session = synchronized(store) { store.session(id) }
             val paths = paths(session)
             val verified = workflow.inspect(paths)
-            requirePrerequisite(initial.step,verified)
+            requirePrerequisite(initial,verified)
             val command = command(session,initial,paths)
             val result = workflow.execute(command, stoppable(id, initial.id, CaptureCheckpointObserver { checkpoint -> synchronized(store) {
                 val progress = mapper.progress(checkpoint)
@@ -383,10 +391,10 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private fun walletToken(settings: CaptureWalletSettings?): Boolean = settings?.let { CaptureWalletScope.of(it.scope) } == CaptureWalletScope.WALLET_TOKEN
     private fun walletSettings(manifest: WalletHistoryManifest): CaptureWalletSettings =
         CaptureWalletSettings(manifest.wallet, CaptureWalletScope.of(manifest.scope).value, manifest.limit, manifest.scanPageLimit, manifest.targetMint)
-    private fun requirePrerequisite(step: String, value: CaptureInspection) {
-        val eligible = when(step) {
+    private fun requirePrerequisite(operation: CaptureOperationRecord, value: CaptureInspection) {
+        val eligible = when(operation.step) {
             CaptureNames.WALLET -> value.wallet.canStart || value.wallet.canResume
-            CaptureNames.MARKET -> value.market.canStart || value.market.canResume
+            CaptureNames.MARKET -> value.market.canStart || value.market.canResume || extendsDecidedWindow(operation, value)
             CaptureNames.RATES -> value.rates.canStart || value.rates.canResume
             CaptureNames.EXPORT -> value.canExport
             CaptureNames.CALIBRATE -> value.canCalibrate
@@ -394,6 +402,10 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         }
         if(!eligible) CaptureValidation.conflict("PREREQUISITE","Selected capture does not meet the operation prerequisites")
     }
+    /** A complete market stage restarts only to capture the rest of a decided window, which a FULL operation does. */
+    private fun extendsDecidedWindow(operation: CaptureOperationRecord, value: CaptureInspection): Boolean =
+        CaptureCutoffModes.saved(operation.cutoffMode) == MarketCutoffMode.FULL && value.market.state != CaptureStageState.INVALID &&
+            value.marketCapture?.manifest?.windows.orEmpty().any { it.cutoff != null }
     private fun paths(session: CaptureSessionRecord): CapturePaths {
         val wallet=store.attempt(session.id,session.walletAttemptId).directory
         val market=session.marketAttemptId?.let { store.attempt(session.id,it).directory }
@@ -409,7 +421,8 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         }
         CaptureNames.MARKET -> {
             val attempt=store.attempt(session.id,requireNotNull(session.marketAttemptId)); val settings=requireNotNull(attempt.market)
-            CaptureStepCommand.Markets(ReplayMarketCaptureRequest(paths.wallet,requireNotNull(paths.market),operation.scanPages ?: settings.scanPages,settings.maxTransactions,operation.budget.requestBudget,operation.budget.byteBudget,timeout(operation)))
+            CaptureStepCommand.Markets(ReplayMarketCaptureRequest(walletCaptureDirectory=paths.wallet,directory=requireNotNull(paths.market),scanPages=operation.scanPages ?: settings.scanPages,maxTransactions=settings.maxTransactions,
+                requestBudget=operation.budget.requestBudget,byteBudget=operation.budget.byteBudget,operationTimeout=timeout(operation),cutoffMode=CaptureCutoffModes.saved(operation.cutoffMode)))
         }
         CaptureNames.RATES -> CaptureStepCommand.Rates(paths.wallet,requireNotNull(paths.market),requireNotNull(paths.rates))
         CaptureNames.EXPORT -> CaptureStepCommand.Export(RecordedReplayExportRequest(paths.wallet,requireNotNull(paths.market),requireNotNull(paths.rates),store.paths.resolve(generated(session,"dataset.json"))))

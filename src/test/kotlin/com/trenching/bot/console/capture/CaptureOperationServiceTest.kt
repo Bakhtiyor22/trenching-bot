@@ -11,7 +11,15 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.console.api.dto.CaptureAttemptRequest
 import com.trenching.bot.console.api.dto.CaptureCreateRequest
 import com.trenching.bot.console.api.dto.CaptureWalletSettings
+import com.trenching.bot.marketdata.MarketCaptureWindow
+import com.trenching.bot.marketdata.MarketCutoffMode
+import com.trenching.bot.marketdata.MarketHistoryCaptureResult
+import com.trenching.bot.marketdata.MarketWindowCutoff
+import com.trenching.bot.common.Slot
+import com.trenching.bot.common.TransactionSignature
+import com.trenching.bot.replay.CaptureInspection
 import com.trenching.bot.replay.CaptureStageState
+import com.trenching.bot.replay.ReplayMarketFixtures
 import com.trenching.bot.replay.CaptureStageSummary
 import com.trenching.bot.replay.CaptureStepCommand
 import com.trenching.bot.walletactivity.WalletHistoryCaptureResult
@@ -556,5 +564,97 @@ class CaptureOperationServiceTest {
         assertEquals("REPLAY_FAILED", verdict.classification)
         assertEquals("FAILED", verdict.replay.state)
         assertEquals("COMPLETE", verdict.capture.state)
+    }
+
+    private val walletReady = CaptureStageSummary(CaptureStageState.READY)
+    private val marketStartable = FakeCaptureWorkflow.inspection(walletReady, CaptureStageSummary(CaptureStageState.NOT_STARTED, canStart = true))
+
+    private fun CaptureConsoleFixture.market(requestId: String, cutoffMode: String? = null) =
+        operations.start("session-1", CaptureOperationRequest(requestId, CaptureNames.MARKET, store.session("session-1").marketAttemptId, cutoffMode = cutoffMode))
+
+    private fun CaptureConsoleFixture.marketModes() = workflow.executed.filterIsInstance<CaptureStepCommand.Markets>().map { it.request.cutoffMode }
+
+    /** Every stage complete, with the market window decided at slot 140; [cutoff] false leaves it captured in full. */
+    private fun completeMarket(cutoff: Boolean): CaptureInspection {
+        val window = MarketCaptureWindow.of(MintAddress.of(CaptureTokenFixtures.MINT), Slot.of(101), Slot.of(4600), TransactionSignature.of("1".repeat(64)))
+        val manifest = ReplayMarketFixtures.manifest(listOf(window))
+        val decided = if (cutoff) manifest.copy(windows = manifest.windows.map { it.copy(cutoff = MarketWindowCutoff(140, "TAKE_PROFIT", "engine-v1", "hash")) }) else manifest
+        return CaptureTokenFixtures.exportReady().copy(marketCapture = MarketHistoryCaptureResult(root, decided))
+    }
+
+    @Test
+    fun `a market operation runs in its attempt's cutoff mode unless the request overrides it, and keeps that mode`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = marketStartable
+
+        fixture.market("market-1")
+        fixture.executor.runAll()
+        fixture.market("market-2", cutoffMode = "FULL")
+        fixture.executor.runAll()
+
+        assertEquals(listOf(MarketCutoffMode.DECIDED, MarketCutoffMode.FULL), fixture.marketModes())
+        assertEquals("DECIDED", fixture.operations.find("session-1", "market-1").cutoffMode)
+        assertEquals("FULL", fixture.operations.find("session-1", "market-2").cutoffMode)
+    }
+
+    @Test
+    fun `a market attempt saved without a cutoff mode captures in full`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = marketStartable
+        val attempt = fixture.store.attempt("session-1", requireNotNull(fixture.store.session("session-1").marketAttemptId))
+        fixture.store.save("session-1", attempt.copy(market = attempt.market?.copy(cutoffMode = null)))
+
+        fixture.market("market-1")
+        fixture.executor.runAll()
+
+        assertEquals(listOf(MarketCutoffMode.FULL), fixture.marketModes())
+    }
+
+    @Test
+    fun `DECIDED without reference rates is refused before any inspection or provider work`() {
+        val fixture = CaptureConsoleFixture(root, ratesConfigured = false).apply { createToken() }
+        val attempt = fixture.store.attempt("session-1", requireNotNull(fixture.store.session("session-1").marketAttemptId))
+
+        val requested = failure { fixture.market("market-1", cutoffMode = "DECIDED") }
+        fixture.store.save("session-1", attempt.copy(market = attempt.market?.copy(cutoffMode = "DECIDED")))
+        val saved = failure { fixture.market("market-2") }
+
+        assertEquals(409 to "RATES_NOT_CONFIGURED", requested.status to requested.code)
+        assertEquals(409 to "RATES_NOT_CONFIGURED", saved.status to saved.code)
+        assertTrue(fixture.executor.queued.isEmpty())
+        assertEquals(0, fixture.workflow.inspections)
+        assertNull(fixture.store.operationOrNull("session-1", "market-1"))
+    }
+
+    @Test
+    fun `a cutoff mode is a per-field error when unknown or sent with a step other than MARKET`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        val attemptId = fixture.store.session("session-1").marketAttemptId
+
+        val unknown = failure { fixture.market("market-1", cutoffMode = "SOMETIMES") }
+        val otherStep = failure { fixture.operations.start("session-1", CaptureOperationRequest("inspect-1", CaptureNames.INSPECT, attemptId, cutoffMode = "FULL")) }
+
+        assertEquals(400 to setOf("cutoffMode"), unknown.status to unknown.fields.keys)
+        assertEquals(400 to setOf("cutoffMode"), otherStep.status to otherStep.fields.keys)
+        assertTrue(fixture.executor.queued.isEmpty())
+    }
+
+    @Test
+    fun `a FULL market operation extends a decided capture that is otherwise complete, and only such a capture`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+
+        fixture.workflow.inspection = completeMarket(cutoff = false)
+        fixture.market("full-complete", cutoffMode = "FULL")
+        fixture.executor.runAll()
+        fixture.workflow.inspection = completeMarket(cutoff = true)
+        fixture.market("decided-again")
+        fixture.executor.runAll()
+        fixture.market("extend", cutoffMode = "FULL")
+        fixture.executor.runAll()
+
+        assertEquals("PREREQUISITE", fixture.operations.find("session-1", "full-complete").code)
+        assertEquals("PREREQUISITE", fixture.operations.find("session-1", "decided-again").code)
+        assertEquals(listOf(MarketCutoffMode.FULL), fixture.marketModes())
+        assertEquals("FULL", fixture.operations.find("session-1", "extend").cutoffMode)
     }
 }

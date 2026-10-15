@@ -8,5 +8,6 @@ object ConsoleMetrics {
     const val CREATED = "created"
     const val EXISTING = "existing"
     const val FAILED = "failed"
+    const val COVERAGE_ENDED = "coverage_ended"
     const val INVALID = "invalid"
 }

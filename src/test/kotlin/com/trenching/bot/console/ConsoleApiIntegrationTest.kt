@@ -3,9 +3,15 @@ package com.trenching.bot.console
 import com.trenching.bot.console.ConsoleTestData.UNKNOWN_ID
 import com.trenching.bot.console.ConsoleTestData.sampleText
 import com.trenching.bot.console.ConsoleTestData.variant
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.trenching.bot.console.application.ConsoleMetrics
+import com.trenching.bot.console.application.RunLaunchService
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.support.DipSample
+import com.trenching.bot.support.DipSampleV5
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import java.math.BigDecimal
 import com.trenching.bot.support.AdditionalClockConfiguration
@@ -16,6 +22,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.web.server.LocalServerPort
@@ -91,6 +98,37 @@ class ConsoleApiIntegrationTest {
         assertEquals("is not a configuration field", rejected.body.path("fields").path("feeBps").asString())
         assertEquals(400, http.post("/api/runs", """{"datasetId":"$datasetId","config":{"latencySlots":0}}""").status)
         assertEquals(runsBefore, count("select count(*) from simulation_runs"))
+    }
+
+    @Test
+    fun `a run decided beyond the dataset's coverage is refused with 409 and stores nothing`() {
+        val takeProfit = DipSample.pair(DipSample.TAKE_PROFIT)
+        val decided = DipSampleV5.dataset(mapOf(takeProfit to 1006))
+        val datasetId = upload(DipSampleV5.json(decided), "decided-v5.json").path("dataset").path("id").asString()
+        val runsBefore = count("select count(*) from simulation_runs")
+        val failedBefore = counter(ConsoleMetrics.RUNS, ConsoleMetrics.FAILED)
+        val coverageEndedBefore = counter(ConsoleMetrics.RUNS, ConsoleMetrics.COVERAGE_ENDED)
+        val logs = ListAppender<ILoggingEvent>().apply { start() }
+        val logger = LoggerFactory.getLogger(RunLaunchService::class.java) as Logger
+        logger.addAppender(logs)
+
+        val refused = try {
+            http.post("/api/runs", """{"datasetId":"$datasetId","config":{"takeProfitBps":5000}}""")
+        } finally {
+            logger.detachAppender(logs)
+        }
+
+        assertEquals(409, refused.status, refused.raw)
+        assertEquals("MARKET_COVERAGE_ENDED", refused.body.path("code").asString())
+        assertTrue(refused.body.path("message").asString().contains(takeProfit.base.value), refused.raw)
+        assertEquals(runsBefore, count("select count(*) from simulation_runs"))
+        assertEquals(failedBefore, counter(ConsoleMetrics.RUNS, ConsoleMetrics.FAILED))
+        assertEquals(coverageEndedBefore + 1, counter(ConsoleMetrics.RUNS, ConsoleMetrics.COVERAGE_ENDED))
+        val refusal = logs.list.single()
+        assertEquals(Level.WARN, refusal.level)
+        val (loggedDataset, mint, decidedAt, throughSlot) = refusal.argumentArray.map(Any::toString)
+        assertEquals(listOf(datasetId, takeProfit.base.value, "1006"), listOf(loggedDataset, mint, throughSlot))
+        assertTrue(decidedAt.toLong() > 1006, decidedAt)
     }
 
     @Test

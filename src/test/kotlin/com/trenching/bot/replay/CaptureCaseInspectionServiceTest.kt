@@ -69,6 +69,19 @@ class CaptureCaseInspectionServiceTest {
         assertTrue(decodeCalls > 0)
     }
 
+    @Test
+    fun `a case carries how far its window was observed, also once its artifacts are decoded`() {
+        val planned = RecordedWalletPlanning(walletHistory).plan(walletDirectory)
+        val window = planned.plan.windows.single()
+        val decidedAt = window.fromSlot.plus(40)
+        val progress = MarketCaseProgress(MarketCaseId.from(window), window,
+            com.trenching.bot.marketdata.MarketWindowCoverage.COMPLETE, MarketStage.READY_TO_VALIDATE, 1, 1, 0, null, decidedAt)
+        val service = CaptureCaseInspectionService(RecordedWalletPlanning(walletHistory), markets(progress, planned.plan.parameters))
+
+        assertEquals(decidedAt.value, service.inspectCases(walletDirectory, marketDirectory).cases.single().observedThrough)
+        assertEquals(decidedAt.value, service.inspectCase(walletDirectory, marketDirectory, progress.caseId).observedThrough)
+    }
+
     private fun markets(progress: MarketCaseProgress, decodedParameters: MarketCaptureWindowParameters) = object : RecordedMarketHistory {
         override fun inspect(directory: Path): MarketHistoryCaptureResult = error("Case inspection reads manifest progress")
         override fun decode(directory: Path): MarketHistoryDecodeResult = error("Case inspection does not decode a whole capture")

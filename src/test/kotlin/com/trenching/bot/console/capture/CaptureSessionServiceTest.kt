@@ -32,7 +32,7 @@ class CaptureSessionServiceTest {
 
         assertEquals("Sample", session.name)
         assertNotNull(session.marketAttempt)
-        assertEquals(CaptureMarketSettings(), session.marketAttempt?.market)
+        assertEquals(CaptureMarketSettings(cutoffMode = "FULL"), session.marketAttempt?.market)
         assertEquals(session.marketAttempt?.id, session.ratesAttempt?.marketAttemptId)
         assertEquals(CaptureNames.INSPECT, session.operation?.step)
         assertEquals("console/session-1/wallet", fixture.store.attempt("session-1", session.walletAttemptId).directory)
@@ -119,7 +119,7 @@ class CaptureSessionServiceTest {
 
         assertEquals(original.walletAttemptId, updated.walletAttemptId)
         assertEquals("market-2", updated.marketAttempt?.id)
-        assertEquals(CaptureMarketSettings(80, 1000), updated.marketAttempt?.market)
+        assertEquals(CaptureMarketSettings(80, 1000, "FULL"), updated.marketAttempt?.market)
         assertEquals("console/session-1/markets/market-2", fixture.store.attempt("session-1", "market-2").directory)
         assertNull(updated.inspection)
         assertFalse(updated.datasetReady)
@@ -370,5 +370,66 @@ class CaptureSessionServiceTest {
         assertEquals("NOT_RUN", fixture.createToken("session-1").qualification?.replay?.state)
         assertNull(fixture.create("session-2").qualification)
         assertEquals(1, fixture.workflow.verdicts.size)
+    }
+
+    @Test
+    fun `a wallet-token market attempt decides early by default and every other scope captures in full`() {
+        val fixture = CaptureConsoleFixture(root)
+
+        assertEquals("DECIDED", fixture.createToken("session-1").marketAttempt?.market?.cutoffMode)
+        assertEquals("FULL", fixture.create("session-2").marketAttempt?.market?.cutoffMode)
+        val references = fixture.sessions.create(CaptureCreateRequest("session-3", "References",
+            wallet = CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-references", 4, 8)))
+        assertEquals("FULL", references.marketAttempt?.market?.cutoffMode)
+        fixture.settle()
+        assertEquals("DECIDED", fixture.sessions.newAttempt("session-1", CaptureAttemptRequest("market-2", CaptureNames.MARKET)).marketAttempt?.market?.cutoffMode)
+        fixture.settle()
+        assertEquals("FULL", fixture.sessions.newAttempt("session-2", CaptureAttemptRequest("market-3", CaptureNames.MARKET)).marketAttempt?.market?.cutoffMode)
+    }
+
+    @Test
+    fun `an explicit cutoff mode replaces the scope default and an unknown one is a per-field error`() {
+        val fixture = CaptureConsoleFixture(root)
+        val token = CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-token", 100, 5, CaptureTokenFixtures.MINT)
+
+        assertEquals("FULL", fixture.sessions.create(CaptureCreateRequest("session-1", "Token", wallet = token, cutoffMode = "FULL")).marketAttempt?.market?.cutoffMode)
+        fixture.settle()
+        assertEquals("FULL", fixture.sessions.newAttempt("session-1",
+            CaptureAttemptRequest("market-2", CaptureNames.MARKET, CaptureMarketSettings(cutoffMode = "FULL"))).marketAttempt?.market?.cutoffMode)
+        fixture.settle()
+        val unknown = assertFailsWith<CaptureRequestException> {
+            fixture.sessions.newAttempt("session-1", CaptureAttemptRequest("market-3", CaptureNames.MARKET, CaptureMarketSettings(cutoffMode = "SOMETIMES")))
+        }
+        assertEquals(400, unknown.status)
+        assertEquals(setOf("cutoffMode"), unknown.fields.keys)
+        assertEquals(400, assertFailsWith<CaptureRequestException> {
+            fixture.sessions.create(CaptureCreateRequest("session-2", "Token", wallet = token, cutoffMode = "decided"))
+        }.status)
+        assertEquals(1, fixture.sessions.page(0, 20).total)
+    }
+
+    @Test
+    fun `without reference rates a wallet-token attempt captures in full and an explicit DECIDED attempt is refused`() {
+        val fixture = CaptureConsoleFixture(root, ratesConfigured = false)
+        val token = CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-token", 100, 5, CaptureTokenFixtures.MINT)
+
+        assertEquals("FULL", fixture.createToken().marketAttempt?.market?.cutoffMode)
+        conflict("RATES_NOT_CONFIGURED") {
+            fixture.sessions.newAttempt("session-1", CaptureAttemptRequest("market-2", CaptureNames.MARKET, CaptureMarketSettings(cutoffMode = "DECIDED")))
+        }
+        conflict("RATES_NOT_CONFIGURED") {
+            fixture.sessions.create(CaptureCreateRequest("session-2", "Token", wallet = token, cutoffMode = "DECIDED"))
+        }
+        assertEquals(1, fixture.sessions.page(0, 20).total)
+        assertEquals(3, fixture.sessions.attempts("session-1", 0, 20).total)
+    }
+
+    @Test
+    fun `a market attempt saved before cutoff modes existed loads without one and its identity keeps the legacy form`() {
+        val fixture = CaptureConsoleFixture(root)
+
+        assertEquals(CaptureMarketSettings(50, 50000, null), fixture.json.readValue("""{"scanPages":50,"maxTransactions":50000}""", CaptureMarketSettings::class.java))
+        assertEquals("""{"scanPages":50,"maxTransactions":50000}""", fixture.json.writeValueAsString(CaptureMarketSettings()))
+        assertFalse("cutoffMode" in fixture.json.writeValueAsString(CaptureCreateRequest("r", "n")))
     }
 }

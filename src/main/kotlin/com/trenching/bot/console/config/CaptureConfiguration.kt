@@ -42,6 +42,6 @@ class CaptureConfiguration {
         CaptureOperationService(store,workflow,mapper,json,clock,Executors.newSingleThreadExecutor { task -> Thread(task,"capture-console-worker").apply { isDaemon=true } },!rpc.rpcUrl.isNullOrBlank(),rates.enabled,ExecutorCaptureRetryScheduler()).also { it.recover() }
     @Bean(destroyMethod="close") fun captureCaseService(store: CaptureFileStore, workflow: CaptureWorkflow, mapper: CaptureResponseMapper, datasets: com.trenching.bot.console.mapper.DatasetResponseMapper, catalog: ReplayDatasetCatalog, clock: Clock): CaptureCaseService =
         CaptureCaseService(store,workflow,mapper,datasets,catalog,clock,Executors.newSingleThreadExecutor { task -> Thread(task,"capture-case-worker").apply { isDaemon=true } }).also { it.recover() }
-    @Bean fun captureSessionService(store: CaptureFileStore, operations: CaptureOperationService, cases: CaptureCaseService, clock: Clock): CaptureSessionService = CaptureSessionService(store,operations,clock,CaptureIds { UUID.randomUUID().toString() },cases)
+    @Bean fun captureSessionService(store: CaptureFileStore, operations: CaptureOperationService, cases: CaptureCaseService, clock: Clock, rates: ReferenceRateProperties): CaptureSessionService = CaptureSessionService(store,operations,clock,CaptureIds { UUID.randomUUID().toString() },rates.enabled,cases)
     @Bean fun captureCatalogService(store: CaptureFileStore, operations: CaptureOperationService, catalog: ReplayDatasetCatalog): CaptureCatalogService = CaptureCatalogService(store,operations,catalog)
 }

@@ -113,7 +113,19 @@ class CaptureCaseServiceTest {
         assertEquals(before?.id, fixture.sessions.find("session-1").operation?.id)
     }
 
-    private class FakeCaseWorkflow(private val ratesComplete: Boolean = true, private val corrupt: Boolean = false) : CaptureWorkflow {
+    @Test
+    fun `a case shows how far its market window was observed`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val cases = CaptureCaseService(fixture.store, FakeCaseWorkflow(observedThrough = 140), CaptureResponseMapperImpl(), DatasetResponseMapperImpl(),
+            FakeCatalog(), fixture.clock, ManualExecutor())
+
+        val item = cases.cases("session-1").items.single()
+
+        assertEquals(140L, item.observedThrough)
+        assertEquals(140L, CaptureResponseMapperImpl().captureCase(item).observedThrough)
+    }
+
+    private class FakeCaseWorkflow(private val ratesComplete: Boolean = true, private val corrupt: Boolean = false, observedThrough: Long? = null) : CaptureWorkflow {
         private val wallet = WalletAddress.of(CaptureConsoleFixture.WALLET)
         private val mint = MintAddress.of(CaptureTokenFixtures.MINT)
         private val signature = TransactionSignature.of("1".repeat(64))
@@ -121,7 +133,7 @@ class CaptureCaseServiceTest {
         private val parameters = MarketCaptureWindowParameters(100, 10)
         private val summary = CaptureCaseInspection(MarketCaseId.from(window), wallet, mint, signature, 100, 2, window,
             parameters, MarketWindowCoverage.COMPLETE, 4, 4, 0, CaptureCaseStage.READY_TO_VALIDATE, false,
-            "MARKET_CASE_NOT_VALIDATED", 0)
+            "MARKET_CASE_NOT_VALIDATED", 0, observedThrough)
 
         override fun inspectCases(walletDirectory: Path, marketDirectory: Path) = CaptureCaseInventory(listOf(summary))
 

@@ -9,6 +9,7 @@ import com.trenching.bot.console.domain.SimulationConfigLimits
 import com.trenching.bot.replay.ReplayDatasetCatalog
 import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.domain.DatasetNotFoundException
+import com.trenching.bot.replay.domain.MarketCoverageEndedException
 import com.trenching.bot.replay.domain.RunStart
 import com.trenching.bot.strategy.domain.SimulationConfig
 import io.micrometer.core.instrument.MeterRegistry
@@ -47,6 +48,12 @@ class RunLaunchService(
 
     private fun run(datasetId: String, config: SimulationConfig): RunStart = try {
         runs.start(datasetId, config)
+    } catch (exception: MarketCoverageEndedException) {
+        meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, ConsoleMetrics.COVERAGE_ENDED).increment()
+        val shortfall = exception.shortfall
+        log.warn("console run refused datasetId={} mint={} decidedAt={} throughSlot={} reason=MARKET_COVERAGE_ENDED",
+            datasetId, shortfall.pair.base.value, shortfall.decidedAt.value, shortfall.throughSlot?.value)
+        throw exception
     } catch (exception: RuntimeException) {
         meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, ConsoleMetrics.FAILED).increment()
         log.error("console run failed datasetId={} strategyVersion={}", datasetId, config.strategyVersion, exception)

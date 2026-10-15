@@ -8,7 +8,7 @@ import com.trenching.bot.console.capture.CaptureNames.INSPECT
 import java.time.Clock
 import org.slf4j.LoggerFactory
 
-class CaptureSessionService(private val store: CaptureFileStore, private val operations: CaptureOperationService, private val clock: Clock, private val ids: CaptureIds, private val cases: CaptureCaseActivity = CaptureCaseActivity.NONE) {
+class CaptureSessionService(private val store: CaptureFileStore, private val operations: CaptureOperationService, private val clock: Clock, private val ids: CaptureIds, private val ratesConfigured: Boolean, private val cases: CaptureCaseActivity = CaptureCaseActivity.NONE) {
     private val log = LoggerFactory.getLogger(CaptureSessionService::class.java)
     fun create(request: CaptureCreateRequest): CaptureSessionView = synchronized(store) {
         store.id(request.requestId)
@@ -28,13 +28,14 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
             if (attach.rates != null && attach.market == null) CaptureValidation.invalid("attach", "rates require a market directory")
             operations.requireIdle()
         }
+        val market = CaptureMarketSettings(cutoffMode = cutoffMode(request.cutoffMode, request.wallet))
         val id = request.requestId
         val at = clock.instant()
         val walletId = ids.next()
         val marketId = if (request.attach == null || request.attach.market != null) ids.next() else null
         val ratesId = if (request.attach == null || request.attach.rates != null) ids.next() else null
         store.save(id, CaptureAttemptRecord(walletId, request.requestId, fingerprint, WALLET, at, request.attach?.wallet ?: "console/$id/wallet", request.attach != null, null, walletId, null), true)
-        marketId?.let { store.save(id, CaptureAttemptRecord(it, request.requestId, fingerprint, MARKET, at, request.attach?.market ?: "console/$id/markets/$it", request.attach?.market != null, CaptureMarketSettings(), walletId, null), true) }
+        marketId?.let { store.save(id, CaptureAttemptRecord(it, request.requestId, fingerprint, MARKET, at, request.attach?.market ?: "console/$id/markets/$it", request.attach?.market != null, market, walletId, null), true) }
         ratesId?.let { store.save(id, CaptureAttemptRecord(it, request.requestId, fingerprint, RATES, at, request.attach?.rates ?: "console/$id/rates/$it", request.attach?.rates != null, null, walletId, marketId), true) }
         val record = CaptureSessionRecord(id = id, requestId = request.requestId, fingerprint = fingerprint, name = normalized.name, createdAt = at, wallet = request.wallet, walletAttemptId = walletId, marketAttemptId = marketId, ratesAttemptId = ratesId)
         store.save(record, true)
@@ -52,8 +53,9 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
         operations.requireIdle()
         cases.requireIdle()
         if (request.stage !in setOf(MARKET, RATES)) CaptureValidation.invalid("stage", "must be MARKET or RATES")
-        val settings = if (request.stage == MARKET) request.market ?: CaptureMarketSettings() else null
-        settings?.let(CaptureValidation::market)
+        val requested = if (request.stage == MARKET) request.market ?: CaptureMarketSettings() else null
+        requested?.let(CaptureValidation::market)
+        val settings = requested?.let { it.copy(cutoffMode = cutoffMode(it.cutoffMode, session.wallet)) }
         if (request.stage == RATES && session.marketAttemptId == null) CaptureValidation.conflict("PREREQUISITE", "Select a market attempt first")
         val attempt = CaptureAttemptRecord(store.id(request.requestId), request.requestId, fingerprint, request.stage, clock.instant(), "console/$id/${if (request.stage == MARKET) "markets" else "rates"}/${request.requestId}", false, settings, session.walletAttemptId, if (request.stage == RATES) session.marketAttemptId else null)
         store.save(id, attempt, true)
@@ -86,6 +88,8 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
     private fun view(record: CaptureSessionRecord): CaptureSessionView = CaptureSessionView(record.id,record.name,record.createdAt,record.wallet,record.walletAttemptId,record.marketAttemptId?.let { store.attempt(record.id,it) },record.ratesAttemptId?.let { store.attempt(record.id,it) },record.inspection,record.operationId?.let { store.operation(record.id,it) }, record.exportOperationId != null,record.calibrationOperationId != null,record.datasetId,record.calibrationOperationId?.let { store.operation(record.id,it).calibration },record.qualifyOperationId?.let { store.operation(record.id,it).qualification } ?: record.qualification)
     /** Queues the offline inspection, so stage states reflect the evidence on disk without a manual Inspect. */
     private fun inspect(id: String, marketAttemptId: String?) { operations.start(id, CaptureOperationRequest(ids.next(), INSPECT, marketAttemptId)) }
+    private fun cutoffMode(requested: String?, wallet: CaptureWalletSettings?): String =
+        CaptureCutoffModes.forAttempt(requested, wallet?.let { CaptureWalletScope.of(it.scope) }, ratesConfigured).name
     private fun paging(page: Int, size: Int) { if (page !in 0..100000 || size !in 1..100) CaptureValidation.invalid("page", "page must be nonnegative and size between 1 and 100") }
 }
 

@@ -278,7 +278,7 @@ class CaptureCaseService(
             exportReady && record.datasetId == null, inspection.stage == CaptureCaseStage.READY_TO_VALIDATE && !validated && !active,
             validated && !exportReady && !active,
             when { operation?.state in setOf(CaptureNames.FAILED, CaptureNames.CANCELLED, CaptureNames.INCOMPLETE) -> operation?.code; validated -> ratesOperation?.caseInspection?.blocker; else -> inspection.blocker },
-            operation?.id, operation?.state, record?.datasetId,
+            operation?.id, operation?.state, record?.datasetId, inspection.observedThrough,
         )
     }
 

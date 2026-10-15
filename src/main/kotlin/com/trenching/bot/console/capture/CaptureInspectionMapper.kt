@@ -23,12 +23,13 @@ class CaptureInspectionMapper(private val mapper: CaptureResponseMapper) {
                 manifest.windows.forEachIndexed { index, window ->
                     val key = "window.$index"
                     put("$key.mint", window.baseMint); put("$key.fromSlot", window.fromSlot.toString()); put("$key.toSlot", window.toSlot.toString()); put("$key.coverage", window.coverage.name); put("$key.scanned", window.scanned.toString()); put("$key.selected", window.selected.toString())
+                    window.cutoff?.let { cutoff -> put("$key.cutoffThroughSlot", cutoff.throughSlot.toString()); put("$key.cutoffOutcome", cutoff.outcome) }
                 }
             }
             value.marketDecoded?.let { decoded ->
                 put("observations", decoded.observations.size.toString()); put("extractor", decoded.extractor.name)
                 decoded.exclusions.forEach { (key, count) -> put("exclusion.${key.name}", count.toString()) }
-                decoded.windows.forEachIndexed { index, window -> put("window.$index.detailGaps", window.detailGaps.toString()); put("window.$index.observations", window.observations.toString()) }
+                decoded.windows.forEachIndexed { index, window -> put("window.$index.detailGaps", window.detailGaps.toString()); put("window.$index.observations", window.observations.toString()); put("window.$index.observedThrough", window.observedThrough.value.toString()) }
             }
         }
         val rates = buildMap {
