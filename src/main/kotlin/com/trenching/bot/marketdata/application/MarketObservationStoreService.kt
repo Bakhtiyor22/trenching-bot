@@ -6,6 +6,7 @@ import com.trenching.bot.common.ReplayLimits
 import com.trenching.bot.common.TimePrecision
 import com.trenching.bot.marketdata.MarketObservationStore
 import com.trenching.bot.marketdata.domain.MarketObservation
+import com.trenching.bot.marketdata.infrastructure.persistence.MarketObservationEntity
 import com.trenching.bot.marketdata.infrastructure.persistence.MarketObservationRepository
 import com.trenching.bot.marketdata.mapper.MarketObservationMapper
 import org.springframework.data.domain.PageRequest
@@ -22,7 +23,13 @@ class MarketObservationStoreService(private val repository: MarketObservationRep
             DecimalPolicy.requireExactPrice(it.price)
             it.liquidityQuote?.let(DecimalPolicy::requireExactPrice)
         }
-        repository.saveAllAndFlush(observations.map { mapper.toEntity(runId, it) })
+        val entities = observations.map { mapper.toEntity(runId, it) }
+        entities.forEach(::requireTradeColumnsAllOrNone)
+        repository.saveAllAndFlush(entities)
+    }
+
+    private fun requireTradeColumnsAllOrNone(entity: MarketObservationEntity) {
+        mapper.trade(entity)
     }
 
     @Transactional(readOnly = true)

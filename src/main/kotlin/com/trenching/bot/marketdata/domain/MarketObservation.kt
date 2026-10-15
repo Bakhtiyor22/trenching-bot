@@ -19,6 +19,8 @@ data class MarketObservation(
     /** Whether the trade left its bonding curve complete: from this trade on, the token has migrated off the curve. */
     val curveComplete: Boolean,
     val curve: CurveState,
+    /** The decoded trade behind the observation; null for data recorded before trades were kept, never inferred. */
+    val trade: ObservedTrade? = null,
 )
 
 enum class ObservationQuality { LAST_TRADE, MIDPOINT, INVALID }

@@ -1,14 +1,18 @@
 package com.trenching.bot.replay
 
 import com.trenching.bot.marketdata.domain.CurveState
+import com.trenching.bot.marketdata.domain.ObservedTrade
+import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.replay.application.DatasetFingerprint
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.support.DipSample
+import com.trenching.bot.support.DipSampleV4
 import java.math.BigInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -24,13 +28,29 @@ class ReplayDatasetLoaderTest {
     fun `every bundled observation carries a curve state consistent with curveComplete`() {
         val dataset = DipSample.load()
 
-        assertEquals(ReplayDataset.SCHEMA_VERSION, dataset.schemaVersion)
+        assertEquals(ReplayDataset.SCHEMA_V3, dataset.schemaVersion)
         assertTrue(dataset.observations.all { it.curve.complete == it.curveComplete })
         assertTrue(dataset.observations.any { it.curveComplete })
     }
 
+    @Test
+    fun `the bundled v3 sample keeps its pinned checksum and has no trade fields`() {
+        val dataset = DipSample.load()
+
+        assertEquals(PINNED_V3_CHECKSUM, DatasetFingerprint.checksum(dataset))
+        assertTrue(dataset.observations.all { it.trade == null })
+    }
+
+    @Test
+    fun `a v3 checksum ignores trades, so v3 meaning cannot change`() {
+        val dataset = DipSample.load()
+        val withTrades = dataset.copy(observations = dataset.observations.mapIndexed { index, it -> it.copy(trade = DipSampleV4.trade(index)) })
+
+        assertEquals(DatasetFingerprint.checksum(dataset), DatasetFingerprint.checksum(withTrades))
+    }
+
     @ParameterizedTest
-    @ValueSource(ints = [1, 2])
+    @ValueSource(ints = [1, 2, 5])
     fun `earlier schema versions are refused`(version: Int) {
         val error = refusal { it.put("schemaVersion", version) }
 
@@ -132,9 +152,122 @@ class ReplayDatasetLoaderTest {
         assertEquals(0, curve.creatorFeeBps)
     }
 
+    @Test
+    fun `a v3 observation with a trade key is refused`() {
+        assertTrue(refusal { observation(it).putObject("trade").put("trader", DipSampleV4.trade(0).trader) }.contains(TRADE_FIELDS_IN_V3))
+    }
+
+    @Test
+    fun `a v3 observation with a null trade is refused`() {
+        assertTrue(refusal { observation(it).putNull("trade") }.contains(TRADE_FIELDS_IN_V3))
+    }
+
+    @Test
+    fun `a v4 dataset loads with each observation's trade`() {
+        val dataset = loadV4 { }
+
+        assertEquals(ReplayDataset.SCHEMA_V4, dataset.schemaVersion)
+        val expected = DipSampleV4.dataset().observations.associate { it.id to it.trade }
+        assertEquals(expected, dataset.observations.associate { it.id to it.trade })
+    }
+
+    @Test
+    fun `loading a v3 and its v4 twin gives the same observations apart from the trade`() {
+        val v3 = DipSample.load()
+        val v4 = loadV4 { }
+
+        assertEquals(v3.observations.associateBy { it.id }, v4.observations.associate { it.id to it.copy(trade = null) })
+        assertEquals(v3.transactions, v4.transactions)
+        assertEquals(v3.referenceRates, v4.referenceRates)
+        assertNull(v3.observations.first().trade)
+    }
+
+    @Test
+    fun `a v4 observation without a trade is refused`() {
+        assertTrue(refusalV4 { observation(it).remove("trade") }.contains(TRADE_FIELDS_MISSING))
+        assertTrue(refusalV4 { observation(it).putNull("trade") }.contains(TRADE_FIELDS_MISSING))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["trader", "side", "solLamports", "tokenRaw"])
+    fun `a v4 trade without one of its fields is refused`(field: String) {
+        assertTrue(refusalV4 { trade(it).remove(field) }.contains(TRADE_FIELDS_INVALID))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["0", "-1", "1.5", "", "1e3", " 5", "18446744073709551616", "123456789012345678901"])
+    fun `a v4 trade amount that is not a positive raw u64 string is refused`(value: String) {
+        assertTrue(refusalV4 { trade(it).put("solLamports", value) }.contains(TRADE_FIELDS_INVALID))
+        assertTrue(refusalV4 { trade(it).put("tokenRaw", value) }.contains(TRADE_FIELDS_INVALID))
+    }
+
+    @Test
+    fun `a v4 trade amount written as a JSON number is refused`() {
+        assertTrue(refusalV4 { trade(it).put("solLamports", 5) }.contains(TRADE_FIELDS_INVALID))
+    }
+
+    @Test
+    fun `the largest u64 amount is accepted`() {
+        val dataset = loadV4 { trade(it).put("solLamports", "18446744073709551615") }
+
+        assertEquals(BigInteger("18446744073709551615"), dataset.observations.single { it.id == FIRST_OBSERVATION }.trade?.solLamports)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["BUY ", "buy", "HOLD", ""])
+    fun `a v4 trade side other than BUY or SELL is refused`(side: String) {
+        assertTrue(refusalV4 { trade(it).put("side", side) }.contains(TRADE_FIELDS_INVALID))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["", "0OIl", "11111111111111111111111111111111111111111111111111", "1111111111111111111111111111111"])
+    fun `a v4 trader that is not a base58 32 byte key is refused`(trader: String) {
+        assertTrue(refusalV4 { trade(it).put("trader", trader) }.contains(TRADE_FIELDS_INVALID))
+    }
+
+    @Test
+    fun `the v4 checksum covers every trade field`() {
+        val dataset = DipSampleV4.dataset()
+        val first = dataset.observations.first()
+        val trade = requireNotNull(first.trade)
+        val variants = listOf(
+            ObservedTrade.of(DipSampleV4.trade(1).trader.takeIf { it != trade.trader } ?: DipSampleV4.trade(2).trader, trade.side, trade.solLamports, trade.tokenRaw),
+            ObservedTrade.of(trade.trader, TradeSide.entries.first { it != trade.side }, trade.solLamports, trade.tokenRaw),
+            ObservedTrade.of(trade.trader, trade.side, trade.solLamports + BigInteger.ONE, trade.tokenRaw),
+            ObservedTrade.of(trade.trader, trade.side, trade.solLamports, trade.tokenRaw + BigInteger.ONE),
+        )
+        val original = DatasetFingerprint.checksum(dataset)
+
+        val checksums = variants.map { variant ->
+            DatasetFingerprint.checksum(dataset.copy(observations = listOf(first.copy(trade = variant)) + dataset.observations.drop(1)))
+        }
+
+        checksums.forEach { assertNotEquals(original, it) }
+        assertEquals(variants.size, checksums.toSet().size)
+    }
+
+    @Test
+    fun `the v4 checksum differs from the v3 checksum of the same observations`() {
+        assertNotEquals(DatasetFingerprint.checksum(DipSample.load()), DatasetFingerprint.checksum(DipSampleV4.dataset()))
+    }
+
+    @Test
+    fun `a v4 file whose trade was edited without recomputing the checksum is refused`() {
+        val root = mapper.readTree(DipSampleV4.json()) as ObjectNode
+        trade(root).put("tokenRaw", "7")
+
+        val error = requireNotNull(assertFailsWith<IllegalArgumentException> { loader.load(mapper.writeValueAsString(root).byteInputStream()) }.message)
+
+        assertTrue(error.startsWith(CHECKSUM_MISMATCH), error)
+    }
+
     /** Loads the sample after [change], with its checksum recomputed so only the change itself can fail the load. */
-    private fun load(change: (ObjectNode) -> Unit): ReplayDataset {
-        val root = mapper.readTree(DipSample.json()) as ObjectNode
+    private fun load(change: (ObjectNode) -> Unit): ReplayDataset = load(DipSample.json(), change)
+
+    private fun loadV4(change: (ObjectNode) -> Unit): ReplayDataset = load(DipSampleV4.json(), change)
+
+    private fun load(base: String, change: (ObjectNode) -> Unit): ReplayDataset {
+        val root = mapper.readTree(base) as ObjectNode
         change(root)
         val mismatch = try {
             return loader.load(mapper.writeValueAsString(root).byteInputStream())
@@ -148,6 +281,11 @@ class ReplayDatasetLoaderTest {
     private fun refusal(change: (ObjectNode) -> Unit): String =
         requireNotNull(assertFailsWith<IllegalArgumentException> { load(change) }.message)
 
+    private fun refusalV4(change: (ObjectNode) -> Unit): String =
+        requireNotNull(assertFailsWith<IllegalArgumentException> { loadV4(change) }.message)
+
+    private fun trade(root: ObjectNode): ObjectNode = observation(root).path("trade") as ObjectNode
+
     private fun observation(root: ObjectNode): ObjectNode =
         root.path("observations").single { it.path("id").asString() == FIRST_OBSERVATION } as ObjectNode
 
@@ -157,6 +295,10 @@ class ReplayDatasetLoaderTest {
         const val FIRST_OBSERVATION = "fixture:TP:1000:0"
         const val CURVE_STATE_INVALID = "CURVE_STATE_INVALID"
         const val CURVE_STATE_INCONSISTENT = "CURVE_STATE_INCONSISTENT"
+        const val TRADE_FIELDS_IN_V3 = "TRADE_FIELDS_IN_V3"
+        const val TRADE_FIELDS_MISSING = "TRADE_FIELDS_MISSING"
+        const val TRADE_FIELDS_INVALID = "TRADE_FIELDS_INVALID"
+        const val PINNED_V3_CHECKSUM = "06103b0faebf5d3e95468fc250232c333a0e6b665612c977fc76441883eac765"
         const val CHECKSUM_MISMATCH = "Replay checksum mismatch computed="
     }
 }

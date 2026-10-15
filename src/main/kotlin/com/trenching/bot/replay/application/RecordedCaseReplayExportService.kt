@@ -8,6 +8,7 @@ import com.trenching.bot.marketdata.RecordedReferenceRates
 import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.replay.CaptureCaseExport
 import com.trenching.bot.replay.CaptureCaseExportRequest
+import com.trenching.bot.replay.domain.DatasetTrades
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetFiles
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
@@ -45,8 +46,12 @@ internal class RecordedCaseReplayExportService(
         if (decoded.progress.window != window || decoded.windowParameters != planned.plan.parameters) {
             throw CaptureValidationException("MARKET_CAPTURE_MISMATCH")
         }
+        if (!DatasetTrades.allPresent(decoded.observations)) {
+            log.warn("recorded_case_export refused reason={} caseId={}", DatasetTrades.FIELDS_MISSING, request.caseId.value)
+            throw CaptureValidationException(DatasetTrades.FIELDS_MISSING)
+        }
         val caseRates = rates(request.ratesCaptureDirectory, decoded.observations)
-        val dataset = ReplayDataset(ReplayDataset.SCHEMA_VERSION, planned.history.wallet, listOf(walletTransaction), decoded.observations, caseRates)
+        val dataset = ReplayDataset(ReplayDataset.CURRENT_SCHEMA_VERSION, planned.history.wallet, listOf(walletTransaction), decoded.observations, caseRates)
         if (dataset.transactions.size > ReplayLimits.MAX_INPUT_RECORDS || dataset.observations.size > ReplayLimits.MAX_INPUT_RECORDS) {
             throw CaptureValidationException("DATASET_BOUNDS")
         }

@@ -43,6 +43,9 @@ data class MarketTransactionDecodeRecord(
 
 enum class MarketObservationExtractorVersion {
     PUMPFUN_BONDING_CURVE_TRADE_V1,
+
+    /** V1 plus each observation's decoded trade actor, side and amounts. */
+    PUMPFUN_BONDING_CURVE_TRADE_V2,
 }
 
 enum class MarketObservationExclusion {

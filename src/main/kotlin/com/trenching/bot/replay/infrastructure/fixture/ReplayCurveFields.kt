@@ -1,6 +1,6 @@
 package com.trenching.bot.replay.infrastructure.fixture
 
-/** Property names of an observation's `curve` object in replay dataset v3. */
+/** Property names of an observation's `curve` object in replay datasets v3 and v4. */
 internal object ReplayCurveFields {
     const val VIRTUAL_SOL_RESERVES = "virtualSolReserves"
     const val VIRTUAL_TOKEN_RESERVES = "virtualTokenReserves"

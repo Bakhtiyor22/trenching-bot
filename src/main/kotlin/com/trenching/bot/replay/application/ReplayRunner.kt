@@ -14,7 +14,7 @@ import com.trenching.bot.strategy.domain.*
 import com.trenching.bot.walletactivity.application.WalletNormalizer
 import com.trenching.bot.walletactivity.domain.*
 
-/** Replays a v3 dataset under the dip-entry strategy: one cycle per mint, from the tracked wallet's first buy of it. */
+/** Replays a v3 or v4 dataset under the dip-entry strategy: one cycle per mint, from the tracked wallet's first buy of it. */
 class ReplayRunner(
     private val normalizer: WalletNormalizer = WalletNormalizer(),
     private val strategy: DipEntryStrategy = DipEntryStrategy(),
@@ -22,7 +22,7 @@ class ReplayRunner(
     private val positions: PositionService = PositionService(),
 ) {
     fun run(dataset: ReplayDataset, config: SimulationConfig): SimulationReport {
-        require(dataset.schemaVersion == ReplayDataset.SCHEMA_VERSION) { "Unsupported replay schema" }
+        require(dataset.schemaVersion in ReplayDataset.SUPPORTED_SCHEMA_VERSIONS) { "Unsupported replay schema" }
         val transactions = OrderedWalletTransactions.canonical(dataset.transactions)
         val source = OrderedMarketData(dataset.observations)
         val rates = OrderedReferenceRates(dataset.referenceRates)

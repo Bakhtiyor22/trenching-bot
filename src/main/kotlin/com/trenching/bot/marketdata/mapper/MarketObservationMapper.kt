@@ -3,6 +3,7 @@ package com.trenching.bot.marketdata.mapper
 import com.trenching.bot.common.*
 import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.domain.MarketObservation
+import com.trenching.bot.marketdata.domain.ObservedTrade
 import com.trenching.bot.marketdata.infrastructure.persistence.MarketObservationEntity
 import com.trenching.bot.protocol.pumpfun.CurveReserves
 import org.mapstruct.*
@@ -34,6 +35,10 @@ abstract class MarketObservationMapper {
         Mapping(target = "realTokenReserves", source = "observation.curve.reserves.realToken"),
         Mapping(target = "feeBps", source = "observation.curve.feeBps"),
         Mapping(target = "creatorFeeBps", source = "observation.curve.creatorFeeBps"),
+        Mapping(target = "tradeTrader", source = "observation.trade.trader"),
+        Mapping(target = "tradeSide", source = "observation.trade.side"),
+        Mapping(target = "tradeSolLamports", source = "observation.trade.solLamports"),
+        Mapping(target = "tradeTokenRaw", source = "observation.trade.tokenRaw"),
         Mapping(target = "version", ignore = true),
     ])
     abstract fun toEntity(runId: String, observation: MarketObservation): MarketObservationEntity
@@ -45,6 +50,7 @@ abstract class MarketObservationMapper {
         Mapping(target = "liquidityQuote", expression = "java(originalLiquidity(entity))"),
         Mapping(target = "curveComplete", expression = "java(curveComplete(entity))"),
         Mapping(target = "curve", expression = "java(curve(entity))"),
+        Mapping(target = "trade", expression = "java(trade(entity))"),
     ])
     abstract fun toObservation(entity: MarketObservationEntity): MarketObservation
 
@@ -57,6 +63,16 @@ abstract class MarketObservationMapper {
         CurveReserves(requireCurve(entity.virtualSolReserves, entity), requireCurve(entity.virtualTokenReserves, entity),
             requireCurve(entity.realSolReserves, entity), requireCurve(entity.realTokenReserves, entity)),
         requireCurve(entity.feeBps, entity), requireCurve(entity.creatorFeeBps, entity))
+
+    /** The stored trade, or null for a row stored before trades were kept; a row with only some trade columns is refused. */
+    fun trade(entity: MarketObservationEntity): ObservedTrade? {
+        val columns = listOf(entity.tradeTrader, entity.tradeSide, entity.tradeSolLamports, entity.tradeTokenRaw)
+        if (columns.all { it == null }) return null
+        require(columns.none { it == null }) { "Observation with a partial trade id=${entity.observationId}" }
+        return ObservedTrade.of(requireNotNull(entity.tradeTrader), requireNotNull(entity.tradeSide),
+            requireNotNull(entity.tradeSolLamports), requireNotNull(entity.tradeTokenRaw))
+    }
+
     fun originalLiquidity(entity: MarketObservationEntity): java.math.BigDecimal? =
         entity.liquidityQuote?.let { ChainValueMapper.originalDecimal(it, requireNotNull(entity.liquidityScale)) }
 

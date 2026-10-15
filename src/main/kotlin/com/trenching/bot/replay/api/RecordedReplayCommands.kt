@@ -39,7 +39,7 @@ internal class RecordedReplayCommands(
         output.println("trackedWallet=${export.trackedWallet.value}")
         output.println("sourceBuys=${export.sourceBuys} windows=${export.windows} transactions=${export.transactions} " +
             "observations=${export.observations} written=${export.written}")
-        output.println("replayReady=true schemaVersion=${ReplayDataset.SCHEMA_VERSION}")
+        output.println("replayReady=true schemaVersion=${ReplayDataset.CURRENT_SCHEMA_VERSION}")
         output.println(RecordedReplayCommandOptions.NOTE)
     }
 

@@ -10,6 +10,8 @@ import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.ObservationQuality
+import com.trenching.bot.marketdata.domain.ObservedTrade
+import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifactStore
 import com.trenching.bot.protocol.pumpfun.CurveReserves
 import java.math.BigDecimal
@@ -60,6 +62,7 @@ class RecordedMarketHistoryTest {
                 feeBps = 95,
                 creatorFeeBps = 30,
             ),
+            trade = ObservedTrade.of(TRADER, TradeSide.BUY, BigInteger("244444444"), BigInteger("1238520682656")),
         )
         assertEquals(listOf(expected), result.observations)
         assertEquals(38, result.observations.single().price.scale())
@@ -67,7 +70,7 @@ class RecordedMarketHistoryTest {
         assertEquals(listOf(MarketTransactionDecodeRecord(TransactionSignature.of(SIGNATURE), Slot.of(SLOT), MarketTransactionOutcome.CAPTURED, 1, 0)),
             result.transactions)
         assertEquals(listOf(MarketWindowDecodeRecord(windowValue(MINT), MarketWindowCoverage.COMPLETE, 1, 0, true, 1)), result.windows)
-        assertEquals(MarketObservationExtractorVersion.PUMPFUN_BONDING_CURVE_TRADE_V1, result.extractor)
+        assertEquals(MarketObservationExtractorVersion.PUMPFUN_BONDING_CURVE_TRADE_V2, result.extractor)
         assertEquals(PARAMETERS, result.windowParameters)
         assertTrue(result.complete)
         assertEquals(directory.toAbsolutePath().normalize(), result.directory)
@@ -213,6 +216,8 @@ class RecordedMarketHistoryTest {
 
         assertTrue(result.ready)
         assertEquals(1, result.observations.size)
+        assertEquals(MarketObservationExtractorVersion.PUMPFUN_BONDING_CURVE_TRADE_V2, result.extractor)
+        assertEquals(TRADER, result.observations.single().trade?.trader)
         assertCategory("ARTIFACT_BYTES") { recorded.decode(directory) }
     }
 
@@ -397,6 +402,7 @@ class RecordedMarketHistoryTest {
         const val SIGNATURE = "35Vnpu9DSwADxy77FBQV8seGitMXuQRPB575AKXv1Jhh3NQSuZRKtuppUkiyLkYszxxi9HaKcmNN7fywqJ9R3mNA"
         const val MINT = "5bYUihkPWGph9BLyG4uUbNV634UTwjf3Ly5JEsnokbDs"
         const val OTHER_MINT = "Bo82e4Upnsdg9zDeM6wPpckRyuzkLZovJucKCQ2ivUye"
+        const val TRADER = "4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9"
         const val UNTIL = "1111111111111111111111111111111111111111111111111111111111111112"
         const val SLOT = 453004996L
         const val FROM = 453004990L

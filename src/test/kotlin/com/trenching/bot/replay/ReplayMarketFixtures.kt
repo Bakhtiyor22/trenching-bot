@@ -21,6 +21,7 @@ import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.ObservationQuality
 import com.trenching.bot.protocol.pumpfun.CurveReserves
+import com.trenching.bot.support.DipSampleV4
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.nio.file.Path
@@ -71,9 +72,10 @@ internal object ReplayMarketFixtures {
         val listed = (0 until observations).map { index ->
             MarketObservation("pumpfun-bonding-curve-trade/v1:observation$index", window.pair, window.fromSlot.plus(index.toLong()),
                 window.fromSlot.plus(index.toLong()), Instant.ofEpochSecond(1791049629), BigDecimal("0.00000019736807582073671197813450558296"),
-                null, "pumpfun-bonding-curve-trade/v1", "observation$index", Commitment.CONFIRMED, ObservationQuality.LAST_TRADE, false, CURVE)
+                null, "pumpfun-bonding-curve-trade/v1", "observation$index", Commitment.CONFIRMED, ObservationQuality.LAST_TRADE, false, CURVE,
+                DipSampleV4.trade(index))
         }
-        return MarketHistoryDecodeResult(directory, manifest.complete, MarketObservationExtractorVersion.PUMPFUN_BONDING_CURVE_TRADE_V1,
+        return MarketHistoryDecodeResult(directory, manifest.complete, MarketObservationExtractorVersion.PUMPFUN_BONDING_CURVE_TRADE_V2,
             manifest.windowParameters, listOf(MarketWindowDecodeRecord(window, first.coverage, first.selected, 0, true, observations)),
             manifest.records.map { MarketTransactionDecodeRecord(TransactionSignature.of(it.signature), Slot.of(it.slot), it.outcome, observations, 0) },
             listed, MarketObservationExclusion.entries.associateWith { 0 })

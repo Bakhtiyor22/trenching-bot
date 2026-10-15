@@ -5,6 +5,7 @@ import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.marketdata.domain.*
 import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.replay.application.DatasetFingerprint
+import com.trenching.bot.replay.domain.DatasetTrades
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.walletactivity.domain.WalletTransaction
 import java.io.InputStream
@@ -18,10 +19,11 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
     fun load(input: InputStream): ReplayDataset {
         val root = mapper.readTree(input)
         val rawVersion = integer(root, "schemaVersion")
-        require(rawVersion == ReplayDataset.SCHEMA_VERSION.toLong()) {
-            "Unsupported replay schemaVersion=$rawVersion; re-export it with curve state (UNSUPPORTED_SCHEMA)"
+        require(rawVersion in ReplayDataset.SUPPORTED_SCHEMA_VERSIONS.map(Int::toLong)) {
+            "Unsupported replay schemaVersion=$rawVersion; supported versions are ${ReplayDataset.SUPPORTED_SCHEMA_VERSIONS} (UNSUPPORTED_SCHEMA)"
         }
         val version = rawVersion.toInt()
+        val recordsTrades = ReplayDataset.recordsTrades(version)
         val wallet = WalletAddress.of(string(root, "trackedWallet"))
         val transactions = array(root, "transactions").map { node ->
             val index = integer(node, "instructionIndex")
@@ -47,7 +49,7 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
                 liquidity, string(node, "source", ReplayLimits.MAX_SOURCE_LENGTH),
                 string(node, "sourceEventId", ReplayLimits.MAX_OBSERVATION_ID_LENGTH),
                 Commitment.valueOf(string(node, "commitment")), ObservationQuality.valueOf(string(node, "quality")),
-                curveComplete, curve(node.path("curve"), id, curveComplete))
+                curveComplete, curve(node.path("curve"), id, curveComplete), trade(node, id, recordsTrades))
         }
         val rates = array(root, "referenceRates").map { node ->
             ReferenceRate(instant(string(node, "minute")), BigDecimal(string(node, "rate")), string(node, "source", ReplayLimits.MAX_SOURCE_LENGTH))
@@ -79,6 +81,36 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
             "curveComplete=$curveComplete contradicts realTokenReserves=$realToken observation id=$observationId (CURVE_STATE_INCONSISTENT)"
         }
         return curve
+    }
+
+    /** A v3 observation never has a trade, so editing one in cannot change what a v3 file means; a v4 observation always does. */
+    private fun trade(node: JsonNode, observationId: String, recordsTrades: Boolean): ObservedTrade? {
+        val trade = node.path(ReplayTradeFields.TRADE)
+        if (!recordsTrades) {
+            require(trade.isMissingNode) { "Unexpected trade in a schema v3 observation id=$observationId (${DatasetTrades.FIELDS_IN_V3})" }
+            return null
+        }
+        require(!trade.isMissingNode && !trade.isNull) { "Missing trade observation id=$observationId (${DatasetTrades.FIELDS_MISSING})" }
+        val side = TradeSide.entries.firstOrNull { it.name == tradeText(trade, ReplayTradeFields.SIDE, observationId) }
+        requireNotNull(side) { "Invalid trade.${ReplayTradeFields.SIDE} observation id=$observationId (${DatasetTrades.FIELDS_INVALID})" }
+        return try {
+            ObservedTrade.of(tradeText(trade, ReplayTradeFields.TRADER, observationId), side,
+                tradeAmount(trade, ReplayTradeFields.SOL_LAMPORTS, observationId), tradeAmount(trade, ReplayTradeFields.TOKEN_RAW, observationId))
+        } catch (invalid: IllegalArgumentException) {
+            throw IllegalArgumentException("Invalid trade observation id=$observationId (${DatasetTrades.FIELDS_INVALID})", invalid)
+        }
+    }
+
+    private fun tradeAmount(trade: JsonNode, field: String, observationId: String): BigInteger {
+        val text = tradeText(trade, field, observationId)
+        require(RAW_INTEGER.matches(text)) { "Expected raw integer string trade.$field observation id=$observationId (${DatasetTrades.FIELDS_INVALID})" }
+        return BigInteger(text)
+    }
+
+    private fun tradeText(trade: JsonNode, field: String, observationId: String): String {
+        val value = trade.path(field)
+        require(value.isString) { "Expected string trade.$field observation id=$observationId (${DatasetTrades.FIELDS_INVALID})" }
+        return value.asString()
     }
 
     private fun curveInteger(node: JsonNode, field: String, observationId: String): BigInteger {

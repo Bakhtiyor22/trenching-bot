@@ -14,6 +14,9 @@ object PumpFunLayout {
     /** Source of a wallet buy decoded from a bonding-curve `buy`, per the pumpfun-bonding-curve-buy-decoder ADR. */
     const val BUY_SOURCE = "pumpfun-bonding-curve-buy/v1"
 
+    /** Source of an observation decoded from a `TradeEvent`, per the pumpfun-last-trade-observations ADR. */
+    const val TRADE_SOURCE = "pumpfun-bonding-curve-trade/v1"
+
     /** Seed of the per-user volume accumulator PDA that `buy` passes, with the user's public key as second seed. */
     const val USER_VOLUME_ACCUMULATOR_SEED = "user_volume_accumulator"
 

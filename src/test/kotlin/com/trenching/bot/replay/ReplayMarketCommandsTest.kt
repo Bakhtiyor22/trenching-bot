@@ -145,7 +145,7 @@ class ReplayMarketCommandsTest {
 
         val printed = output.toString()
         val lines = printed.lines()
-        assertTrue(lines.contains("replayReady=false extractorStatus=PUMPFUN_BONDING_CURVE_TRADE_V1"), printed)
+        assertTrue(lines.contains("replayReady=false extractorStatus=PUMPFUN_BONDING_CURVE_TRADE_V2"), printed)
         assertTrue(lines.contains("observations=1"))
         assertTrue(lines.contains("observation=pumpfun-bonding-curve-trade/v1:$SIGNATURE:1:7:$MINT slot=453004996 " +
             "price=0.00000019736807582073671197813450558296"), printed)

@@ -18,6 +18,8 @@ import com.trenching.bot.marketdata.RecordedMarketHistory
 import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifactStore
 import com.trenching.bot.protocol.pumpfun.CurveReserves
+import com.trenching.bot.protocol.pumpfun.PumpFunInstruction
+import com.trenching.bot.protocol.pumpfun.PumpFunInstructionReader
 import com.trenching.bot.replay.RecordedWalletFixtures.MINT
 import com.trenching.bot.replay.RecordedWalletFixtures.SIGNATURE
 import com.trenching.bot.replay.RecordedWalletFixtures.SLOT
@@ -25,6 +27,7 @@ import com.trenching.bot.replay.RecordedWalletFixtures.WALLET
 import com.trenching.bot.replay.application.DatasetFingerprint
 import com.trenching.bot.replay.application.RecordedReplayExportService
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
+import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.application.RecordedCaseReplayExportService
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.marketdata.RecordedReferenceRates
@@ -52,7 +55,7 @@ class RecordedReplayExportTest {
     private var marketDecodes = 0
 
     @Test
-    fun `exports the real recorded buy, its in-window trade and that trade's rate as canonical v3 json that the loader round-trips`() {
+    fun `exports the real recorded buy, its in-window trade and that trade's rate as canonical v4 json, with the trade's actor, that the loader round-trips`() {
         RecordedWalletFixtures.save(mapper, wallet())
         saveRealMarketCapture()
 
@@ -75,7 +78,10 @@ class RecordedReplayExportTest {
             CurveReserves(BigInteger("80123104314"), BigInteger("401756777019139"), BigInteger("50123104314"), BigInteger("121856777019139")),
             feeBps = 95, creatorFeeBps = 30), observation.curve)
         assertEquals(listOf(RATE), dataset.referenceRates)
-        assertEquals(3, dataset.schemaVersion)
+        assertEquals(ReplayDataset.SCHEMA_V4, dataset.schemaVersion)
+        assertEquals(fixtureTrade().user.value, observation.trade?.trader)
+        assertEquals(fixtureTrade().solAmount, observation.trade?.solLamports)
+        assertEquals(fixtureTrade().tokenAmount, observation.trade?.tokenRaw)
         assertEquals(DatasetFingerprint.checksum(dataset), export.checksum)
         assertEquals(export.checksum, mapper.readTree(json).path("checksum").asString())
         assertEquals(listOf(1, 1, 1, 1), listOf(export.sourceBuys, export.windows, export.transactions, export.observations))
@@ -119,6 +125,61 @@ class RecordedReplayExportTest {
         assertEquals(listOf(SIGNATURE), dataset.transactions.map { it.signature.value })
         assertEquals(1, dataset.observations.size)
         assertEquals(listOf(RATE), dataset.referenceRates)
+        assertEquals(ReplayDataset.SCHEMA_V4, dataset.schemaVersion)
+        assertEquals(fixtureTrade().user.value, dataset.observations.single().trade?.trader)
+    }
+
+    @Test
+    fun `a repeated case export is byte identical and leaves the existing file in place`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveRealMarketCapture()
+        val first = caseService().export(caseRequest())
+        val bytes = Files.readAllBytes(first.output)
+
+        val second = caseService().export(caseRequest())
+
+        assertEquals(first.checksum, second.checksum)
+        assertFalse(second.written)
+        assertTrue(bytes.contentEquals(Files.readAllBytes(first.output)))
+    }
+
+    @Test
+    fun `a full and a case export of the same capture carry the same trade`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveRealMarketCapture()
+        service().export(request())
+        val case = caseService().export(caseRequest())
+
+        val full = Files.newInputStream(output()).use { ReplayDatasetLoader(mapper).load(it) }
+        val single = Files.newInputStream(case.output).use { ReplayDatasetLoader(mapper).load(it) }
+
+        assertEquals(ReplayDataset.SCHEMA_V4, single.schemaVersion)
+        assertEquals(full.observations.map { it.trade }, single.observations.map { it.trade })
+    }
+
+    @Test
+    fun `an export of observations lacking their trade is refused instead of written as v3`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveRealMarketCapture()
+        val recorded = MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper)
+        val untraded = recorded.decode(markets()).let { decoded -> decoded.copy(observations = decoded.observations.map { it.copy(trade = null) }) }
+
+        assertCategory("TRADE_FIELDS_MISSING") { service(untraded).export(request()) }
+        assertFalse(Files.exists(output()))
+    }
+
+    @Test
+    fun `a case export of an observation lacking its trade is refused instead of written as v3`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveRealMarketCapture()
+        val recorded = MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper)
+        val untraded = object : RecordedMarketHistory by recorded {
+            override fun decodeCase(directory: Path, caseId: MarketCaseId) = recorded.decodeCase(directory, caseId)
+                .let { decoded -> decoded.copy(observations = decoded.observations.map { it.copy(trade = null) }) }
+        }
+
+        assertCategory("TRADE_FIELDS_MISSING") { caseService(markets = untraded).export(caseRequest()) }
+        assertFalse(Files.exists(caseRequest().output))
     }
 
     @Test
@@ -299,6 +360,7 @@ class RecordedReplayExportTest {
 
     private fun caseService(
         walletHistory: RecordedWalletHistory = WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper),
+        markets: RecordedMarketHistory = MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper),
     ): RecordedCaseReplayExportService {
         val recordedRates = object : RecordedReferenceRates {
             override fun inspect(directory: Path): ReferenceRateCaptureResult = error("Export reads rates, not their audit")
@@ -306,7 +368,7 @@ class RecordedReplayExportTest {
         }
         return RecordedCaseReplayExportService(
             walletHistory,
-            MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper),
+            markets,
             recordedRates,
             mapper,
         )
@@ -323,6 +385,13 @@ class RecordedReplayExportTest {
             anchor.signature, anchor.slot.value, anchor.instructionIndex, window.fromSlot.value, window.toSlot.value,
             ReplayMarketFixtures.PARAMETERS, directory.resolve("case.json"),
         )
+    }
+
+    /** The `TradeEvent` of the captured Pump.fun transaction, as the protocol reader decodes it. */
+    private fun fixtureTrade(): PumpFunInstruction.TradeEvent {
+        val root = javaClass.getResourceAsStream("/marketdata/pumpfun-trade-453004997.json").use { mapper.readTree(requireNotNull(it)) }
+        return PumpFunInstructionReader.read(if (root.has("result")) root.path("result") else root)
+            .filterIsInstance<PumpFunInstruction.TradeEvent>().single()
     }
 
     private fun request() = RecordedReplayExportRequest(wallet(), markets(), rates(), output())

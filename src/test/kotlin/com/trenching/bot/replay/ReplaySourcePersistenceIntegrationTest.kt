@@ -6,6 +6,8 @@ import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.application.SimulationRunLedger
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.strategy.domain.SimulationConfig
+import com.trenching.bot.support.DipSample
+import com.trenching.bot.support.DipSampleV4
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import com.trenching.bot.walletactivity.WalletEventStore
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
@@ -47,5 +49,22 @@ class ReplaySourcePersistenceIntegrationTest {
         assertEquals(report.ingestion.filterIsInstance<NormalizationOutcome.Accepted>().map { it.trade }, wallets.acceptedTrades(report.runId))
         assertEquals(report.ingestion.filterIsInstance<NormalizationOutcome.Ignored>(), wallets.ignored(report.runId))
         assertEquals(OrderedMarketData.canonical(input.observations), markets.observations(report.runId))
+    }
+
+    @Test
+    fun `a v4 dataset's trades round trip and a v3 dataset's observations read back without one`() {
+        val v4 = ReplayDatasetLoader(mapper).load(DipSampleV4.json().byteInputStream())
+        val v3 = DipSample.load()
+        val config = SimulationConfig.mvp()
+        val v4Report = ReplayRunner().run(v4, config)
+        val v3Report = ReplayRunner().run(v3, config)
+
+        ledger.persist(v4, v4Report)
+        ledger.persist(v3, v3Report)
+
+        val stored = markets.observations(v4Report.runId)
+        assertEquals(OrderedMarketData.canonical(v4.observations), stored)
+        assertTrue(stored.all { it.trade != null })
+        assertTrue(markets.observations(v3Report.runId).all { it.trade == null })
     }
 }

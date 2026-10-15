@@ -72,7 +72,7 @@ class ExecutionCalibrationTest {
         assertEquals(0, report.summary.mathMismatches)
         assertEquals(WalletAddress.of(WALLET), report.wallet)
         assertEquals(WalletHistoryDecoderVersion.PUMPFUN_BONDING_CURVE_BUY_V2, report.decoder)
-        assertEquals(MarketObservationExtractorVersion.PUMPFUN_BONDING_CURVE_TRADE_V1, report.extractor)
+        assertEquals(MarketObservationExtractorVersion.PUMPFUN_BONDING_CURVE_TRADE_V2, report.extractor)
     }
 
     @Test

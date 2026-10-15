@@ -11,17 +11,20 @@ import com.trenching.bot.marketdata.MarketObservationExclusion
 import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.ObservationQuality
+import com.trenching.bot.marketdata.domain.ObservedTrade
+import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.protocol.pumpfun.BondingCurve
 import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.protocol.pumpfun.PumpFunInstruction
 import com.trenching.bot.protocol.pumpfun.PumpFunInstructionReader
+import com.trenching.bot.protocol.pumpfun.PumpFunLayout
 import java.time.Instant
 import tools.jackson.databind.JsonNode
 
 /**
  * Turns every Pump.fun `TradeEvent` instruction of a verified transaction into one `LAST_TRADE` observation or one
  * counted exclusion, per the pumpfun-last-trade-observations ADR. Events are read from the self-invoked instruction,
- * never from `Program data:` log lines.
+ * never from `Program data:` log lines. An observation's trade actor is the event's `user`, never the fee payer or a router.
  */
 internal class PumpFunTradeObservationExtractor {
     fun extract(transaction: JsonNode, signature: TransactionSignature, slot: Slot, inWindow: (MintAddress, Slot) -> Boolean): List<TradeExtraction> =
@@ -57,7 +60,7 @@ internal class PumpFunTradeObservationExtractor {
             ?: return TradeExtraction.Excluded(MarketObservationExclusion.DECIMALS_UNPROVEN)
         val price = BondingCurve.price(event.solAmount, event.tokenAmount, decimals)
         val sourceEventId = "${signature.value}:${event.topLevelIndex}:${event.innerIndex ?: TOP_LEVEL_INNER_INDEX}"
-        val id = "$SOURCE:$sourceEventId:${event.mint.value}"
+        val id = "${PumpFunLayout.TRADE_SOURCE}:$sourceEventId:${event.mint.value}"
         val seconds = blockTime.asLong()
         if (price.signum() <= 0 || price.precision() > DecimalPolicy.PRICE_PRECISION || seconds !in 0..LATEST_BLOCK_TIME ||
             id.length > ReplayLimits.MAX_OBSERVATION_ID_LENGTH) {
@@ -71,12 +74,13 @@ internal class PumpFunTradeObservationExtractor {
             observedTime = Instant.ofEpochSecond(seconds),
             price = price,
             liquidityQuote = null,
-            source = SOURCE,
+            source = PumpFunLayout.TRADE_SOURCE,
             sourceEventId = sourceEventId,
             commitment = Commitment.CONFIRMED,
             quality = ObservationQuality.LAST_TRADE,
             curveComplete = curve.complete,
             curve = curve,
+            trade = ObservedTrade.of(event.user.value, if (event.isBuy == BUY) TradeSide.BUY else TradeSide.SELL, event.solAmount, event.tokenAmount),
         ))
     }
 
@@ -100,7 +104,6 @@ internal class PumpFunTradeObservationExtractor {
             .singleOrNull()
 
     private companion object {
-        const val SOURCE = "pumpfun-bonding-curve-trade/v1"
         const val TOP_LEVEL_INNER_INDEX = "-"
         const val SELL = 0
         const val BUY = 1

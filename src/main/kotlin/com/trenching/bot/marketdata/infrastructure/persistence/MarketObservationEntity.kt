@@ -7,6 +7,8 @@ import java.time.Instant
 import com.trenching.bot.common.Commitment
 import com.trenching.bot.common.DecimalPolicy
 import com.trenching.bot.marketdata.domain.ObservationQuality
+import com.trenching.bot.marketdata.domain.ObservedTrade
+import com.trenching.bot.marketdata.domain.TradeSide
 
 @Entity
 @Table(
@@ -43,6 +45,11 @@ class MarketObservationEntity(
     @Column(name = "real_token_reserves", nullable = true, precision = 20, scale = 0) var realTokenReserves: BigInteger?,
     @Column(name = "fee_bps", nullable = true, columnDefinition = "integer") var feeBps: Int?,
     @Column(name = "creator_fee_bps", nullable = true, columnDefinition = "integer") var creatorFeeBps: Int?,
+    // The four trade columns are all set or all null; null only for rows stored before trades were kept.
+    @Column(name = "trade_trader", nullable = true, length = ObservedTrade.MAX_TRADER_LENGTH) var tradeTrader: String?,
+    @Enumerated(EnumType.STRING) @Column(name = "trade_side", nullable = true, length = 8) var tradeSide: TradeSide?,
+    @Column(name = "trade_sol_lamports", nullable = true, precision = 20, scale = 0) var tradeSolLamports: BigInteger?,
+    @Column(name = "trade_token_raw", nullable = true, precision = 20, scale = 0) var tradeTokenRaw: BigInteger?,
 ) {
     @Version @Column(name = "version", nullable = false)
     var version: Long? = null

@@ -24,7 +24,7 @@ data class CaptureCaseExportRequest(
     val output: Path,
 )
 
-/** v3 dataset result plus case provenance that the immutable v3 file format does not carry. */
+/** Dataset (schema v4) result plus case provenance that the dataset file format does not carry. */
 data class CaptureCaseExport(
     val output: Path,
     val checksum: String,
