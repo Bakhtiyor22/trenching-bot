@@ -10,6 +10,9 @@ import com.trenching.bot.strategy.domain.TradeIntent
 
 data class RunDetail(val run: RunSummary, val config: SimulationConfig, val scenarios: List<RunScenario>)
 
+/** A run's detail with all its stored observations, from one read of them. */
+data class RunObservations(val detail: RunDetail, val observations: List<MarketObservation>)
+
 /** One entry offset of one source buy; [selectedObservation] is the observation its fill used. */
 data class RunScenario(
     val intent: TradeIntent,

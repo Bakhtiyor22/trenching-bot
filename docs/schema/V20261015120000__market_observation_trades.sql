@@ -1,5 +1,5 @@
 -- Reference only: no Flyway runs this. Production (`ddl-auto: validate`) needs it applied by hand before deploying
--- replay dataset schema v4 (docs/plans/20261015-chart-trade-actors-mcap.md, docs/adr/20261015-chart-trade-actors-and-mcap.md).
+-- replay dataset schema v4 (docs/plans/archive/20261015-chart-trade-actors-mcap.md, docs/adr/20261015-chart-trade-actors-and-mcap.md).
 -- Local and test databases get the four columns from the entity through `ddl-auto: update`; the CHECK constraints below
 -- exist only here, like the other constraints Hibernate does not create.
 --

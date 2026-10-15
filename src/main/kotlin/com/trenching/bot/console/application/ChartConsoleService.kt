@@ -22,8 +22,7 @@ class ChartConsoleService(
     /** The run's own stored observations, valued with its dataset's rates when the dataset is still in the catalog. */
     fun runChart(runId: String, query: ChartQuery): ChartView {
         val parameters = ChartParameters.of(query)
-        val detail = consoleService.detail(runId)
-        val observations = consoleService.observations(runId)
+        val (detail, observations) = consoleService.detailWithObservations(runId)
         val dataset = catalog.find(detail.run.datasetId)?.let { catalog.load(it.id) }
         val pair = parameters.pair ?: onlyPair(observations.map { it.pair }.distinct())
         return assemble(parameters, pair, ChartSource(observations, detail.run.quoteMint, dataset, detail))

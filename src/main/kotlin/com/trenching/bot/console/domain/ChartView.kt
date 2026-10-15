@@ -39,7 +39,8 @@ data class Ohlc(val open: BigDecimal, val high: BigDecimal, val low: BigDecimal,
 
 /**
  * A bucket with data. [price] is in SOL per token; [mcap] in USDT over the points that could be valued (null when none
- * could); [mcapMissingPoints] counts the points whose minute has no recorded rate.
+ * could); [mcapMissingPoints] counts the points whose minute has no recorded rate and [mcapUnsupportedPoints] those that cannot be
+ * valued at all (not Pump.fun, not SOL-quoted, or a price that does not follow from the trade).
  */
 data class CandleView(
     val bucketStart: Instant,
@@ -47,6 +48,7 @@ data class CandleView(
     val price: Ohlc,
     val mcap: Ohlc?,
     val mcapMissingPoints: Int,
+    val mcapUnsupportedPoints: Int,
 )
 
 enum class MarkerMode { ITEMS, CLUSTERED }

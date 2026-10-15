@@ -5,6 +5,7 @@ import com.trenching.bot.console.ChartFixtures.observation
 import com.trenching.bot.console.application.ChartBuckets
 import com.trenching.bot.console.application.ChartPoint
 import com.trenching.bot.console.application.PointValuation
+import com.trenching.bot.marketdata.domain.ValuationUnavailableReason
 import java.math.BigDecimal
 import java.time.Instant
 import kotlin.test.assertEquals
@@ -62,6 +63,7 @@ class ChartBucketsTest {
         assertEquals(listOf("3", "9", "1", "4"), listOf(candle.price.open, candle.price.high, candle.price.low, candle.price.close).map { it.toPlainString() })
         assertNull(candle.mcap)
         assertEquals(0, candle.mcapMissingPoints)
+        assertEquals(0, candle.mcapUnsupportedPoints)
     }
 
     @Test
@@ -100,6 +102,23 @@ class ChartBucketsTest {
         assertEquals(2, candles[0].mcapMissingPoints)
         assertEquals("5.000000000000", assertNotNull(candles[1].mcap).close.toPlainString())
         assertEquals(1, candles[1].mcapMissingPoints)
+        assertEquals(listOf(0, 0), candles.map { it.mcapUnsupportedPoints })
+    }
+
+    @Test
+    fun `unsupported points are counted apart from missing rates and rates that are unavailable are counted nowhere`() {
+        val points = listOf(
+            point("a", "2026-10-01T00:00:01Z", "1", PointValuation.Unsupported(ValuationUnavailableReason.DECIMALS_MISMATCH)),
+            point("b", "2026-10-01T00:00:02Z", "2", PointValuation.MissingRate),
+            point("c", "2026-10-01T00:00:03Z", "3", PointValuation.Unsupported(ValuationUnavailableReason.UNSUPPORTED_TOKEN)),
+            point("d", "2026-10-01T00:00:04Z", "4", PointValuation.Valued(BigDecimal("5.000000000000"))),
+            point("e", "2026-10-01T00:01:01Z", "5", PointValuation.RatesUnavailable),
+        )
+
+        val candles = ChartBuckets.candles(points, 60)
+
+        assertEquals(listOf(2, 0), candles.map { it.mcapUnsupportedPoints })
+        assertEquals(listOf(1, 0), candles.map { it.mcapMissingPoints })
     }
 
     private fun point(id: String, time: String, price: String, valuation: PointValuation = PointValuation.RatesUnavailable): ChartPoint =

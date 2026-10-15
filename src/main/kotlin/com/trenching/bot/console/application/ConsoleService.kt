@@ -5,6 +5,7 @@ import com.trenching.bot.console.domain.RunDetail
 import com.trenching.bot.console.domain.RunEvent
 import com.trenching.bot.console.domain.RunOrder
 import com.trenching.bot.console.domain.RunPosition
+import com.trenching.bot.console.domain.RunObservations
 import com.trenching.bot.console.domain.RunScenario
 import com.trenching.bot.console.report.RunReportReader
 import com.trenching.bot.marketdata.MarketObservationStore
@@ -41,19 +42,12 @@ class ConsoleService(
         return runs.page(page, size, datasetId?.takeIf { it.isNotBlank() })
     }
 
-    fun detail(runId: String): RunDetail {
+    fun detail(runId: String): RunDetail = detailWithObservations(runId).detail
+
+    fun detailWithObservations(runId: String): RunObservations {
         val run = requireRun(runId)
-        val facts = reports.read(runs.report(runId))
-        val outcomes = orders.outcomes(runId).associateBy { it.orderId }
-        val positionsByIntent = positions.storedPositions(runId).associateBy { it.position.intentId }
-        val observationsById = observations.observations(runId).associateBy { it.id }
-        val scenarios = intents.intents(runId).map { intent ->
-            val outcome = checkNotNull(outcomes[intent.id]) { "Missing paper order runId=$runId intentId=${intent.id}" }
-            val selected = (outcome as? FillOutcome.Filled)?.let { observationsById[it.fill.observationId] }
-            val storedPosition = positionsByIntent[intent.id]
-            RunScenario(intent, outcome, selected, storedPosition?.position, storedPosition?.exitUnavailable)
-        }
-        return RunDetail(run, facts.config, scenarios)
+        val stored = observations.observations(runId)
+        return RunObservations(detail(run, stored), stored)
     }
 
     fun events(runId: String): List<RunEvent> {
@@ -87,6 +81,21 @@ class ConsoleService(
     }
 
     fun report(runId: String): String = runs.report(runId)
+
+    private fun detail(run: RunSummary, stored: List<MarketObservation>): RunDetail {
+        val runId = run.id
+        val facts = reports.read(runs.report(runId))
+        val outcomes = orders.outcomes(runId).associateBy { it.orderId }
+        val positionsByIntent = positions.storedPositions(runId).associateBy { it.position.intentId }
+        val observationsById = stored.associateBy { it.id }
+        val scenarios = intents.intents(runId).map { intent ->
+            val outcome = checkNotNull(outcomes[intent.id]) { "Missing paper order runId=$runId intentId=${intent.id}" }
+            val selected = (outcome as? FillOutcome.Filled)?.let { observationsById[it.fill.observationId] }
+            val storedPosition = positionsByIntent[intent.id]
+            RunScenario(intent, outcome, selected, storedPosition?.position, storedPosition?.exitUnavailable)
+        }
+        return RunDetail(run, facts.config, scenarios)
+    }
 
     private fun requireRun(runId: String): RunSummary = runs.find(runId) ?: throw SimulationRunNotFoundException(runId)
 

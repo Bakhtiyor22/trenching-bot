@@ -9,6 +9,7 @@ import com.trenching.bot.console.ChartFixtures.OTHER_QUOTE_PAIR
 import com.trenching.bot.console.ChartFixtures.PAIR
 import com.trenching.bot.console.ChartFixtures.at
 import com.trenching.bot.console.ChartFixtures.observation
+import com.trenching.bot.console.ChartFixtures.tradeObservation
 import com.trenching.bot.console.application.ChartConsoleService
 import com.trenching.bot.console.application.ConsoleService
 import com.trenching.bot.console.domain.ChartQuery
@@ -19,6 +20,7 @@ import com.trenching.bot.console.domain.MarkerMode
 import com.trenching.bot.console.domain.MarkersUnavailableReason
 import com.trenching.bot.console.domain.PaperPhase
 import com.trenching.bot.console.domain.RunDetail
+import com.trenching.bot.console.domain.RunObservations
 import com.trenching.bot.console.domain.RunScenario
 import com.trenching.bot.console.domain.ValuationBasisReason
 import com.trenching.bot.marketdata.ReferenceRate
@@ -167,6 +169,22 @@ class ChartConsoleServiceTest {
     }
 
     @Test
+    fun `a point failing the decimals cross-check is counted as unsupported and not as a missing rate`() {
+        val intact = tradeObservation("a", at("2026-10-01T00:00:10Z"), ChartFixtures.TRADER_A)
+        val tampered = tradeObservation("b", at("2026-10-01T00:00:20Z"), ChartFixtures.TRADER_B).let { it.copy(price = it.price.add(BigDecimal.ONE)) }
+        val dataset = syntheticDataset(listOf(intact, tampered), listOf(rate("2026-10-01T00:00:00Z", "200")))
+        catalog.add(dataset)
+
+        val chart = datasetChart(dataset, pair = PAIR, maxBuckets = 1)
+
+        val candle = chart.candles.single()
+        assertEquals(1, candle.mcapUnsupportedPoints)
+        assertEquals(0, candle.mcapMissingPoints)
+        assertNotNull(candle.mcap)
+        assertTrue(chart.valuationBasis.available)
+    }
+
+    @Test
     fun `a pair not quoted in SOL is not valued`() {
         val dataset = syntheticDataset(listOf(observation("a", at("2026-10-01T00:00:10Z"), "1", pair = OTHER_QUOTE_PAIR)),
             listOf(rate("2026-10-01T00:00:00Z", "200")))
@@ -280,7 +298,7 @@ class ChartConsoleServiceTest {
 
     @Test
     fun `an unknown run is not found`() {
-        Mockito.`when`(console.detail("missing")).thenThrow(com.trenching.bot.replay.domain.SimulationRunNotFoundException("missing"))
+        Mockito.`when`(console.detailWithObservations("missing")).thenThrow(com.trenching.bot.replay.domain.SimulationRunNotFoundException("missing"))
 
         assertFailsWith<com.trenching.bot.replay.domain.SimulationRunNotFoundException> { service.runChart("missing", query()) }
     }
@@ -315,8 +333,7 @@ class ChartConsoleServiceTest {
         service.datasetChart(id(dataset), query(pair, maxBuckets = maxBuckets, markerLimit = markerLimit))
 
     private fun runChart(detail: RunDetail, observations: List<MarketObservation>, pair: MarketPair? = null, to: Instant? = null): ChartView {
-        Mockito.`when`(console.detail(detail.run.id)).thenReturn(detail)
-        Mockito.`when`(console.observations(detail.run.id)).thenReturn(observations)
+        Mockito.`when`(console.detailWithObservations(detail.run.id)).thenReturn(RunObservations(detail, observations))
         return service.runChart(detail.run.id, query(pair, to = to))
     }
 

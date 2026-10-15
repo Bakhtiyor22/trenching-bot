@@ -28,6 +28,7 @@ object ChartBuckets {
                 price = ohlc(bucket.map { it.observation.price }),
                 mcap = bucket.mapNotNull { it.mcap }.takeIf { it.isNotEmpty() }?.let(::ohlc),
                 mcapMissingPoints = bucket.count { it.valuation == PointValuation.MissingRate },
+                mcapUnsupportedPoints = bucket.count { it.valuation is PointValuation.Unsupported },
             )
         }
 

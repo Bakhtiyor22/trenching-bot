@@ -59,9 +59,10 @@ class ChartControllerTest {
             basis.propertyNames().toList())
         assertEquals("RATES_UNAVAILABLE", basis["unavailableReason"].asString())
         val candle = body["candles"][0]
-        assertEquals(listOf("bucketStart", "observationCount", "price", "mcap", "mcapMissingPoints"), candle.propertyNames().toList())
+        assertEquals(listOf("bucketStart", "observationCount", "price", "mcap", "mcapMissingPoints", "mcapUnsupportedPoints"), candle.propertyNames().toList())
         assertEquals("0.00000000", candle["price"]["open"].asString())
         assertTrue(candle["mcap"].isNull)
+        assertEquals(3, candle["mcapUnsupportedPoints"].asInt())
         val markers = body["markers"]
         assertEquals(listOf("available", "unavailableReason", "mode", "total", "items", "nextCursor", "clusters"), markers.propertyNames().toList())
         assertEquals("CLUSTERED", markers["mode"].asString())
@@ -129,7 +130,7 @@ class ChartControllerTest {
         trackedWallet = TRACKED,
         valuationBasis = ValuationBasisView("total-supply valuation (FDV), USDT", "1000000000", "PUMPFUN_FIXED_SUPPLY", "USDT", null, "MINUTE", false,
             ValuationBasisReason.RATES_UNAVAILABLE),
-        candles = listOf(CandleView(at("2026-10-01T00:00:00Z"), 2, Ohlc(price("0"), price("0"), price("0"), price("0")), null, 0)),
+        candles = listOf(CandleView(at("2026-10-01T00:00:00Z"), 2, Ohlc(price("0"), price("0"), price("0"), price("0")), null, 0, 3)),
         markers = MarkersView(true, null, MarkerMode.CLUSTERED, 3, listOf(
             ObservedMarkerView(MarkerKind.OBSERVED, "o1", TRACKED, true, TradeSide.BUY, BigInteger.TEN, BigInteger("18446744073709551615"),
                 price("1"), null, 7, at("2026-10-01T00:00:01Z"), null, "pumpfun-bonding-curve-trade/v1")), null, listOf(

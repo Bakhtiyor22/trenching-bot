@@ -35,6 +35,7 @@ data class CandleResponse(
     val price: OhlcResponse,
     val mcap: OhlcResponse?,
     val mcapMissingPoints: Int,
+    val mcapUnsupportedPoints: Int,
 )
 
 data class MarkersResponse(

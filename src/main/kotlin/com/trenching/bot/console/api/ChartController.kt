@@ -30,7 +30,7 @@ class ChartController(
         @RequestParam(name = "wallet", required = false) wallets: List<String>?,
         @RequestParam(required = false) cursor: String?,
     ): ChartResponse = chartResponseMapper.toResponse(
-        chartConsoleService.runChart(id, ChartQuery(pair, from, to, maxBuckets, markerLimit, wallets.orEmpty(), cursor)))
+        chartConsoleService.runChart(id, query(pair, from, to, maxBuckets, markerLimit, wallets, cursor)))
 
     @GetMapping("/datasets/{id}/chart")
     fun dataset(
@@ -43,5 +43,8 @@ class ChartController(
         @RequestParam(name = "wallet", required = false) wallets: List<String>?,
         @RequestParam(required = false) cursor: String?,
     ): ChartResponse = chartResponseMapper.toResponse(
-        chartConsoleService.datasetChart(id, ChartQuery(pair, from, to, maxBuckets, markerLimit, wallets.orEmpty(), cursor)))
+        chartConsoleService.datasetChart(id, query(pair, from, to, maxBuckets, markerLimit, wallets, cursor)))
+
+    private fun query(pair: String?, from: Instant?, to: Instant?, maxBuckets: Int?, markerLimit: Int?, wallets: List<String>?, cursor: String?) =
+        ChartQuery(pair, from, to, maxBuckets, markerLimit, wallets.orEmpty(), cursor)
 }

@@ -1,6 +1,6 @@
 # Trade actors in replay dataset v4
 
-Accepted 2026-10-15 as part 2 of the approved [chart trade actors and market-cap plan](../plans/20261015-chart-trade-actors-mcap.md), milestone 3 of the [capture, paper and chart improvement plan](../plans/20261011-capture-paper-chart-improvement-plan.md).
+Accepted 2026-10-15 as part 2 of the approved [chart trade actors and market-cap plan](../plans/archive/20261015-chart-trade-actors-mcap.md), milestone 3 of the [capture, paper and chart improvement plan](../plans/20261011-capture-paper-chart-improvement-plan.md).
 
 ## Context
 
