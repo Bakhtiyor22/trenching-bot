@@ -170,6 +170,15 @@ class ActualFirstBuyRuleTest {
     }
 
     @Test
+    fun `a trade after an unknown candidate blocks on the unknown candidate, which could be the creation`() {
+        val result = evaluate(creation = creation(fetched = listOf(
+            candidate(UNKNOWN, 790, CreationCandidateKind.Unknown),
+            candidate(TRANSFER, 800, CreationCandidateKind.Trade),
+        )))
+        assertEquals(unproven(FirstBuyGap.CREATION_NOT_IDENTIFIED, UNKNOWN), result)
+    }
+
+    @Test
     fun `no creation among every candidate or within ten fetches means the creation is not identified`() {
         val allFetched = evaluate(creation = creation(candidates = 2, fetched = listOf(
             candidate(TRANSFER, 800, CreationCandidateKind.Other), candidate(UNKNOWN, 850, CreationCandidateKind.Unknown))))
