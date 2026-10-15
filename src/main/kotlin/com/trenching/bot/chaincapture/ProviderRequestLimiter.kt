@@ -33,15 +33,17 @@ class ProviderRequestLimiter(
 
     /**
      * Keeps every caller from starting a request for [delay], as the provider asked after a rate limit. The hold is
-     * recorded even when [delay] outlasts the deadline of [budget], which then stops with `DEADLINE` as a plain wait would.
+     * recorded even when [delay] outlasts the deadline of [budget]; the holder then stops with a rate limit that carries
+     * the hold left as its retry hint, so a scheduler retries after the hold instead of burning attempts inside it.
      */
     fun holdStarts(delay: Duration, budget: CaptureBudget) {
-        val now = timing.nanoTime()
-        lock.withLock {
+        val (now, remainingHold) = lock.withLock {
+            val now = timing.nanoTime()
             val until = now + delay.toNanos()
             if (until - holdUntilNanos > 0) holdUntilNanos = until
+            now to holdUntilNanos - now
         }
-        if (delay.toNanos() >= budget.remainingNanos(now)) throw deadline(budget)
+        if (delay.toNanos() >= budget.remainingNanos(now)) throw rateLimited(remainingHold, budget)
     }
 
     private fun acquirePermit(budget: CaptureBudget) {
@@ -52,20 +54,30 @@ class ProviderRequestLimiter(
 
     private fun awaitStartSlot(budget: CaptureBudget) {
         while (true) {
-            val now = timing.nanoTime()
-            val wait = lock.withLock {
-                val ready = if (holdUntilNanos - nextStartNanos > 0) holdUntilNanos else nextStartNanos
-                val remaining = ready - now
-                if (remaining <= 0) nextStartNanos = now + intervalNanos
-                maxOf(0L, remaining)
+            val slot = claimOrWait()
+            if (slot.waitNanos == 0L) return
+            if (slot.waitNanos >= budget.remainingNanos(slot.nowNanos)) {
+                throw if (slot.holdBinds) rateLimited(slot.waitNanos, budget) else deadline(budget)
             }
-            if (wait == 0L) return
-            if (wait >= budget.remainingNanos(now)) throw deadline(budget)
-            try { timing.pause(Duration.ofNanos(wait)) } catch (_: InterruptedException) { throw interrupted() }
+            try { timing.pause(Duration.ofNanos(slot.waitNanos)) } catch (_: InterruptedException) { throw interrupted() }
         }
     }
 
+    /** Takes the next start slot when it has come, else says how long to wait; the clock is read under the lock so slots are claimed in clock order. */
+    private fun claimOrWait(): StartSlot = lock.withLock {
+        val now = timing.nanoTime()
+        val holdBinds = holdUntilNanos - nextStartNanos > 0
+        val remaining = (if (holdBinds) holdUntilNanos else nextStartNanos) - now
+        if (remaining <= 0) nextStartNanos = now + intervalNanos
+        StartSlot(now, maxOf(0L, remaining), holdBinds)
+    }
+
+    private class StartSlot(val nowNanos: Long, val waitNanos: Long, val holdBinds: Boolean)
+
     private fun deadline(budget: CaptureBudget) = CaptureBudgetException("DEADLINE", budget.requestsUsed, budget.bytesUsed)
+
+    private fun rateLimited(remainingHoldNanos: Long, budget: CaptureBudget) =
+        CaptureProviderException(CaptureCategory.RATE_LIMITED, Duration.ofNanos(remainingHoldNanos), budget.requestsUsed, budget.bytesUsed)
 
     private fun interrupted(): CaptureProviderException {
         Thread.currentThread().interrupt()

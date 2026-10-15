@@ -9,6 +9,8 @@ import com.trenching.bot.chaincapture.CaptureStop
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.chaincapture.ChainCaptureFormat
 import com.trenching.bot.chaincapture.ChainCaptureReads
+import com.trenching.bot.chaincapture.DetailBatches
+import com.trenching.bot.chaincapture.DetailFetch
 import com.trenching.bot.chaincapture.FetchedItem
 import com.trenching.bot.chaincapture.SignatureListing
 import com.trenching.bot.chaincapture.SignatureListingEntry
@@ -37,7 +39,7 @@ internal class WalletHistoryCaptureService(
     private val log = LoggerFactory.getLogger(WalletHistoryCaptureService::class.java)
     private val store = WalletHistoryArtifactStore(objectMapper)
     private val evidence = WalletTransactionEvidence()
-    private val parallelFetch = BoundedParallelFetch()
+    private val detailBatches = DetailBatches(BoundedParallelFetch(), observer, concurrency, WalletCaptureFormat.DETAIL_CHECKPOINT_INTERVAL, "wallet_capture")
     private val verification = WalletTokenVerificationCapture(rpc, store, CapturedArtifactReader(store, PumpFunBuyDecoder()), concurrency, observer)
 
     override fun capture(request: WalletHistoryCaptureRequest): WalletHistoryCaptureResult {
@@ -72,50 +74,22 @@ internal class WalletHistoryCaptureService(
     }
 
     private fun fetchDetails(request: WalletHistoryCaptureRequest, saved: WalletHistoryManifest, budget: CaptureBudget, stop: CaptureStop): WalletHistoryManifest {
-        var manifest = saved
-        val phase = DetailMeasurements()
-        val unresolved = manifest.selection.withIndex().filter { (index, _) -> manifest.records[index].outcome in WalletCaptureFormat.UNRESOLVED_OUTCOMES }
-        try {
-            for (batch in unresolved.chunked(WalletCaptureFormat.DETAIL_CHECKPOINT_INTERVAL)) {
-                val fetched = parallelFetch.fetch(batch, concurrency, budget, observer::stopRequested) { fetchDetail(it.value, saved, budget) }
-                phase.add(fetched.measurements)
-                val done = fetched.completed.mapTo(HashSet()) { it.index }
-                val failed = batch.withIndex().firstOrNull { (position, _) -> position !in done }?.value
-                manifest = withDetails(request, manifest, fetched.completed, failed.takeIf { fetched.failure is CaptureProviderException })
-                when (val failure = fetched.failure) {
-                    null -> if (fetched.stopped) stop.record(STOP_REQUESTED)
-                    is CaptureProviderException -> {
-                        log.warn("wallet_capture interrupted category={} signature={}", failure.category, failed?.value?.signature)
-                        stop.record(failure.category, failure.retryAfter)
-                    }
-                    is CaptureBudgetException -> {
-                        log.warn("wallet_capture interrupted category={} signature={}", failure.category, failed?.value?.signature)
-                        stop.record(failure.category)
-                    }
-                    else -> {
-                        checkpoint(request, usage(manifest, budget), budget)
-                        throw failure
-                    }
-                }
-                checkpoint(request, usage(manifest, budget), budget)
-                if (stop.reason != null) break
-            }
-        } finally {
-            if (phase.batches > 0) {
+        val unresolved = saved.selection.withIndex().filter { (index, _) -> saved.records[index].outcome in WalletCaptureFormat.UNRESOLVED_OUTCOMES }
+        return detailBatches.run(
+            items = unresolved, initial = saved, budget = budget, stop = stop,
+            signatureOf = { it.value.signature },
+            fetchOne = { fetchDetail(it.value, saved, budget) },
+            apply = { manifest, batch -> withDetails(request, manifest, batch.completed, batch.unavailable) },
+            checkpoint = { checkpoint(request, usage(it, budget), budget) },
+            report = { phase ->
                 log.info("wallet_capture details wallet={} scope={} requestsSent={} cacheHits={} rateLimitedResponses={} retries={} elapsedMs={} concurrency={}",
-                    saved.wallet, saved.scope, phase.total.requestsSent, phase.total.cacheHits, phase.total.rateLimitedResponses, phase.total.retries,
-                    phase.total.elapsed.toMillis(), concurrency)
-            }
-        }
-        return manifest
+                    saved.wallet, saved.scope, phase.requestsSent, phase.cacheHits, phase.rateLimitedResponses, phase.retries, phase.elapsed.toMillis(), concurrency)
+            },
+        )
     }
 
-    private fun fetchDetail(selection: WalletHistorySelection, manifest: WalletHistoryManifest, budget: CaptureBudget): DetailFetch<WalletHistoryOutcome> = try {
-        val raw = ChainCaptureReads.transaction(rpc, selection.signature, budget)
-        DetailFetch.Fetched(raw, evidence.classify(raw, selection, manifest.wallet, manifest.listingAddress))
-    } catch (exception: CaptureProviderException) {
-        if (exception.category == UNSUPPORTED_VERSION) DetailFetch.UnsupportedVersion else throw exception
-    }
+    private fun fetchDetail(selection: WalletHistorySelection, manifest: WalletHistoryManifest, budget: CaptureBudget): DetailFetch<WalletHistoryOutcome> =
+        DetailFetch.request(rpc, selection.signature, budget) { evidence.classify(it, selection, manifest.wallet, manifest.listingAddress) }
 
     /** Applies the completed details to their records in selection order; the record that failed on the provider stays retryable. */
     private fun withDetails(
@@ -252,10 +226,5 @@ internal class WalletHistoryCaptureService(
             (request.targetMint != null) != (request.scope == WalletHistoryScope.WALLET_TOKEN_ACCOUNT)) {
             throw CaptureValidationException("REQUEST_BOUNDS")
         }
-    }
-
-    private companion object {
-        const val UNSUPPORTED_VERSION = "UNSUPPORTED_VERSION"
-        const val STOP_REQUESTED = "STOP_REQUESTED"
     }
 }

@@ -15,6 +15,16 @@ class RpcLimiterRegistryTest {
     }
 
     @Test
+    fun `surrounding whitespace and a trailing slash do not make a different endpoint`() {
+        val registry = RpcLimiterRegistry(ManualTiming())
+        val plain = registry.limiterFor(TestSettings(endpoint = "https://rpc.example.invalid/v1?api-key=A"))
+        assertSame(plain, registry.limiterFor(TestSettings(endpoint = "  https://rpc.example.invalid/v1?api-key=A \n")))
+        val root = registry.limiterFor(TestSettings(endpoint = "http://127.0.0.1:1"))
+        assertSame(root, registry.limiterFor(TestSettings(endpoint = "http://127.0.0.1:1/")))
+        assertNotSame(plain, root)
+    }
+
+    @Test
     fun `different endpoints get independent limiters`() {
         val registry = RpcLimiterRegistry(ManualTiming())
         assertNotSame(registry.limiterFor(TestSettings(endpoint = "http://127.0.0.1:1/")), registry.limiterFor(TestSettings(endpoint = "http://127.0.0.1:2/")))

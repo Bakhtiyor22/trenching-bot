@@ -1,6 +1,7 @@
 package com.trenching.bot.console.capture
 
 import com.trenching.bot.chaincapture.CaptureProviderException
+import com.trenching.bot.chaincapture.ProviderRequestLimiter
 import com.trenching.bot.chaincapture.CaptureCheckpoint
 import com.trenching.bot.console.api.dto.CaptureBudget
 import com.trenching.bot.console.api.dto.CaptureOperationRequest
@@ -113,6 +114,33 @@ class CaptureOperationServiceTest {
 
         assertEquals(CaptureNames.FAILED, fixture.operations.find("session-1", accepted.id).state)
         assertTrue(scheduler.pending.isEmpty())
+    }
+
+    @Test
+    fun `a shared rate limit hold schedules the next attempt no earlier than the hold end and spends no further attempt`() {
+        val scheduler = ManualCaptureRetryScheduler()
+        val fixture = CaptureConsoleFixture(root, retryScheduler = scheduler).apply { create() }
+        val hold = Duration.ofMinutes(25)
+        val deadline = com.trenching.bot.chaincapture.CaptureBudget(maxRequests = 10, maxBytes = 1000).also { it.startDeadline(System.nanoTime(), Duration.ofMinutes(1)) }
+        fixture.workflow.failure = assertFailsWith<CaptureProviderException> {
+            ProviderRequestLimiter(1, Duration.ofMillis(1)).holdStarts(hold, deadline)
+        }
+        val session = fixture.store.session("session-1")
+
+        val accepted = fixture.operations.start("session-1", CaptureOperationRequest(
+            "wallet-hold", CaptureNames.WALLET, session.walletAttemptId,
+            CaptureBudget(requestBudget = 2, byteBudget = 100),
+            recovery = CaptureRecoveryConfig(totalRequestBudget = 6, totalByteBudget = 300, maxAttempts = 3),
+        ))
+        fixture.executor.runAll()
+
+        val waiting = fixture.operations.find("session-1", accepted.id)
+        assertEquals(CaptureNames.WAITING_RETRY, waiting.state)
+        assertEquals(1, waiting.recovery?.attemptsUsed)
+        assertEquals(1, scheduler.pending.size)
+        assertTrue(scheduler.pending.first().delay >= hold, "scheduled after ${scheduler.pending.first().delay}")
+        assertTrue(waiting.recovery?.nextRetryAt?.isBefore(fixture.clock.instant().plus(hold)) == false)
+        assertEquals("RETRY_COOLDOWN", failure { fixture.operations.control("session-1", accepted.id, "retry", "retry-now") }.code)
     }
 
     @Test

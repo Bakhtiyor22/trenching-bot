@@ -30,7 +30,7 @@ class SharedTransactionCacheTest {
     @BeforeEach fun attachAppender() { logs.start(); logger.addAppender(logs) }
     @AfterEach fun detachAppender() { logger.detachAppender(logs) }
 
-    private val transaction = """{"slot":100,"blockTime":1790985600,"meta":{"fee":5000,"uiAmount":0.123456789123456789123456789,"scaled":1.50,"big":1E+3},"version":0}"""
+    private val transaction = validTransactionJson(signature)
 
     private fun cache() = SharedTransactionCache(directory.resolve("cache"), testMapper)
 
@@ -103,6 +103,30 @@ class SharedTransactionCacheTest {
         repeat(2) { runCatching { capture(failing) } }
         assertEquals(2, failing.calls.get())
         assertTrue(cacheFiles().isEmpty())
+    }
+
+    @Test
+    fun `a response that is not a valid transaction for its signature is never cached, so a retry fetches it again`() {
+        val invalid = listOf(
+            "no meta" to """{"slot":100,"blockTime":1790985600,"version":0,"transaction":{"signatures":["$signature"],"message":{}}}""",
+            "another signature" to validTransactionJson("6".repeat(88)),
+            "failed on chain" to validTransactionJson(signature).replace(""""err":null""", """"err":{"InstructionError":[0,"Custom"]}"""),
+            "unsupported version" to validTransactionJson(signature, version = "99"),
+            "unknown version" to validTransactionJson(signature, version = "\"v9\""),
+        )
+        invalid.forEach { (name, body) ->
+            val provider = CountingRpc { exactJson(body) }
+            repeat(2) { capture(provider) }
+            assertEquals(2, provider.calls.get(), "$name must not be served from the cache")
+            assertTrue(cacheFiles().isEmpty(), "$name must not be written")
+        }
+        val flaky = CountingRpc { exactJson("""{"slot":100}""") }
+        capture(flaky)
+        val healthy = CountingRpc { exactJson(transaction) }
+        assertEquals(5000, capture(healthy).path("meta").path("fee").asInt())
+        capture(healthy)
+        assertEquals(1, healthy.calls.get())
+        assertEquals(1, cacheFiles().size)
     }
 
     @Test

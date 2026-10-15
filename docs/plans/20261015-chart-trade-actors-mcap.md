@@ -2,7 +2,7 @@
 
 Status: Approved (user approved the v4 dataset on 2026-10-15) — waiting for milestone 2 to land. Nothing implemented.
 
-Milestone 3 of the approved [capture, paper and chart improvement plan](20261011-capture-paper-chart-improvement-plan.md) (sections 9 and 10, work unit 6; milestones 1 and 2: [cases](20261012-capture-paper-implementation.md), [throughput](20261014-capture-throughput.md)). It adds what the chart needs from the backend: the decoded trade actor, side and amounts of every observed trade, a market-cap valuation derived from the dataset's own rates, and a bounded chart read API. The frontend is a self-contained Codex brief (Part 4).
+Milestone 3 of the approved [capture, paper and chart improvement plan](20261011-capture-paper-chart-improvement-plan.md) (sections 9 and 10, work unit 6; milestones 1 and 2: [cases](20261012-capture-paper-implementation.md), [throughput](archive/20261014-capture-throughput.md)). It adds what the chart needs from the backend: the decoded trade actor, side and amounts of every observed trade, a market-cap valuation derived from the dataset's own rates, and a bounded chart read API. The frontend is a self-contained Codex brief (Part 4).
 
 Out of scope: new venue decoders (PumpSwap after migration), the new strategy, verified circulating supply, live rates, any RPC download, any change to replay semantics.
 

@@ -5,8 +5,8 @@ import java.util.concurrent.ConcurrentHashMap
 import org.slf4j.LoggerFactory
 
 /**
- * The [ProviderRequestLimiter] of each RPC endpoint, so every capture against one endpoint paces together. The endpoint
- * is kept only as a hash, as it can embed an API key. Production code shares [shared]; tests build their own registry.
+ * The [ProviderRequestLimiter] of each RPC endpoint, so every capture against one endpoint paces together. The endpoint,
+ * trimmed of whitespace and a trailing slash, is kept only as a hash, as it can embed an API key. Production code shares [shared]; tests build their own registry.
  */
 class RpcLimiterRegistry(val timing: CaptureTiming = SystemCaptureTiming) {
     private val log = LoggerFactory.getLogger(RpcLimiterRegistry::class.java)
@@ -14,7 +14,7 @@ class RpcLimiterRegistry(val timing: CaptureTiming = SystemCaptureTiming) {
 
     /** The limiter for [settings]' endpoint; the settings of the first caller fix its pacing and later differences are logged. */
     fun limiterFor(settings: SolanaRpcSettings): ProviderRequestLimiter {
-        val entry = entries.computeIfAbsent(Sha256.hex(settings.endpoint.orEmpty().toByteArray())) {
+        val entry = entries.computeIfAbsent(Sha256.hex(settings.endpoint.orEmpty().trim().trimEnd('/').toByteArray())) {
             Entry(settings.maxConcurrentRequests, settings.minRequestInterval, ProviderRequestLimiter.of(settings, timing))
         }
         if (entry.maxConcurrentRequests != settings.maxConcurrentRequests || entry.minRequestInterval != settings.minRequestInterval) {

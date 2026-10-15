@@ -1,10 +1,9 @@
-package com.trenching.bot.walletactivity.application
+package com.trenching.bot.chaincapture
 
-import com.trenching.bot.chaincapture.CaptureMeasurements
 import java.time.Duration
 
 /** The measurements of every batch of one detail phase, summed so the phase is logged once. */
-internal class DetailMeasurements {
+class DetailMeasurements {
     var batches = 0
         private set
     var total = CaptureMeasurements(requestsSent = 0, cacheHits = 0, rateLimitedResponses = 0, retries = 0, elapsed = Duration.ZERO)

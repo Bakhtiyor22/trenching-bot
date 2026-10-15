@@ -66,17 +66,53 @@ class HttpSolanaReadRpcPacingTest {
                 LocalRpcServer.reply(exchange, 200, GENESIS_REPLY)
             }
         }.use { server ->
-            val limiter = ProviderRequestLimiter(4, Duration.ofMillis(1))
+            val holdBegun = CountDownLatch(1)
+            val observing = object : CaptureTiming by SystemCaptureTiming {
+                override fun pause(duration: Duration) {
+                    if (duration >= Duration.ofMillis(500)) holdBegun.countDown()
+                    SystemCaptureTiming.pause(duration)
+                }
+            }
+            val limiter = ProviderRequestLimiter(4, Duration.ofMillis(1), observing)
             val worker = rpc(server, limiter, SystemCaptureTiming)
             val other = rpc(server, limiter, SystemCaptureTiming)
             val first = Thread { call(worker) }.apply { start() }
             assertTrue(limited.await(5, TimeUnit.SECONDS))
-            Thread.sleep(300)
+            // The limited worker only sleeps through the hold once the hold is recorded, so waiting for that sleep needs no guessed delay.
+            assertTrue(holdBegun.await(5, TimeUnit.SECONDS))
             call(other)
             first.join()
             assertEquals(2, arrivals.size)
             val earliest = arrivals.min()
             assertTrue(earliest - rateLimitedAtNanos.get() >= Duration.ofMillis(900).toNanos(), "a worker started during the pause")
+        }
+    }
+
+    @Test
+    fun `many concurrent calls through two transports sharing a limiter keep the interval between starts and the in flight limit`() {
+        val interval = Duration.ofMillis(100)
+        val tolerance = Duration.ofMillis(40)
+        val inFlight = AtomicInteger()
+        val highest = AtomicInteger()
+        val arrivals = CopyOnWriteArrayList<Long>()
+        LocalRpcServer { exchange ->
+            arrivals += System.nanoTime()
+            highest.accumulateAndGet(inFlight.incrementAndGet(), ::maxOf)
+            Thread.sleep(400)
+            inFlight.decrementAndGet()
+            LocalRpcServer.reply(exchange, 200, GENESIS_REPLY)
+        }.use { server ->
+            val limiter = ProviderRequestLimiter(3, interval)
+            val transports = listOf(rpc(server, limiter, SystemCaptureTiming), rpc(server, limiter, SystemCaptureTiming))
+            transports.forEach { call(it) }
+            arrivals.clear()
+            highest.set(0)
+            val budget = CaptureBudget(100, 1_000_000)
+            runConcurrently(18) { index -> call(transports[index % 2], budget) }
+            assertEquals(18, arrivals.size)
+            assertEquals(3, highest.get(), "the in flight limit must be reached and never exceeded")
+            val gaps = arrivals.sorted().zipWithNext { earlier, later -> later - earlier }
+            assertTrue(gaps.all { it >= (interval - tolerance).toNanos() }, "starts came closer than the interval: ${gaps.map { Duration.ofNanos(it).toMillis() }}")
         }
     }
 

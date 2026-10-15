@@ -1,6 +1,6 @@
 # Capture, paper trading and chart improvement plan
 
-Status: Approved 2026-10-12 — implemented in milestones: [1 independent cases](20261012-capture-paper-implementation.md), [2 capture throughput](20261014-capture-throughput.md). Decisions since approval: provider stays on the Helius free tier (10 req/s), so no paid filtered-history adapter for now; strict first interaction (unknown history stays UNPROVEN); chart Mcap uses total supply, labelled, with the USD/USDT basis stated; a new dataset version may carry trade actor, side and amounts for wallet markers.
+Status: Approved 2026-10-12 — implemented in milestones: [1 independent cases](20261012-capture-paper-implementation.md), [2 capture throughput](archive/20261014-capture-throughput.md). Decisions since approval: provider stays on the Helius free tier (10 req/s), so no paid filtered-history adapter for now; strict first interaction (unknown history stays UNPROVEN); chart Mcap uses total supply, labelled, with the USD/USDT basis stated; a new dataset version may carry trade actor, side and amounts for wallet markers.
 
 The recommendation is to make each complete case independently usable, add bounded automatic recovery, then improve acquisition throughput and the chart. The new strategy needs its own versioned paper implementation. Live trading, signing transactions and sending orders remain outside this plan.
 

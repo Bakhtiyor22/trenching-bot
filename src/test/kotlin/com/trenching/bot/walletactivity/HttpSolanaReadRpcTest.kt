@@ -103,15 +103,37 @@ class HttpSolanaReadRpcTest {
     }
 
     @Test
-    fun `refuses Retry After beyond the remaining capture deadline without making another request`() {
+    fun `a Retry After beyond the remaining capture deadline ends the call with a rate limit that carries the wait, without another request`() {
         fakeServer { exchange ->
             exchange.responseHeaders.set("Retry-After", "1200")
             exchange.sendResponseHeaders(429, 2)
             exchange.responseBody.use { it.write("{}".toByteArray()) }
         }.use { server ->
             val budget = CaptureBudget(10, 1024)
-            assertFailsWith<CaptureBudgetException> { rpc(server).call("getGenesisHash", emptyList(), budget) }
+            val failure = assertFailsWith<CaptureProviderException> { rpc(server).call("getGenesisHash", emptyList(), budget) }
+            assertEquals(listOf("RATE_LIMITED", Duration.ofMinutes(20), 1), listOf(failure.category, failure.retryAfter, failure.requestsUsed))
             assertEquals(1, budget.requestsUsed)
+        }
+    }
+
+    @Test
+    fun `a Retry After of either form is capped at thirty minutes, far future dates included, and a past date is no wait at all`() {
+        val cases = mapOf(
+            "99999999999" to Duration.ofMinutes(30),
+            "Fri, 31 Dec 9999 23:59:59 GMT" to Duration.ofMinutes(30),
+            "Sat, 03 Oct 2026 00:20:00 GMT" to Duration.ofMinutes(20),
+            "Mon, 01 Jan 2001 00:00:00 GMT" to Duration.ZERO,
+        )
+        cases.forEach { (header, expected) ->
+            fakeServer { exchange ->
+                exchange.responseHeaders.set("Retry-After", header)
+                exchange.sendResponseHeaders(429, 2)
+                exchange.responseBody.use { it.write("{}".toByteArray()) }
+            }.use { server ->
+                val failure = assertFailsWith<CaptureProviderException>(header) { rpc(server).call("getGenesisHash", emptyList(), CaptureBudget(10, 1024)) }
+                assertEquals("RATE_LIMITED", failure.category, header)
+                assertEquals(expected, failure.retryAfter, header)
+            }
         }
     }
 

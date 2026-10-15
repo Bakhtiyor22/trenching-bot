@@ -19,6 +19,17 @@ internal val testMapper: JsonMapper = JsonMapper.builder().build()
 internal val testClock: Clock = Clock.fixed(Instant.parse("2026-10-14T00:00:00Z"), ZoneOffset.UTC)
 internal const val GENESIS_REPLY = """{"jsonrpc":"2.0","id":1,"result":"genesis"}"""
 
+/**
+ * A `jsonParsed` transaction that [CapturedTransactionCheck] accepts for [signature], carrying decimals that must survive
+ * a cache round trip exactly.
+ */
+internal fun validTransactionJson(signature: String, slot: Long = 100, fee: Int = 5000, version: String = "0"): String {
+    val address = "1".repeat(32)
+    return """{"slot":$slot,"blockTime":1790985600,"version":$version,"meta":{"err":null,"fee":$fee,"preBalances":[1],"postBalances":[1],""" +
+        """"preTokenBalances":[{"accountIndex":0,"mint":"$address","uiTokenAmount":{"amount":"1","decimals":6,"uiAmount":0.123456789123456789123456789,"scaled":1.50,"big":1E+3}}]},""" +
+        """"transaction":{"signatures":["$signature"],"message":{"accountKeys":[{"pubkey":"$address","signer":true,"writable":true}],"instructions":[],"recentBlockhash":"$address"}}}"""
+}
+
 /** A virtual clock: pausing advances it by exactly the requested duration, so waits are deterministic. */
 internal class ManualTiming : CaptureTiming {
     var nanos: Long = 0

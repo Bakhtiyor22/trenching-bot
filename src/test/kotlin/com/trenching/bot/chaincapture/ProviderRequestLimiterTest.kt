@@ -48,14 +48,37 @@ class ProviderRequestLimiterTest {
     }
 
     @Test
-    fun `a hold longer than the caller deadline still binds other callers but ends the holder with a deadline stop`() {
+    fun `a hold longer than the caller deadline still binds other callers but ends the holder with a rate limit that says when to retry`() {
         val limiter = ProviderRequestLimiter(4, Duration.ofMillis(125), timing)
         val short = CaptureBudget(10, 1000).also { it.startDeadline(timing.nanoTime(), Duration.ofMinutes(1)) }
-        assertEquals("DEADLINE", assertFailsWith<CaptureBudgetException> { limiter.holdStarts(Duration.ofMinutes(5), short) }.category)
-        assertEquals("DEADLINE", assertFailsWith<CaptureBudgetException> { limiter.withStart(short) { error("must not run") } }.category)
+        short.request()
+        short.bytes(7)
+        val holder = assertFailsWith<CaptureProviderException> { limiter.holdStarts(Duration.ofMinutes(5), short) }
+        assertEquals(listOf("RATE_LIMITED", Duration.ofMinutes(5), 1, 7L), listOf(holder.category, holder.retryAfter, holder.requestsUsed, holder.bytesUsed))
+        val waiter = assertFailsWith<CaptureProviderException> { limiter.withStart(short) { error("must not run") } }
+        assertEquals(listOf("RATE_LIMITED", Duration.ofMinutes(5)), listOf(waiter.category, waiter.retryAfter))
         assertTrue(timing.pauses.isEmpty())
         val start = limiter.withStart(budget()) { timing.nanoTime() }
         assertEquals(Duration.ofMinutes(5).toNanos(), start)
+    }
+
+    @Test
+    fun `the retry hint is the hold that remains, including a longer hold a shorter one did not shorten`() {
+        val limiter = ProviderRequestLimiter(4, Duration.ofMillis(125), timing)
+        limiter.holdStarts(Duration.ofMinutes(10), CaptureBudget(10, 1000).also { it.startDeadline(timing.nanoTime(), Duration.ofHours(1)) })
+        timing.nanos += Duration.ofMinutes(2).toNanos()
+        val short = CaptureBudget(10, 1000).also { it.startDeadline(timing.nanoTime(), Duration.ofSeconds(30)) }
+        assertEquals(Duration.ofMinutes(8), assertFailsWith<CaptureProviderException> { limiter.withStart(short) { error("must not run") } }.retryAfter)
+        assertEquals(Duration.ofMinutes(8), assertFailsWith<CaptureProviderException> { limiter.holdStarts(Duration.ofSeconds(45), short) }.retryAfter)
+    }
+
+    @Test
+    fun `ordinary pacing that would pass the caller deadline is still a deadline stop`() {
+        val limiter = ProviderRequestLimiter(4, Duration.ofMillis(125), timing)
+        val tight = CaptureBudget(10, 1000).also { it.startDeadline(timing.nanoTime(), Duration.ofMillis(100)) }
+        limiter.withStart(tight) { }
+        assertEquals("DEADLINE", assertFailsWith<CaptureBudgetException> { limiter.withStart(tight) { error("must not run") } }.category)
+        assertTrue(timing.pauses.isEmpty())
     }
 
     @Test

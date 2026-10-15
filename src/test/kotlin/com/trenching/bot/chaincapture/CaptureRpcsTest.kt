@@ -27,11 +27,11 @@ class CaptureRpcsTest {
     @Test
     fun `a configured cache serves repeated transactions without another request`() {
         val requests = AtomicInteger()
-        val transaction = """{"jsonrpc":"2.0","id":1,"result":{"slot":1,"meta":{"fee":5}}}"""
+        val signature = "4".repeat(88)
+        val transaction = """{"jsonrpc":"2.0","id":1,"result":${validTransactionJson(signature, slot = 1)}}"""
         LocalRpcServer { requests.incrementAndGet(); LocalRpcServer.reply(it, 200, transaction) }.use { server ->
             val cache = SharedTransactionCache(directory.resolve("cache"), testMapper)
             val settings = TestSettings(endpoint = server.endpoint)
-            val signature = "4".repeat(88)
             repeat(2) {
                 val rpc = CaptureRpcs.create(settings, testMapper, testClock, cache, RpcLimiterRegistry(timing))
                 assertEquals(1, ChainCaptureReads.transaction(rpc, signature, CaptureBudget(10, 10_000)).path("slot").asInt())

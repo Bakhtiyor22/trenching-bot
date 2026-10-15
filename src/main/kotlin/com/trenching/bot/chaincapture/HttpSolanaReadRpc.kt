@@ -77,7 +77,7 @@ class HttpSolanaReadRpc(
                 val bytes = readBounded(response.body, budget)
                 when {
                     status == 401 || status == 403 -> CaptureHttpReply.Failed("AUTHENTICATION", false)
-                    status == 429 -> CaptureHttpReply.Failed("RATE_LIMITED", true, retryAfter(response.headers.getFirst("Retry-After")), rateLimited = true)
+                    status == 429 -> CaptureHttpReply.Failed(CaptureCategory.RATE_LIMITED, true, retryAfter(response.headers.getFirst("Retry-After")), rateLimited = true)
                     status in 500..599 -> CaptureHttpReply.Failed("UNAVAILABLE", true)
                     status !in 200..299 -> CaptureHttpReply.Failed("HTTP", false)
                     else -> parse(bytes)
@@ -110,7 +110,7 @@ class HttpSolanaReadRpc(
             val code = node.path("error").path("code")
             return when (if (code.isIntegralNumber && code.canConvertToInt()) code.asInt() else null) {
                 -32005 -> CaptureHttpReply.Failed("UNAVAILABLE", true, rateLimited = true)
-                -32015 -> CaptureHttpReply.Failed("UNSUPPORTED_VERSION", false)
+                -32015 -> CaptureHttpReply.Failed(CaptureCategory.UNSUPPORTED_VERSION, false)
                 else -> CaptureHttpReply.Failed("RPC_ERROR", false)
             }
         }
@@ -151,10 +151,10 @@ class HttpSolanaReadRpc(
 
     private fun retryAfter(value: String?): Duration? {
         if (value == null) return null
-        val seconds = value.toLongOrNull()
-        if (seconds != null) return if (seconds in 0..1800) Duration.ofSeconds(seconds) else Duration.ofMinutes(30)
-        return try { maxOf(Duration.ZERO, Duration.between(clock.instant(), ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant())) }
-        catch (_: DateTimeParseException) { null }
+        val requested = value.toLongOrNull()?.let { seconds -> Duration.ofSeconds(seconds.coerceIn(0, MAX_RETRY_AFTER.seconds)) }
+            ?: try { Duration.between(clock.instant(), ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toInstant()) }
+            catch (_: DateTimeParseException) { return null }
+        return requested.coerceIn(Duration.ZERO, MAX_RETRY_AFTER)
     }
 
     private fun endpoint(value: String?): URI? {
@@ -167,6 +167,7 @@ class HttpSolanaReadRpc(
 
     private companion object {
         const val MAX_ATTEMPTS = 3
+        val MAX_RETRY_AFTER: Duration = Duration.ofMinutes(30)
         const val BASE_BACKOFF_MILLIS = 500L
         const val MIN_CREDENTIAL_FRAGMENT_LENGTH = 8
     }

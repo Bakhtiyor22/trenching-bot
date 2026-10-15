@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -123,6 +124,91 @@ class BoundedParallelFetchTest {
     @Test
     fun `an error that is not an exception is rethrown after the workers are cleaned up`() {
         assertFailsWith<OutOfMemoryError> { fetcher.fetch(listOf(1, 2), 2, budget, { false }) { throw OutOfMemoryError("simulated") } }
+        assertTrue(fetchThreads().isEmpty())
+    }
+
+    @Test
+    fun `when several items fail the lowest numbered failure is reported whatever order they failed in`() {
+        val low = CaptureProviderException("UNAVAILABLE")
+        val high = CaptureBudgetException("REQUESTS")
+        val highFailed = CountDownLatch(1)
+        val result = fetcher.fetch(listOf(0, 1), 2, budget, { false }) { item ->
+            if (item == 1) { highFailed.countDown(); throw high }
+            highFailed.await(5, TimeUnit.SECONDS)
+            throw low
+        }
+        assertSame(low, result.failure)
+        assertTrue(result.completed.isEmpty())
+    }
+
+    @Test
+    fun `an error at a higher index is rethrown in preference to an exception at a lower one`() {
+        val error = OutOfMemoryError("simulated")
+        val errorThrown = CountDownLatch(1)
+        val thrown = assertFailsWith<OutOfMemoryError> {
+            fetcher.fetch(listOf(0, 1), 2, budget, { false }) { item ->
+                if (item == 1) { errorThrown.countDown(); throw error }
+                errorThrown.await(5, TimeUnit.SECONDS)
+                throw CaptureProviderException("UNAVAILABLE")
+            }
+        }
+        assertSame(error, thrown)
+        assertTrue(fetchThreads().isEmpty())
+    }
+
+    /** Runs [fetch] on its own thread, which the test interrupts once [ready] has been counted down by a fetch. */
+    private fun interruptedRun(items: List<Int>, concurrency: Int, ready: CountDownLatch, release: CountDownLatch): Pair<ParallelFetchResult<Int, Int>, Boolean> {
+        var outcome: ParallelFetchResult<Int, Int>? = null
+        var flag = false
+        var crash: Throwable? = null
+        val caller = Thread {
+            try {
+                outcome = fetcher.fetch(items, concurrency, budget, { false }) { item ->
+                    ready.countDown()
+                    release.await(10, TimeUnit.SECONDS)
+                    item
+                }
+            } catch (throwable: Throwable) { crash = throwable }
+            flag = Thread.currentThread().isInterrupted
+        }
+        caller.start()
+        assertTrue(ready.await(5, TimeUnit.SECONDS))
+        Thread.sleep(50)
+        caller.interrupt()
+        caller.join(10_000)
+        assertFalse(caller.isAlive)
+        release.countDown()
+        return checkNotNull(outcome) { "the fetch crashed: $crash" } to flag
+    }
+
+    @Test
+    fun `a caller interrupted while waiting for a free slot gets an interruption failure, its workers are stopped and the flag is kept`() {
+        val (result, flag) = interruptedRun((0 until 3).toList(), 1, CountDownLatch(1), CountDownLatch(1))
+        val failure = assertIs<CaptureProviderException>(result.failure)
+        assertEquals("INTERRUPTED", failure.category)
+        assertTrue(result.completed.isEmpty())
+        assertFalse(result.finished)
+        assertTrue(flag, "the interrupt flag must be restored")
+        assertTrue(fetchThreads().isEmpty(), fetchThreads().toString())
+    }
+
+    @Test
+    fun `a caller interrupted while the last fetches run gets an interruption failure and no worker is left behind`() {
+        val (result, flag) = interruptedRun(listOf(0, 1), 2, CountDownLatch(2), CountDownLatch(1))
+        assertEquals("INTERRUPTED", assertIs<CaptureProviderException>(result.failure).category)
+        assertTrue(flag, "the interrupt flag must be restored")
+        assertTrue(fetchThreads().isEmpty(), fetchThreads().toString())
+    }
+
+    @Test
+    fun `a stop check that throws is a fatal failure and keeps the fetches already completed`() {
+        val broken = IllegalStateException("stop check failed")
+        val started = AtomicInteger()
+        val result = fetcher.fetch((0 until 6).toList(), 1, budget, { if (started.get() >= 2) throw broken else false }) { started.incrementAndGet(); it }
+        assertSame(broken, result.failure)
+        assertEquals(listOf(0, 1), result.completed.map { it.result })
+        assertFalse(result.stopped)
+        assertFalse(result.finished)
         assertTrue(fetchThreads().isEmpty())
     }
 

@@ -3,10 +3,13 @@ package com.trenching.bot.walletactivity.application
 import com.trenching.bot.chaincapture.BoundedParallelFetch
 import com.trenching.bot.chaincapture.CaptureBudget
 import com.trenching.bot.chaincapture.CaptureBudgetException
+import com.trenching.bot.chaincapture.CaptureCategory
 import com.trenching.bot.chaincapture.CaptureCheckpointObserver
 import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.chaincapture.CaptureStop
 import com.trenching.bot.chaincapture.CaptureValidationException
+import com.trenching.bot.chaincapture.DetailFetch
+import com.trenching.bot.chaincapture.DetailMeasurements
 import com.trenching.bot.chaincapture.ChainCaptureFormat
 import com.trenching.bot.chaincapture.ChainCaptureReads
 import com.trenching.bot.chaincapture.ParallelFetchResult
@@ -244,7 +247,7 @@ internal class WalletTokenVerificationCapture(
         ): WalletTokenVerification {
             val failure = fetched.failure
             if (failure == null) {
-                halted = STOP_REQUESTED
+                halted = CaptureCategory.STOP_REQUESTED
                 return applied
             }
             save(if (failure is CaptureProviderException) replace(applied, record.copy(outcome = VerificationOutcome.PROVIDER_UNAVAILABLE)) else applied)
@@ -264,12 +267,8 @@ internal class WalletTokenVerificationCapture(
             return apply(verification, record, fetched)
         }
 
-        private fun fetchOne(record: VerificationRecord, listingAddress: String): DetailFetch<VerificationOutcome> = try {
-            val raw = ChainCaptureReads.transaction(rpc, record.signature, budget)
-            DetailFetch.Fetched(raw, transactions.classifyVerification(raw, record.signature, record.slot, listingAddress))
-        } catch (exception: CaptureProviderException) {
-            if (exception.category == UNSUPPORTED_VERSION) DetailFetch.UnsupportedVersion else throw exception
-        }
+        private fun fetchOne(record: VerificationRecord, listingAddress: String): DetailFetch<VerificationOutcome> =
+            DetailFetch.request(rpc, record.signature, budget) { transactions.classifyVerification(it, record.signature, record.slot, listingAddress) }
 
         private fun reuse(verification: WalletTokenVerification, record: VerificationRecord, artifact: StoredArtifact): WalletTokenVerification {
             val listingAddress = VerificationSection.listingAddress(verification, target, record.listing)
@@ -340,13 +339,5 @@ internal class WalletTokenVerificationCapture(
             stop.record(category)
             return manifest
         }
-    }
-
-    /** An entry to resolve, with the artifact it can reuse instead of a fetch, if any. */
-    private data class PlannedEntry(val record: VerificationRecord, val artifact: StoredArtifact?)
-
-    private companion object {
-        const val UNSUPPORTED_VERSION = "UNSUPPORTED_VERSION"
-        const val STOP_REQUESTED = "STOP_REQUESTED"
     }
 }
