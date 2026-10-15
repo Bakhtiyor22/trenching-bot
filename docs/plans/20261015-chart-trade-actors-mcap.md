@@ -64,6 +64,16 @@ You work only under `frontend/`. Backend Parts 1 to 3 add the data below; develo
 - `paperFills[]` (runs only): `kind:"PAPER"`, `phase` (ENTRY|EXIT), `side`, `intentId`, `slot`, `time`, `price`, `mcap` (or null), `quantity`, `reason` (exit reason or null).
 - `ObservationResponse` gains `trade` (`{trader, side, solLamports, tokenRaw}` or null) on the existing `/observations` endpoints.
 
+**Contract details as implemented** (backend Part 3, commit `a00471f`):
+- `range` echoes the requested `from`/`to`, else the first and last observation time.
+- Bucket ladder (seconds): 1, 5, 15, 30, 60, 300, 900, 3600, 14400, 86400; the smallest that fits `min(maxBuckets, 2000)` buckets, epoch-aligned on observation time.
+- `cursor` is opaque (do not parse it). Paging applies to the tracked wallet's `items` only; in CLUSTERED mode `clusters` are sent on the first page only, where `items + Σ clusters.count == total` holds exactly. Later pages carry `items` only.
+- `mcapMissingPoints` counts only points whose minute has no recorded rate (unsupported points are reported through `valuationBasis` instead).
+- A paper fill's `mcap` values the observation the fill used, not the fill's execution price.
+- `unavailableReason` precedence: `NOT_SOL_QUOTED` before `RATES_UNAVAILABLE`.
+- `rateSource` may list several sources joined by a comma.
+- `markers.available=false` only when no observation in the data carries a trade.
+
 **Behaviour** (approved plan section 9):
 - Circular wallet markers at the trade's time and coordinates; ring plus letter B or S so colour is not the only cue; deterministic identicon or saved alias from an address (never infer identity). Tooltip or selection panel: address, side, SOL amount (lamports / 1e9), token amount (raw / 1e6), time, slot, source, transaction link (`MarketLinks`, only when `signature` is non-null). Keyboard users and tapped markers on mobile get the same details in a panel.
 - Default layer: the tracked wallet (pinned, always shown, selection kept across zoom) plus a user-edited watchlist (local storage; sent as `wallet` params). Optional "all captured traders" layer: no `wallet` param, rendered as clusters when `mode` is CLUSTERED, anchored at the bucket's real first trade coordinate with a count badge; expansion uses the next zoom's request. Re-request with `from`/`to` from the data zoom (debounced).
