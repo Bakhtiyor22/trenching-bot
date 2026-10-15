@@ -1,6 +1,5 @@
 import react from '@vitejs/plugin-react';
 import { msw } from 'msw/vite';
-import { loadEnv } from 'vite';
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -25,15 +24,16 @@ const DEFAULT_PUBLIC_HOSTS = [
   '.ngrok.io',
 ];
 
-export default defineConfig(({ command, mode }) => {
-  const env = loadEnv(mode, process.cwd(), 'VITE_');
-  const apiTarget = process.env.VITE_API_TARGET ?? env.VITE_API_TARGET ?? 'http://localhost:8081';
+export default defineConfig(({ command }) => {
+  const apiTarget = process.env.VITE_API_TARGET ?? 'http://localhost:8081';
   const proxy = { target: apiTarget, changeOrigin: false };
   const publicHosts = process.env.CONSOLE_PUBLIC_HOSTS
     ?.split(',')
     .map((host) => host.trim())
     .filter(Boolean) ?? DEFAULT_PUBLIC_HOSTS;
   return {
+    // Configuration is supplied by the process; never read workspace environment files.
+    envDir: false,
     base: '/console/',
     // The mock service worker script is served in development only and never emitted into dist.
     plugins: [react(), ...(command === 'serve' ? [msw({ mode: 'worker-only' })] : [])],

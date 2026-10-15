@@ -74,6 +74,105 @@ export interface Observation {
   sourceEventId: string;
   commitment: string;
   quality: ObservationQuality | string;
+  /** Absent in older recordings; null when this observation has no captured trade. */
+  trade?: ObservationTrade | null;
+}
+
+export interface ObservationTrade {
+  trader: string;
+  side: 'BUY' | 'SELL';
+  solLamports: DecimalString;
+  tokenRaw: DecimalString;
+}
+
+export interface ChartRequest {
+  pair?: string | null;
+  from?: IsoInstant;
+  to?: IsoInstant;
+  maxBuckets?: number;
+  markerLimit?: number;
+  wallet?: string[];
+  /** Opaque backend token. */
+  cursor?: string;
+}
+
+export interface ChartOhlc {
+  open: DecimalString;
+  high: DecimalString;
+  low: DecimalString;
+  close: DecimalString;
+}
+
+export interface ChartCandle {
+  bucketStart: IsoInstant;
+  observationCount: number;
+  price: ChartOhlc;
+  mcap: ChartOhlc | null;
+  mcapMissingPoints: number;
+  mcapUnsupportedPoints: number;
+}
+
+export interface ObservedChartMarker extends ObservationTrade {
+  kind: 'OBSERVED';
+  observationId: string;
+  isTrackedWallet: boolean;
+  price: DecimalString;
+  mcap: DecimalString | null;
+  slot: number;
+  time: IsoInstant;
+  signature: string | null;
+  source: string;
+}
+
+export interface PaperChartFill {
+  kind: 'PAPER';
+  phase: 'ENTRY' | 'EXIT';
+  side: 'BUY' | 'SELL';
+  intentId: string;
+  slot: number;
+  time: IsoInstant;
+  price: DecimalString;
+  mcap: DecimalString | null;
+  quantity: DecimalString;
+  reason: string | null;
+}
+
+export interface ChartCluster {
+  bucketStart: IsoInstant;
+  count: number;
+  buyCount: number;
+  sellCount: number;
+  firstSlot: number;
+  lastSlot: number;
+  firstTime: IsoInstant;
+  lastTime: IsoInstant;
+}
+
+export interface ChartResponse {
+  bucketSeconds: number;
+  range: { from: IsoInstant; to: IsoInstant };
+  trackedWallet: string | null;
+  valuationBasis: {
+    label: string;
+    supply: DecimalString | null;
+    supplySource: string | null;
+    quoteCurrency: 'USDT';
+    rateSource: string | null;
+    rateGranularity: string | null;
+    available: boolean;
+    unavailableReason: 'UNSUPPORTED_TOKEN' | 'NOT_SOL_QUOTED' | 'RATES_UNAVAILABLE' | null;
+  };
+  candles: ChartCandle[];
+  markers: {
+    available: boolean;
+    unavailableReason: 'NOT_RECORDED_BEFORE_SCHEMA_V4' | null;
+    mode: 'ITEMS' | 'CLUSTERED';
+    total: number;
+    items: ObservedChartMarker[];
+    nextCursor: string | null;
+    clusters: ChartCluster[];
+  };
+  paperFills: PaperChartFill[];
 }
 
 export interface Config {

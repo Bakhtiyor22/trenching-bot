@@ -1,53 +1,40 @@
-import { Button, Group, Select, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Button, Select, SimpleGrid, Stack, Text } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router';
 import { pairKey } from '../../api/endpoints';
 import { useDataset, useDatasetObservations, useDeleteDataset } from '../../api/queries';
-import { Chart } from '../../components/Chart';
+import type { ObservedChartMarker, PaperChartFill } from '../../api/types';
+import { TradeChart } from '../../components/TradeChart';
 import { ConfirmDelete } from '../../components/ConfirmDelete';
 import { Mint, ShortId, Timestamp } from '../../components/DisplayValues';
 import { ObservationTable } from '../../components/ObservationTable';
 import { IconPlay } from '../../components/Icons';
 import { KeyValueTable, PageHeader, Section } from '../../components/Panels';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
-import { priceChartOption, QUALITY_STYLE } from '../../charts/priceChart';
-import { formatCount, humanizeCode, mintLabel, slotRange } from '../../lib/format';
+import { formatCount, mintLabel, slotRange } from '../../lib/format';
 import { paths } from '../../paths';
 
-function ObservationsPanel({ datasetId, pair }: { datasetId: string; pair: string | null }) {
+function ObservationsPanel({
+  datasetId,
+  pair,
+  selectedId,
+  navigationRequest,
+}: {
+  datasetId: string;
+  pair: string | null;
+  selectedId: string | null;
+  navigationRequest: number;
+}) {
   const observations = useDatasetObservations(datasetId, pair, pair !== null);
   if (pair === null) return <EmptyState title="This dataset has no pairs" />;
   if (observations.isPending) return <LoadingState label="Loading observations…" />;
-  if (observations.isError) return <ErrorState error={observations.error} onRetry={() => void observations.refetch()} />;
+  if (observations.isError)
+    return <ErrorState error={observations.error} onRetry={() => void observations.refetch()} />;
   const items = observations.data;
   return (
-    <Stack gap="lg">
-      <Section
-        title="Price vs slot"
-        hint="Each point is an observation; its color and shape show the quality. Invalid observations are not joined by the line. Ctrl + scroll or drag the slider to zoom; drag the chart to pan."
-      >
-        {items.length === 0 ? (
-          <EmptyState title="No observations for this pair" />
-        ) : (
-          <>
-            <Chart option={priceChartOption(items)} height={360} ariaLabel="Observed price by slot for the selected pair" />
-            <Group gap="md" mt="xs">
-              {Object.entries(QUALITY_STYLE).map(([quality, style]) => (
-                <Group key={quality} gap={6}>
-                  <span style={{ width: 10, height: 10, borderRadius: 5, background: style.color, display: 'inline-block' }} />
-                  <Text size="xs" c="dimmed">
-                    {humanizeCode(quality)}
-                  </Text>
-                </Group>
-              ))}
-            </Group>
-          </>
-        )}
-      </Section>
-      <Section title="Observations">
-        <ObservationTable observations={items} />
-      </Section>
-    </Stack>
+    <Section title="Observations">
+      <ObservationTable key={navigationRequest} observations={items} selectedId={selectedId} />
+    </Section>
   );
 }
 
@@ -57,9 +44,26 @@ export function DatasetDetailPage() {
   const navigate = useNavigate();
   const deleteDataset = useDeleteDataset();
   const [selectedPair, setSelectedPair] = useState<string | null>(null);
+  const [selectedObservation, setSelectedObservation] = useState<string | null>(null);
+  const [navigationRequest, setNavigationRequest] = useState(0);
+  const openAction = (action: ObservedChartMarker | PaperChartFill) => {
+    if (action.kind !== 'OBSERVED') return;
+    setSelectedObservation(action.observationId);
+    setNavigationRequest((request) => request + 1);
+    document
+      .getElementById(`observation-${encodeURIComponent(action.observationId)}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
 
   if (dataset.isPending) return <LoadingState label="Loading dataset…" />;
-  if (dataset.isError) return <ErrorState error={dataset.error} title="Could not load the dataset" onRetry={() => void dataset.refetch()} />;
+  if (dataset.isError)
+    return (
+      <ErrorState
+        error={dataset.error}
+        title="Could not load the dataset"
+        onRetry={() => void dataset.refetch()}
+      />
+    );
 
   const data = dataset.data;
   const pairOptions = data.pairs.map((pair) => ({
@@ -78,7 +82,11 @@ export function DatasetDetailPage() {
             <Button component={Link} to={paths.runsFor(data.id)} variant="default">
               Runs of this dataset
             </Button>
-            <Button component={Link} to={paths.newRunFor(data.id)} leftSection={<IconPlay size={16} />}>
+            <Button
+              component={Link}
+              to={paths.newRunFor(data.id)}
+              leftSection={<IconPlay size={16} />}
+            >
               Start run with this dataset
             </Button>
             <ConfirmDelete
@@ -89,7 +97,8 @@ export function DatasetDetailPage() {
                 await navigate(paths.datasets);
               }}
             >
-              Removes “{data.name}” from Datasets. Runs made with it are kept, each with its own copy of the dataset. Uploading the same file again restores it under the same id.
+              Removes “{data.name}” from Datasets. Runs made with it are kept, each with its own
+              copy of the dataset. Uploading the same file again restores it under the same id.
             </ConfirmDelete>
           </>
         }
@@ -131,7 +140,22 @@ export function DatasetDetailPage() {
           Pair: {pairOptions[0]?.label}
         </Text>
       )}
-      <ObservationsPanel datasetId={data.id} pair={pair} />
+      {pair !== null && (
+        <TradeChart
+          kind="dataset"
+          id={data.id}
+          pair={pair}
+          trackedWallet={data.trackedWallet}
+          onOpenAction={openAction}
+        />
+      )}
+      <ObservationsPanel
+        key={pair}
+        datasetId={data.id}
+        pair={pair}
+        selectedId={selectedObservation}
+        navigationRequest={navigationRequest}
+      />
     </Stack>
   );
 }

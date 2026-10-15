@@ -115,7 +115,7 @@ export function DatasetUpload() {
               Drag a replay dataset here or click to choose
             </Text>
             <Text size="sm" c="dimmed">
-              Schema v3 JSON, up to 100 MB. The backend validates it fully, including the checksum.
+              Schema v3 or v4 JSON, up to 100 MB. The backend validates it fully, including the checksum.
             </Text>
           </div>
         </Group>

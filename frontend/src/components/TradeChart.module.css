@@ -1,0 +1,19 @@
+.root { min-width: 0; overflow: visible; }
+.title span { font-family: var(--mantine-font-family-monospace); font-weight: 500; color: #93a1ad; }
+.value { font-size: 38px; line-height: 1.25; letter-spacing: -1.2px; font-weight: 500; }
+.change { min-height: 28px; }
+.changeChip { border-radius: 5px; padding: 3px 6px; font-family: var(--mantine-font-family-monospace); }
+.plot { position: relative; height: 420px; }
+.rangeTrack { padding: 3px; border: 1px solid var(--mantine-color-dark-4); border-radius: 24px; overflow-x: auto; max-width: 100%; }
+.rangePill { appearance: none; border: 0; border-radius: 20px; background: transparent; color: var(--mantine-color-dimmed); padding: 6px 12px; font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.rangePill[aria-pressed='true'] { background: var(--mantine-color-dark-5); color: var(--mantine-color-text); }
+.rangePill:focus-visible { outline: 2px solid var(--mantine-color-amber-5); }
+.legend { color: var(--mantine-color-dimmed); }
+.buyLegend, .sellLegend { display: inline-grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--mantine-color-amber-5); border-radius: 50%; font-size: 10px; font-weight: 700; }
+.buyLegend { background: var(--mantine-color-amber-5); color: var(--mantine-color-dark-7); }
+.sellLegend { color: var(--mantine-color-amber-5); }
+.status { color: var(--mantine-color-dimmed); padding-top: 8px; border-top: 1px dashed var(--mantine-color-dark-4); }
+.stack { position: absolute; z-index: 6; background: var(--mantine-color-dark-5); border: 1px solid #2a343d; border-radius: 10px; padding: 12px; box-shadow: 0 12px 36px #0006; }
+.hoverDot { pointer-events: none; position: absolute; transform: translate(-50%, -50%); width: 8px; height: 8px; border-radius: 50%; background: var(--mantine-color-dark-6); border: 2px solid; }
+.timePill { pointer-events: none; position: absolute; bottom: 2px; transform: translateX(-50%); padding: 3px 6px; background: var(--mantine-color-dark-5); border: 1px solid var(--mantine-color-dark-4); border-radius: 4px; font-size: 11px; font-family: var(--mantine-font-family-monospace); }
+@media (max-width: 500px) { .value { font-size: 32px; } .rangePill { padding-inline: 9px; } }

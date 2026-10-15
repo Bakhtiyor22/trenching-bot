@@ -1,5 +1,5 @@
 import { Badge, Code, ScrollArea, Table, Text } from '@mantine/core';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import type { Close, Fill, RunEvent, RunOrder, RunPosition } from '../../api/types';
 import { Decimal, PairLabel, Pnl, ShortId, Timestamp } from '../../components/DisplayValues';
 import { MarketLinks } from '../../components/MarketLinks';
@@ -28,7 +28,12 @@ function Wrap({ children, minWidth }: { children: ReactNode; minWidth: number })
 }
 
 function ReasonText({ code }: { code: string | null }) {
-  if (!code) return <Text span c="dimmed" size="sm">—</Text>;
+  if (!code)
+    return (
+      <Text span c="dimmed" size="sm">
+        —
+      </Text>
+    );
   return (
     <Text span size="sm">
       {humanizeCode(code)} <Code fz="xs">{code}</Code>
@@ -60,7 +65,10 @@ export function EventsTable({ events }: { events: RunEvent[] }) {
             <Table.Tr key={e.eventId}>
               <Table.Td ta="right">{formatSlot(e.slot)}</Table.Td>
               <Table.Td>
-                <ShortId value={e.signature} /> <Text span size="xs" c="dimmed">#{e.instructionIndex}</Text>
+                <ShortId value={e.signature} />{' '}
+                <Text span size="xs" c="dimmed">
+                  #{e.instructionIndex}
+                </Text>
                 <MarketLinks links={transactionLinks(recordedEventSignature(e) ?? '')} />
               </Table.Td>
               <Table.Td>
@@ -82,14 +90,19 @@ export function EventsTable({ events }: { events: RunEvent[] }) {
               </Table.Td>
               <Table.Td ta="right">
                 <Decimal value={e.baseDelta} />
-                <Text size="xs" c="dimmed">{e.baseDecimals} decimals</Text>
+                <Text size="xs" c="dimmed">
+                  {e.baseDecimals} decimals
+                </Text>
               </Table.Td>
               <Table.Td ta="right">
                 <Decimal value={e.quoteDelta} />
-                <Text size="xs" c="dimmed">{e.quoteDecimals} decimals</Text>
+                <Text size="xs" c="dimmed">
+                  {e.quoteDecimals} decimals
+                </Text>
               </Table.Td>
               <Table.Td>
-                <Flag value={e.successful} label="success" /> <Flag value={e.supportedRoute} label="route" />{' '}
+                <Flag value={e.successful} label="success" />{' '}
+                <Flag value={e.supportedRoute} label="route" />{' '}
                 <Flag value={e.signer} label="signer" />
                 <Text size="xs" c="dimmed">
                   {e.commitment} · {e.source}
@@ -102,7 +115,13 @@ export function EventsTable({ events }: { events: RunEvent[] }) {
           ))}
         </Table.Tbody>
       </Wrap>
-      <PagingFooter page={paging.page} pages={paging.pages} total={paging.total} onChange={paging.setPage} noun="events" />
+      <PagingFooter
+        page={paging.page}
+        pages={paging.pages}
+        total={paging.total}
+        onChange={paging.setPage}
+        noun="events"
+      />
     </>
   );
 }
@@ -111,7 +130,12 @@ export function EventsTable({ events }: { events: RunEvent[] }) {
 type ExecutionCosts = Pick<Close, 'fee' | 'feeBps' | 'priceImpactBps' | 'transactionCost'>;
 
 function fillCosts(fill: Fill): ExecutionCosts {
-  return { fee: fill.fee, feeBps: fill.feeBps, priceImpactBps: fill.priceImpactBps, transactionCost: fill.priorityFee };
+  return {
+    fee: fill.fee,
+    feeBps: fill.feeBps,
+    priceImpactBps: fill.priceImpactBps,
+    transactionCost: fill.priorityFee,
+  };
 }
 
 function CostsCell({ costs }: { costs: ExecutionCosts | null }) {
@@ -129,7 +153,8 @@ function CostsCell({ costs }: { costs: ExecutionCosts | null }) {
         fees {costs.feeBps} bps
       </Text>
       <Text size="xs" c="dimmed">
-        impact {signedBps(costs.priceImpactBps)} · tx <Decimal value={costs.transactionCost} size="xs" />
+        impact {signedBps(costs.priceImpactBps)} · tx{' '}
+        <Decimal value={costs.transactionCost} size="xs" />
       </Text>
     </Table.Td>
   );
@@ -150,16 +175,56 @@ function FillCells({ fill }: { fill: Fill | null }) {
   return (
     <>
       <Table.Td ta="right">{formatSlot(fill.actualSlot)}</Table.Td>
-      <Table.Td ta="right"><Decimal value={fill.executionPrice} /></Table.Td>
-      <Table.Td ta="right"><Decimal value={fill.quantity} /></Table.Td>
+      <Table.Td ta="right">
+        <Decimal value={fill.executionPrice} />
+      </Table.Td>
+      <Table.Td ta="right">
+        <Decimal value={fill.quantity} />
+      </Table.Td>
       <CostsCell costs={fillCosts(fill)} />
-      <Table.Td ta="right"><Decimal value={fill.costBasis} /></Table.Td>
+      <Table.Td ta="right">
+        <Decimal value={fill.costBasis} />
+      </Table.Td>
     </>
   );
 }
 
-export function OrdersTable({ orders }: { orders: RunOrder[] }) {
-  const paging = useClientPaging(orders, 50);
+function useFillTarget<T extends { intentId: string }>(
+  items: T[],
+  selectedIntentId: string | null | undefined,
+  phase: 'entry' | 'exit',
+) {
+  const paging = useClientPaging(items, 50);
+  const selectedIndex = items.findIndex((item) => item.intentId === selectedIntentId);
+  const selectionKey = selectedIntentId ? `${selectedIntentId}:${selectedIndex}` : '';
+  const [previousSelection, setPreviousSelection] = useState('');
+  if (selectionKey !== previousSelection) {
+    setPreviousSelection(selectionKey);
+    if (selectedIndex >= 0) paging.setPage(Math.floor(selectedIndex / 50) + 1);
+  }
+  useEffect(() => {
+    if (selectedIntentId)
+      document
+        .getElementById(`fill-${encodeURIComponent(selectedIntentId)}-${phase}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [selectedIntentId, phase, paging.page]);
+  return paging;
+}
+
+const selectedRecordStyle = {
+  outline: '2px solid var(--mantine-color-blue-5)',
+  outlineOffset: -2,
+  scrollMarginTop: 24,
+};
+
+export function OrdersTable({
+  orders,
+  selectedIntentId,
+}: {
+  orders: RunOrder[];
+  selectedIntentId?: string | null;
+}) {
+  const paging = useFillTarget(orders, selectedIntentId, 'entry');
   if (orders.length === 0) return <EmptyState title="No orders" />;
   return (
     <>
@@ -179,28 +244,53 @@ export function OrdersTable({ orders }: { orders: RunOrder[] }) {
         </Table.Thead>
         <Table.Tbody>
           {paging.visible.map((o) => (
-            <Table.Tr key={o.orderId}>
-              <Table.Td><ShortId value={o.orderId} /></Table.Td>
+            <Table.Tr
+              key={o.orderId}
+              id={`fill-${encodeURIComponent(o.intentId)}-entry`}
+              data-highlighted={o.intentId === selectedIntentId || undefined}
+              aria-selected={o.intentId === selectedIntentId || undefined}
+              style={o.intentId === selectedIntentId ? selectedRecordStyle : undefined}
+            >
+              <Table.Td>
+                <ShortId value={o.orderId} />
+              </Table.Td>
               <Table.Td ta="right">{formatSlot(o.targetSlot)}</Table.Td>
               <Table.Td>
                 <Badge color={o.status === 'FILLED' ? 'teal' : 'red'} variant="light">
                   {o.status}
                 </Badge>
               </Table.Td>
-              <Table.Td><ReasonText code={o.rejectionReason} /></Table.Td>
+              <Table.Td>
+                <ReasonText code={o.rejectionReason} />
+              </Table.Td>
               <FillCells fill={o.fill} />
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Wrap>
-      <PagingFooter page={paging.page} pages={paging.pages} total={paging.total} onChange={paging.setPage} noun="orders" />
+      <PagingFooter
+        page={paging.page}
+        pages={paging.pages}
+        total={paging.total}
+        onChange={paging.setPage}
+        noun="orders"
+      />
     </>
   );
 }
 
-export function PositionsTable({ positions }: { positions: RunPosition[] }) {
-  const paging = useClientPaging(positions, 50);
-  if (positions.length === 0) return <EmptyState title="No positions" description="Cycles without an entry open no position." />;
+export function PositionsTable({
+  positions,
+  selectedIntentId,
+}: {
+  positions: RunPosition[];
+  selectedIntentId?: string | null;
+}) {
+  const paging = useFillTarget(positions, selectedIntentId, 'exit');
+  if (positions.length === 0)
+    return (
+      <EmptyState title="No positions" description="Cycles without an entry open no position." />
+    );
   return (
     <>
       <Wrap minWidth={1500}>
@@ -225,31 +315,61 @@ export function PositionsTable({ positions }: { positions: RunPosition[] }) {
         </Table.Thead>
         <Table.Tbody>
           {paging.visible.map((p) => (
-            <Table.Tr key={p.id}>
-              <Table.Td><ShortId value={p.id} /></Table.Td>
-              <Table.Td><PairLabel pair={p.pair} /></Table.Td>
+            <Table.Tr
+              key={p.id}
+              id={`fill-${encodeURIComponent(p.intentId)}-exit`}
+              data-highlighted={p.intentId === selectedIntentId || undefined}
+              aria-selected={p.intentId === selectedIntentId || undefined}
+              style={p.intentId === selectedIntentId ? selectedRecordStyle : undefined}
+            >
+              <Table.Td>
+                <ShortId value={p.id} />
+              </Table.Td>
+              <Table.Td>
+                <PairLabel pair={p.pair} />
+              </Table.Td>
               <Table.Td>
                 <Badge color={p.state === 'OPEN' ? 'yellow' : 'gray'} variant="light">
                   {p.state}
                 </Badge>
               </Table.Td>
               <Table.Td ta="right">{formatSlot(p.fill.actualSlot)}</Table.Td>
-              <Table.Td ta="right"><Decimal value={p.fill.executionPrice} /></Table.Td>
-              <Table.Td ta="right"><Decimal value={p.fill.quantity} /></Table.Td>
+              <Table.Td ta="right">
+                <Decimal value={p.fill.executionPrice} />
+              </Table.Td>
+              <Table.Td ta="right">
+                <Decimal value={p.fill.quantity} />
+              </Table.Td>
               <CostsCell costs={fillCosts(p.fill)} />
-              <Table.Td ta="right"><Decimal value={p.takeProfitPrice} /></Table.Td>
-              <Table.Td ta="right"><Decimal value={p.stopLossPrice} /></Table.Td>
+              <Table.Td ta="right">
+                <Decimal value={p.takeProfitPrice} />
+              </Table.Td>
+              <Table.Td ta="right">
+                <Decimal value={p.stopLossPrice} />
+              </Table.Td>
               <Table.Td ta="right">{p.close ? formatSlot(p.close.slot) : '—'}</Table.Td>
-              <Table.Td ta="right">{p.close ? <Decimal value={p.close.executionPrice} /> : '—'}</Table.Td>
+              <Table.Td ta="right">
+                {p.close ? <Decimal value={p.close.executionPrice} /> : '—'}
+              </Table.Td>
               <CostsCell costs={p.close} />
-              <Table.Td ta="right">{p.close ? <Decimal value={p.close.netProceeds} /> : '—'}</Table.Td>
+              <Table.Td ta="right">
+                {p.close ? <Decimal value={p.close.netProceeds} /> : '—'}
+              </Table.Td>
               <Table.Td ta="right">{p.close ? <Pnl value={p.close.realizedPnl} /> : '—'}</Table.Td>
-              <Table.Td><ReasonText code={p.exitUnavailableReason} /></Table.Td>
+              <Table.Td>
+                <ReasonText code={p.exitUnavailableReason} />
+              </Table.Td>
             </Table.Tr>
           ))}
         </Table.Tbody>
       </Wrap>
-      <PagingFooter page={paging.page} pages={paging.pages} total={paging.total} onChange={paging.setPage} noun="positions" />
+      <PagingFooter
+        page={paging.page}
+        pages={paging.pages}
+        total={paging.total}
+        onChange={paging.setPage}
+        noun="positions"
+      />
     </>
   );
 }

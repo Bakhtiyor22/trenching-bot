@@ -1,4 +1,6 @@
 import { MantineProvider } from '@mantine/core';
+import * as echarts from 'echarts/core';
+import { SVGRenderer } from 'echarts/renderers';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -11,6 +13,27 @@ import { Chart } from './Chart';
 vi.unmock('echarts-for-react/esm/core');
 
 describe('Chart package integration', () => {
+  it('registers time-axis candlesticks and custom marker renderers', () => {
+    echarts.use([SVGRenderer]);
+    const instance = echarts.init(null, undefined, { renderer: 'svg', ssr: true, width: 500, height: 300 });
+    try {
+      instance.setOption({
+        animation: false,
+        xAxis: { type: 'time', show: false, min: Date.parse('2026-10-15T00:00:00Z'), max: Date.parse('2026-10-15T00:03:00Z') },
+        yAxis: { type: 'value', show: false },
+        series: [
+          { type: 'candlestick', large: false, data: [[Date.parse('2026-10-15T00:01:00Z'), 1, 2, 0.5, 3]], itemStyle: { color: '#12ab34' } },
+          { type: 'custom', data: [[Date.parse('2026-10-15T00:01:00Z'), 1]], renderItem: () => ({ type: 'circle', shape: { cx: 20, cy: 20, r: 5 }, style: { fill: '#abcdef' } }) },
+        ],
+      });
+      const svg = instance.renderToSVGString();
+      expect(svg).toContain('#12ab34');
+      expect(svg).toContain('#abcdef');
+    } finally {
+      instance.dispose();
+    }
+  });
+
   it('exports a React component after Vite development optimization', async () => {
     const cacheDirectory = await mkdtemp(join(tmpdir(), 'console-chart-interop-'));
     if (

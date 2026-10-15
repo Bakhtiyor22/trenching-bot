@@ -2,7 +2,10 @@ import { delay, http, HttpResponse } from 'msw';
 import type {
   AddressCheck,
   ApiErrorBody,
+  ChartCandle,
+  ChartResponse,
   Dataset,
+  Observation,
   RunStartRequest,
   SolanaCheck,
   SolanaStatus,
@@ -17,6 +20,7 @@ import {
   datasetObservations,
   edgeDataset,
   realRunUsdt,
+  REAL_RUN_ID,
   recordedRunRecords,
   runForDataset,
   runRecords,
@@ -24,6 +28,11 @@ import {
   sampleDataset,
   solanaUnconfigured,
   solUsdtPrice,
+  v3Chart,
+  v4Chart,
+  v4Dataset,
+  v4Observations,
+  V4_DATASET_ID,
 } from './fixtures';
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
@@ -67,6 +76,86 @@ function pageOf<T>(items: T[], url: URL) {
 function runDetailOr404(id: string) {
   const records = runRecords[id] ?? recordedRunRecords[id];
   return records ?? null;
+}
+
+const BUCKET_LADDER = [1, 5, 15, 30, 60, 300, 900, 3600, 14400, 86400];
+const MARKER_CURSOR_PREFIX = 'mock-chart-page:';
+
+function mockMcap(price: string): string {
+  const [integer = '0', fraction = ''] = price.split('.');
+  const digits = (BigInt(integer + fraction) * 200000000000n).toString().padStart(fraction.length + 1, '0');
+  return fraction.length ? `${digits.slice(0, -fraction.length)}.${digits.slice(-fraction.length)}` : digits;
+}
+
+function legacyChart(observations: Observation[], records?: NonNullable<ReturnType<typeof runDetailOr404>>): ChartResponse {
+  const sorted = [...observations].sort((left, right) => Date.parse(left.observedTime) - Date.parse(right.observedTime) || left.slot - right.slot);
+  const candles = sorted.map((observation) => {
+    const mcap = mockMcap(observation.price);
+    return { bucketStart: observation.observedTime, observationCount: 1, price: { open: observation.price, high: observation.price, low: observation.price, close: observation.price }, mcap: { open: mcap, high: mcap, low: mcap, close: mcap }, mcapMissingPoints: 0, mcapUnsupportedPoints: 0 };
+  });
+  const paperFills: ChartResponse['paperFills'] = [];
+  for (const scenario of records?.detail.scenarios ?? []) {
+    const fill = scenario.fill;
+    const entry = observations.find((item) => item.id === fill?.observationId);
+    if (fill && entry) paperFills.push({ kind: 'PAPER', phase: 'ENTRY', side: 'BUY', intentId: scenario.intentId, slot: fill.actualSlot, time: entry.observedTime, price: fill.executionPrice, mcap: mockMcap(entry.price), quantity: fill.quantity, reason: null });
+    const close = scenario.position?.close;
+    const exit = observations.find((item) => item.id === close?.observationId);
+    if (fill && close && exit) paperFills.push({ kind: 'PAPER', phase: 'EXIT', side: 'SELL', intentId: scenario.intentId, slot: close.slot, time: exit.observedTime, price: close.executionPrice, mcap: mockMcap(exit.price), quantity: fill.quantity, reason: close.reason });
+  }
+  return { ...v3Chart, range: { from: sorted[0]?.observedTime ?? v3Chart.range.from, to: sorted.at(-1)?.observedTime ?? v3Chart.range.to }, candles, paperFills };
+}
+
+function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
+  const params = url.searchParams;
+  const from = params.get('from') ?? base.range.from;
+  const to = params.get('to') ?? base.range.to;
+  const maxBuckets = Number(params.get('maxBuckets') ?? 300);
+  const markerLimit = Number(params.get('markerLimit') ?? 500);
+  const wallets = params.getAll('wallet');
+  if (!Number.isFinite(Date.parse(from)) || !Number.isFinite(Date.parse(to)) || Date.parse(from) > Date.parse(to)) {
+    return error(400, 'INVALID_REQUEST', 'Chart range must contain ordered ISO instants');
+  }
+  if (!Number.isInteger(maxBuckets) || maxBuckets < 1 || !Number.isInteger(markerLimit) || markerLimit < 1 || wallets.length > 20 || wallets.some((wallet) => !isSolanaAddress(wallet))) {
+    return error(400, 'INVALID_REQUEST', 'Invalid chart bucket, marker or wallet parameters');
+  }
+  const inRange = (time: string) => Date.parse(time) >= Date.parse(from) && Date.parse(time) <= Date.parse(to);
+  const bucketSeconds = BUCKET_LADDER.find((seconds) => Math.floor((Date.parse(to) - Date.parse(from)) / (seconds * 1000)) + 1 <= Math.min(maxBuckets, 2000)) ?? BUCKET_LADDER.at(-1)!;
+  const candles = new Map<string, ChartCandle>();
+  for (const candle of base.candles.filter((item) => inRange(item.bucketStart))) {
+    const bucketStart = new Date(Math.floor(Date.parse(candle.bucketStart) / (bucketSeconds * 1000)) * bucketSeconds * 1000).toISOString();
+    const previous = candles.get(bucketStart);
+    if (!previous) candles.set(bucketStart, { ...candle, bucketStart });
+    else candles.set(bucketStart, {
+      ...previous,
+      observationCount: previous.observationCount + candle.observationCount,
+      price: { open: previous.price.open, high: compareDecimals(previous.price.high, candle.price.high) >= 0 ? previous.price.high : candle.price.high, low: compareDecimals(previous.price.low, candle.price.low) <= 0 ? previous.price.low : candle.price.low, close: candle.price.close },
+      mcap: previous.mcap && candle.mcap ? { open: previous.mcap.open, high: compareDecimals(previous.mcap.high, candle.mcap.high) >= 0 ? previous.mcap.high : candle.mcap.high, low: compareDecimals(previous.mcap.low, candle.mcap.low) <= 0 ? previous.mcap.low : candle.mcap.low, close: candle.mcap.close } : previous.mcap ?? candle.mcap,
+      mcapMissingPoints: previous.mcapMissingPoints + candle.mcapMissingPoints,
+      mcapUnsupportedPoints: previous.mcapUnsupportedPoints + candle.mcapUnsupportedPoints,
+    });
+  }
+  const selected = base.markers.items.filter((item) => inRange(item.time) && (wallets.length === 0 || item.isTrackedWallet || wallets.includes(item.trader)));
+  const clustered = selected.length > Math.min(markerLimit, 2000);
+  const items = clustered ? selected.filter((item) => item.isTrackedWallet) : selected;
+  const cursor = params.get('cursor');
+  const offset = cursor?.startsWith(MARKER_CURSOR_PREFIX) ? Number(cursor.slice(MARKER_CURSOR_PREFIX.length)) : 0;
+  if (cursor && (!cursor.startsWith(MARKER_CURSOR_PREFIX) || !Number.isInteger(offset) || offset < 1 || offset >= items.length)) {
+    return error(400, 'INVALID_REQUEST', 'Invalid chart marker cursor');
+  }
+  const page = items.slice(offset, offset + Math.min(markerLimit, 2000));
+  const clusterMap = new Map<string, ChartResponse['markers']['clusters'][number]>();
+  if (clustered && !cursor) {
+    for (const item of selected.filter((marker) => !marker.isTrackedWallet)) {
+      const bucketStart = new Date(Math.floor(Date.parse(item.time) / (bucketSeconds * 1000)) * bucketSeconds * 1000).toISOString();
+      const previous = clusterMap.get(bucketStart);
+      clusterMap.set(bucketStart, previous ? { ...previous, count: previous.count + 1, buyCount: previous.buyCount + (item.side === 'BUY' ? 1 : 0), sellCount: previous.sellCount + (item.side === 'SELL' ? 1 : 0), lastSlot: item.slot, lastTime: item.time } : { bucketStart, count: 1, buyCount: item.side === 'BUY' ? 1 : 0, sellCount: item.side === 'SELL' ? 1 : 0, firstSlot: item.slot, lastSlot: item.slot, firstTime: item.time, lastTime: item.time });
+    }
+  }
+  return HttpResponse.json({
+    ...base, bucketSeconds, range: { from, to }, candles: [...candles.values()],
+    markers: { ...base.markers, mode: clustered ? 'CLUSTERED' : 'ITEMS', total: selected.length, items: page, clusters: [...clusterMap.values()], nextCursor: offset + page.length < items.length ? `${MARKER_CURSOR_PREFIX}${offset + page.length}` : null },
+    paperFills: datasetOnly ? [] : base.paperFills.filter((fill) => inRange(fill.time)),
+  } satisfies ChartResponse);
 }
 
 const PLAIN_DECIMAL = /^[0-9]+(\.[0-9]+)?$/;
@@ -189,8 +278,8 @@ export function createHandlers(options: MockOptions = {}) {
       } catch {
         return error(400, 'DATASET_INVALID', 'Replay dataset is not valid JSON');
       }
-      if (parsed.schemaVersion !== 1) {
-        return error(400, 'DATASET_INVALID', `Unsupported replay schemaVersion ${String(parsed.schemaVersion)}; expected 1`);
+      if (parsed.schemaVersion !== 3 && parsed.schemaVersion !== 4) {
+        return error(400, 'DATASET_INVALID', `Unsupported replay schemaVersion ${String(parsed.schemaVersion)}; expected 3 or 4`);
       }
       const checksum = String(parsed.checksum ?? '');
       if (!/^[0-9a-f]{64}$/.test(checksum) || checksum.startsWith('0000')) {
@@ -203,14 +292,14 @@ export function createHandlers(options: MockOptions = {}) {
       const existing = db.datasets.find((d) => d.id === checksum);
       if (existing) return HttpResponse.json({ dataset: existing, created: false });
       const name = String(form.get('name') ?? '') || file.name.replace(/\.json$/i, '');
-      const dataset: Dataset = { ...sampleDataset, id: checksum, name, createdAt: new Date().toISOString() };
+      const dataset: Dataset = { ...sampleDataset, id: checksum, name, schemaVersion: parsed.schemaVersion, createdAt: new Date().toISOString() };
       db.datasets.unshift(dataset);
       return HttpResponse.json({ dataset, created: true }, { status: 201 });
     }),
 
     http.get('/api/datasets/:id', async ({ params }) => {
       await wait();
-      const dataset = db.datasets.find((d) => d.id === params.id);
+      const dataset = db.datasets.find((d) => d.id === params.id) ?? (params.id === V4_DATASET_ID ? v4Dataset : undefined);
       return dataset
         ? HttpResponse.json(dataset)
         : error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
@@ -226,11 +315,22 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.get('/api/datasets/:id/observations', async ({ params, request }) => {
       await wait();
-      const dataset = db.datasets.find((d) => d.id === params.id);
+      const dataset = db.datasets.find((d) => d.id === params.id) ?? (params.id === V4_DATASET_ID ? v4Dataset : undefined);
       if (!dataset) return error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
       const pair = new URL(request.url).searchParams.get('pair');
-      const all = datasetObservations[dataset.id] ?? datasetObservations[SAMPLE_DATASET_ID] ?? [];
+      const all = dataset.id === V4_DATASET_ID ? v4Observations : datasetObservations[dataset.id] ?? datasetObservations[SAMPLE_DATASET_ID] ?? [];
       return HttpResponse.json(pair ? all.filter((o) => `${o.pair.base}/${o.pair.quote}` === pair) : all);
+    }),
+
+    http.get('/api/datasets/:id/chart', async ({ params, request }) => {
+      await wait();
+      const dataset = db.datasets.find((item) => item.id === params.id) ?? (params.id === V4_DATASET_ID ? v4Dataset : undefined);
+      if (!dataset) return error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
+      const url = new URL(request.url);
+      const pair = url.searchParams.get('pair');
+      if (!pair || !dataset.pairs.some((item) => `${item.base}/${item.quote}` === pair)) return error(400, 'INVALID_REQUEST', 'A recorded pair is required');
+      const observations = (datasetObservations[dataset.id] ?? datasetObservations[SAMPLE_DATASET_ID] ?? []).filter((item) => `${item.pair.base}/${item.pair.quote}` === pair);
+      return chartResponse(dataset.schemaVersion >= 4 ? v4Chart : legacyChart(observations), url, true);
     }),
 
     http.get('/api/config/defaults', async () => {
@@ -271,6 +371,18 @@ export function createHandlers(options: MockOptions = {}) {
       await wait();
       const records = runDetailOr404(String(params.id));
       return records ? HttpResponse.json(records.detail) : error(404, 'RUN_NOT_FOUND', `Run ${String(params.id)} not found`);
+    }),
+
+    http.get('/api/runs/:id/chart', async ({ params, request }) => {
+      await wait();
+      const records = runDetailOr404(String(params.id));
+      if (!records) return error(404, 'RUN_NOT_FOUND', `Run ${String(params.id)} not found`);
+      const url = new URL(request.url);
+      const pairs = [...new Set(records.observations.map((item) => `${item.pair.base}/${item.pair.quote}`))];
+      const pair = url.searchParams.get('pair');
+      if ((!pair && pairs.length > 1) || (pair && !pairs.includes(pair))) return error(400, 'INVALID_REQUEST', 'A recorded pair is required');
+      const observations = records.observations.filter((item) => !pair || `${item.pair.base}/${item.pair.quote}` === pair);
+      return chartResponse(params.id === REAL_RUN_ID ? v4Chart : legacyChart(observations, records), url);
     }),
 
     ...(['events', 'observations', 'orders', 'positions'] as const).map((kind) =>

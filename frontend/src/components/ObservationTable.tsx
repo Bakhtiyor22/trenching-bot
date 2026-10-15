@@ -1,8 +1,9 @@
 import { Badge, Code, ScrollArea, Table, Text } from '@mantine/core';
+import { useEffect, useState } from 'react';
 import type { Observation, UsdtObservation } from '../api/types';
 import { humanizeCode, formatSlot, usdtRateNote } from '../lib/format';
 import { recordedTradeSignature, transactionLinks } from '../lib/marketLinks';
-import { Decimal, Timestamp } from './DisplayValues';
+import { Decimal, ShortId, Timestamp } from './DisplayValues';
 import { MarketLinks } from './MarketLinks';
 import { PagingFooter } from './Panels';
 import { useClientPaging } from './useClientPaging';
@@ -38,9 +39,31 @@ function TradeLinks({ observationId }: { observationId: string }) {
 }
 
 /** With [usdt], the price column shows each observation's USDT conversion (or why it has none). */
-export function ObservationTable({ observations, usdt }: { observations: Observation[]; usdt?: UsdtObservation[] }) {
+export function ObservationTable({
+  observations,
+  usdt,
+  selectedId,
+}: {
+  observations: Observation[];
+  usdt?: UsdtObservation[];
+  selectedId?: string | null;
+}) {
   const paging = useClientPaging(observations, 50);
+  const selectedIndex = observations.findIndex((observation) => observation.id === selectedId);
+  const selectionKey = selectedId ? `${selectedId}:${selectedIndex}` : '';
+  const [previousSelection, setPreviousSelection] = useState('');
+  if (selectionKey !== previousSelection) {
+    setPreviousSelection(selectionKey);
+    if (selectedIndex >= 0) paging.setPage(Math.floor(selectedIndex / 50) + 1);
+  }
+  useEffect(() => {
+    if (selectedId)
+      document
+        .getElementById(`observation-${encodeURIComponent(selectedId)}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }, [selectedId, paging.page]);
   const usdtById = new Map((usdt ?? []).map((o) => [o.id, o]));
+  const hasTraders = observations.some((observation) => observation.trade != null);
   if (observations.length === 0) return <EmptyState title="No observations" />;
   return (
     <>
@@ -52,6 +75,7 @@ export function ObservationTable({ observations, usdt }: { observations: Observa
               <Table.Th ta="right">Slot</Table.Th>
               <Table.Th ta="right">Price slot</Table.Th>
               <Table.Th>Observed</Table.Th>
+              {hasTraders && <Table.Th>Trader</Table.Th>}
               <Table.Th ta="right">{usdt ? 'Price (USDT)' : 'Price'}</Table.Th>
               <Table.Th ta="right">Liquidity (quote)</Table.Th>
               <Table.Th>Quality</Table.Th>
@@ -61,18 +85,54 @@ export function ObservationTable({ observations, usdt }: { observations: Observa
           </Table.Thead>
           <Table.Tbody>
             {paging.visible.map((o) => (
-              <Table.Tr key={o.id}>
+              <Table.Tr
+                key={o.id}
+                id={`observation-${encodeURIComponent(o.id)}`}
+                data-highlighted={o.id === selectedId || undefined}
+                aria-selected={o.id === selectedId || undefined}
+                style={
+                  o.id === selectedId
+                    ? {
+                        outline: '2px solid var(--mantine-color-yellow-5)',
+                        outlineOffset: -2,
+                        scrollMarginTop: 24,
+                      }
+                    : undefined
+                }
+              >
                 <Table.Td ff="monospace">{o.id}</Table.Td>
                 <Table.Td ta="right">{formatSlot(o.slot)}</Table.Td>
                 <Table.Td ta="right">{formatSlot(o.priceSlot)}</Table.Td>
                 <Table.Td style={{ whiteSpace: 'nowrap' }}>
                   <Timestamp iso={o.observedTime} />
                 </Table.Td>
+                {hasTraders && (
+                  <Table.Td>
+                    {o.trade ? (
+                      <>
+                        <ShortId value={o.trade.trader} />
+                        <Text size="xs" c="dimmed">
+                          {o.trade.side}
+                        </Text>
+                      </>
+                    ) : (
+                      <Text span c="dimmed">
+                        —
+                      </Text>
+                    )}
+                  </Table.Td>
+                )}
                 <Table.Td ta="right">
                   {usdt ? <UsdtPrice value={usdtById.get(o.id)} /> : <Decimal value={o.price} />}
                 </Table.Td>
                 <Table.Td ta="right">
-                  {o.liquidityQuote == null ? <Text span c="dimmed" size="sm">unknown</Text> : <Decimal value={o.liquidityQuote} />}
+                  {o.liquidityQuote == null ? (
+                    <Text span c="dimmed" size="sm">
+                      unknown
+                    </Text>
+                  ) : (
+                    <Decimal value={o.liquidityQuote} />
+                  )}
                 </Table.Td>
                 <Table.Td>
                   <QualityBadge quality={o.quality} />
@@ -90,7 +150,13 @@ export function ObservationTable({ observations, usdt }: { observations: Observa
           </Table.Tbody>
         </Table>
       </ScrollArea>
-      <PagingFooter page={paging.page} pages={paging.pages} total={paging.total} onChange={paging.setPage} noun="observations" />
+      <PagingFooter
+        page={paging.page}
+        pages={paging.pages}
+        total={paging.total}
+        onChange={paging.setPage}
+        noun="observations"
+      />
     </>
   );
 }

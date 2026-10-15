@@ -2,6 +2,8 @@ import { API_BASE, deleteRequest, getJson, postForm, postJson, withQuery } from 
 import type {
   ActuatorHealth,
   AddressCheck,
+  ChartRequest,
+  ChartResponse,
   ConfigDefaults,
   Dashboard,
   Dataset,
@@ -31,11 +33,22 @@ export function pairKey(pair: Pair): string {
   return `${pair.base}/${pair.quote}`;
 }
 
+function chartUrl(path: string, request: ChartRequest): string {
+  const { wallet, ...query } = request;
+  const url = withQuery(path, query);
+  if (!wallet?.length) return url;
+  const params = new URLSearchParams();
+  wallet.forEach((address) => params.append('wallet', address));
+  return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
+}
+
 export const api = {
   datasets: (page: number, size: number, signal?: AbortSignal) =>
     getJson<Page<Dataset>>(withQuery(`${API_BASE}/datasets`, { page, size }), signal),
   dataset: (id: string, signal?: AbortSignal) =>
     getJson<Dataset>(`${API_BASE}/datasets/${enc(id)}`, signal),
+  datasetChart: (id: string, request: ChartRequest, signal?: AbortSignal) =>
+    getJson<ChartResponse>(chartUrl(`${API_BASE}/datasets/${enc(id)}/chart`, request), signal),
   deleteDataset: (id: string) => deleteRequest(`${API_BASE}/datasets/${enc(id)}`),
   datasetObservations: (id: string, pair: string | null, signal?: AbortSignal) =>
     getJson<Observation[]>(
@@ -58,6 +71,8 @@ export const api = {
   runs: (page: number, size: number, datasetId: string | null, signal?: AbortSignal) =>
     getJson<Page<RunSummary>>(withQuery(`${API_BASE}/runs`, { page, size, datasetId }), signal),
   run: (id: string, signal?: AbortSignal) => getJson<RunDetail>(`${API_BASE}/runs/${enc(id)}`, signal),
+  runChart: (id: string, request: ChartRequest, signal?: AbortSignal) =>
+    getJson<ChartResponse>(chartUrl(`${API_BASE}/runs/${enc(id)}/chart`, request), signal),
   runEvents: (id: string, signal?: AbortSignal) =>
     getJson<RunEvent[]>(`${API_BASE}/runs/${enc(id)}/events`, signal),
   runObservations: (id: string, signal?: AbortSignal) =>

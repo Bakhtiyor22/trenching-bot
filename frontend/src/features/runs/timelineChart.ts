@@ -1,7 +1,7 @@
 import type { EChartsOption, SeriesOption } from 'echarts';
 import { pairKey } from '../../api/endpoints';
-import type { Observation, RunUsdtView, Scenario } from '../../api/types';
-import { itemTooltip, observationSeries, slotAxes } from '../../charts/priceChart';
+import type { ChartResponse, Observation, RunUsdtView, Scenario } from '../../api/types';
+import { chartCandleOption, itemTooltip, observationSeries, slotAxes, type ChartView, type MarketChartStyle } from '../../charts/priceChart';
 import { compactDecimal, formatDecimal, toChartNumber } from '../../lib/decimal';
 import { formatSlot, humanizeCode, signedBps, usdtRateNote } from '../../lib/format';
 import { FONT_MONO, terminal } from '../../theme';
@@ -288,4 +288,39 @@ export function timelineOption(
 /** The distinct pairs traded in a run, in scenario order. */
 export function scenarioPairs(scenarios: Scenario[]): string[] {
   return [...new Set(scenarios.map((s) => pairKey(s.pair)))];
+}
+
+/** Recorded market series with SOL strategy levels spanning the visible time domain. */
+export function chartTimelineOption(response: ChartResponse, view: ChartView, scenarios: Scenario[], style: MarketChartStyle = 'line'): EChartsOption {
+  const option = chartCandleOption(response, view, style);
+  if (view === 'mcap' && response.valuationBasis.available) return option;
+  const axis = (Array.isArray(option.xAxis) ? option.xAxis[0] : option.xAxis) as { min: number; max: number };
+  const levelMarkers = timelineMarkers(scenarios).levels;
+  const levels: SeriesOption[] = levelMarkers.flatMap((level) => {
+    const price = toChartNumber(level.price);
+    return price == null ? [] : [{
+      type: 'line', name: LEVELS_SERIES,
+      data: [[axis.min, price], [axis.max, price]],
+      showSymbol: false, silent: true,
+      lineStyle: { color: level.color, type: 'dotted', width: 1.5 },
+      itemStyle: { color: LEVEL_COLORS.reference },
+      endLabel: { show: true, formatter: `${level.label} ${compactDecimal(level.price)}`, color: level.color, fontFamily: FONT_MONO, fontSize: 11, align: 'right', distance: -6 },
+      tooltip: { show: false }, emphasis: { disabled: true }, z: 0,
+    }];
+  });
+  if (!levels.length) return option;
+  const axes = Array.isArray(option.yAxis) ? option.yAxis : [option.yAxis ?? {}];
+  const mainAxis = axes[0] as { min: number; max: number };
+  const prices = levelMarkers.flatMap((level) => {
+    const price = toChartNumber(level.price);
+    return price == null ? [] : [price];
+  });
+  const min = Math.min(mainAxis.min, ...prices.map((price) => price - Math.abs(price) * 0.1));
+  const max = Math.max(mainAxis.max, ...prices.map((price) => price + Math.abs(price) * 0.1));
+  const paddedAxis = { ...axes[0], min, max, interval: (max - min) / 3 };
+  return {
+    ...option,
+    yAxis: Array.isArray(option.yAxis) ? [paddedAxis, ...axes.slice(1)] : paddedAxis,
+    series: [...(option.series as SeriesOption[]), ...levels],
+  };
 }

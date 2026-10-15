@@ -1,5 +1,5 @@
 import { Box, useComputedColorScheme } from '@mantine/core';
-import { BarChart, LineChart, ScatterChart } from 'echarts/charts';
+import { BarChart, CandlestickChart, CustomChart, LineChart, ScatterChart } from 'echarts/charts';
 import {
   DataZoomComponent,
   GridComponent,
@@ -10,13 +10,16 @@ import {
 } from 'echarts/components';
 import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
-import type { EChartsOption } from 'echarts';
+import type { ECharts, EChartsOption } from 'echarts';
+import { useEffect, useRef } from 'react';
 import { FONT_MONO, terminal } from '../theme';
 import ReactEChartsCore from './chartComponent';
 
 // Register only what the console uses, to keep the bundle small.
 echarts.use([
   BarChart,
+  CandlestickChart,
+  CustomChart,
   LineChart,
   ScatterChart,
   DataZoomComponent,
@@ -71,13 +74,18 @@ export interface ChartProps {
   /** Accessible description of what the chart shows. */
   ariaLabel: string;
   onEvents?: ChartEvents;
+  onReady?: (instance: ECharts) => void;
+  onDispose?: () => void;
 }
 
 /**
  * ECharts wrapper. Charts are the only place where decimal strings become JS numbers; tables and
  * tooltips that show amounts use the original strings.
  */
-export function Chart({ option, height = 300, ariaLabel, onEvents }: ChartProps) {
+export function Chart({ option, height = 300, ariaLabel, onEvents, onReady, onDispose }: ChartProps) {
+  const dispose = useRef(onDispose);
+  useEffect(() => { dispose.current = onDispose; }, [onDispose]);
+  useEffect(() => () => dispose.current?.(), []);
   const scheme = useComputedColorScheme('dark');
   const themed: EChartsOption = {
     backgroundColor: 'transparent',
@@ -94,6 +102,7 @@ export function Chart({ option, height = 300, ariaLabel, onEvents }: ChartProps)
         lazyUpdate
         style={{ height, width: '100%' }}
         onEvents={onEvents}
+        onChartReady={onReady}
       />
     </Box>
   );

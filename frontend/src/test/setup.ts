@@ -15,14 +15,37 @@ function serializeOption(option: unknown): string {
   );
 }
 
-// ECharts needs a real canvas, which jsdom lacks. Render a stub exposing the option as JSON so tests
-// can still assert what would be plotted.
-vi.mock('echarts-for-react/esm/core', async () => {
-  const { createElement } = await import('react');
+/**
+ * A minimal ECharts instance for overlays that place HTML over the plot: x is 40 px per second of
+ * the minute, y a fixed baseline, so actions a second or more apart never stack.
+ */
+function fakeChartInstance(dom: HTMLElement) {
+  const noop = () => {};
   return {
-    default: ({ option }: { option: unknown }) =>
-      createElement('div', { 'data-testid': 'echarts', 'data-option': serializeOption(option) }),
+    convertToPixel: (_finder: unknown, values: number[]) => [((values[0]! / 1000) % 60) * 40 + 40, 200],
+    containPixel: () => true,
+    on: noop,
+    off: noop,
+    isDisposed: () => false,
+    getDom: () => dom,
+    getZr: () => ({ on: noop, off: noop }),
   };
+}
+
+// ECharts needs a real canvas, which jsdom lacks. Render a stub exposing the option as JSON so tests
+// can still assert what would be plotted, and hand callers a fake instance once mounted.
+vi.mock('echarts-for-react/esm/core', async () => {
+  const { createElement, useEffect, useRef } = await import('react');
+  function EChartsStub({ option, onChartReady }: { option: unknown; onChartReady?: (instance: unknown) => void }) {
+    const dom = useRef<HTMLDivElement>(null);
+    const ready = useRef(onChartReady);
+    // Ready fires once per mount, as in echarts-for-react.
+    useEffect(() => {
+      if (dom.current) ready.current?.(fakeChartInstance(dom.current));
+    }, []);
+    return createElement('div', { ref: dom, 'data-testid': 'echarts', 'data-option': serializeOption(option) });
+  }
+  return { default: EChartsStub };
 });
 
 // Browser APIs Mantine relies on that jsdom lacks.

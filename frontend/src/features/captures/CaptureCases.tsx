@@ -68,11 +68,13 @@ function CaseCard({ sessionId, item }: { sessionId: string; item: CaptureCase })
   const operationState = operation.data?.state ?? item.operationState;
   const operationActive =
     isCaptureOperationOpen(item.readiness) || isCaptureOperationOpen(operationState);
+  // Refresh once when the operation settles. Keyed on its state, not the response object: the
+  // refresh refetches this operation too, and a new object would trigger the refresh again.
+  const settledState = operation.data?.state;
   useEffect(() => {
-    if (!item.operationId || !operation.data || isCaptureOperationOpen(operation.data.state))
-      return;
+    if (!item.operationId || !settledState || isCaptureOperationOpen(settledState)) return;
     void refresh();
-  }, [item.operationId, operation.data, refresh]);
+  }, [item.operationId, settledState, refresh]);
   const progress = item.progress;
   return (
     <Card withBorder padding="md" component="article" aria-label={`Capture case ${item.caseId}`}>

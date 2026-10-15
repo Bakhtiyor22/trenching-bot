@@ -7,6 +7,7 @@
  */
 import type {
   Close,
+  ChartResponse,
   Config,
   ConfigDefaults,
   Dashboard,
@@ -30,6 +31,7 @@ export const BASE_MINT = '11111111111111111111111111111112';
 export const STOP_LOSS_MINT = '11111111111111111111111111111113';
 export const NO_DIP_MINT = '11111111111111111111111111111114';
 export const WALLET = '11111111111111111111111111111111';
+export const WATCHED_WALLET = '11111111111111111111111111111115';
 export const SIGNATURE = '1'.repeat(64);
 export const PAIR: Pair = { base: BASE_MINT, quote: SOL_MINT };
 const STOP_LOSS_PAIR: Pair = { base: STOP_LOSS_MINT, quote: SOL_MINT };
@@ -494,6 +496,7 @@ const realObservations: Observation[] = REAL_TRADES.map((signature, index) => ({
   id: tradeId(signature),
   pair: REAL_PAIR,
   sourceEventId: `${signature}:1:7`,
+  trade: { trader: index % 2 === 0 ? WALLET : WATCHED_WALLET, side: index < 2 ? 'BUY' : 'SELL', solLamports: '1000000000', tokenRaw: '123456789012345' },
 }));
 
 const sampleTakeProfit = sampleScenarios[0] as Scenario;
@@ -588,6 +591,66 @@ export const realRunUsdt: RunUsdtView = {
   })),
   realizedPnlUsdt: USDT_TOTAL_PNL,
   realizedPnlUnavailableReason: null,
+};
+
+export const V4_DATASET_ID = 'cafef00d1234567890abcdef1234567890abcdef1234567890abcdef12345678';
+export const v4Dataset: Dataset = { ...edgeDataset, id: V4_DATASET_ID, name: 'chart-capture-v4', schemaVersion: 4, observationCount: 6 };
+
+const CHART_TIMES = [0, 1, 3, 60, 61, 62].map((second) => new Date(Date.parse(MINUTE) + second * 1000).toISOString());
+const CHART_PRICES = ['0.0000001', '0.00000008', '0.00000012', '0.00000011', '0.00000009', '0.00000013'];
+const CHART_MCAPS = ['20000', '16000', '24000', '22000', '18000', '26000'];
+
+/** Static decimal strings remain exact; the deliberate empty seconds exercise real chart gaps. */
+export const v4Chart: ChartResponse = {
+  bucketSeconds: 1,
+  range: { from: CHART_TIMES[0]!, to: CHART_TIMES.at(-1)! },
+  trackedWallet: WALLET,
+  valuationBasis: { label: 'Fully diluted Mcap (USDT)', supply: '1000000000', supplySource: 'pumpfun-standard-supply', quoteCurrency: 'USDT', rateSource: 'recorded:SOLUSDT:1m:open', rateGranularity: '1m', available: true, unavailableReason: null },
+  candles: CHART_TIMES.map((bucketStart, index) => ({ bucketStart, observationCount: 1, price: { open: CHART_PRICES[index]!, high: CHART_PRICES[index]!, low: CHART_PRICES[index]!, close: CHART_PRICES[index]! }, mcap: { open: CHART_MCAPS[index]!, high: CHART_MCAPS[index]!, low: CHART_MCAPS[index]!, close: CHART_MCAPS[index]! }, mcapMissingPoints: 0, mcapUnsupportedPoints: 0 })),
+  markers: {
+    available: true, unavailableReason: null, mode: 'ITEMS', total: CHART_TIMES.length, nextCursor: null, clusters: [],
+    items: CHART_TIMES.map((time, index) => ({ kind: 'OBSERVED', observationId: `v4-observation-${index}`, trader: index % 2 === 0 ? WALLET : WATCHED_WALLET, isTrackedWallet: index % 2 === 0, side: index % 2 === 0 ? 'BUY' : 'SELL', solLamports: '1234567890', tokenRaw: '123456789012345', price: CHART_PRICES[index]!, mcap: CHART_MCAPS[index]!, slot: 1000 + index, time, signature: index === 0 ? null : SIGNATURE, source: 'pumpfun-bonding-curve-trade/v1' })),
+  },
+  paperFills: [
+    { kind: 'PAPER', phase: 'ENTRY', side: 'BUY', intentId: 'chart-paper-entry', slot: 1001, time: CHART_TIMES[1]!, price: TAKE_PROFIT_ENTRY_PRICE, mcap: CHART_MCAPS[1]!, quantity: TAKE_PROFIT_QUANTITY, reason: null },
+    { kind: 'PAPER', phase: 'EXIT', side: 'SELL', intentId: 'chart-paper-entry', slot: 1002, time: CHART_TIMES[2]!, price: TAKE_PROFIT_EXIT_PRICE, mcap: CHART_MCAPS[2]!, quantity: TAKE_PROFIT_QUANTITY, reason: 'TAKE_PROFIT' },
+  ],
+};
+
+export const v3Chart: ChartResponse = {
+  ...v4Chart,
+  markers: { available: false, unavailableReason: 'NOT_RECORDED_BEFORE_SCHEMA_V4', mode: 'ITEMS', total: 0, items: [], nextCursor: null, clusters: [] },
+};
+
+export const v4Observations: Observation[] = v4Chart.markers.items.map((item) => ({
+  id: item.observationId, pair: PAIR, slot: item.slot, priceSlot: item.slot, observedTime: item.time,
+  price: item.price, liquidityQuote: null, source: item.source, sourceEventId: item.signature ?? `v4-event-${item.slot}`,
+  commitment: 'CONFIRMED', quality: 'LAST_TRADE',
+  trade: { trader: item.trader, side: item.side, solLamports: item.solLamports, tokenRaw: item.tokenRaw },
+}));
+
+export const clusteredChart: ChartResponse = {
+  ...v4Chart,
+  markers: {
+    ...v4Chart.markers,
+    mode: 'CLUSTERED',
+    items: v4Chart.markers.items.filter((item) => item.isTrackedWallet),
+    clusters: v4Chart.markers.items.filter((item) => !item.isTrackedWallet).map((item) => ({ bucketStart: item.time, count: 1, buyCount: item.side === 'BUY' ? 1 : 0, sellCount: item.side === 'SELL' ? 1 : 0, firstSlot: item.slot, lastSlot: item.slot, firstTime: item.time, lastTime: item.time })),
+  },
+};
+
+export const rateGapChart: ChartResponse = {
+  ...v4Chart,
+  candles: v4Chart.candles.map((candle, index) => index === 1 ? { ...candle, mcap: null, mcapMissingPoints: 1 } : index === 2 ? { ...candle, mcap: null, mcapUnsupportedPoints: 1 } : candle),
+  markers: { ...v4Chart.markers, items: v4Chart.markers.items.map((item, index) => index === 1 || index === 2 ? { ...item, mcap: null } : item) },
+};
+
+export const unavailableChart: ChartResponse = {
+  ...v4Chart,
+  valuationBasis: { ...v4Chart.valuationBasis, available: false, unavailableReason: 'RATES_UNAVAILABLE', rateSource: null },
+  candles: v4Chart.candles.map((candle) => ({ ...candle, mcap: null, mcapMissingPoints: candle.observationCount })),
+  markers: { ...v4Chart.markers, items: v4Chart.markers.items.map((item) => ({ ...item, mcap: null })) },
+  paperFills: v4Chart.paperFills.map((fill) => ({ ...fill, mcap: null })),
 };
 
 export const solUsdtPrice: SolUsdtPrice = {

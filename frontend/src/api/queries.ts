@@ -8,7 +8,7 @@ import {
 } from '@tanstack/react-query';
 import { ApiError } from './client';
 import { api } from './endpoints';
-import type { RunStartRequest } from './types';
+import type { ChartRequest, ChartResponse, RunStartRequest } from './types';
 
 /** Runs started from this tab; the new-run watcher skips them, since starting one already notifies. */
 export const locallyStartedRuns = new Set<string>();
@@ -31,6 +31,7 @@ export const queryKeys = {
   dataset: (id: string) => ['dataset', id] as const,
   datasetObservations: (id: string, pair: string | null) =>
     ['dataset', id, 'observations', pair] as const,
+  datasetChart: (id: string, request: ChartRequest) => ['dataset', id, 'chart', request] as const,
   configDefaults: ['config', 'defaults'] as const,
   runsAll: ['runs'] as const,
   runs: (page: number, size: number, datasetId: string | null) =>
@@ -39,6 +40,7 @@ export const queryKeys = {
   runRecords: (id: string, kind: 'events' | 'observations' | 'orders' | 'positions') =>
     ['run', id, kind] as const,
   runUsdt: (id: string) => ['run', id, 'usdt'] as const,
+  runChart: (id: string, request: ChartRequest) => ['run', id, 'chart', request] as const,
   solUsdtPrice: ['market', 'sol-usdt'] as const,
   dashboard: ['dashboard'] as const,
   actuatorHealth: ['actuator', 'health'] as const,
@@ -81,6 +83,47 @@ export function useDatasetObservations(id: string, pair: string | null, enabled 
     queryKey: queryKeys.datasetObservations(id, pair),
     queryFn: ({ signal }) => api.datasetObservations(id, pair, signal),
     enabled,
+  });
+}
+
+/** The server repeats candles but sends clusters only once; retain the first page's chart. */
+async function completeChart(
+  fetchPage: (request: ChartRequest, signal: AbortSignal) => Promise<ChartResponse>,
+  request: ChartRequest,
+  signal: AbortSignal,
+): Promise<ChartResponse> {
+  signal.throwIfAborted();
+  const first = await fetchPage(request, signal);
+  const items = [...first.markers.items];
+  const cursors = new Set<string>();
+  let cursor = first.markers.nextCursor;
+  while (cursor !== null) {
+    signal.throwIfAborted();
+    if (cursors.has(cursor)) throw new ApiError(0, 'BAD_RESPONSE', 'The chart returned a repeated marker cursor.');
+    cursors.add(cursor);
+    const page = await fetchPage({ ...request, cursor }, signal);
+    items.push(...page.markers.items);
+    cursor = page.markers.nextCursor;
+  }
+  signal.throwIfAborted();
+  return { ...first, markers: { ...first.markers, items, nextCursor: null } };
+}
+
+export function useDatasetChart(id: string, request: ChartRequest, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.datasetChart(id, request),
+    queryFn: ({ signal }) => completeChart((page, pageSignal) => api.datasetChart(id, page, pageSignal), request, signal),
+    enabled,
+    staleTime: Infinity,
+  });
+}
+
+export function useRunChart(id: string, request: ChartRequest, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.runChart(id, request),
+    queryFn: ({ signal }) => completeChart((page, pageSignal) => api.runChart(id, page, pageSignal), request, signal),
+    enabled,
+    staleTime: Infinity,
   });
 }
 
