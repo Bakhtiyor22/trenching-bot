@@ -1,6 +1,6 @@
 # Chart data: trade actors and market-cap valuation — milestone 3
 
-Status: Approved (user approved the v4 dataset on 2026-10-15) — waiting for milestone 2 to land. Nothing implemented.
+Status: Implemented (Parts 1–3 in `21d59d2`, `a00471f`), review fixes in progress; Part 4 (frontend) is with Codex.
 
 Milestone 3 of the approved [capture, paper and chart improvement plan](20261011-capture-paper-chart-improvement-plan.md) (sections 9 and 10, work unit 6; milestones 1 and 2: [cases](20261012-capture-paper-implementation.md), [throughput](archive/20261014-capture-throughput.md)). It adds what the chart needs from the backend: the decoded trade actor, side and amounts of every observed trade, a market-cap valuation derived from the dataset's own rates, and a bounded chart read API. The frontend is a self-contained Codex brief (Part 4).
 
@@ -41,7 +41,7 @@ Order: after milestone 2 is committed (both touch `RecordedReplayExportTest`), P
 - A candle's mcap high is the maximum of the converted points, differing from price high × one rate when the rate changes inside the bucket (two-minute test).
 - A point without a rate minute gives null mcap and counts in `mcapMissingPoints`; a bucket with no rated point has `mcap: null`. A non-Pump.fun source, non-SOL quote or a failed v4 cross-check gives unavailable. A run whose dataset was deleted gives `RATES_UNAVAILABLE`.
 - Bucket cap: 5,000 observations over 10 days with `maxBuckets=5000` return at most 2,000 candles; `bucketSeconds` is the smallest fixed-ladder value that fits.
-- Markers: over the limit the response is clustered, `items` holds the tracked wallet's trades and `items + Σ cluster counts == total`; at or under the limit every trade is an item. `isTrackedWallet` is true exactly for the dataset's tracked wallet. v3 data returns `markers.available=false`.
+- Markers: over the limit the response is clustered, `items` holds the tracked wallet's trades and, summed over all pages, `items + Σ cluster counts == total`; at or under the limit every trade is an item. `isTrackedWallet` is true exactly for the dataset's tracked wallet. v3 data returns `markers.available=false`.
 - Run-chart paper fills have `kind=PAPER`, are absent from observed markers and match the run's fill and close observations; the dataset chart has none.
 - Existing `/observations` responses keep every field and gain only the nullable `trade`.
 
@@ -59,7 +59,7 @@ You work only under `frontend/`. Backend Parts 1 to 3 add the data below; develo
 
 **HTTP contract** (owned by backend Part 3): `GET /api/runs/{id}/chart` and `GET /api/datasets/{id}/chart`, query: `pair=<base>/<quote>` (required for datasets and for runs with several pairs), `from`/`to` (ISO instants, default whole range), `maxBuckets` (default 300, server cap 2000), `markerLimit` (default 500, cap 2000), `wallet` (repeatable, at most 20, base58), `cursor` (opaque, from `markers.nextCursor`). Errors use the existing console error body (400 invalid request, 404 unknown run or dataset).
 - `bucketSeconds` (int), `range {from,to}`, `trackedWallet` (string or null), `valuationBasis {label, supply, supplySource, quoteCurrency:"USDT", rateSource, rateGranularity, available, unavailableReason}` with `unavailableReason` one of `UNSUPPORTED_TOKEN`, `NOT_SOL_QUOTED`, `RATES_UNAVAILABLE` or null.
-- `candles[]` (only buckets with data; absent buckets are gaps): `bucketStart`, `observationCount`, `price {open,high,low,close}` in SOL per token, `mcap {open,high,low,close}` in USDT or null, `mcapMissingPoints` (int).
+- `candles[]` (only buckets with data; absent buckets are gaps): `bucketStart`, `observationCount`, `price {open,high,low,close}` in SOL per token, `mcap {open,high,low,close}` in USDT or null, `mcapMissingPoints` (int), `mcapUnsupportedPoints` (int).
 - `markers {available, unavailableReason ("NOT_RECORDED_BEFORE_SCHEMA_V4" or null), mode ("ITEMS"|"CLUSTERED"), total, items[], nextCursor, clusters[]}`. Item: `kind:"OBSERVED"`, `observationId`, `trader`, `isTrackedWallet`, `side` (BUY|SELL), `solLamports`, `tokenRaw`, `price`, `mcap` (or null), `slot`, `time`, `signature` (or null), `source`. Cluster: `bucketStart`, `count`, `buyCount`, `sellCount`, `firstSlot`, `lastSlot`, `firstTime`, `lastTime`. In CLUSTERED mode `items` holds only the tracked wallet's trades.
 - `paperFills[]` (runs only): `kind:"PAPER"`, `phase` (ENTRY|EXIT), `side`, `intentId`, `slot`, `time`, `price`, `mcap` (or null), `quantity`, `reason` (exit reason or null).
 - `ObservationResponse` gains `trade` (`{trader, side, solLamports, tokenRaw}` or null) on the existing `/observations` endpoints.
@@ -67,8 +67,8 @@ You work only under `frontend/`. Backend Parts 1 to 3 add the data below; develo
 **Contract details as implemented** (backend Part 3, commit `a00471f`):
 - `range` echoes the requested `from`/`to`, else the first and last observation time.
 - Bucket ladder (seconds): 1, 5, 15, 30, 60, 300, 900, 3600, 14400, 86400; the smallest that fits `min(maxBuckets, 2000)` buckets, epoch-aligned on observation time.
-- `cursor` is opaque (do not parse it). Paging applies to the tracked wallet's `items` only; in CLUSTERED mode `clusters` are sent on the first page only, where `items + Σ clusters.count == total` holds exactly. Later pages carry `items` only.
-- `mcapMissingPoints` counts only points whose minute has no recorded rate (unsupported points are reported through `valuationBasis` instead).
+- `cursor` is opaque (do not parse it). Paging applies to the tracked wallet's `items` only; in CLUSTERED mode `clusters` are sent on the first page only and later pages carry `items` only. `items + Σ clusters.count == total` holds over all pages; on the first page alone it holds only when the tracked wallet has at most `markerLimit` trades, so keep following `nextCursor` until it is null to show every tracked trade.
+- `mcapMissingPoints` counts points whose minute has no recorded rate; `mcapUnsupportedPoints` (additive per-candle integer) counts points whose valuation is unavailable for another reason, e.g. a failed decimals cross-check. Show both in the gap note. `valuationBasis.available=false` only when no point can be valued.
 - A paper fill's `mcap` values the observation the fill used, not the fill's execution price.
 - `unavailableReason` precedence: `NOT_SOL_QUOTED` before `RATES_UNAVAILABLE`.
 - `rateSource` may list several sources joined by a comma.
