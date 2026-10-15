@@ -10,6 +10,7 @@ import com.trenching.bot.walletactivity.RecordedWalletHistory
 import com.trenching.bot.walletactivity.application.WalletNormalizer
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
 import com.trenching.bot.walletactivity.domain.TradeSide
+import com.trenching.bot.walletactivity.domain.WalletTransaction
 import com.trenching.bot.walletactivity.domain.WalletTradeObserved
 import java.nio.file.Path
 import org.slf4j.LoggerFactory
@@ -52,5 +53,11 @@ class RecordedWalletPlanning(
             throw CaptureValidationException("MARKET_CAPTURE_MISMATCH")
         }
         return anchor
+    }
+
+    /** The wallet transactions of a window's anchor buy that trade its mint: all a replay of that window's cycle needs. */
+    fun anchorTransactions(planned: PlannedWalletHistory, window: MarketCaptureWindow): List<WalletTransaction> {
+        val anchor = anchor(planned, window)
+        return planned.history.transactions.filter { it.signature == anchor.signature && it.pair.base == window.baseMint }
     }
 }

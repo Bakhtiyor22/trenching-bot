@@ -63,7 +63,7 @@ internal class CaptureCaseInspectionService(
             caseId, planned.history.wallet, window.baseMint, anchor.signature, anchor.slot.value, anchor.instructionIndex,
             window, planned.plan.parameters, progress?.coverage ?: MarketWindowCoverage.PENDING,
             progress?.selected ?: 0, progress?.captured ?: 0, progress?.unresolved ?: 0,
-            stage, false, blocker, 0,
+            stage, false, blocker, 0, progress?.observedThrough?.value,
         )
     }
 

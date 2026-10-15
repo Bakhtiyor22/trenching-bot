@@ -60,7 +60,7 @@ class CaptureWorkflowTest {
                     providerCalls++
                     return rateResult()
                 }
-            } }, mapper)
+            } }, mapper, cutoffRates = null)
 
     @Test
     fun `acquisition complete market with incomplete coverage refuses rates before constructing provider`() {

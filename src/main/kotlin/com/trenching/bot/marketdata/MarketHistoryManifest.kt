@@ -22,7 +22,8 @@ data class MarketHistoryManifest(
 
 /**
  * One window's discovery audit. [selected] counts in-window successful signatures; [selection] keeps them only while
- * the window is pending or complete, because the other coverages fetch no details.
+ * the window is pending or complete, because the other coverages fetch no details. [cutoff] is set while the window's
+ * outcome is decided at a slot before its end; the window is then observed only through that slot.
  */
 data class MarketWindowRecord(
     val baseMint: String,
@@ -38,6 +39,15 @@ data class MarketWindowRecord(
     val selected: Int,
     val selection: List<MarketListedSignature>,
     val scanCursor: MarketListedSignature?,
+    val cutoff: MarketWindowCutoff? = null,
+)
+
+/** Where a decided window stops being observed, which outcome decided it, and the evaluator's identity. */
+data class MarketWindowCutoff(
+    val throughSlot: Long,
+    val outcome: String,
+    val engineVersion: String,
+    val configurationHash: String,
 )
 
 data class MarketListedSignature(val signature: String, val slot: Long)
@@ -66,4 +76,7 @@ enum class MarketTransactionOutcome {
     INVALID_TRANSACTION,
     PROVIDER_UNAVAILABLE,
     WITHHELD_UNSAFE_TEXT,
+
+    /** Every window that selects it was decided before its slot; it is resolved, never fetched or referenced. */
+    NOT_NEEDED,
 }

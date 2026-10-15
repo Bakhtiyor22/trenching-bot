@@ -1,12 +1,16 @@
 package com.trenching.bot.replay.application
 
 import com.trenching.bot.replay.domain.DatasetTrades
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.walletactivity.domain.OrderedWalletTransactions
 import com.trenching.bot.marketdata.domain.OrderedMarketData
 import com.trenching.bot.marketdata.domain.OrderedReferenceRates
 
-/** The v3 observation parts are unchanged; v4 appends the four trade values to each observation's parts. */
+/**
+ * The v3 observation parts are unchanged; v4 appends the four trade values to each observation's parts, and v5 appends each
+ * coverage entry after the rates.
+ */
 object DatasetFingerprint {
     fun checksum(dataset: ReplayDataset): String {
         val transactions = OrderedWalletTransactions.canonical(dataset.transactions)
@@ -36,6 +40,12 @@ object DatasetFingerprint {
         }
         OrderedReferenceRates.canonical(dataset.referenceRates).forEach { rate ->
             parts.addAll(listOf("rate", rate.minute.toString(), rate.rate.stripTrailingZeros().toPlainString(), rate.source))
+        }
+        if (ReplayDataset.recordsCoverage(dataset.schemaVersion)) {
+            MarketCoverage.canonical(dataset.coverage).forEach { entry ->
+                parts.addAll(listOf("coverage", entry.pair.base.value, entry.pair.quote.value, entry.fromSlot.value.toString(),
+                    entry.throughSlot.value.toString()))
+            }
         }
         return StableHash.of(parts)
     }

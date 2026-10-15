@@ -35,8 +35,8 @@ class CaptureConfiguration {
     }
 
 
-    @Bean fun captureWorkflow(properties: SolanaRpcProperties, wallet: WalletHistoryCaptureProperties, market: MarketHistoryCaptureProperties, capture: CaptureProperties, rateSource: SolUsdtRateSource, mapper: ObjectMapper, clock: Clock): CaptureWorkflow =
-        CaptureWorkflows.create(wallet.withEndpoint(properties.rpcUrl),market.withEndpoint(properties.rpcUrl),rateSource,mapper,clock,SharedTransactionCache(capture.validatedRoot().resolve(TRANSACTION_CACHE_DIRECTORY),mapper))
+    @Bean fun captureWorkflow(properties: SolanaRpcProperties, wallet: WalletHistoryCaptureProperties, market: MarketHistoryCaptureProperties, capture: CaptureProperties, rateSource: SolUsdtRateSource, rates: ReferenceRateProperties, mapper: ObjectMapper, clock: Clock): CaptureWorkflow =
+        CaptureWorkflows.create(wallet.withEndpoint(properties.rpcUrl),market.withEndpoint(properties.rpcUrl),rateSource,rates.enabled,mapper,clock,SharedTransactionCache(capture.validatedRoot().resolve(TRANSACTION_CACHE_DIRECTORY),mapper))
     @Bean(destroyMethod="close") fun captureFileStore(properties: CaptureProperties, mapper: ObjectMapper): CaptureFileStore = CaptureFileStore(CapturePathPolicy(properties.validatedRoot()),mapper).also { it.initialize() }
     @Bean(destroyMethod="close") fun captureOperationService(store: CaptureFileStore, workflow: CaptureWorkflow, mapper: CaptureResponseMapper, json: ObjectMapper, clock: Clock, rpc: SolanaRpcProperties, rates: ReferenceRateProperties): CaptureOperationService =
         CaptureOperationService(store,workflow,mapper,json,clock,Executors.newSingleThreadExecutor { task -> Thread(task,"capture-console-worker").apply { isDaemon=true } },!rpc.rpcUrl.isNullOrBlank(),rates.enabled,ExecutorCaptureRetryScheduler()).also { it.recover() }

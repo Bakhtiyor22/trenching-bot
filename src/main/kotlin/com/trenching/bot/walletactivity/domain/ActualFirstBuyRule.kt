@@ -38,7 +38,10 @@ internal object ActualFirstBuyRule {
         return entries(evidence, creation)
     }
 
-    /** B itself when it creates the mint, else the creation the oldest-first candidate fetches identify, or the verdict they settle. */
+    /**
+     * B itself when it creates the mint, else the creation the oldest-first candidate fetches identify, or the verdict they
+     * settle. A trade before any creation blocks on the older unknown candidates, which could be the creation, or else on itself.
+     */
     fun creation(evidence: ActualFirstBuyEvidence): CreationOutcome {
         (evidence.firstBuyKind as? CreationCandidateKind.Creation)?.let { own ->
             return CreationOutcome.Identified(evidence.firstBuy.signature, evidence.firstBuy.slot, own.blockTime)
@@ -47,12 +50,15 @@ internal object ActualFirstBuyRule {
         if (!search.listing.endedWithinPage) {
             return if (pagesSpent(search.listing)) CreationOutcome.Decided(bound(evidence, VerificationLimit.MINT_PAGES)) else CreationOutcome.Pending
         }
+        val unknown = mutableListOf<TransactionSignature>()
         for (candidate in search.fetched) {
             when (val kind = candidate.kind) {
                 is CreationCandidateKind.Creation -> return CreationOutcome.Identified(candidate.signature, candidate.slot, kind.blockTime)
-                CreationCandidateKind.Trade -> return CreationOutcome.Decided(unproven(FirstBuyGap.CREATION_NOT_IDENTIFIED, listOf(candidate.signature)))
+                CreationCandidateKind.Trade -> return CreationOutcome.Decided(
+                    unproven(FirstBuyGap.CREATION_NOT_IDENTIFIED, unknown.ifEmpty { listOf(candidate.signature) }))
                 CreationCandidateKind.Unresolved -> return fetchNeeded(evidence)
-                CreationCandidateKind.Other, CreationCandidateKind.Unknown -> Unit
+                CreationCandidateKind.Unknown -> unknown += candidate.signature
+                CreationCandidateKind.Other -> Unit
             }
         }
         val allowance = minOf(search.candidates, WalletHistoryCaptureLimits.CREATION_FETCHES)

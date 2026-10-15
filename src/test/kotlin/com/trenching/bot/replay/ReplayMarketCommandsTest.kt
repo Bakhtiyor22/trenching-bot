@@ -4,6 +4,7 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.marketdata.MarketCaptureWindow
+import com.trenching.bot.marketdata.MarketCutoffMode
 import com.trenching.bot.marketdata.MarketHistoryCapture
 import com.trenching.bot.marketdata.MarketHistoryCaptureConfiguration
 import com.trenching.bot.marketdata.MarketHistoryCaptureRequest
@@ -72,6 +73,29 @@ class ReplayMarketCommandsTest {
     }
 
     @Test
+    fun `capture forwards an explicit cutoff mode and defaults to full`() {
+        val base = arrayOf("--wallet-capture-directory", wallet().toString(), "--directory", markets().toString())
+
+        assertEquals(0, commands().capture(base + arrayOf("--cutoff-mode", "DECIDED")))
+        assertEquals(MarketCutoffMode.DECIDED, captured?.cutoffMode)
+        assertEquals(0, commands().capture(base + arrayOf("--cutoff-mode", "FULL")))
+        assertEquals(MarketCutoffMode.FULL, captured?.cutoffMode)
+        assertEquals(0, commands().capture(base))
+        assertEquals(MarketCutoffMode.FULL, captured?.cutoffMode)
+    }
+
+    @Test
+    fun `capture rejects an unknown or differently spelled cutoff mode before any planning`() {
+        val base = arrayOf("--wallet-capture-directory", wallet().toString(), "--directory", markets().toString())
+
+        listOf("decided", "PARTIAL", " ").forEach { mode ->
+            assertEquals(2, commands().capture(base + arrayOf("--cutoff-mode", mode)), mode)
+        }
+        assertEquals(null, captured)
+        assertTrue(errors.toString().contains("[--cutoff-mode <FULL|DECIDED>]"))
+    }
+
+    @Test
     fun `capture prints window coverage counts and usage and never decodes`() {
         assertEquals(0, commands().capture(arrayOf("--wallet-capture-directory", wallet().toString(), "--directory", markets().toString())))
         val lines = output.toString().lines()
@@ -109,7 +133,7 @@ class ReplayMarketCommandsTest {
             object : MarketHistoryCapture {
                 override fun capture(request: MarketHistoryCaptureRequest): MarketHistoryCaptureResult = error("Must not capture")
             }
-        })
+        }, cutoffRates = null)
         val commands = ReplayMarketCommands(service::capture, { error("Must not inspect") }, { error("Must not decode") },
             PrintStream(output), PrintStream(errors))
 

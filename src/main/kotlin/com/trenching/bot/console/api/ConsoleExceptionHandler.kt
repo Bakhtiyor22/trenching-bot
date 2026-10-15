@@ -9,6 +9,7 @@ import com.trenching.bot.console.domain.SampleDatasetNotFoundException
 import com.trenching.bot.console.mapper.ConsoleErrorMapper
 import com.trenching.bot.replay.domain.DatasetInvalidException
 import com.trenching.bot.replay.domain.DatasetNotFoundException
+import com.trenching.bot.replay.domain.MarketCoverageEndedException
 import com.trenching.bot.replay.domain.SimulationRunConflictException
 import com.trenching.bot.replay.domain.SimulationRunNotFoundException
 import org.springframework.http.HttpStatus
@@ -54,6 +55,10 @@ class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper
     fun runConflict(e: SimulationRunConflictException): ConsoleErrorResponse = error(RUN_CONFLICT, e.message)
 
     @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun coverageEnded(e: MarketCoverageEndedException): ConsoleErrorResponse = error(MARKET_COVERAGE_ENDED, e.message)
+
+    @ExceptionHandler
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     fun configInvalid(e: ConfigInvalidException): ConsoleErrorResponse =
         consoleErrorMapper.toResponse(CONFIG_INVALID, CONFIG_INVALID_MESSAGE, e.fields)
@@ -94,6 +99,7 @@ class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper
         const val SAMPLE_NOT_FOUND = "SAMPLE_NOT_FOUND"
         const val RUN_NOT_FOUND = "RUN_NOT_FOUND"
         const val RUN_CONFLICT = "RUN_CONFLICT"
+        const val MARKET_COVERAGE_ENDED = "MARKET_COVERAGE_ENDED"
         const val CONFIG_INVALID = "CONFIG_INVALID"
         const val INVALID_REQUEST = "INVALID_REQUEST"
         const val UPLOAD_TOO_LARGE = "UPLOAD_TOO_LARGE"

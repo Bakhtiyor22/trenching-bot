@@ -14,7 +14,7 @@ import com.trenching.bot.strategy.domain.*
 import com.trenching.bot.walletactivity.application.WalletNormalizer
 import com.trenching.bot.walletactivity.domain.*
 
-/** Replays a v3 or v4 dataset under the dip-entry strategy: one cycle per mint, from the tracked wallet's first buy of it. */
+/** Replays a v3, v4 or v5 dataset under the dip-entry strategy: one cycle per mint, from the tracked wallet's first buy of it. */
 class ReplayRunner(
     private val normalizer: WalletNormalizer = WalletNormalizer(),
     private val strategy: DipEntryStrategy = DipEntryStrategy(),
@@ -27,12 +27,7 @@ class ReplayRunner(
         val source = OrderedMarketData(dataset.observations)
         val rates = OrderedReferenceRates(dataset.referenceRates)
         val datasetHash = DatasetFingerprint.checksum(dataset)
-        val configHash = StableHash.of(listOf(config.strategyName, config.strategyVersion, config.notional.toPlainString(),
-            config.maxAgeSlots.toString(), config.dipBps.toString(), config.takeProfitBps.toString(), config.stopLossBps.toString(),
-            config.minMarketCapUsd.toPlainString(), config.horizonSlots.toString(), "latencySlots=${config.latencySlots}",
-            "transactionCostSol=${config.transactionCostSol.toPlainString()}", config.quoteMint.value,
-            "scale=${DecimalPolicy.SCALE}", "priceScale=${DecimalPolicy.PRICE_SCALE}", DecimalPolicy.ROUNDING.name,
-            "supply=${PumpFunLayout.TOKEN_SUPPLY}", "fills=first-eligible-after-latency", CURVE_RULE, "confirmed-signer-buys"))
+        val configHash = configurationHash(config)
         val runId = StableHash.of(listOf(ENGINE_VERSION, datasetHash, configHash))
         val normalized = transactions.map { normalizer.normalize(it, dataset.trackedWallet, config.quoteMint) }
         val plan = strategy.plan(normalized.filterIsInstance<NormalizationOutcome.Accepted>().map { it.trade },
@@ -97,5 +92,14 @@ class ReplayRunner(
 
         /** Fills trade against the fill trade's post-trade curve, outputs rounded down and fees rounded up. */
         private const val CURVE_RULE = "curve-post-trade-floor-fees-ceil"
+
+        /** The hash a report of [config] carries; it depends on the configuration and the engine's rules only, never on a dataset. */
+        fun configurationHash(config: SimulationConfig): String =
+            StableHash.of(listOf(config.strategyName, config.strategyVersion, config.notional.toPlainString(),
+                config.maxAgeSlots.toString(), config.dipBps.toString(), config.takeProfitBps.toString(), config.stopLossBps.toString(),
+                config.minMarketCapUsd.toPlainString(), config.horizonSlots.toString(), "latencySlots=${config.latencySlots}",
+                "transactionCostSol=${config.transactionCostSol.toPlainString()}", config.quoteMint.value,
+                "scale=${DecimalPolicy.SCALE}", "priceScale=${DecimalPolicy.PRICE_SCALE}", DecimalPolicy.ROUNDING.name,
+                "supply=${PumpFunLayout.TOKEN_SUPPLY}", "fills=first-eligible-after-latency", CURVE_RULE, "confirmed-signer-buys"))
     }
 }

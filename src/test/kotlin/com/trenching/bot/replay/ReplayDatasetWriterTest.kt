@@ -2,6 +2,7 @@ package com.trenching.bot.replay
 
 import com.trenching.bot.marketdata.domain.OrderedMarketData
 import com.trenching.bot.support.DipSampleV4
+import com.trenching.bot.support.DipSampleV5
 import com.trenching.bot.replay.application.DatasetFingerprint
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetWriter
@@ -120,6 +121,31 @@ class ReplayDatasetWriterTest {
         val error = assertFailsWith<IllegalArgumentException> { writer.write(broken) }
 
         assertTrue(error.message.orEmpty().contains("TRADE_FIELDS_MISSING"), error.message)
+    }
+
+    @Test
+    fun `a v5 dataset writes its coverage last, ordered by pair, and loads back equal`() {
+        val dataset = DipSampleV5.dataset()
+        val written = writer.write(dataset.copy(coverage = dataset.coverage.reversed()))
+        val root = json.readTree(written)
+
+        assertEquals(5, root.path("schemaVersion").asInt())
+        assertEquals("coverage", root.propertyNames().toList().last())
+        val entries = root.path("coverage").toList()
+        assertEquals(dataset.coverage.size, entries.size)
+        assertEquals(listOf("baseMint", "quoteMint", "fromSlot", "throughSlot"), entries.first().propertyNames().toList())
+        assertEquals(entries.map { it.path("baseMint").asString() }.sorted(), entries.map { it.path("baseMint").asString() })
+        assertTrue(entries.all { it.path("fromSlot").isIntegralNumber && it.path("throughSlot").isIntegralNumber })
+        val restored = loader.load(written.byteInputStream())
+        assertEquals(dataset.coverage.toSet(), restored.coverage.toSet())
+        assertEquals(DatasetFingerprint.checksum(dataset), DatasetFingerprint.checksum(restored))
+        assertEquals(written, writer.write(restored))
+    }
+
+    @Test
+    fun `v3 and v4 datasets are written without coverage`() {
+        assertTrue(!json.readTree(writer.write(dataset())).has("coverage"))
+        assertTrue(!json.readTree(writer.write(DipSampleV4.dataset())).has("coverage"))
     }
 
     private fun sha256(text: String): String =

@@ -6,6 +6,7 @@ import com.trenching.bot.marketdata.domain.OrderedMarketData
 import com.trenching.bot.marketdata.domain.OrderedReferenceRates
 import com.trenching.bot.replay.application.DatasetFingerprint
 import com.trenching.bot.replay.domain.DatasetTrades
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.walletactivity.domain.OrderedWalletTransactions
 import com.trenching.bot.walletactivity.domain.WalletTransaction
@@ -14,7 +15,8 @@ import tools.jackson.databind.node.ObjectNode
 
 /**
  * Writes the canonical form that [ReplayDatasetLoader] reads: deduplicated, ordered, exact decimals. A v3 dataset is written
- * exactly as before schema v4 existed, without trades; a v4 dataset adds each observation's `trade` after its `curve`.
+ * exactly as before schema v4 existed, without trades; a v4 dataset adds each observation's `trade` after its `curve`, and a v5
+ * dataset its `coverage` after the rates.
  */
 class ReplayDatasetWriter(private val mapper: ObjectMapper) {
     fun write(dataset: ReplayDataset): String {
@@ -34,6 +36,16 @@ class ReplayDatasetWriter(private val mapper: ObjectMapper) {
                 put("rate", rate.rate.toPlainString())
                 put("source", rate.source)
             })
+        }
+        if (ReplayDataset.recordsCoverage(dataset.schemaVersion)) {
+            val coverage = root.putArray("coverage")
+            MarketCoverage.canonical(dataset.coverage).forEach { entry ->
+                coverage.add(mapper.createObjectNode().apply {
+                    pair(this, entry.pair)
+                    put("fromSlot", entry.fromSlot.value)
+                    put("throughSlot", entry.throughSlot.value)
+                })
+            }
         }
         return mapper.writeValueAsString(root)
     }

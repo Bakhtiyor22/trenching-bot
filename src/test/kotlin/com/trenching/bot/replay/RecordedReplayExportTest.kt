@@ -27,6 +27,7 @@ import com.trenching.bot.replay.RecordedWalletFixtures.WALLET
 import com.trenching.bot.replay.application.DatasetFingerprint
 import com.trenching.bot.replay.application.RecordedReplayExportService
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.application.RecordedCaseReplayExportService
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
@@ -55,7 +56,7 @@ class RecordedReplayExportTest {
     private var marketDecodes = 0
 
     @Test
-    fun `exports the real recorded buy, its in-window trade and that trade's rate as canonical v4 json, with the trade's actor, that the loader round-trips`() {
+    fun `exports the real recorded buy, its in-window trade and that trade's rate as canonical v5 json, with the trade's actor and the full window's coverage, that the loader round-trips`() {
         RecordedWalletFixtures.save(mapper, wallet())
         saveRealMarketCapture()
 
@@ -78,7 +79,8 @@ class RecordedReplayExportTest {
             CurveReserves(BigInteger("80123104314"), BigInteger("401756777019139"), BigInteger("50123104314"), BigInteger("121856777019139")),
             feeBps = 95, creatorFeeBps = 30), observation.curve)
         assertEquals(listOf(RATE), dataset.referenceRates)
-        assertEquals(ReplayDataset.SCHEMA_V4, dataset.schemaVersion)
+        assertEquals(ReplayDataset.SCHEMA_V5, dataset.schemaVersion)
+        assertEquals(listOf(MarketCoverage.of(observation.pair, Slot.of(SLOT + 1), Slot.of(SLOT + 4500))), dataset.coverage)
         assertEquals(fixtureTrade().user.value, observation.trade?.trader)
         assertEquals(fixtureTrade().solAmount, observation.trade?.solLamports)
         assertEquals(fixtureTrade().tokenAmount, observation.trade?.tokenRaw)
@@ -125,7 +127,8 @@ class RecordedReplayExportTest {
         assertEquals(listOf(SIGNATURE), dataset.transactions.map { it.signature.value })
         assertEquals(1, dataset.observations.size)
         assertEquals(listOf(RATE), dataset.referenceRates)
-        assertEquals(ReplayDataset.SCHEMA_V4, dataset.schemaVersion)
+        assertEquals(ReplayDataset.SCHEMA_V5, dataset.schemaVersion)
+        assertEquals(listOf(MarketCoverage.of(window.pair, window.fromSlot, window.toSlot)), dataset.coverage)
         assertEquals(fixtureTrade().user.value, dataset.observations.single().trade?.trader)
     }
 
@@ -144,7 +147,7 @@ class RecordedReplayExportTest {
     }
 
     @Test
-    fun `a full and a case export of the same capture carry the same trade`() {
+    fun `a full and a case export of the same capture carry the same trade and coverage`() {
         RecordedWalletFixtures.save(mapper, wallet())
         saveRealMarketCapture()
         service().export(request())
@@ -153,8 +156,9 @@ class RecordedReplayExportTest {
         val full = Files.newInputStream(output()).use { ReplayDatasetLoader(mapper).load(it) }
         val single = Files.newInputStream(case.output).use { ReplayDatasetLoader(mapper).load(it) }
 
-        assertEquals(ReplayDataset.SCHEMA_V4, single.schemaVersion)
+        assertEquals(ReplayDataset.SCHEMA_V5, single.schemaVersion)
         assertEquals(full.observations.map { it.trade }, single.observations.map { it.trade })
+        assertEquals(full.coverage, single.coverage)
     }
 
     @Test

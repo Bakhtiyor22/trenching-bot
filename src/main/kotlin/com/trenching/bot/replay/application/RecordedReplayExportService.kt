@@ -7,6 +7,7 @@ import com.trenching.bot.marketdata.RecordedMarketHistory
 import com.trenching.bot.marketdata.RecordedReferenceRates
 import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.replay.domain.DatasetTrades
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.RecordedReplayExport
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
 import com.trenching.bot.replay.domain.ReplayDataset
@@ -19,9 +20,10 @@ import tools.jackson.databind.ObjectMapper
 
 /**
  * Exports a recorded wallet capture, the market capture planned from it and the rates recorded for that market capture as
- * one canonical v4 dataset. All three are verified offline. The market capture must hold exactly the planned windows,
- * each complete and free of detail gaps and in-window exclusions, so a missing trade can never read as an absence of
- * trades; every trade's minute must have a rate. The JSON is loaded back before it is written.
+ * one canonical v5 dataset. All three are verified offline. The market capture must hold exactly the planned windows, each
+ * complete and free of detail gaps and in-window exclusions through its observed end, so a missing trade can never read as
+ * an absence of trades; the dataset's coverage records that end per window, the window's last slot or its cutoff. Every
+ * trade's minute must have a rate. The JSON is loaded back before it is written.
  */
 class RecordedReplayExportService(
     walletHistory: RecordedWalletHistory,
@@ -41,8 +43,9 @@ class RecordedReplayExportService(
             log.warn("recorded_replay_export refused reason={} observations={}", DatasetTrades.FIELDS_MISSING, market.observations.size)
             throw CaptureValidationException(DatasetTrades.FIELDS_MISSING)
         }
+        val coverage = market.windows.map { MarketCoverage.of(it.window.pair, it.window.fromSlot, it.observedThrough) }
         val dataset = ReplayDataset(ReplayDataset.CURRENT_SCHEMA_VERSION, planned.history.wallet, planned.history.transactions,
-            market.observations, rates(request, market))
+            market.observations, rates(request, market), coverage)
         if (dataset.transactions.size > ReplayLimits.MAX_INPUT_RECORDS || dataset.observations.size > ReplayLimits.MAX_INPUT_RECORDS) {
             log.warn("recorded_replay_export refused reason=DATASET_BOUNDS transactions={} observations={} max={}",
                 dataset.transactions.size, dataset.observations.size, ReplayLimits.MAX_INPUT_RECORDS)

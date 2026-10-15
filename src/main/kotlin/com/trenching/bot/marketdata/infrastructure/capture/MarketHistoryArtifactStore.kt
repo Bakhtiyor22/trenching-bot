@@ -13,12 +13,14 @@ import com.trenching.bot.chaincapture.ManifestFields.string
 import com.trenching.bot.marketdata.MarketCaseId
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.marketdata.*
+import com.trenching.bot.marketdata.domain.MarketCutoffRules
 import com.trenching.bot.marketdata.domain.MarketWindowRules
 import java.nio.file.Path
 import java.time.Instant
 import java.time.format.DateTimeParseException
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
+import tools.jackson.databind.node.ObjectNode
 
 internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
     private val files = CaptureArtifactStore(mapper)
@@ -31,7 +33,7 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
     fun loadManifest(directory: Path): MarketHistoryManifest? {
         val root = files.root(directory, create = false)
         val inner = files.readManifest(root, MarketCaptureFormat.MANIFEST) ?: return null
-        ManifestFields.requireVersion(inner, MarketCaptureFormat.VERSION)
+        ManifestFields.requireVersion(inner, MarketCaptureFormat.SUPPORTED_VERSIONS)
         return parse(inner).also(::validate)
     }
 
@@ -43,7 +45,7 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         val manifest = loadManifest(directory) ?: return null
         val record = manifest.windows.singleOrNull { MarketCaseId.from(MarketWindowRecords.window(it)) == caseId }
             ?: throw CaptureValidationException("MARKET_CASE_NOT_FOUND")
-        val signatures = record.selection.mapTo(HashSet()) { it.signature }
+        val signatures = MarketCutoffRules.observedSelection(record).mapTo(HashSet()) { it.signature }
         verifyArtifacts(directory, manifest, signatures) { transaction, node -> onArtifact(transaction, node, record) }
         return manifest
     }
@@ -62,17 +64,27 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         onArtifact: (MarketTransactionRecord, JsonNode) -> Unit,
     ) {
         val root = files.root(directory, create = false)
-        manifest.records.filter { signatures == null || it.signature in signatures }.forEach { record ->
-            val artifact = record.artifact ?: return@forEach
-            val sha256 = checkNotNull(record.sha256) { "Validated record has an artifact without a hash signature=${record.signature}" }
-            val node = files.readArtifact(root, artifact, record.bytes, sha256)
-            if (evidence.classify(node, record.signature, record.slot) != record.outcome) fail("ARTIFACT_IDENTITY")
-            onArtifact(record, node)
+        manifest.records.filter { it.artifact != null && (signatures == null || it.signature in signatures) }.forEach { record ->
+            onArtifact(record, verified(root, record))
         }
     }
 
+    /** Reads a captured record's artifact after its hash and identity checks. */
+    fun readTransaction(directory: Path, record: MarketTransactionRecord): JsonNode = verified(files.root(directory, create = false), record)
+
+    private fun verified(root: Path, record: MarketTransactionRecord): JsonNode {
+        val artifact = record.artifact ?: fail("RECORD_ARTIFACT")
+        val sha256 = record.sha256 ?: fail("RECORD_ARTIFACT")
+        val node = files.readArtifact(root, artifact, record.bytes, sha256)
+        if (evidence.classify(node, record.signature, record.slot) != record.outcome) fail("ARTIFACT_IDENTITY")
+        return node
+    }
+
+    /** A window without a cutoff is written without the field, so a manifest without cutoffs keeps its version 2 bytes. */
     fun save(directory: Path, manifest: MarketHistoryManifest) {
-        files.writeManifest(files.root(directory, create = true), MarketCaptureFormat.MANIFEST, mapper.valueToTree(manifest))
+        val tree = mapper.valueToTree<ObjectNode>(manifest)
+        tree.path("windows").forEach { window -> if (window.path(CUTOFF_FIELD).isNull) (window as ObjectNode).remove(CUTOFF_FIELD) }
+        files.writeManifest(files.root(directory, create = true), MarketCaptureFormat.MANIFEST, tree)
     }
 
     fun lock(directory: Path): AutoCloseable = files.lock(directory)
@@ -102,6 +114,11 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         smallInteger(node, "skippedNewer"), smallInteger(node, "selected"),
         array(node, "selection", MarketCaptureFormat.MAX_TRANSACTIONS).map(::listed),
         node.path("scanCursor").takeUnless { it.isNull || it.isMissingNode }?.let(::listed),
+        node.path(CUTOFF_FIELD).takeUnless { it.isNull || it.isMissingNode }?.let(::cutoff),
+    )
+
+    private fun cutoff(node: JsonNode): MarketWindowCutoff = MarketWindowCutoff(
+        integer(node, "throughSlot"), string(node, "outcome"), string(node, "engineVersion"), string(node, "configurationHash"),
     )
 
     private fun listed(node: JsonNode): MarketListedSignature = MarketListedSignature(string(node, "signature"), integer(node, "slot"))
@@ -117,6 +134,7 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         if (windows != MarketWindowRules.canonical(windows) || !MarketWindowRules.isDisjoint(windows)) fail("WINDOW_ORDER")
         manifest.windows.forEach { if (!consistentWindow(it, manifest.scanPageLimit)) fail("WINDOW_STATE") }
         if (!sequentialDiscovery(manifest.windows)) fail("WINDOW_STATE")
+        validateCutoffs(manifest)
         validateRecords(manifest)
         val acquired = manifest.windows.none { it.coverage == MarketWindowCoverage.PENDING } &&
             manifest.records.none { it.outcome in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
@@ -150,6 +168,28 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
     private fun sequentialDiscovery(windows: List<MarketWindowRecord>): Boolean =
         windows.dropWhile { it.pagesScanned > 0 }.all { it.coverage == MarketWindowCoverage.PENDING && it.pagesScanned == 0 }
 
+    /**
+     * A cutoff sits on a complete window between the slot before its start and its end, with every selected record through
+     * it captured; a record is `NOT_NEEDED`, without an artifact, exactly when every selecting window was decided before it.
+     */
+    private fun validateCutoffs(manifest: MarketHistoryManifest) {
+        if (manifest.schemaVersion != MarketCaptureFormat.versionFor(manifest.windows)) fail("MANIFEST_VERSION")
+        val outcomes = manifest.records.associate { it.signature to it.outcome }
+        manifest.windows.forEach { window ->
+            val cutoff = window.cutoff ?: return@forEach
+            val consistent = window.coverage == MarketWindowCoverage.COMPLETE && cutoff.throughSlot >= 0 &&
+                cutoff.throughSlot in (window.fromSlot - 1)..window.toSlot &&
+                listOf(cutoff.outcome, cutoff.engineVersion, cutoff.configurationHash).all(MarketCaptureFormat::isCutoffText) &&
+                MarketCutoffRules.observedSelection(window).all { outcomes[it.signature] == MarketTransactionOutcome.CAPTURED }
+            if (!consistent) fail(CUTOFF_INVALID)
+        }
+        val notNeeded = MarketCutoffRules.notNeeded(manifest.windows)
+        manifest.records.forEach { record ->
+            val marked = record.outcome == MarketTransactionOutcome.NOT_NEEDED
+            if (marked != (record.signature in notNeeded) || (marked && (record.artifact != null || record.sha256 != null))) fail(CUTOFF_INVALID)
+        }
+    }
+
     private fun validateRecords(manifest: MarketHistoryManifest) {
         if (manifest.records.map { MarketListedSignature(it.signature, it.slot) } != MarketWindowRecords.admitted(manifest.windows)) fail("RECORD_SELECTION")
         manifest.records.forEach { record ->
@@ -171,6 +211,8 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
     private fun fail(category: String): Nothing = throw CaptureValidationException(category)
 
     private companion object {
+        const val CUTOFF_FIELD = "cutoff"
+        const val CUTOFF_INVALID = "CAPTURE_INVALID"
         val SHA256 = Regex("[0-9a-f]{64}")
     }
 }

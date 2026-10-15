@@ -186,6 +186,7 @@ tasks.register<JavaExec>("captureReplayMarkets") {
     args("--request-budget", providers.gradleProperty("requestBudget").orElse("400").get())
     args("--byte-budget", providers.gradleProperty("byteBudget").orElse("104857600").get())
     args("--operation-timeout-minutes", providers.gradleProperty("operationTimeoutMinutes").orElse("10").get())
+    providers.gradleProperty("cutoffMode").orNull?.let { args("--cutoff-mode", it) }
     transactionCacheDirectory.orNull?.let { args("--transaction-cache-directory", it) }
 }
 

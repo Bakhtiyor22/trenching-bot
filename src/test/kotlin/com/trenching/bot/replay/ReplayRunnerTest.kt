@@ -14,6 +14,7 @@ import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.strategy.domain.DipWatchOutcome
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.DipSample
+import com.trenching.bot.support.DipSampleV4
 import com.trenching.bot.walletactivity.domain.IngestionReason
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
 import java.math.BigDecimal
@@ -157,6 +158,16 @@ class ReplayRunnerTest {
     }
 
     @Test
+    fun `dip-sample-v3 and its v4 twin keep the run identity and result they had before schema v5`() {
+        val v4 = ReplayRunner().run(DipSampleV4.dataset(), SimulationConfig.mvp())
+
+        assertEquals(listOf(PINNED_V3_RUN_ID, PINNED_CONFIGURATION_HASH, PINNED_V3_RESULT_CHECKSUM),
+            listOf(report.runId, report.configurationHash, report.resultChecksum))
+        assertEquals(listOf(PINNED_V4_RUN_ID, PINNED_CONFIGURATION_HASH, PINNED_V4_RESULT_CHECKSUM),
+            listOf(v4.runId, v4.configurationHash, v4.resultChecksum))
+    }
+
+    @Test
     fun `swaps against another quote mint create no cycle`() {
         val original = DipSample.load()
         val otherQuote = original.transactions.first().let {
@@ -199,5 +210,13 @@ class ReplayRunnerTest {
             val error = assertFailsWith<IllegalArgumentException> { loader.load(tampered.byteInputStream()) }
             assertTrue(requireNotNull(error.message).contains(reason), error.message)
         }
+    }
+
+    private companion object {
+        const val PINNED_CONFIGURATION_HASH = "be937336820a84b0af7482105efb9334ebb710c0ccf8e4d6bae88f2666a0a329"
+        const val PINNED_V3_RUN_ID = "734e3b09bba7bcf7d0d824cd99875ee6d0f2a27cd1ccb1eed6d20f64b6c08d37"
+        const val PINNED_V3_RESULT_CHECKSUM = "2d2e378e7d4d69a9aecc863b35b001031c0036d8b2261c1b3cd9b41c498874cd"
+        const val PINNED_V4_RUN_ID = "721699d35b7da69d1603f1761b84b20b3e2e580c4216c74e20446e4d01543c7f"
+        const val PINNED_V4_RESULT_CHECKSUM = "4bcb0d921c16618bb5fe973cd8f7f6e517cddf7d64092513199b624a916ff9c5"
     }
 }

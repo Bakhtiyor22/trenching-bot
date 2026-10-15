@@ -9,6 +9,7 @@ import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.replay.CaptureCaseExport
 import com.trenching.bot.replay.CaptureCaseExportRequest
 import com.trenching.bot.replay.domain.DatasetTrades
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetFiles
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
@@ -51,7 +52,9 @@ internal class RecordedCaseReplayExportService(
             throw CaptureValidationException(DatasetTrades.FIELDS_MISSING)
         }
         val caseRates = rates(request.ratesCaptureDirectory, decoded.observations)
-        val dataset = ReplayDataset(ReplayDataset.CURRENT_SCHEMA_VERSION, planned.history.wallet, listOf(walletTransaction), decoded.observations, caseRates)
+        val coverage = MarketCoverage.of(window.pair, window.fromSlot, decoded.progress.observedThrough)
+        val dataset = ReplayDataset(ReplayDataset.CURRENT_SCHEMA_VERSION, planned.history.wallet, listOf(walletTransaction),
+            decoded.observations, caseRates, listOf(coverage))
         if (dataset.transactions.size > ReplayLimits.MAX_INPUT_RECORDS || dataset.observations.size > ReplayLimits.MAX_INPUT_RECORDS) {
             throw CaptureValidationException("DATASET_BOUNDS")
         }

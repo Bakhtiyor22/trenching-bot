@@ -17,6 +17,9 @@ object VerdictReasons {
     /** Capture reason: the dataset is exported and every stage is ready, but its qualification has not run yet. */
     const val QUALIFICATION_PENDING = "QUALIFICATION_PENDING"
 
+    /** Capture reason: the market capture ends before a scenario's outcome is decided, so the window must be extended. */
+    const val MARKET_COVERAGE_ENDED = "MARKET_COVERAGE_ENDED"
+
     /** Replay failure categories. */
     const val DATASET_UNREADABLE = "DATASET_UNREADABLE"
     const val DATASET_INVALID = "DATASET_INVALID"

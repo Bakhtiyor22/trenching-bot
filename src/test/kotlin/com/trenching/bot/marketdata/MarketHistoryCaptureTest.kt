@@ -54,7 +54,7 @@ class MarketHistoryCaptureTest {
         assertEquals(6, window.scanned)
         assertEquals(1, window.pagesScanned)
         assertEquals(mapOf("commitment" to "confirmed", "limit" to 1000, "until" to signature(SOURCE)), listings.single())
-        assertEquals(listOf(3, 5, 6).map(::signature), fetched)
+        assertEquals(listOf(6, 5, 3).map(::signature), fetched)
         assertEquals(List(3) { MarketTransactionOutcome.CAPTURED }, result.manifest.records.map { it.outcome })
         assertTrue(result.manifest.complete)
         assertTrue(result.manifest.acquisitionComplete)
@@ -62,10 +62,23 @@ class MarketHistoryCaptureTest {
     }
 
     @Test
+    fun `fetches details oldest first by slot then signature while records keep the listing order and full manifests stay version 2`() {
+        val page = listOf(entry(1, 1010), entry(2, 1003), entry(4, 1003), entry(3, 1003), entry(5, 1001))
+        val result = capture(request(listOf(window(MINT, 1001, 1012, SOURCE)))) { _, _ -> page }
+
+        val sameSlot = listOf(2, 4, 3).map(::signature).sorted()
+        assertEquals(listOf(signature(5)) + sameSlot + signature(1), fetched)
+        assertEquals(listOf(1, 2, 4, 3, 5).map(::signature), result.manifest.records.map { it.signature })
+        assertEquals(2, result.manifest.schemaVersion)
+        assertEquals(null, result.manifest.windows.single().cutoff)
+        assertFalse(Files.readString(directory.resolve("market-manifest.json")).contains("cutoff"))
+    }
+
+    @Test
     fun `completes a window at a short page that reached the until signature`() {
         val result = capture(request(listOf(window(MINT, 1001, 1012, SOURCE)))) { _, _ -> listOf(entry(1, 1003), entry(2, 1002)) }
         assertEquals(MarketWindowCoverage.COMPLETE, result.manifest.windows.single().coverage)
-        assertEquals(listOf(1, 2).map(::signature), fetched)
+        assertEquals(listOf(2, 1).map(::signature), fetched)
         assertTrue(result.manifest.complete)
     }
 
@@ -148,7 +161,7 @@ class MarketHistoryCaptureTest {
         val extended = capture(request(windows, scanPages = 2), listing).manifest
         assertEquals(MarketWindowCoverage.COMPLETE, extended.windows.single().coverage)
         assertEquals(listOf(999, 1000, 1001).map(::signature), extended.records.map { it.signature })
-        assertEquals(listOf(999, 1000, 1001).map(::signature), fetched)
+        assertEquals(listOf(1001, 1000, 999).map(::signature), fetched)
         assertTrue(extended.complete)
     }
 
@@ -192,7 +205,7 @@ class MarketHistoryCaptureTest {
 
         assertEquals(listOf(MarketWindowCoverage.OVER_CAP, MarketWindowCoverage.COMPLETE), extended.windows.map { it.coverage })
         assertEquals(listOf(5001, 5002).map(::signature), extended.records.map { it.signature })
-        assertEquals(listOf(5001, 5002).map(::signature), fetched)
+        assertEquals(listOf(5002, 5001).map(::signature), fetched)
         assertEquals(extended, recorded().inspect(directory).manifest)
     }
 
@@ -216,7 +229,7 @@ class MarketHistoryCaptureTest {
         assertEquals(MarketWindowCoverage.OVER_CAP, windows.getValue(MINT).coverage)
         assertEquals(emptyList(), windows.getValue(MINT).selection)
         assertEquals(2, windows.getValue(MINT).selected)
-        assertEquals(listOf(1, 2).map(::signature), fetched)
+        assertEquals(listOf(2, 1).map(::signature), fetched)
         assertEquals(listOf(1, 2).map(::signature), result.manifest.records.map { it.signature })
         assertTrue(result.manifest.acquisitionComplete)
         assertFalse(result.manifest.complete)
@@ -350,12 +363,12 @@ class MarketHistoryCaptureTest {
         val request = request(listOf(window(MINT, 1001, 1012, SOURCE)))
         val stopped = service.capture(request)
         val first = stopped.manifest
-        assertEquals(listOf(MarketTransactionOutcome.CAPTURED, MarketTransactionOutcome.PROVIDER_UNAVAILABLE, MarketTransactionOutcome.PENDING),
+        assertEquals(listOf(MarketTransactionOutcome.PENDING, MarketTransactionOutcome.PROVIDER_UNAVAILABLE, MarketTransactionOutcome.CAPTURED),
             first.records.map { it.outcome })
         assertEquals(Duration.ofSeconds(17), stopped.stopRetryAfter)
         available = true
         val second = service.capture(request).manifest
-        assertEquals(listOf(1, 2, 2, 3).map(::signature), fetched)
+        assertEquals(listOf(3, 2, 2, 1).map(::signature), fetched)
         assertTrue(second.complete)
     }
 
@@ -373,7 +386,7 @@ class MarketHistoryCaptureTest {
         val windows = listOf(window(MINT, 1001, 1012, SOURCE))
         val limited = service.capture(request(windows, requestBudget = 3)).manifest
         assertEquals(3, limited.requestsUsed)
-        assertEquals(listOf(MarketTransactionOutcome.CAPTURED, MarketTransactionOutcome.PENDING), limited.records.map { it.outcome })
+        assertEquals(listOf(MarketTransactionOutcome.PENDING, MarketTransactionOutcome.CAPTURED), limited.records.map { it.outcome })
         assertFalse(limited.acquisitionComplete)
         val resumed = service.capture(request(windows, requestBudget = 3)).manifest
         assertEquals(5, resumed.requestsUsed)

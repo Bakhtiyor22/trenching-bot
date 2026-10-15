@@ -22,7 +22,8 @@ class DetailBatches(
 
     /**
      * Returns the final state. [apply] folds a batch into the state, [checkpoint] saves it, and [report] receives the summed
-     * measurements once, even when the phase stops early, if at least one batch ran.
+     * measurements once, even when the phase stops early, if at least one batch ran. [until] is asked after each checkpoint;
+     * true ends the phase there without recording a stop reason.
      */
     fun <I : Any, R : Any, S> run(
         items: List<I>,
@@ -34,6 +35,7 @@ class DetailBatches(
         apply: (S, DetailBatch<I, R>) -> S,
         checkpoint: (S) -> Unit,
         report: (CaptureMeasurements) -> Unit,
+        until: (S) -> Boolean = { false },
     ): S {
         var state = initial
         val phase = DetailMeasurements()
@@ -60,7 +62,7 @@ class DetailBatches(
                     }
                 }
                 checkpoint(state)
-                if (stop.reason != null) break
+                if (stop.reason != null || until(state)) break
             }
         } finally {
             if (phase.batches > 0) report(phase.total)

@@ -12,10 +12,12 @@ import java.time.Clock
 import tools.jackson.databind.ObjectMapper
 
 object CaptureWorkflows {
+    /** [ratesEnabled] is whether [rateSource] is configured; only then may a market capture run in decided mode. */
     fun create(
         walletProperties: WalletHistoryCaptureProperties,
         marketProperties: MarketHistoryCaptureProperties,
         rateSource: SolUsdtRateSource,
+        ratesEnabled: Boolean,
         mapper: ObjectMapper,
         clock: Clock,
         transactionCache: SharedTransactionCache? = null,
@@ -28,6 +30,7 @@ object CaptureWorkflows {
         return CaptureWorkflowService(recordedWallets, recordedMarkets, recordedRates,
             { observer -> wallets.observedCapture(walletProperties, mapper, clock, observer, transactionCache) },
             { observer -> markets.observedCapture(marketProperties, mapper, clock, observer, transactionCache) },
-            { observer -> ReferenceRateCaptures.observedCapture(rateSource, recordedMarkets, mapper, clock, observer) }, mapper)
+            { observer -> ReferenceRateCaptures.observedCapture(rateSource, recordedMarkets, mapper, clock, observer) }, mapper,
+            rateSource.takeIf { ratesEnabled })
     }
 }

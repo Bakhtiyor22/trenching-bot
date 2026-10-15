@@ -308,6 +308,82 @@ class RecordedMarketHistoryTest {
         assertCategory("ARTIFACT_IDENTITY") { recorded.inspect(directory) }
     }
 
+    @Test
+    fun `a decided window decodes only through its cutoff while a later record it shares still serves its undecided sibling`() {
+        val observed = artifact(fixture())
+        val shared = artifact(fixture(signature(2), SLOT + 4))
+        val decided = complete(MINT, listOf(observed, shared)).copy(cutoff = CUTOFF)
+        val sibling = complete(OTHER_MINT, listOf(shared))
+        save(listOf(decided, sibling), listOf(shared, observed))
+
+        val result = recorded.decode(directory)
+
+        assertEquals(listOf(SLOT), result.observations.map { it.slot.value })
+        val window = result.windows.single { it.window.baseMint.value == MINT }
+        assertEquals(MarketWindowDecodeRecord(windowValue(MINT), MarketWindowCoverage.COMPLETE, 2, 0, true, 1, Slot.of(SLOT)), window)
+        assertEquals(Slot.of(TO), result.windows.single { it.window.baseMint.value == OTHER_MINT }.observedThrough)
+        assertEquals(1, result.exclusions.getValue(MarketObservationExclusion.OUT_OF_WINDOW))
+
+        Files.writeString(directory.resolve(requireNotNull(shared.artifact)), "corrupt record after the cutoff")
+        val case = recorded.decodeCase(directory, MarketCaseId.from(windowValue(MINT)))
+        assertTrue(case.ready)
+        assertEquals(listOf(SLOT), case.observations.map { it.slot.value })
+        assertEquals(Slot.of(SLOT), case.progress.observedThrough)
+    }
+
+    @Test
+    fun `a gap after the cutoff does not block a decided window and NOT_NEEDED counts as resolved`() {
+        val observed = artifact(fixture())
+        val notNeeded = MarketTransactionRecord(signature(3), SLOT + 1, MarketTransactionOutcome.NOT_NEEDED)
+        save(listOf(complete(MINT, listOf(observed, notNeeded)).copy(cutoff = CUTOFF)), listOf(notNeeded, observed))
+
+        val manifest = recorded.inspect(directory).manifest
+        assertEquals(3, manifest.schemaVersion)
+        assertTrue(manifest.acquisitionComplete && manifest.complete)
+        val window = recorded.decode(directory).windows.single()
+        assertEquals(0, window.detailGaps)
+        assertTrue(window.yieldsObservations)
+        val progress = recorded.inspectCases(directory).cases.single()
+        assertEquals(MarketCaseStage.READY_TO_VALIDATE, progress.stage)
+        assertEquals(Triple(2, 1, 0), Triple(progress.selected, progress.captured, progress.unresolved))
+        assertEquals(Slot.of(SLOT), progress.observedThrough)
+    }
+
+    @Test
+    fun `inconsistent cutoff manifests are refused at inspection`() {
+        val observed = artifact(fixture())
+        val later = artifact(fixture(signature(4), SLOT + 2))
+        val notNeeded = MarketTransactionRecord(later.signature, later.slot, MarketTransactionOutcome.NOT_NEEDED)
+        val decided = complete(MINT, listOf(observed, notNeeded)).copy(cutoff = CUTOFF)
+        val valid = manifest(listOf(decided), listOf(notNeeded, observed))
+        store.save(directory, valid)
+        assertEquals(valid, recorded.inspect(directory).manifest)
+        val unavailable = observed.copy(outcome = MarketTransactionOutcome.UNAVAILABLE, artifact = null, sha256 = null, bytes = 0)
+        val invalid = mapOf(
+            "not needed with an artifact" to valid.copy(records = listOf(later.copy(outcome = MarketTransactionOutcome.NOT_NEEDED), observed)),
+            "cutoff above the window" to valid.copy(windows = listOf(decided.copy(cutoff = CUTOFF.copy(throughSlot = TO + 1)))),
+            "cutoff below the slot before the window" to valid.copy(windows = listOf(decided.copy(cutoff = CUTOFF.copy(throughSlot = FROM - 2)))),
+            "gap at or below the cutoff" to valid.copy(records = listOf(notNeeded, unavailable)),
+            "not needed in an undecided window" to valid.copy(schemaVersion = 2, windows = listOf(decided.copy(cutoff = null))),
+            "needed record marked not needed" to valid.copy(windows = listOf(decided.copy(cutoff = CUTOFF.copy(throughSlot = SLOT + 2)))),
+            "blank outcome" to valid.copy(windows = listOf(decided.copy(cutoff = CUTOFF.copy(outcome = " ")))),
+            "cutoff on a window over the cap" to manifest(listOf(incomplete(MINT, MarketWindowCoverage.OVER_CAP).copy(cutoff = CUTOFF)), emptyList()),
+        )
+        invalid.forEach { (name, forged) ->
+            store.save(directory, forged)
+            val failure = assertFailsWith<CaptureValidationException>(name) { recorded.inspect(directory) }
+            assertTrue(failure.message.orEmpty().endsWith("category=CAPTURE_INVALID"), "$name: ${failure.message}")
+        }
+        mapOf(
+            "version 2 with a cutoff" to valid.copy(schemaVersion = 2),
+            "version 3 without a cutoff" to manifest(listOf(complete(MINT, listOf(observed))), listOf(observed)).copy(schemaVersion = 3),
+        ).forEach { (name, forged) ->
+            store.save(directory, forged)
+            val failure = assertFailsWith<CaptureValidationException>(name) { recorded.inspect(directory) }
+            assertTrue(failure.message.orEmpty().endsWith("category=MANIFEST_VERSION"), "$name: ${failure.message}")
+        }
+    }
+
     private fun artifact(transaction: ObjectNode, target: Path = directory): MarketTransactionRecord {
         val signature = transaction.path("transaction").path("signatures").path(0).asString()
         val written = store.writeTransaction(target, signature, transaction)
@@ -339,7 +415,7 @@ class RecordedMarketHistoryTest {
         val unresolved = setOf(MarketTransactionOutcome.PENDING, MarketTransactionOutcome.PROVIDER_UNAVAILABLE, MarketTransactionOutcome.INVALID_TRANSACTION)
         val acquired = windows.none { it.coverage == MarketWindowCoverage.PENDING } && records.none { it.outcome in unresolved }
         return MarketHistoryManifest(
-            schemaVersion = 2, genesisHash = GENESIS, commitment = "confirmed", capturedAt = "2026-10-04T00:00:00Z",
+            schemaVersion = if (windows.any { it.cutoff != null }) 3 else 2, genesisHash = GENESIS, commitment = "confirmed", capturedAt = "2026-10-04T00:00:00Z",
             windowParameters = PARAMETERS, scanPageLimit = 1, maxTransactions = 300,
             windows = windows.sortedWith(compareBy({ it.baseMint }, { it.fromSlot })), records = records,
             acquisitionComplete = acquired, complete = acquired && windows.all { it.coverage == MarketWindowCoverage.COMPLETE },
@@ -413,5 +489,6 @@ class RecordedMarketHistoryTest {
         const val TOKEN_AMOUNT_OFFSET = 56
         const val IS_BUY_OFFSET = 64
         val PARAMETERS = MarketCaptureWindowParameters(horizonSlots = 4500, maxAgeSlots = 2)
+        val CUTOFF = MarketWindowCutoff(SLOT, "TAKE_PROFIT", "engine-v1", "a".repeat(64))
     }
 }
