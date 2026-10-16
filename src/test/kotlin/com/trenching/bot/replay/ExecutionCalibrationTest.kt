@@ -426,6 +426,43 @@ class ExecutionCalibrationTest {
         assertEquals(LatencyCheck.NoPriorState, report.buys.single().latency)
     }
 
+    @Test
+    fun `a later buy after a fully observed window has no prior state instead of the window's stale last trade`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val full = plannedMarket().let { it.copy(observations = listOf(observation("in-window", SLOT + 4500, LAUNCH_STATE))) }
+
+        val report = service(full, laterBuySlot = SLOT + 4600).calibrate(wallet(), markets())
+
+        assertEquals(LatencyCheck.NoPriorState, report.buys.last().latency)
+        assertEquals(2, report.summary.noPriorState)
+    }
+
+    @Test
+    fun `a later buy after a cut-off window's end does not refuse calibration, since the full window would not reach it either`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val partial = plannedMarket().let { market ->
+            market.copy(windows = market.windows.map { it.copy(observedThrough = Slot.of(SLOT + 40)) },
+                observations = listOf(observation("at-cutoff", SLOT + 40, LAUNCH_STATE)))
+        }
+
+        val report = service(partial, laterBuySlot = SLOT + 4600).calibrate(wallet(), markets())
+
+        assertEquals(LatencyCheck.NoPriorState, report.buys.last().latency)
+    }
+
+    @Test
+    fun `a buy whose previous slot is the window's last still needs the window observed through it`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val partial = plannedMarket().let { market ->
+            market.copy(windows = market.windows.map { it.copy(observedThrough = Slot.of(SLOT + 40)) },
+                observations = listOf(observation("at-cutoff", SLOT + 40, LAUNCH_STATE)))
+        }
+
+        assertCategory("MARKET_COVERAGE_ENDED") {
+            service(partial, laterBuySlot = SLOT + 4501).calibrate(wallet(), markets())
+        }
+    }
+
     private fun service(market: MarketHistoryDecodeResult, laterBuySlot: Long? = null): ExecutionCalibrationService {
         val markets = object : RecordedMarketHistory {
             override fun inspect(directory: Path): MarketHistoryCaptureResult =

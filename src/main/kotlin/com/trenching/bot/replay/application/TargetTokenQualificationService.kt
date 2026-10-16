@@ -72,7 +72,9 @@ class TargetTokenQualificationService(
     /** [datasetExported] is whether a dataset of the current capture was exported, so only its qualification is missing. */
     fun fromInspection(inspection: CaptureInspection, datasetExported: Boolean): TargetTokenVerdict {
         val evidence = inspection.targetToken
-        val (classification, proven) = when (val assessment = evidence?.let(TargetFirstBuyGate::assess)) {
+        // An incomplete wallet capture, such as one capped before the end of its history, is never classified by its partial evidence.
+        val assessed = evidence?.takeIf { inspection.wallet.state != CaptureStageState.INCOMPLETE }
+        val (classification, proven) = when (val assessment = assessed?.let(TargetFirstBuyGate::assess)) {
             is TargetFirstBuyAssessment.Refused -> classification(assessment.reason) to null
             is TargetFirstBuyAssessment.Proven -> CaseClassification.INCOMPLETE_CAPTURE to assessment.firstBuy
             null -> CaseClassification.INCOMPLETE_CAPTURE to null

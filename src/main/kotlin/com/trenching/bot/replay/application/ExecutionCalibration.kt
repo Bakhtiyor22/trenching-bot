@@ -30,12 +30,21 @@ import java.math.BigInteger
 object ExecutionCalibration {
     private const val ERROR_BPS_SCALE = CalibrationMedians.BASIS_POINTS_SCALE
 
-    /** One calibration per buy, ordered by slot, then signature. */
-    fun buys(facts: List<PumpFunBuyFacts>, observations: List<MarketObservation>): List<BuyCalibration> {
+    /**
+     * One calibration per buy, ordered by slot, then signature. [observedThrough] bounds a capture's observations per mint:
+     * a buy whose previous slot its mint's coverage does not reach (after the window's end, or without a window) has no prior
+     * state rather than a stale one. Null means [observations] are not bounded by a capture's coverage.
+     */
+    fun buys(
+        facts: List<PumpFunBuyFacts>,
+        observations: List<MarketObservation>,
+        observedThrough: Map<MintAddress, Slot>? = null,
+    ): List<BuyCalibration> {
         val market = OrderedMarketData(observations)
         return facts.sortedWith(compareBy({ it.slot }, { it.signature.value })).map { buy ->
+            val covered = observedThrough == null || observedThrough[buy.mint]?.let { buy.slot.value - 1 <= it.value } == true
             BuyCalibration(buy.signature, buy.slot, buy.mint, buy.solAmount, buy.instruction, math(buy),
-                latency(buy, prior(market, buy.mint, buy.slot)), costs(buy))
+                latency(buy, if (covered) prior(market, buy.mint, buy.slot) else null), costs(buy))
         }
     }
 

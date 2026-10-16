@@ -23,7 +23,10 @@ import com.trenching.bot.strategy.domain.DipWatchOutcome
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV5
+import com.trenching.bot.walletactivity.ActualFirstBuy
 import com.trenching.bot.walletactivity.TargetTokenEvidence
+import com.trenching.bot.walletactivity.TokenAccountFirstBuy
+import com.trenching.bot.walletactivity.TokenAccountGap
 import com.trenching.bot.walletactivity.domain.WalletTransaction
 import java.nio.file.Files
 import java.nio.file.Path
@@ -260,6 +263,11 @@ class TargetTokenQualificationServiceTest {
         } + listOf(
             walletIncomplete to Triple(CaseClassification.INCOMPLETE_CAPTURE,
                 CaptureVerdict(CaptureVerdictState.INCOMPLETE, CaptureVerdictStage.WALLET, "WALLET_CAPTURE_INCOMPLETE"), null),
+            walletIncomplete.copy(wallet = CaptureStageSummary(CaptureStageState.INCOMPLETE, "HISTORY_NOT_EXHAUSTED", requiresNewAttempt = true),
+                targetToken = TargetTokenFixtures.evidence(mint, TargetTokenParts(
+                    TokenAccountFirstBuy.NotEstablished(TokenAccountGap.HISTORY_NOT_EXHAUSTED, emptyList()), ActualFirstBuy.NotVerified))) to
+                Triple(CaseClassification.INCOMPLETE_CAPTURE,
+                    CaptureVerdict(CaptureVerdictState.INCOMPLETE, CaptureVerdictStage.WALLET, "HISTORY_NOT_EXHAUSTED"), null),
             walletIncomplete.copy(wallet = summary(CaptureStageState.INVALID, "ARTIFACT_HASH")) to Triple(CaseClassification.INCOMPLETE_CAPTURE,
                 CaptureVerdict(CaptureVerdictState.INCOMPLETE, CaptureVerdictStage.WALLET, "ARTIFACT_HASH"), null),
             ready(evidence(DipSample.TAKE_PROFIT)).copy(market = summary(CaptureStageState.INCOMPLETE, "MARKET_CAPTURE_INCOMPLETE"),

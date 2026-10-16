@@ -28,7 +28,7 @@ class ExecutionCalibrationService(
             log.warn("execution_calibration refused reason={} wallet={}", VerdictReasons.MARKET_COVERAGE_ENDED, planned.history.wallet.value)
             throw CaptureValidationException(VerdictReasons.MARKET_COVERAGE_ENDED)
         }
-        val buys = ExecutionCalibration.buys(planned.history.buyFacts, market.observations)
+        val buys = ExecutionCalibration.buys(planned.history.buyFacts, market.observations, RecordedMarketVerification.observedThrough(market))
         val report = CalibrationReport(planned.history.wallet, planned.history.decoder, market.extractor, ExecutionCalibration.summary(buys), buys)
         val summary = report.summary
         log.info("execution_calibration finished buys={} mathExact={} mathMismatches={} latencyChecked={} noPriorState={} unpredictable={}",
