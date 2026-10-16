@@ -3,6 +3,7 @@ package com.trenching.bot.console.config
 import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.chaincapture.SharedTransactionCache
 import com.trenching.bot.console.capture.*
+import com.trenching.bot.console.domain.CaptureSources
 import com.trenching.bot.console.mapper.CaptureResponseMapper
 import com.trenching.bot.marketdata.*
 import com.trenching.bot.replay.*
@@ -43,6 +44,7 @@ class CaptureConfiguration {
         CaptureWorkflows.create(wallet.withEndpoint(properties.rpcUrl),market.withEndpoint(properties.rpcUrl),rateSource,rates.enabled,mapper,clock,transactionCache,recorder)
     @Bean fun walletActivityLookup(properties: SolanaRpcProperties, wallet: WalletHistoryCaptureProperties, transactionCache: SharedTransactionCache, mapper: ObjectMapper, clock: Clock, recorder: ApiUsageRecorder): WalletActivityLookup =
         WalletActivityLookups.create(wallet.withEndpoint(properties.rpcUrl),mapper,clock,transactionCache,recorder)
+    @Bean fun captureSources(store: CaptureFileStore): CaptureSources = CaptureSourceLookup(store)
     @Bean fun walletActivityConsoleService(lookup: WalletActivityLookup, store: CaptureFileStore, clock: Clock): WalletActivityConsoleService = WalletActivityConsoleService(lookup,store,clock)
     @Bean(destroyMethod="close") fun captureFileStore(properties: CaptureProperties, mapper: ObjectMapper): CaptureFileStore = CaptureFileStore(CapturePathPolicy(properties.validatedRoot()),mapper).also { it.initialize() }
     @Bean(destroyMethod="close") fun captureOperationService(store: CaptureFileStore, workflow: CaptureWorkflow, mapper: CaptureResponseMapper, json: ObjectMapper, clock: Clock, rpc: SolanaRpcProperties, rates: ReferenceRateProperties): CaptureOperationService =

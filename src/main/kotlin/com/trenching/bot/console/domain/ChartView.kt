@@ -12,6 +12,7 @@ import java.time.Instant
 data class ChartView(
     val bucketSeconds: Int,
     val range: ChartRange,
+    val extent: ChartExtent?,
     val trackedWallet: String?,
     val valuationBasis: ValuationBasisView,
     val candles: List<CandleView>,
@@ -20,6 +21,9 @@ data class ChartView(
 )
 
 data class ChartRange(val from: Instant?, val to: Instant?)
+
+/** The pair's whole data range, whatever window was asked for; null when the pair has no observations. */
+data class ChartExtent(val firstTime: Instant, val lastTime: Instant, val firstSlot: Long, val lastSlot: Long)
 
 /** How the mcap was derived, so a reader can tell what the number means and why it is missing. */
 data class ValuationBasisView(

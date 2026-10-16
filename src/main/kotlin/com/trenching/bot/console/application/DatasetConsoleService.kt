@@ -1,6 +1,7 @@
 package com.trenching.bot.console.application
 
 import com.trenching.bot.common.PageResult
+import com.trenching.bot.console.domain.DatasetDetail
 import com.trenching.bot.console.domain.EmptyDatasetUploadException
 import com.trenching.bot.console.domain.SampleDatasetNotFoundException
 import com.trenching.bot.marketdata.domain.MarketObservation
@@ -21,6 +22,7 @@ import org.springframework.stereotype.Service
 class DatasetConsoleService(
     private val catalog: ReplayDatasetCatalog,
     private val meterRegistry: MeterRegistry,
+    private val sources: DatasetSourceService,
 ) {
     private val log = LoggerFactory.getLogger(DatasetConsoleService::class.java)
 
@@ -55,6 +57,8 @@ class DatasetConsoleService(
     }
 
     fun find(id: String): DatasetSummary = catalog.find(id) ?: throw DatasetNotFoundException(id)
+
+    fun detail(id: String): DatasetDetail = find(id).let { DatasetDetail(it, sources.of(it.id, it.name)) }
 
     /** Removes the dataset from the catalog; its runs stay, each with its own snapshot. */
     fun delete(id: String) {

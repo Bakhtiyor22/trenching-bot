@@ -1,5 +1,6 @@
 package com.trenching.bot.console.api.dto
 
+import com.fasterxml.jackson.annotation.JsonInclude
 import java.time.Instant
 
 data class DatasetResponse(
@@ -13,6 +14,17 @@ data class DatasetResponse(
     val lastSlot: Long?,
     val pairs: List<PairResponse>,
     val createdAt: Instant,
+    /** Only on the dataset detail. */
+    @get:JsonInclude(JsonInclude.Include.NON_NULL) val source: DatasetSourceResponse? = null,
+)
+
+/** Where a dataset came from; the capture fields are null when no capture on this machine registered it. */
+data class DatasetSourceResponse(
+    val datasetId: String,
+    val datasetName: String?,
+    val captureId: String?,
+    val captureDisplayName: String?,
+    val caseId: String?,
 )
 
 data class DatasetRegistrationResponse(

@@ -52,7 +52,7 @@ class DatasetController(
     }
 
     @GetMapping("/{id}")
-    fun find(@PathVariable id: String): DatasetResponse = datasetResponseMapper.toResponse(datasetConsoleService.find(id))
+    fun find(@PathVariable id: String): DatasetResponse = datasetResponseMapper.toResponse(datasetConsoleService.detail(id))
 
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)

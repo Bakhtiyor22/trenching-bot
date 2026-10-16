@@ -89,6 +89,22 @@ class ChartApiIntegrationTest {
         assertTrue(observations.items().all { it.path("trade").path("trader").isString })
     }
 
+    @Test
+    fun `a windowed run chart still reports the pair's whole extent`() {
+        val datasetId = upload(variant(json, "chart-extent")).path("dataset").path("id").asString()
+        val runId = http.post("/api/runs", """{"datasetId":"$datasetId"}""").body.path("run").path("id").asString()
+        val observations = http.get("/api/runs/$runId/observations").body.items()
+            .filter { "${it.path("pair").path("base").asString()}/${it.path("pair").path("quote").asString()}" == pair }
+        val first = observations.minOf { it.path("observedTime").asString() }
+        val last = observations.maxOf { it.path("observedTime").asString() }
+
+        val chart = http.get("/api/runs/$runId/chart?pair=$pair&from=$first&to=$first")
+
+        assertEquals(200, chart.status, chart.raw)
+        assertEquals(json.readTree("""{"firstTime":"$first","lastTime":"$last","firstSlot":${observations.minOf { it.path("slot").asLong() }},
+            "lastSlot":${observations.maxOf { it.path("slot").asLong() }}}"""), chart.body.path("extent"))
+    }
+
     private fun JsonNode.items(): List<JsonNode> = (this as Iterable<JsonNode>).toList()
 
     private fun upload(content: String): JsonNode {

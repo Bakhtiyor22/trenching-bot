@@ -290,6 +290,9 @@ class ConsoleApiIntegrationTest {
 
         assertEquals(200, detail.status)
         assertEquals(runId, detail.body.path("run").path("id").asString())
+        val datasetId = detail.body.path("run").path("datasetId").asString()
+        assertEquals(json.readTree("""{"datasetId":"$datasetId","datasetName":"detail.json","captureId":null,"captureDisplayName":null,"caseId":null}"""),
+            detail.body.path("source"))
         assertDecimal("0.100000000000", detail.body.path("config").path("notional"))
         assertEquals(1, detail.body.path("config").path("latencySlots").asLong())
         assertDecimal("0.001000000000", detail.body.path("config").path("transactionCostSol"))
@@ -327,10 +330,16 @@ class ConsoleApiIntegrationTest {
         assertDecimal("0.001000000000", close.path("transactionCost"))
         assertEquals(-22, close.path("priceImpactBps").asInt())
         assertTrue(takeProfit.path("exitUnavailableReason").isNull)
+        val timeline = takeProfit.path("timeline")
+        assertEquals(takeProfit.path("selectedObservation").path("observedTime").asString(), timeline.path("entryAt").asString())
+        assertEquals(listOf("firstBuyAt", "dipAt", "entryAt", "exitTriggerAt", "exitAt"), timeline.propertyNames().toList())
+        assertTrue(listOf("dipAt", "exitTriggerAt", "exitAt").all { timeline.path(it).isString }, timeline.toString())
+        assertTrue(timeline.path("dipAt").asString() <= timeline.path("entryAt").asString() && timeline.path("exitTriggerAt").asString() <= timeline.path("exitAt").asString())
         val noDip = scenario(scenarios, DipSample.NO_DIP)
         assertEquals("REJECTED", noDip.path("status").asString())
         assertEquals("NO_DIP", noDip.path("rejectionReason").asString())
         assertTrue(noDip.path("trigger").isNull)
+        assertTrue(listOf("dipAt", "entryAt", "exitTriggerAt", "exitAt").all { noDip.path("timeline").path(it).isNull })
     }
 
     @Test
@@ -463,7 +472,21 @@ class ConsoleApiIntegrationTest {
         assertError(404, "DATASET_NOT_FOUND", http.get("/api/datasets/$datasetId"))
         assertError(404, "DATASET_NOT_FOUND", http.delete("/api/datasets/$datasetId"))
         assertEquals(runId, http.get("/api/runs?datasetId=$datasetId").body.path("items").first().path("id").asString())
-        assertEquals(200, http.get("/api/runs/$runId").status)
+        val detail = http.get("/api/runs/$runId")
+        assertEquals(200, detail.status)
+        assertTrue(detail.body.path("source").path("datasetName").isNull)
+    }
+
+    @Test
+    fun `dataset detail names its source and the list leaves it out`() {
+        val datasetId = upload(variant(json, "source"), "source.json").path("dataset").path("id").asString()
+
+        val detail = http.get("/api/datasets/$datasetId")
+
+        assertEquals(200, detail.status)
+        assertEquals(json.readTree("""{"datasetId":"$datasetId","datasetName":"source.json","captureId":null,"captureDisplayName":null,"caseId":null}"""),
+            detail.body.path("source"))
+        assertTrue(http.get("/api/datasets").body.path("items").items().none { it.has("source") })
     }
 
     @Test

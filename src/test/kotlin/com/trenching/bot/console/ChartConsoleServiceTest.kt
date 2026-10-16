@@ -13,6 +13,7 @@ import com.trenching.bot.console.ChartFixtures.tradeObservation
 import com.trenching.bot.console.application.ChartConsoleService
 import com.trenching.bot.console.application.ConsoleService
 import com.trenching.bot.console.domain.ChartQuery
+import com.trenching.bot.console.domain.ChartExtent
 import com.trenching.bot.console.domain.ChartView
 import com.trenching.bot.console.domain.InvalidConsoleRequestException
 import com.trenching.bot.console.domain.MarkerKind
@@ -22,6 +23,7 @@ import com.trenching.bot.console.domain.PaperPhase
 import com.trenching.bot.console.domain.RunDetail
 import com.trenching.bot.console.domain.RunObservations
 import com.trenching.bot.console.domain.RunScenario
+import com.trenching.bot.console.domain.ScenarioTimeline
 import com.trenching.bot.console.domain.ValuationBasisReason
 import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.marketdata.domain.MarketObservation
@@ -224,6 +226,20 @@ class ChartConsoleServiceTest {
     }
 
     @Test
+    fun `the extent covers the pair's whole data whatever window is asked and is null for a pair without data`() {
+        val observations = (0 until 10).map { observation("o$it", at("2026-10-01T00:00:00Z").plusSeconds(it * 10L), "1") }
+        val dataset = syntheticDataset(observations, emptyList())
+        catalog.add(dataset)
+
+        val windowed = service.datasetChart(id(dataset), query(PAIR, from = at("2026-10-01T00:00:20Z"), to = at("2026-10-01T00:00:40Z")))
+        val empty = service.datasetChart(id(dataset), query(takeProfit))
+
+        assertEquals(ChartExtent(at("2026-10-01T00:00:00Z"), at("2026-10-01T00:01:30Z"), observations.minOf { it.slot.value }, observations.maxOf { it.slot.value }),
+            windowed.extent)
+        assertNull(empty.extent)
+    }
+
+    @Test
     fun `a run chart carries its stored fill and close as paper fills and keeps them out of the markers`() {
         catalog.add(sample)
         val detail = detail(sample.observations)
@@ -341,7 +357,7 @@ class ChartConsoleServiceTest {
         val byId = observations.associateBy { it.id }
         val scenarios = report.scenarios.map { result ->
             val selected = (result.outcome as? FillOutcome.Filled)?.let { byId[it.fill.observationId] }
-            RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable)
+            RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable, ScenarioTimeline(null, null, null, null, null))
         }
         val run = RunSummary(report.runId, datasetId, report.engineVersion, report.configurationHash, report.resultChecksum,
             MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"))

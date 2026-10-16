@@ -5,6 +5,7 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.console.application.UsdtConversion
 import com.trenching.bot.console.domain.RunDetail
 import com.trenching.bot.console.domain.RunScenario
+import com.trenching.bot.console.domain.ScenarioTimeline
 import com.trenching.bot.console.domain.RunUsdtView
 import com.trenching.bot.console.domain.UsdtScenario
 import com.trenching.bot.marketdata.RateLookup
@@ -159,7 +160,7 @@ class UsdtConversionTest {
         val byId = observations(move).associateBy { it.id }
         val scenarios = report.scenarios.map { result ->
             val selected = (result.outcome as? FillOutcome.Filled)?.let { byId[it.fill.observationId] }
-            RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable)
+            RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable, ScenarioTimeline(null, null, null, null, null))
         }
         val run = RunSummary(report.runId, report.datasetChecksum, report.engineVersion, report.configurationHash, report.resultChecksum,
             quote, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"))

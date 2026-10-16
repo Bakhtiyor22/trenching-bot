@@ -88,11 +88,13 @@ class ConsoleService(
         val outcomes = orders.outcomes(runId).associateBy { it.orderId }
         val positionsByIntent = positions.storedPositions(runId).associateBy { it.position.intentId }
         val observationsById = stored.associateBy { it.id }
+        val buyTimes = events.acceptedTrades(runId).associate { it.id to it.blockTime }
         val scenarios = intents.intents(runId).map { intent ->
             val outcome = checkNotNull(outcomes[intent.id]) { "Missing paper order runId=$runId intentId=${intent.id}" }
             val selected = (outcome as? FillOutcome.Filled)?.let { observationsById[it.fill.observationId] }
             val storedPosition = positionsByIntent[intent.id]
-            RunScenario(intent, outcome, selected, storedPosition?.position, storedPosition?.exitUnavailable)
+            RunScenario(intent, outcome, selected, storedPosition?.position, storedPosition?.exitUnavailable,
+                ScenarioTimelines.of(intent, outcome, storedPosition?.position, buyTimes, observationsById))
         }
         return RunDetail(run, facts.config, scenarios)
     }

@@ -10,6 +10,7 @@ import com.trenching.bot.console.api.dto.RunStartRequest
 import com.trenching.bot.console.api.dto.RunStartResponse
 import com.trenching.bot.console.api.dto.RunUsdtViewResponse
 import com.trenching.bot.console.application.ConsoleService
+import com.trenching.bot.console.application.RunDetailService
 import com.trenching.bot.console.application.RunLaunchService
 import com.trenching.bot.console.application.RunUsdtViewService
 import com.trenching.bot.console.config.ConditionalOnConsoleEnabled
@@ -34,6 +35,7 @@ import org.springframework.web.bind.annotation.RestController
 class RunController(
     private val runLaunchService: RunLaunchService,
     private val consoleService: ConsoleService,
+    private val runDetailService: RunDetailService,
     private val runResponseMapper: RunResponseMapper,
     private val observationResponseMapper: ObservationResponseMapper,
     private val runUsdtViewService: RunUsdtViewService,
@@ -53,7 +55,7 @@ class RunController(
     ): RunPageResponse = runResponseMapper.toPage(consoleService.page(page, size, datasetId))
 
     @GetMapping("/{id}")
-    fun detail(@PathVariable id: String): RunDetailResponse = runResponseMapper.toResponse(consoleService.detail(id))
+    fun detail(@PathVariable id: String): RunDetailResponse = runResponseMapper.toResponse(runDetailService.detail(id))
 
     @GetMapping("/{id}/events")
     fun events(@PathVariable id: String): List<RunEventResponse> = runResponseMapper.toEvents(consoleService.events(id))

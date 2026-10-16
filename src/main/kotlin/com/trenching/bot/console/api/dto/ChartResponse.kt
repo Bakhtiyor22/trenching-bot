@@ -7,6 +7,7 @@ import java.time.Instant
 data class ChartResponse(
     val bucketSeconds: Int,
     val range: ChartRangeResponse,
+    val extent: ChartExtentResponse?,
     val trackedWallet: String?,
     val valuationBasis: ValuationBasisResponse,
     val candles: List<CandleResponse>,
@@ -15,6 +16,8 @@ data class ChartResponse(
 )
 
 data class ChartRangeResponse(val from: Instant?, val to: Instant?)
+
+data class ChartExtentResponse(val firstTime: Instant, val lastTime: Instant, val firstSlot: Long, val lastSlot: Long)
 
 data class ValuationBasisResponse(
     val label: String,

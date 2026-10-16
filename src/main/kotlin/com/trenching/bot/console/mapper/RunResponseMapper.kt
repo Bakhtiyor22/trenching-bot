@@ -13,7 +13,7 @@ import com.trenching.bot.console.api.dto.RunSummaryResponse
 import com.trenching.bot.console.api.dto.ScenarioPositionResponse
 import com.trenching.bot.console.api.dto.ScenarioResponse
 import com.trenching.bot.console.domain.IngestionStatus
-import com.trenching.bot.console.domain.RunDetail
+import com.trenching.bot.console.domain.RunDetailView
 import com.trenching.bot.console.domain.RunEvent
 import com.trenching.bot.console.domain.RunOrder
 import com.trenching.bot.console.domain.RunPosition
@@ -45,7 +45,12 @@ abstract class RunResponseMapper {
 
     abstract fun toPage(page: PageResult<RunSummary>): RunPageResponse
 
-    abstract fun toResponse(detail: RunDetail): RunDetailResponse
+    @Mappings(value = [
+        Mapping(target = "run", source = "detail.run"),
+        Mapping(target = "config", source = "detail.config"),
+        Mapping(target = "scenarios", source = "detail.scenarios"),
+    ])
+    abstract fun toResponse(view: RunDetailView): RunDetailResponse
 
     fun toScenario(scenario: RunScenario): ScenarioResponse =
         scenario(scenario, (scenario.outcome as? FillOutcome.Filled)?.fill, scenario.outcome as? FillOutcome.Rejected)
@@ -61,6 +66,7 @@ abstract class RunResponseMapper {
         Mapping(target = "referencePrice", source = "scenario.intent.referencePrice"),
         Mapping(target = "dipPrice", source = "scenario.intent.dipPrice"),
         Mapping(target = "horizonEndSlot", source = "scenario.intent.horizonEndSlot"),
+        Mapping(target = "timeline", source = "scenario.timeline"),
         Mapping(target = "watch", source = "scenario.intent.watch"),
         Mapping(target = "trigger", source = "scenario.intent.trigger"),
         Mapping(target = "status", expression = "java(status(scenario.getOutcome()))"),
