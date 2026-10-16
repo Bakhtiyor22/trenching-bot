@@ -17,13 +17,16 @@ import com.trenching.bot.marketdata.MarketHistoryCaptureResult
 import com.trenching.bot.marketdata.MarketWindowCutoff
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
+import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.replay.CaptureInspection
 import com.trenching.bot.replay.CaptureStageState
 import com.trenching.bot.replay.ReplayMarketFixtures
 import com.trenching.bot.replay.CaptureStageSummary
 import com.trenching.bot.replay.CaptureStepCommand
 import com.trenching.bot.walletactivity.WalletHistoryCaptureResult
+import com.trenching.bot.walletactivity.WalletHistoryDiscoveryStop
 import com.trenching.bot.walletactivity.WalletHistoryScope
+import com.trenching.bot.walletactivity.infrastructure.capture.VerificationStart
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
@@ -403,6 +406,28 @@ class CaptureOperationServiceTest {
             assertEquals(settings.limit, request.limit)
             assertEquals(settings.scanPages, request.scanPages)
             assertEquals(settings.mint?.let(MintAddress::of), request.targetMint)
+            fixture.settle()
+        }
+    }
+
+    @Test
+    fun `a wallet + token operation capped before the end of its history is incomplete with a reason resuming cannot fix`() {
+        val fixture = CaptureConsoleFixture(root)
+        val session = fixture.createToken()
+        val capped = CaptureTokenFixtures.manifest(WalletHistoryScope.WALLET_TOKEN_ACCOUNT, CaptureTokenFixtures.MINT).copy(
+            complete = false, discoveryStop = WalletHistoryDiscoveryStop.LIMIT_REACHED,
+            verification = VerificationStart.of(WalletAddress.of(CaptureConsoleFixture.WALLET), null))
+        val stillDiscovering = capped.copy(discoveryComplete = false, discoveryStop = null, verification = null)
+
+        listOf(capped to "HISTORY_NOT_EXHAUSTED", stillDiscovering to null).forEachIndexed { index, (manifest, code) ->
+            fixture.workflow.walletResult = WalletHistoryCaptureResult(root, manifest)
+            val started = fixture.operations.start(session.id, CaptureOperationRequest("wallet-$index", CaptureNames.WALLET, session.walletAttemptId))
+            fixture.executor.runAll()
+
+            val finished = fixture.operations.find(session.id, started.id)
+            assertEquals(CaptureNames.INCOMPLETE, finished.state, "$index")
+            assertEquals(code, finished.code, "$index")
+            assertEquals(code != null, finished.message?.contains("start a new session") == true, "$index")
             fixture.settle()
         }
     }

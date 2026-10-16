@@ -9,7 +9,9 @@ import com.trenching.bot.marketdata.MarketCutoffMode
 import com.trenching.bot.replay.*
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
 import com.trenching.bot.replay.domain.ReplayMarketCaptureRequest
+import com.trenching.bot.walletactivity.TokenAccountGap
 import com.trenching.bot.walletactivity.WalletHistoryCaptureRequest
+import com.trenching.bot.walletactivity.WalletHistoryCompletion
 import com.trenching.bot.walletactivity.WalletHistoryManifest
 import java.nio.file.Files
 import java.time.Clock
@@ -316,12 +318,13 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                 is CaptureStepResult.Markets -> result.capture.stopReason
                 else -> null
             }?.let(::safeCategory)
+            val cappedHistory = if (stopReason == null) (result as? CaptureStepResult.Wallet)?.capture?.manifest?.let(::cappedHistoryCode) else null
             val artifact = when(result) {
                 is CaptureStepResult.Exported -> generated(session,"dataset.json")
                 is CaptureStepResult.Calibrated -> generated(session,"calibration.json")
                 else -> null
             }
-            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason,message=stopReason?.let(::stopMessage),inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null,qualification=qualification,recovery=releaseReservation(operation.recovery))
+            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason ?: cappedHistory,message=stopReason?.let(::stopMessage) ?: cappedHistory?.let { CAPPED_HISTORY_MESSAGE },inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null,qualification=qualification,recovery=releaseReservation(operation.recovery))
         } catch(exception: Exception) {
             if (exception is CaptureOperationStop) {
                 operation = store.operation(id, operation.id)
@@ -460,6 +463,9 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private fun stopMessage(reason: String): String =
         if (reason == DEADLINE) "The operation deadline ended this run. Saved evidence is kept; resume to continue with a fresh allowance."
         else "This run stopped early: $reason. Saved evidence is kept; inspect it, then resume to continue."
+    /** A wallet + token capture that finished its requests but stopped listing before the end of its history; resuming cannot complete it. */
+    private fun cappedHistoryCode(manifest: WalletHistoryManifest): String? =
+        TokenAccountGap.HISTORY_NOT_EXHAUSTED.name.takeIf { WalletHistoryCompletion.historyNotExhausted(manifest) }
     private fun safeCategory(value: String): String = if(value.matches(Regex("[A-Z][A-Z0-9_]{0,63}"))) value else "CAPTURE_FAILED"
     override fun close() {
         synchronized(store) { closed=true }
@@ -478,6 +484,8 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private companion object {
         val STOP_CONTROLS = setOf(CaptureNames.PAUSE_REQUESTED, CaptureNames.CANCEL_REQUESTED)
         const val DEADLINE = "DEADLINE"
+        const val CAPPED_HISTORY_MESSAGE = "The token-account listing stopped at the sample's record or page limit before the end of its history. " +
+            "Saved evidence is kept; resuming cannot finish it, so start a new session with a larger sample or more wallet scan pages."
         const val QUALIFY_ID_HASH_LENGTH = 32
         const val MAX_RETRY_SECONDS = 300L
         const val RETRY_JITTER_MILLIS = 1000L

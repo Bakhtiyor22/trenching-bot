@@ -73,6 +73,7 @@ internal class CaptureInspectionService(
                 else -> CaptureStageSummary(CaptureStageState.READY)
             }
         }.let { if (it.state == CaptureStageState.NOT_STARTED) absent(marketReady, "MARKET_CAPTURE_NOT_READY") else it }
+        // A ready market stage implies a ready wallet stage, so both decodes are set whenever the right side runs.
         val canCalibrate = marketReady && RecordedMarketVerification.coversCalibration(
             requireNotNull(walletDecoded).buyFacts, requireNotNull(marketDecoded))
         return CaptureInspection(wallet, market, rateSummary, canCalibrate, marketReady && rateSummary.state == CaptureStageState.READY,

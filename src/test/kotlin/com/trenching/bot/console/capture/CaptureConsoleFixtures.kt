@@ -16,6 +16,7 @@ import com.trenching.bot.replay.CaptureWorkflow
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.replay.domain.RecordedReplayExport
 import com.trenching.bot.replay.domain.TargetTokenVerdict
+import com.trenching.bot.walletactivity.WalletHistoryCaptureResult
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
@@ -55,6 +56,8 @@ class FakeCaptureWorkflow : CaptureWorkflow {
     var failure: Exception? = null
     var checkpointBeforeFailure: CaptureCheckpoint? = null
     var qualifyVerdict: TargetTokenVerdict = CaptureTokenFixtures.takeProfit
+    /** What a wallet command returns; null refuses wallet commands as unsupported. */
+    var walletResult: WalletHistoryCaptureResult? = null
     /** Each inspection-only verdict asked for, with whether a dataset was exported; it answers with [CaptureTokenFixtures.inspectionOnly]. */
     val verdicts = mutableListOf<Pair<CaptureInspection, Boolean>>()
 
@@ -75,6 +78,7 @@ class FakeCaptureWorkflow : CaptureWorkflow {
                 CaptureStepResult.Exported(RecordedReplayExport(command.request.output, "checksum", WalletAddress.of(CaptureConsoleFixture.WALLET), 1, 1, 1, 1, true))
             }
             is CaptureStepCommand.Qualify -> CaptureStepResult.Qualified(qualifyVerdict)
+            is CaptureStepCommand.Wallet -> CaptureStepResult.Wallet(walletResult ?: throw CaptureValidationException("UNSUPPORTED_IN_FAKE"))
             is CaptureStepCommand.CaseRates, is CaptureStepCommand.ExportCase -> throw CaptureValidationException("UNSUPPORTED_IN_FAKE")
             else -> throw CaptureValidationException("UNSUPPORTED_IN_FAKE")
         }
