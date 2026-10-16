@@ -4,6 +4,8 @@
 
 Status: Approved 2026-10-16. Every open question takes its recommendation: sells listed from the accumulator and labelled possibly incomplete; no token names; `DECIDED` cutoff unchanged, with a caveat; `horizonSlots` stays 4,500 flagged `MISSING`; CLI usage not counted; no retention pruning; decu-dip v2 approval is a separate decision.
 
+Delivery (2026-10-16, branch `claude/tender-heisenberg-bal0d6`): units 1–3 and 5–7 in `815fec7` (on `develop`), unit 4 (wallet activity) and unit 8 (source links, timeline, chart extent) on the branch, unit 9 docs with them: README API, configuration and usage sections; [ADR](../adr/20261016-agreed-strategy-run-preset.md) for the preset; capture console ADR addendum; `REAL_DATA_CAPTURE.md` wallet activity section; handoff contract confirmed. Deviations: `presetId` is logged, not stored (rule 19); preset decimals keep their scale-12 strings (`notional` `"0.100000000000"`); a `NAME_TAKEN` suggestion keeps the casing the user typed; `datasetName` in `source` is null once the dataset is deleted, and `source` is on dataset detail only. Archive this plan after the user's review.
+
 Design (Claude Design canvas, 7 pages): https://claude.ai/artifact/UKXHQHKc89nvEM5K5XUAM4. The frontend work is handed to Codex in [20261016-console-capture-run-ux-codex-handoff.md](20261016-console-capture-run-ux-codex-handoff.md); this plan defines the HTTP contract it consumes.
 
 ## Context

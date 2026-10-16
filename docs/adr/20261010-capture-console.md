@@ -39,3 +39,12 @@ No replay schema, simulation rule, execution cost, production schema or provider
 ## Revisit when
 
 Multiple users or processes need concurrent scheduling, operations need coordinated cancellation, durable server-side retention becomes necessary, or authenticated remote capture access is requested.
+
+## Addendum 2026-10-16: names, summary and order
+
+Accepted with the [console capture, run and results plan](../plans/20261016-console-capture-run-ux.md).
+
+- **Unique names.** Names are compared by key: trimmed, whitespace collapsed, lower case. Two sessions created or renamed after this change never share a key; the check runs inside the file store's lock, since captures are local files in one process and have no database to hold a unique constraint. A blank name is generated as `{label} · {mint} · {d MMM HH:mm}` and numbered ` (2)`, ` (3)` on a collision; a typed name that collides returns 409 `NAME_TAKEN` with the first free suggestion. Legacy duplicates are never renamed on disk: their `displayName` is numbered on read by creation time, then id.
+- **Derived summary.** One status, reason, step, progress and next action per session is computed by `CaptureStatusRules` from the session and its case records on every read. Nothing new is stored beyond an optional `nameKey`, so files written earlier stay unchanged. Progress is shown only once the total is known.
+- **Order.** Lists are newest first by default (ties by id), or oldest first, by name, or by attention. Counts cover every session, not the page.
+- **Source links.** Run and dataset detail name the capture, and the case, that registered their dataset by scanning the capture files; the earliest capture wins.

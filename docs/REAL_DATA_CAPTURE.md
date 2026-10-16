@@ -22,6 +22,12 @@ A new market attempt retains the wallet evidence and all prior attempts, comes w
 
 Managed sessions are stored under build/captures/console by default. The validated trenching.console.capture.root-directory property changes the evidence root for both managed sessions and attachment paths. Use an ignored location outside build for evidence that must survive clean. Capture routes are available only locally; they are not available through the public preview tunnel. Delete removes a session and every file the console created for it, including managed evidence and generated exports and calibration reports. Attached directories are never touched, and imported datasets stay in Datasets. Existing CLI commands below remain supported.
 
+### Picking a token from the wallet's activity
+
+The new-capture form can list the wallet's recent Pump.fun curve buys and sells (`GET /api/wallets/{address}/activity`), so a mint need not be pasted. The list comes from the wallet's Pump.fun user volume accumulator listing, the same address the `pumpfun-user-buys` scope scans, so other accounts' bot transactions are skipped. Every Pump.fun `TradeEvent` whose user is the wallet is one row; a transaction with none that decodes (a PumpSwap route, an unknown layout, a non-SOL quote) is counted as unreadable and never guessed. Sells are listed when they pass the accumulator, which is not proven for every route, so the list may miss some.
+
+It is a live read, made only when you open the token step or press Refresh or Load older: one listing page of `max(3 × limit, 100)` entries, up to `limit` `getTransaction` reads (cache hits are free and counted as such in API usage), and one genesis check per backend process. The budget is `3 × limit + 2` requests, retries included, with a 30-second deadline. A page is cached for 60 seconds. The `earlierActionInPage` note only means an older row of the same mint is on the page; whether a buy is the wallet's actual first buy is still proven by the wallet + token capture below.
+
 ## Wallet + token capture
 
 Console only; there is no CLI option for this scope, although CLI inspection, market capture and export read its directories. Use it when you already know a wallet and one token and want to know whether the dip-entry strategy would have qualified on the wallet's first buy of that token. See the [decision](adr/20261010-wallet-token-capture.md) and the [plan](plans/archive/20261010-wallet-token-capture.md).

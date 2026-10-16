@@ -1,6 +1,6 @@
 # Codex handoff: capture, run and results experience
 
-You work only under `frontend/`. The backend contract below is planned in [20261016-console-capture-run-ux.md](20261016-console-capture-run-ux.md) (Status: Proposed). Do not start a task before the backend unit it depends on is delivered, or build it against MSW mocks in `frontend/src/mocks/` first and switch when the endpoint lands. Keep Mantine 9, ECharts 6, React Query and the existing dark terminal theme; add no dependency. Amounts, prices and percents are decimal strings: convert to numbers only for plotting (`toChartNumber`), and show the exact strings in tooltips.
+You work only under `frontend/`. The backend contract below is planned in [20261016-console-capture-run-ux.md](20261016-console-capture-run-ux.md) (Status: Approved; every backend unit is delivered on branch `claude/tender-heisenberg-bal0d6`). Do not start a task before the backend unit it depends on is delivered, or build it against MSW mocks in `frontend/src/mocks/` first and switch when the endpoint lands. Keep Mantine 9, ECharts 6, React Query and the existing dark terminal theme; add no dependency. Amounts, prices and percents are decimal strings: convert to numbers only for plotting (`toChartNumber`), and show the exact strings in tooltips.
 
 **Design (agreed):** Claude Design canvas https://claude.ai/artifact/UKXHQHKc89nvEM5K5XUAM4, 7 pages. The copy on the artboards is the intended copy, and sample numbers are illustrative.
 
@@ -22,7 +22,8 @@ All endpoints are additive; existing fields keep their meaning. Errors use the e
 
 - `200`: `{ wallet, source: "pumpfun-user-volume-accumulator", actions: [Action], unreadable, scanned, nextBefore: string|null, requestsUsed, cachedAt: instant|null }`
 - `Action`: `{ signature, instructionIndex, innerIndex: int|null, slot, blockTime: instant|null, side: "BUY"|"SELL", mint, solLamports: string, tokenRaw: string, tokenDecimals: 6, venue: "PUMPFUN_CURVE", earlierActionInPage: bool, overSignalThreshold: bool, signalBasis: "CURVE_PAYMENT_EXCLUDING_FEES", capturedIn: [{ captureId, displayName }] }`
-- Errors: `400 INVALID_ADDRESS`, `409 RPC_NOT_CONFIGURED`, `409 NOT_MAINNET`, `429 PROVIDER_RATE_LIMITED` (+ `retryAfterSeconds`), `502 PROVIDER_UNAVAILABLE`.
+- Errors: `400 INVALID_ADDRESS` (field `address`), `400 INVALID_REQUEST` (field `limit` outside 1–50, or `before` not a signature), `409 RPC_NOT_CONFIGURED`, `409 NOT_MAINNET`, `429 PROVIDER_RATE_LIMITED` (+ top-level `retryAfterSeconds`, left out when the provider sent no `Retry-After`), `502 PROVIDER_UNAVAILABLE`. Error bodies are the capture error body `{ code, message, fields }`. No error is cached.
+- `cachedAt` is the time the page was fetched, set only when the answer came from the 60 s cache; a fresh or `refresh=true` answer has `cachedAt: null`. `nextBefore` is null once the listing has nothing older.
 - It costs live provider requests: call it only on an explicit user action (open the token step with a wallet filled in, Refresh, Load older). It is never polled. Responses are cached server-side for 60 s; `refresh=true` bypasses the cache.
 
 **Capture config.** `GET /api/captures/config` adds `suggestedWallets: [{ label, address, reasonCode: "AGREED_STRATEGY_WALLET" }]` and `recentWallets: [{ address, label: string|null, lastUsedAt }]`.
@@ -72,11 +73,11 @@ Run recommendation facts: `USE_AGREED_STRATEGY` has setting `{field:"presetId", 
 **Run detail.** `GET /api/runs/{id}` adds:
 
 - `config` percents.
-- `source: { datasetId, datasetName, captureId: string|null, captureDisplayName: string|null, caseId: string|null }`.
-- Per scenario, `timeline: { firstBuyAt, dipAt, entryAt, exitTriggerAt, exitAt }` (instants or null) and `horizonEndSlot`.
+- `source: { datasetId, datasetName: string|null, captureId: string|null, captureDisplayName: string|null, caseId: string|null }`, right after `run`. `datasetName` is null once the dataset was deleted from the catalog (the run stays). The capture fields are null when no capture on this machine registered the dataset or the capture console is off; when two captures registered the same dataset, the earliest one is named.
+- Per scenario, `timeline: { firstBuyAt, dipAt, entryAt, exitTriggerAt, exitAt }` (instants or null, always all five keys), next to the existing `horizonEndSlot`. `firstBuyAt` is the tracked wallet's buy block time; the others are the block times of the dip trigger, entry fill, exit trigger and exit fill observations. A rejected scenario has `dipAt` only when a dip triggered.
 - On fills and closes, `feePercent` and `priceImpactPercent` (signed strings).
 
-**Dataset detail.** `GET /api/datasets/{id}` adds `source`, as on run detail.
+**Dataset detail.** `GET /api/datasets/{id}` adds `source`, as on run detail. List items (`GET /api/datasets`) and upload responses do not carry it; fetch the detail for the source link.
 
 **Chart.** `GET /api/runs/{id}/chart` and `/api/datasets/{id}/chart` add `extent: { firstTime, lastTime, firstSlot, lastSlot }|null`, the pair's full data range, independent of `from`/`to`. The rest is unchanged ([previous brief](20261015-chart-frontend-codex-brief.md)).
 

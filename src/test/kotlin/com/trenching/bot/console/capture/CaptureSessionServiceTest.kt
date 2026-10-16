@@ -458,7 +458,7 @@ class CaptureSessionServiceTest {
         assertEquals("decu · 7mup…pump · 16 oct 20:13", fixture.store.session("decu-1").nameKey)
         assertEquals(409, taken.status)
         assertEquals("NAME_TAKEN", taken.code)
-        assertEquals("$decuName (3)", taken.suggestion)
+        assertEquals("decu · 7MUP…pump · 16 Oct 20:13 (3)", taken.suggestion)
         assertFalse(Files.exists(root.resolve("console/decu-3")))
     }
 
