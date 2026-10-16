@@ -40,7 +40,7 @@ interface CaptureResponseMapper {
     fun statusCounts(value: Map<CaptureSummaryStatus, Long>): Map<String, Long>
     fun summary(value: CaptureSummary): CaptureSummaryResponse
     fun nameCheck(value: CaptureNameCheck): CaptureNameCheckResponse
-    fun error(code: String, message: String, fields: Map<String, String>, suggestion: String?): CaptureErrorResponse
+    fun error(code: String, message: String, fields: Map<String, String>, suggestion: String?, retryAfterSeconds: Long?): CaptureErrorResponse
     fun attempts(value: CapturePage<CaptureAttemptRecord>): CaptureAttemptPageResponse
     fun inspection(wallet: CaptureStageResponse, market: CaptureStageResponse, rates: CaptureStageResponse, canCalibrate: Boolean, canExport: Boolean, walletSummary: Map<String, String>, marketSummary: Map<String, String>, ratesSummary: Map<String, String>, marketWindows: List<CaptureWindowResponse>, targetToken: CaptureTargetTokenResponse?): CaptureInspectionResponse
     fun window(mint: String, fromSlot: Long, toSlot: Long, coverage: String, scanned: Int, selected: Int, detailGaps: Int?, observations: Int?): CaptureWindowResponse

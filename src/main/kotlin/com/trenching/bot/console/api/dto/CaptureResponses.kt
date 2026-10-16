@@ -44,7 +44,7 @@ data class CaptureSuggestedWalletResponse(val label: String, val address: String
 data class CaptureRecentWalletResponse(val address: String, val label: String?, val lastUsedAt: Instant)
 data class CaptureNameCheckResponse(val available: Boolean, val normalized: String, val suggestion: String?)
 /** The console error body, plus the free [suggestion] a `NAME_TAKEN` conflict offers. */
-data class CaptureErrorResponse(val code: String, val message: String, val fields: Map<String, String>, @get:JsonInclude(JsonInclude.Include.NON_NULL) val suggestion: String?)
+data class CaptureErrorResponse(val code: String, val message: String, val fields: Map<String, String>, @get:JsonInclude(JsonInclude.Include.NON_NULL) val suggestion: String?, @get:JsonInclude(JsonInclude.Include.NON_NULL) val retryAfterSeconds: Long? = null)
 
 data class CaptureWindowResponse(val mint: String, val fromSlot: Long, val toSlot: Long, val coverage: String, val scanned: Int, val selected: Int, val detailGaps: Int?, val observations: Int?)
 

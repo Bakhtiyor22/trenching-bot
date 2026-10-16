@@ -24,8 +24,8 @@ data class CaptureSessionView(val id: String, val name: String, val displayName:
 data class CapturePage<T>(val items: List<T>, val page: Int, val size: Int, val total: Long)
 /** [total] counts the sessions the status filter keeps; [statusCounts] counts every session by summary status. */
 data class CaptureSessionPage(val items: List<CaptureSessionView>, val page: Int, val size: Int, val total: Long, val statusCounts: Map<CaptureSummaryStatus, Long>)
-/** [suggestion] is a free name offered with a `NAME_TAKEN` conflict. */
-class CaptureRequestException(val status: Int, val code: String, override val message: String, val fields: Map<String, String> = emptyMap(), val suggestion: String? = null) : ConsoleException(message)
+/** [suggestion] is a free name offered with a `NAME_TAKEN` conflict; [retryAfterSeconds] comes with a provider rate limit. */
+class CaptureRequestException(val status: Int, val code: String, override val message: String, val fields: Map<String, String> = emptyMap(), val suggestion: String? = null, val retryAfterSeconds: Long? = null) : ConsoleException(message)
 fun interface CaptureIds { fun next(): String }
 object CaptureNames {
     const val WALLET = "WALLET"

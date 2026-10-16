@@ -3,9 +3,13 @@ package com.trenching.bot.console.capture
 import com.trenching.bot.console.api.dto.*
 import com.trenching.bot.chaincapture.SolanaRpcSettings
 import com.trenching.bot.common.MintAddress
+import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
+import com.trenching.bot.walletactivity.WalletActivityLimits
+import com.trenching.bot.walletactivity.WalletActivityUnavailable
 import com.trenching.bot.walletactivity.WalletHistoryCaptureLimits
 import java.time.DateTimeException
+import java.time.Duration
 import java.time.ZoneId
 import java.time.ZoneOffset
 
@@ -23,6 +27,21 @@ object CaptureValidation {
         range("scanPages", value.scanPages.toLong(), 50)
     }
     fun walletAddress(value: String): WalletAddress = try { WalletAddress.of(value) } catch (_: IllegalArgumentException) { invalid("wallet", "must be a base58 public wallet address") }
+    /** A wallet path variable: unlike a settings field, a bad one answers `INVALID_ADDRESS`. */
+    fun activityAddress(value: String): WalletAddress = try { WalletAddress.of(value) } catch (_: IllegalArgumentException) {
+        throw CaptureRequestException(400, "INVALID_ADDRESS", "Not a valid 32-byte base58 Solana address", mapOf("address" to "must be a base58 public wallet address"))
+    }
+    fun activityLimit(value: Int): Int = value.also { range("limit", it.toLong(), WalletActivityLimits.MAX_LIMIT.toLong()) }
+    fun activityBefore(value: String?): TransactionSignature? = value?.let {
+        try { TransactionSignature.of(it) } catch (_: IllegalArgumentException) { invalid("before", "must be a base58 transaction signature") }
+    }
+    /** Names only the variable, never its value. */
+    fun activityUnavailable(reason: WalletActivityUnavailable, retryAfter: Duration?): Nothing = throw when (reason) {
+        WalletActivityUnavailable.RPC_NOT_CONFIGURED -> CaptureRequestException(409, reason.name, "SOLANA_RPC_URL is not configured for the backend")
+        WalletActivityUnavailable.NOT_MAINNET -> CaptureRequestException(409, reason.name, "The configured RPC endpoint is not Solana mainnet")
+        WalletActivityUnavailable.PROVIDER_RATE_LIMITED -> CaptureRequestException(429, reason.name, "The RPC provider is rate limiting requests", retryAfterSeconds = retryAfter?.seconds)
+        WalletActivityUnavailable.PROVIDER_UNAVAILABLE -> CaptureRequestException(502, reason.name, "The RPC provider did not answer")
+    }
     fun mintAddress(value: String): MintAddress = try { MintAddress.of(value) } catch (_: IllegalArgumentException) { invalid("mint", "must be a base58 32-byte mint address") }
     fun scope(value: String): CaptureWalletScope = CaptureWalletScope.of(value) ?: invalid("scope", "unsupported discovery scope")
     /** The name as stored: trimmed, whitespace collapsed, 1 to [CaptureNamePolicy.MAX_LENGTH] characters. */

@@ -15,11 +15,11 @@ import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 
-@RestControllerAdvice(assignableTypes=[CaptureController::class])
+@RestControllerAdvice(assignableTypes=[CaptureController::class,WalletController::class])
 @Profile("local & !prod")
 @ConditionalOnConsoleEnabled
 class CaptureExceptionHandler(private val mapper: ConsoleErrorMapper, private val captures: CaptureResponseMapper) {
-    @ExceptionHandler fun capture(exception: CaptureRequestException): ResponseEntity<CaptureErrorResponse> = ResponseEntity.status(exception.status).body(captures.error(exception.code,exception.message,exception.fields,exception.suggestion))
+    @ExceptionHandler fun capture(exception: CaptureRequestException): ResponseEntity<CaptureErrorResponse> = ResponseEntity.status(exception.status).body(captures.error(exception.code,exception.message,exception.fields,exception.suggestion,exception.retryAfterSeconds))
     @ExceptionHandler(HttpMessageNotReadableException::class,MethodArgumentTypeMismatchException::class,MissingServletRequestParameterException::class,IllegalArgumentException::class,DatasetInvalidException::class)
     fun invalid(): ResponseEntity<ConsoleErrorResponse> = ResponseEntity.badRequest().body(mapper.toResponse("INVALID_REQUEST","Invalid capture request or artifact",emptyMap()))
 }
