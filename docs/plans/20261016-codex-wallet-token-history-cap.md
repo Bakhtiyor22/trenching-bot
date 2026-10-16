@@ -1,6 +1,7 @@
 # Codex brief: wallet + token captures complete only at the end of history
 
-Status: Ready for Codex. Backend change is on `develop`; this brief covers the matching frontend text and mocks only.
+Status: Implemented. Frontend text, defaults, mocks and regression coverage match the backend contract. The wallet
+Start/Resume action is hidden when inspection requires a new wallet attempt. No schema change.
 
 ## Backend change this follows
 
@@ -49,3 +50,6 @@ npm test
 npm run lint
 npm run build
 ```
+
+Verified: all 213 tests in 33 files pass; lint and production build pass. The full test suite required execution outside
+the Windows sandbox after sandbox runs failed with temporary-file `ENOENT`/`EPERM` errors.

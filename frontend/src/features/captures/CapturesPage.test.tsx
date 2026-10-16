@@ -71,7 +71,7 @@ describe('Capture console', () => {
     await user.click(await screen.findByRole('option', { name: 'Wallet + token' }));
     expect(screen.getByText(/qualifies is only known after market capture/)).toBeInTheDocument();
     expect(
-      screen.getByText(/Effective settings: 100 transaction\(s\), 5 scan pages/),
+      screen.getByText(/Effective settings: 1000 transaction\(s\), 20 scan pages/),
     ).toBeInTheDocument();
     const mint = screen.getByLabelText(/Token mint address/);
     await user.type(mint, 'not-a-mint');
@@ -83,7 +83,7 @@ describe('Capture console', () => {
     expect(await screen.findByText('Created session')).toBeInTheDocument();
     expect(body).toMatchObject({
       name: 'Token case',
-      wallet: { wallet: WALLET, scope: 'wallet-token', limit: 100, scanPages: 5, mint: BASE_MINT },
+      wallet: { wallet: WALLET, scope: 'wallet-token', limit: 1000, scanPages: 20, mint: BASE_MINT },
     });
   });
   it('restores the default sample when leaving the wallet + token scope', async () => {
@@ -97,6 +97,56 @@ describe('Capture console', () => {
     expect(
       screen.getByText(/Effective settings: 1 transaction\(s\), 20 scan pages/),
     ).toBeInTheDocument();
+  });
+  it('explains capped wallet history and offers no wallet start or resume action', async () => {
+    server.use(
+      http.get('/api/captures/capture-demo', () =>
+        HttpResponse.json({
+          ...captureSession,
+          wallet: { ...captureConfig.walletTokenDefaults, wallet: WALLET, mint: BASE_MINT },
+          datasetReady: false,
+          calibrationReady: false,
+          inspection: {
+            ...readyInspection,
+            wallet: {
+              state: 'INCOMPLETE',
+              reason: 'HISTORY_NOT_EXHAUSTED',
+              canStart: false,
+              canResume: false,
+              requiresNewAttempt: true,
+            },
+            market: {
+              state: 'NOT_STARTED',
+              reason: 'WALLET_CAPTURE_NOT_READY',
+              canStart: false,
+              canResume: false,
+              requiresNewAttempt: false,
+            },
+            rates: {
+              state: 'NOT_STARTED',
+              reason: 'MARKET_CAPTURE_NOT_READY',
+              canStart: false,
+              canResume: false,
+              requiresNewAttempt: false,
+            },
+            canExport: false,
+            canCalibrate: false,
+            marketWindows: [],
+          },
+        }),
+      ),
+    );
+    detail();
+    const walletPanel = await screen.findByRole('tabpanel', { name: 'Wallet' });
+    expect(
+      within(walletPanel).getByText(
+        "The token-account history was not read to its end: the listing stopped at the sample's record or page limit, so an earlier buy cannot be ruled out. Resuming cannot finish this capture; start a new session with a larger sample or more wallet scan pages.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /^(Start|Resume) wallet capture$/ }),
+    ).not.toBeInTheDocument();
+    expect(within(walletPanel).getByText('PUMPFUN_BONDING_CURVE_BUY')).toBeInTheDocument();
   });
   it('defaults the wallet budget of a wallet + token session to its larger preset', async () => {
     let body: Record<string, unknown> | undefined;

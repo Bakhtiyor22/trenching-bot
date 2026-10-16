@@ -770,10 +770,12 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
                     </>
                   )}
                   <Group>
-                    <Button disabled={!enabled} onClick={() => start(step)}>
-                      {stage?.canResume ? 'Resume' : 'Start'} {step === 'MARKET' ? 'market' : key}{' '}
-                      capture
-                    </Button>
+                    {(step !== 'WALLET' || !stage?.requiresNewAttempt) && (
+                      <Button disabled={!enabled} onClick={() => start(step)}>
+                        {stage?.canResume ? 'Resume' : 'Start'} {step === 'MARKET' ? 'market' : key}{' '}
+                        capture
+                      </Button>
+                    )}
                     {!canAcquire && !stage?.reason && (
                       <Text size="xs" c="dimmed">
                         {stage?.state === 'READY'

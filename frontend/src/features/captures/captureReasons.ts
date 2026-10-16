@@ -32,7 +32,7 @@ const REASONS: Record<string, string> = {
   FIRST_BUY_MISMATCH: 'The replay started from a different buy than the proven first buy; this is a data problem, not a strategy outcome.',
   NO_TARGET_BUY: 'The complete token-account history holds no buy of this token, so there is nothing to evaluate.',
   FIRST_BUY_OUTSIDE_TOKEN_ACCOUNT: 'The wallet’s actual first buy of this token went to another token account. This version does not adopt it, so market capture cannot proceed.',
-  HISTORY_NOT_EXHAUSTED: 'The token-account history was not read to its end (more than 100 records or 50 pages), so an earlier buy cannot be ruled out.',
+  HISTORY_NOT_EXHAUSTED: "The token-account history was not read to its end: the listing stopped at the sample's record or page limit, so an earlier buy cannot be ruled out. Resuming cannot finish this capture; start a new session with a larger sample or more wallet scan pages.",
   EARLIER_UNDECODED_ACQUISITION: 'An earlier transaction may have acquired this token through a route the decoder cannot price, such as a multi-hop curve hop or an unsupported buy instruction.',
   EARLIER_UNKNOWN_RECORD: 'An earlier transaction could not be read (unavailable, unsupported version or withheld), so it cannot be ruled out as a buy.',
   NON_ATA_CREDIT: 'The earliest decoded buy credited a token account other than the wallet’s associated token account.',
