@@ -4,17 +4,18 @@ import com.trenching.bot.console.api.dto.*
 import com.trenching.bot.chaincapture.SolanaRpcSettings
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.WalletAddress
+import com.trenching.bot.walletactivity.WalletHistoryCaptureLimits
 
 object CaptureValidation {
     const val WALLET_REQUESTS_MAX = 1000L
-    val bounds = mapOf("walletLimitMax" to 100L, "walletPagesMax" to 50L, "walletRequestsMax" to WALLET_REQUESTS_MAX, "walletBytesMax" to 524288000L, "marketPagesMax" to 500L, "marketTransactionsMax" to 50000L, "marketRequestsMax" to 60000L, "marketBytesMax" to 4294967296L, "operationTimeoutMinutesMax" to SolanaRpcSettings.MAX_OPERATION_TIMEOUT_MINUTES, "recoveryRequestsMax" to 60000L, "recoveryBytesMax" to 4294967296L, "recoveryAttemptsMax" to 8L)
+    val bounds = mapOf("walletLimitMax" to WalletHistoryCaptureLimits.MAX_TRANSACTIONS.toLong(), "walletPagesMax" to 50L, "walletRequestsMax" to WALLET_REQUESTS_MAX, "walletBytesMax" to 524288000L, "marketPagesMax" to 500L, "marketTransactionsMax" to 50000L, "marketRequestsMax" to 60000L, "marketBytesMax" to 4294967296L, "operationTimeoutMinutesMax" to SolanaRpcSettings.MAX_OPERATION_TIMEOUT_MINUTES, "recoveryRequestsMax" to 60000L, "recoveryBytesMax" to 4294967296L, "recoveryAttemptsMax" to 8L)
     fun wallet(value: CaptureWalletSettings) {
         try { WalletAddress.of(value.wallet) } catch (_: IllegalArgumentException) { invalid("wallet", "must be a base58 public wallet address") }
         when (CaptureWalletScope.of(value.scope) ?: invalid("scope", "unsupported discovery scope")) {
             CaptureWalletScope.WALLET_TOKEN -> mint(value.mint)
             CaptureWalletScope.PUMPFUN_USER_BUYS, CaptureWalletScope.WALLET_REFERENCES -> if (value.mint != null) invalid("mint", "only the wallet-token scope takes a mint")
         }
-        range("limit", value.limit.toLong(), 100)
+        range("limit", value.limit.toLong(), WalletHistoryCaptureLimits.MAX_TRANSACTIONS.toLong())
         range("scanPages", value.scanPages.toLong(), 50)
     }
     private fun mint(value: String?) {

@@ -40,7 +40,7 @@ internal class WalletHistoryArtifactStore(private val mapper: ObjectMapper) {
         val root = files.root(directory, create = false)
         val inner = files.readManifest(root, WalletCaptureFormat.MANIFEST) ?: return null
         val manifest = parse(inner, ManifestFields.requireVersion(inner, WalletCaptureFormat.READABLE_VERSIONS))
-        validate(manifest)
+            .also { validate(it) }.let { it.copy(complete = WalletCaptureFormat.isComplete(it)) }
         val token = TokenTarget.of(manifest)
         val evidence = WalletTransactionEvidence()
         manifest.records.forEach { record ->
@@ -149,8 +149,15 @@ internal class WalletHistoryArtifactStore(private val mapper: ObjectMapper) {
         }
         if (!consistentDiscovery(manifest)) fail("DISCOVERY_STATE")
         manifest.verification?.let { VerificationSection.validate(manifest, it, files::transactionPath) }
-        if (manifest.complete != WalletCaptureFormat.isComplete(manifest)) fail("COMPLETE_STATUS")
+        if (manifest.complete != WalletCaptureFormat.isComplete(manifest) && !savedCappedAsComplete(manifest)) fail("COMPLETE_STATUS")
     }
+
+    /**
+     * A token-account capture saved before completion required the end of its history: a finished but capped sample was
+     * stored as complete. It stays readable and is reported incomplete.
+     */
+    private fun savedCappedAsComplete(manifest: WalletHistoryManifest): Boolean =
+        manifest.complete && manifest.scope == WalletHistoryScope.WALLET_TOKEN_ACCOUNT && WalletCaptureFormat.acquisitionFinished(manifest)
 
     private fun consistentDiscovery(manifest: WalletHistoryManifest): Boolean {
         val pageSize = ChainCaptureFormat.SIGNATURE_PAGE_SIZE

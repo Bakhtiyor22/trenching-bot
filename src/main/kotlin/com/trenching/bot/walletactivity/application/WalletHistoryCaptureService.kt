@@ -197,6 +197,10 @@ internal class WalletHistoryCaptureService(
         log.info("wallet_capture finished scope={} selected={} scanned={} skippedFailed={} discoveryStop={} complete={} requests={} bytes={} stopReason={}",
             manifest.scope, manifest.selection.size, manifest.scannedSignatures, manifest.skippedFailed, manifest.discoveryStop, complete, budget.requestsUsed, budget.bytesUsed,
             stop.reason)
+        if (WalletHistoryCompletion.historyNotExhausted(manifest)) {
+            log.warn("wallet_capture history_not_exhausted scope={} discoveryStop={} selected={} limit={} scanned={} scanPageLimit={}",
+                manifest.scope, manifest.discoveryStop, manifest.selection.size, manifest.limit, manifest.scannedSignatures, manifest.scanPageLimit)
+        }
         return WalletHistoryCaptureResult(request.directory.toAbsolutePath().normalize(), manifest, stop.reason, stop.retryAfter)
     }
 

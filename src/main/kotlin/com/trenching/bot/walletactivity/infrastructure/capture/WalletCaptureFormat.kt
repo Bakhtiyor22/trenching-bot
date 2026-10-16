@@ -3,6 +3,7 @@ package com.trenching.bot.walletactivity.infrastructure.capture
 import com.trenching.bot.chaincapture.ChainCaptureFormat
 import com.trenching.bot.walletactivity.VerificationOutcome
 import com.trenching.bot.walletactivity.WalletHistoryCaptureLimits
+import com.trenching.bot.walletactivity.WalletHistoryDiscoveryStop
 import com.trenching.bot.walletactivity.WalletHistoryManifest
 import com.trenching.bot.walletactivity.WalletHistoryOutcome
 import com.trenching.bot.walletactivity.WalletHistoryScope
@@ -40,13 +41,20 @@ internal object WalletCaptureFormat {
         manifest.discoveryComplete && manifest.records.none { it.outcome in UNRESOLVED_OUTCOMES }
 
     /**
-     * A capture is complete once its records are resolved; a token-account capture also once verification has nothing to
+     * Nothing is left to request: the records are resolved and, for a token-account capture, verification has nothing to
      * verify or has reached its verdict.
      */
-    fun isComplete(manifest: WalletHistoryManifest): Boolean = recordsResolved(manifest) && when (manifest.scope) {
+    fun acquisitionFinished(manifest: WalletHistoryManifest): Boolean = recordsResolved(manifest) && when (manifest.scope) {
         WalletHistoryScope.WALLET_REFERENCES, WalletHistoryScope.PUMPFUN_USER_VOLUME_ACCUMULATOR -> true
         WalletHistoryScope.WALLET_TOKEN_ACCOUNT -> manifest.verification?.let { it.firstBuy == null || it.result != null } ?: false
     }
+
+    /**
+     * A capture is complete once its acquisition finished. A token-account capture must also have listed the account's
+     * history to its end: a sample capped by its record or page limit can miss an earlier buy, so it stays incomplete.
+     */
+    fun isComplete(manifest: WalletHistoryManifest): Boolean = acquisitionFinished(manifest) &&
+        (manifest.scope != WalletHistoryScope.WALLET_TOKEN_ACCOUNT || manifest.discoveryStop == WalletHistoryDiscoveryStop.HISTORY_END)
 
     /** The version a manifest of [scope] is written in; the existing scopes keep writing [VERSION]. */
     fun version(scope: WalletHistoryScope): Int = when (scope) {

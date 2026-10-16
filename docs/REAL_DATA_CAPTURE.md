@@ -26,7 +26,7 @@ Managed sessions are stored under build/captures/console by default. The validat
 
 Console only; there is no CLI option for this scope, although CLI inspection, market capture and export read its directories. Use it when you already know a wallet and one token and want to know whether the dip-entry strategy would have qualified on the wallet's first buy of that token. See the [decision](adr/20261010-wallet-token-capture.md) and the [plan](plans/archive/20261010-wallet-token-capture.md).
 
-**Inputs.** Create a session with the scope **Wallet + token**, the wallet and the token's mint (a base58 address). The form defaults are 100 records and 5 listing pages for the token account, with 1,000 requests and 100 MiB per wallet operation. The other scopes take no mint.
+**Inputs.** Create a session with the scope **Wallet + token**, the wallet and the token's mint (a base58 address). The form defaults are 1,000 records and 20 listing pages for the token account, with 1,000 requests and 100 MiB per wallet operation. A capture of 1,000 records needs more than one operation's requests: resume it until it finishes. The other scopes take no mint.
 
 ### Which first buy the strategy needs
 
@@ -41,11 +41,13 @@ Market capture is offered only when the actual first buy is proven and is the sa
 
 ### Step 1: the token account
 
-One `getAccountInfo` on the mint records its token program (Token or Token-2022; anything else, or a missing mint, stops before any listing). The wallet's token account is derived from the wallet, that program and the mint, and its signature listing is scanned newest-first like the other scopes (1–100 records, up to 50 pages). Because the listing is by address, it still answers after the account was closed.
+One `getAccountInfo` on the mint records its token program (Token or Token-2022; anything else, or a missing mint, stops before any listing). The wallet's token account is derived from the wallet, that program and the mint, and its signature listing is scanned newest-first like the other scopes (1–1,000 records, up to 50 pages). Because the listing is by address, it still answers after the account was closed.
+
+The capture is **complete** only once discovery reached the end of the account's history and verification finished. A listing that stops at the record or page limit is a capped sample: an earlier buy may lie beyond it. Its wallet stage stays incomplete with reason `HISTORY_NOT_EXHAUSTED`, still showing the decoded records and first-buy checks; resuming cannot complete it, so start a new session with a larger sample or more listing pages. Captures saved before this rule, whose capped sample was stored as complete, read as incomplete.
 
 - **Found**: discovery reached the end of the account's history and the earliest decoded buy credited the account, with no other decoded buy in its slot and no unrecognised acquisition at or before its slot.
 - **No buy**: the history is complete and holds no buy of the token through this account. This is a valid answer, not a gap.
-- **Not established**, with the reason and the blocking signatures: `HISTORY_NOT_EXHAUSTED` (more than 100 records or more pages than allowed; a reported limitation), `SAME_SLOT_BUY` (another decoded buy of the token in the earliest buy's slot; the order inside a slot is not relied on, so neither can be called first), `EARLIER_UNDECODED_ACQUISITION`, `EARLIER_UNKNOWN_RECORD` or `NON_ATA_CREDIT`.
+- **Not established**, with the reason and the blocking signatures: `HISTORY_NOT_EXHAUSTED` (more records or listing pages than the capture allowed; a reported limitation), `SAME_SLOT_BUY` (another decoded buy of the token in the earliest buy's slot; the order inside a slot is not relied on, so neither can be called first), `EARLIER_UNDECODED_ACQUISITION`, `EARLIER_UNKNOWN_RECORD` or `NON_ATA_CREDIT`.
 
 ### Step 2: the actual first buy
 

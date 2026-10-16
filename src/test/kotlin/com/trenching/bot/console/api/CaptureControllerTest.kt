@@ -42,7 +42,7 @@ class CaptureControllerTest {
 
         val config = fixture.json.readTree(fixture.json.writeValueAsString(controller.config()))
 
-        assertEquals(fixture.json.readTree("""{"wallet":"","scope":"wallet-token","limit":100,"scanPages":5,"mint":""}"""), config["walletTokenDefaults"])
+        assertEquals(fixture.json.readTree("""{"wallet":"","scope":"wallet-token","limit":1000,"scanPages":20,"mint":""}"""), config["walletTokenDefaults"])
         assertEquals(fixture.json.readTree("""{"requestBudget":1000,"byteBudget":104857600,"operationTimeoutMinutes":10}"""), config["walletTokenBudgetDefaults"])
         assertEquals(fixture.json.readTree("""{"wallet":"","scope":"pumpfun-user-buys","limit":1,"scanPages":20}"""), config["walletDefaults"])
         assertEquals(fixture.json.readTree("""{"requestBudget":400,"byteBudget":104857600,"operationTimeoutMinutes":10}"""), config["budgetDefaults"])

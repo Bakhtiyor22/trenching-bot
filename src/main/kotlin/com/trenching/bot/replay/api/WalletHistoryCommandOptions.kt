@@ -26,7 +26,7 @@ internal object WalletHistoryCommandOptions {
     const val DECODER_NOT_RUN = "NOT_RUN"
     const val DECODER_CAPTURE_INCOMPLETE = "CAPTURE_INCOMPLETE"
     const val NO_DISCOVERY_STOP = "NONE"
-    const val CAPTURE_USAGE = "Usage: captureWalletHistory --wallet <address> --directory <path> [--limit <1..100>] [--scan-pages <1..50>] [--request-budget <positive integer>] [--byte-budget <positive bytes>] [--scope wallet-references|pumpfun-user-buys] " +
+    const val CAPTURE_USAGE = "Usage: captureWalletHistory --wallet <address> --directory <path> [--limit <1..${WalletHistoryCaptureLimits.MAX_TRANSACTIONS}>] [--scan-pages <1..${WalletHistoryCaptureLimits.MAX_SCAN_PAGES}>] [--request-budget <positive integer>] [--byte-budget <positive bytes>] [--scope wallet-references|pumpfun-user-buys] " +
         CaptureCommandArguments.OPERATION_TIMEOUT_USAGE
     const val INSPECT_USAGE = "Usage: inspectWalletHistory --directory <path>"
     val CAPTURE_OPTIONS = setOf(WALLET, DIRECTORY, LIMIT, SCAN_PAGES, REQUEST_BUDGET, BYTE_BUDGET, SCOPE,

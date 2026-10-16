@@ -58,9 +58,60 @@ class WalletTokenScopeTest {
     }
 
     @Test
-    fun `the scope's defaults are one hundred records and five scan pages`() {
-        assertEquals(100, WalletHistoryCaptureLimits.TOKEN_ACCOUNT_DEFAULT_TRANSACTIONS)
-        assertEquals(5, WalletHistoryCaptureLimits.TOKEN_ACCOUNT_DEFAULT_SCAN_PAGES)
+    fun `the scope's defaults are a thousand records and twenty scan pages`() {
+        assertEquals(1000, WalletHistoryCaptureLimits.TOKEN_ACCOUNT_DEFAULT_TRANSACTIONS)
+        assertEquals(20, WalletHistoryCaptureLimits.TOKEN_ACCOUNT_DEFAULT_SCAN_PAGES)
+    }
+
+    @Test
+    fun `a capture whose listing stops at its record limit finishes incomplete, stays so on resume and still decodes its first-buy checks`() {
+        val capped = capture(request().copy(limit = 1))
+
+        assertEquals(listOf("getGenesisHash", "getAccountInfo", "getSignaturesForAddress", "getTransaction"), calls.map { it.first })
+        assertEquals(WalletHistoryDiscoveryStop.LIMIT_REACHED, capped.manifest.discoveryStop)
+        assertEquals(VerificationStart.of(wallet, null), capped.manifest.verification)
+        assertFalse(capped.manifest.complete)
+        assertTrue(WalletHistoryCompletion.historyNotExhausted(capped.manifest))
+        assertFalse(store.inspect(directory).manifest.complete)
+        calls.clear()
+
+        val resumed = capture(request().copy(limit = 1))
+
+        assertEquals(listOf("getGenesisHash"), calls.map { it.first })
+        assertFalse(resumed.manifest.complete)
+        val decoded = recorded().decode(directory, wallet)
+        assertFalse(decoded.complete)
+        assertEquals(TokenAccountFirstBuy.NotEstablished(TokenAccountGap.HISTORY_NOT_EXHAUSTED, emptyList()), decoded.targetToken?.tokenAccountFirstBuy)
+        assertEquals(ActualFirstBuy.NotVerified, decoded.targetToken?.actualFirstBuy)
+    }
+
+    @Test
+    fun `a capped capture saved as complete before history exhaustion was required is read as incomplete`() {
+        saveTokenCapture(listOf(buy()), discoveryStop = WalletHistoryDiscoveryStop.LIMIT_REACHED, complete = true)
+
+        val manifest = store.inspect(directory).manifest
+
+        assertFalse(manifest.complete)
+        assertTrue(WalletHistoryCompletion.historyNotExhausted(manifest))
+    }
+
+    @Test
+    fun `inspection still refuses a capture saved as complete before its acquisition finished`() {
+        saveTokenCapture(listOf(buy()), discoveryStop = WalletHistoryDiscoveryStop.LIMIT_REACHED, complete = true, verification = null)
+
+        val failure = assertFailsWith<CaptureValidationException> { store.inspect(directory) }
+
+        assertEquals("COMPLETE_STATUS", failure.category)
+    }
+
+    @Test
+    fun `a capture that listed its history to the end and finished verifying is complete`() {
+        saveTokenCapture(listOf(buy()), complete = true)
+
+        val manifest = store.inspect(directory).manifest
+
+        assertTrue(manifest.complete)
+        assertFalse(WalletHistoryCompletion.historyNotExhausted(manifest))
     }
 
     @Test
@@ -229,7 +280,14 @@ class WalletTokenScopeTest {
         }
     }
 
-    private fun saveTokenCapture(transactions: List<ObjectNode>, mint: String = MINT, tokenAccount: String = TOKEN_ACCOUNT) {
+    private fun saveTokenCapture(
+        transactions: List<ObjectNode>,
+        mint: String = MINT,
+        tokenAccount: String = TOKEN_ACCOUNT,
+        discoveryStop: WalletHistoryDiscoveryStop = WalletHistoryDiscoveryStop.HISTORY_END,
+        complete: Boolean = true,
+        verification: WalletTokenVerification? = VerificationStart.of(wallet, null),
+    ) {
         val records = transactions.map { transaction ->
             val signature = transaction.path("transaction").path("signatures").path(0).asString()
             val written = store.writeTransaction(directory, signature, transaction)
@@ -239,11 +297,12 @@ class WalletTokenScopeTest {
         store.save(directory, WalletHistoryManifest(
             schemaVersion = 4, wallet = WALLET, scope = WalletHistoryScope.WALLET_TOKEN_ACCOUNT, listingAddress = tokenAccount,
             genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", commitment = "confirmed", capturedAt = "2026-10-10T00:00:00Z",
-            limit = 100, scanPageLimit = 5, selection = records.map { WalletHistorySelection(it.signature, it.slot) }, records = records,
-            complete = true, discoveryComplete = true, discoveryStop = WalletHistoryDiscoveryStop.HISTORY_END,
+            limit = if (discoveryStop == WalletHistoryDiscoveryStop.LIMIT_REACHED) records.size else 100, scanPageLimit = 5,
+            selection = records.map { WalletHistorySelection(it.signature, it.slot) }, records = records,
+            complete = complete, discoveryComplete = true, discoveryStop = discoveryStop,
             scannedSignatures = records.size, skippedFailed = 0, scanCursor = WalletHistoryScanCursor(oldest.signature, oldest.slot),
             requestsUsed = records.size + 3, bytesUsed = 1000, targetMint = mint, tokenProgram = TOKEN_2022,
-            verification = VerificationStart.of(wallet, null),
+            verification = verification,
         ))
     }
 

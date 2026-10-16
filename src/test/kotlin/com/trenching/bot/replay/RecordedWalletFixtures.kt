@@ -1,5 +1,6 @@
 package com.trenching.bot.replay
 
+import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.walletactivity.WalletHistoryDiscoveryStop
 import com.trenching.bot.walletactivity.WalletHistoryManifest
 import com.trenching.bot.walletactivity.WalletHistoryOutcome
@@ -7,6 +8,7 @@ import com.trenching.bot.walletactivity.WalletHistoryRecord
 import com.trenching.bot.walletactivity.WalletHistoryScanCursor
 import com.trenching.bot.walletactivity.WalletHistoryScope
 import com.trenching.bot.walletactivity.WalletHistorySelection
+import com.trenching.bot.walletactivity.infrastructure.capture.VerificationStart
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
 import java.nio.file.Files
 import java.nio.file.Path
@@ -24,6 +26,31 @@ internal object RecordedWalletFixtures {
 
     /** Decu's Pump.fun user volume accumulator, which the buy passes as Pump.fun account 13. */
     const val ACCUMULATOR = "Hj2hjN1EAe5pv676kUMf14zbj1ioWEHaiukbHDqw2P3D"
+
+    /** Decu's associated Token-2022 account for [MINT], which the buy credits. */
+    private const val TOKEN_ACCOUNT = "4CnXbpxS5UHLmeEnj9MJrAGdQCSZpDotTCAva85zQUYi"
+    private const val TOKEN_2022 = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+    /**
+     * Saves a wallet + token capture of [MINT] whose listing stopped at its one-record limit: every record is resolved and
+     * nothing is left to verify, but the account's history was not read to its end. [savedComplete] writes it the way
+     * captures were stored before completion required the end of the history.
+     */
+    fun saveCappedTokenCapture(mapper: ObjectMapper, target: Path, savedComplete: Boolean = false) {
+        val store = WalletHistoryArtifactStore(mapper)
+        val transaction = javaClass.getResourceAsStream("/walletactivity/decoder/pumpfun-buy.json").use { mapper.readTree(requireNotNull(it)) }
+        val artifact = store.writeTransaction(target, SIGNATURE, transaction)
+        store.save(target, WalletHistoryManifest(
+            schemaVersion = 4, wallet = WALLET, scope = WalletHistoryScope.WALLET_TOKEN_ACCOUNT, listingAddress = TOKEN_ACCOUNT,
+            genesisHash = GENESIS, commitment = "confirmed", capturedAt = "2026-10-03T00:00:00Z", limit = 1, scanPageLimit = 1,
+            selection = listOf(WalletHistorySelection(SIGNATURE, SLOT)),
+            records = listOf(WalletHistoryRecord(SIGNATURE, SLOT, WalletHistoryOutcome.UNCLASSIFIED, artifact.path, artifact.sha256, artifact.bytes)),
+            complete = savedComplete, discoveryComplete = true, discoveryStop = WalletHistoryDiscoveryStop.LIMIT_REACHED,
+            scannedSignatures = 1, skippedFailed = 0, scanCursor = WalletHistoryScanCursor(SIGNATURE, SLOT),
+            requestsUsed = 4, bytesUsed = artifact.bytes, targetMint = MINT, tokenProgram = TOKEN_2022,
+            verification = VerificationStart.of(WalletAddress.of(WALLET), null),
+        ))
+    }
 
     /**
      * Saves the buy as [target]'s only selection; [complete] false leaves it pending, [signer] false makes it a non-signer.

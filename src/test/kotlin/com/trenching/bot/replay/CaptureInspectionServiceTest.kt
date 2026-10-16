@@ -11,7 +11,10 @@ import com.trenching.bot.replay.RecordedWalletPlanningTest.Companion.SIGNATURE
 import com.trenching.bot.replay.RecordedWalletPlanningTest.Companion.SLOT
 import com.trenching.bot.replay.RecordedWalletPlanningTest.Companion.withTarget
 import com.trenching.bot.replay.application.CaptureInspectionService
+import com.trenching.bot.walletactivity.ActualFirstBuy
 import com.trenching.bot.walletactivity.RecordedWalletHistory
+import com.trenching.bot.walletactivity.TokenAccountFirstBuy
+import com.trenching.bot.walletactivity.TokenAccountGap
 import com.trenching.bot.walletactivity.WalletHistoryCaptureConfiguration
 import java.nio.file.Path
 import kotlin.test.assertEquals
@@ -65,6 +68,21 @@ class CaptureInspectionServiceTest {
         assertEquals(CaptureStageState.INCOMPLETE, inspection.wallet.state)
         assertTrue(inspection.wallet.canResume)
         assertNull(inspection.targetToken)
+    }
+
+    @Test
+    fun `a wallet + token capture capped before the end of its history is incomplete for good but still reports its first-buy checks`() {
+        listOf(false, true).forEach { savedComplete ->
+            val target = directory.resolve("saved-complete-$savedComplete")
+            RecordedWalletFixtures.saveCappedTokenCapture(mapper, target, savedComplete)
+
+            val inspection = CaptureInspectionService(recorded, unusedMarkets, unusedRates).inspect(CapturePaths(target))
+
+            assertEquals(CaptureStageSummary(CaptureStageState.INCOMPLETE, "HISTORY_NOT_EXHAUSTED", requiresNewAttempt = true), inspection.wallet)
+            assertFalse(inspection.market.canStart)
+            assertEquals(TokenAccountFirstBuy.NotEstablished(TokenAccountGap.HISTORY_NOT_EXHAUSTED, emptyList()), inspection.targetToken?.tokenAccountFirstBuy)
+            assertEquals(ActualFirstBuy.NotVerified, inspection.targetToken?.actualFirstBuy)
+        }
     }
 
     @Test

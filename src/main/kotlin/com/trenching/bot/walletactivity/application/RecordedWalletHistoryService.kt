@@ -31,9 +31,10 @@ internal class RecordedWalletHistoryService(
         return verified
     }
 
+    /** A token-account capture capped before the end of its history decodes too, with [WalletHistoryDecodeResult.complete] false. */
     override fun decode(directory: Path, wallet: WalletAddress): WalletHistoryDecodeResult {
         val verified = store.inspect(directory)
-        if (!verified.manifest.complete) throw CaptureValidationException("CAPTURE_INCOMPLETE")
+        if (!WalletCaptureFormat.acquisitionFinished(verified.manifest)) throw CaptureValidationException("CAPTURE_INCOMPLETE")
         if (verified.manifest.wallet != wallet.value) throw CaptureValidationException("WALLET_MISMATCH")
         val artifacts = artifacts(directory, verified.manifest, wallet)
         val manifest = artifacts.manifest

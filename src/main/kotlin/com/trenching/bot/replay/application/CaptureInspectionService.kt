@@ -22,16 +22,23 @@ internal class CaptureInspectionService(
         val wallet = verified {
             walletCapture = wallets.inspect(paths.wallet)
             val captured = requireNotNull(walletCapture)
-            if (!captured.manifest.complete) CaptureStageSummary(CaptureStageState.INCOMPLETE, "WALLET_CAPTURE_INCOMPLETE", canResume = true)
-            else {
-                val decoded = wallets.decode(paths.wallet, WalletAddress.of(captured.manifest.wallet))
-                walletDecoded = decoded
-                when (val decision = MarketPlanGate().plan(decoded)) {
-                    is MarketPlanDecision.Planned -> {
-                        walletPlan = decision.plan
-                        CaptureStageSummary(CaptureStageState.READY)
+            when {
+                // Decoded only to report its first-buy checks: a capped sample never plans market windows.
+                WalletHistoryCompletion.historyNotExhausted(captured.manifest) -> {
+                    walletDecoded = wallets.decode(paths.wallet, WalletAddress.of(captured.manifest.wallet))
+                    CaptureStageSummary(CaptureStageState.INCOMPLETE, TokenAccountGap.HISTORY_NOT_EXHAUSTED.name, requiresNewAttempt = true)
+                }
+                !captured.manifest.complete -> CaptureStageSummary(CaptureStageState.INCOMPLETE, "WALLET_CAPTURE_INCOMPLETE", canResume = true)
+                else -> {
+                    val decoded = wallets.decode(paths.wallet, WalletAddress.of(captured.manifest.wallet))
+                    walletDecoded = decoded
+                    when (val decision = MarketPlanGate().plan(decoded)) {
+                        is MarketPlanDecision.Planned -> {
+                            walletPlan = decision.plan
+                            CaptureStageSummary(CaptureStageState.READY)
+                        }
+                        is MarketPlanDecision.Refused -> CaptureStageSummary(CaptureStageState.UNUSABLE, decision.reason)
                     }
-                    is MarketPlanDecision.Refused -> CaptureStageSummary(CaptureStageState.UNUSABLE, decision.reason)
                 }
             }
         }
