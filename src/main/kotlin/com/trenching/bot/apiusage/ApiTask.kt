@@ -1,0 +1,3 @@
+package com.trenching.bot.apiusage
+
+enum class ApiTask { WALLET_STEP, MARKET_STEP, RATES_STEP, CASE_RATES, WALLET_ACTIVITY, CONNECTION_CHECK, LIVE_PRICE, UNATTRIBUTED }

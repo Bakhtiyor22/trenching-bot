@@ -1,5 +1,6 @@
 package com.trenching.bot.replay
 
+import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.marketdata.MarketHistoryCaptureResult
 import com.trenching.bot.marketdata.MarketHistoryDecodeResult
 import com.trenching.bot.marketdata.MarketCaseId
@@ -26,8 +27,10 @@ data class CapturePaths(val wallet: Path, val market: Path? = null, val rates: P
 sealed interface CaptureStepCommand {
     data class Wallet(val request: WalletHistoryCaptureRequest) : CaptureStepCommand
     data class Markets(val request: ReplayMarketCaptureRequest) : CaptureStepCommand
-    data class Rates(val wallet: Path, val market: Path, val directory: Path) : CaptureStepCommand
-    data class CaseRates(val wallet: Path, val market: Path, val caseId: MarketCaseId, val directory: Path) : CaptureStepCommand
+    data class Rates(val wallet: Path, val market: Path, val directory: Path, val usage: ApiUsageContext = ApiUsageContext.UNATTRIBUTED) :
+        CaptureStepCommand
+    data class CaseRates(val wallet: Path, val market: Path, val caseId: MarketCaseId, val directory: Path,
+        val usage: ApiUsageContext = ApiUsageContext.UNATTRIBUTED) : CaptureStepCommand
     data class Inspect(val paths: CapturePaths) : CaptureStepCommand
     data class Export(val request: RecordedReplayExportRequest) : CaptureStepCommand
     data class ExportCase(val request: CaptureCaseExportRequest) : CaptureStepCommand

@@ -1,15 +1,20 @@
 package com.trenching.bot.console.capture
 
+import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.console.api.dto.CaptureAttachment
 import com.trenching.bot.console.api.dto.CaptureAttemptRequest
 import com.trenching.bot.console.api.dto.CaptureBudget
 import com.trenching.bot.console.api.dto.CaptureCreateRequest
 import com.trenching.bot.console.api.dto.CaptureMarketSettings
 import com.trenching.bot.console.api.dto.CaptureOperationRequest
+import com.trenching.bot.console.api.dto.CaptureRenameRequest
 import com.trenching.bot.console.api.dto.CaptureWalletSettings
 import com.trenching.bot.replay.CaptureStepCommand
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Clock
+import java.time.Instant
+import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
@@ -431,5 +436,164 @@ class CaptureSessionServiceTest {
         assertEquals(CaptureMarketSettings(50, 50000, null), fixture.json.readValue("""{"scanPages":50,"maxTransactions":50000}""", CaptureMarketSettings::class.java))
         assertEquals("""{"scanPages":50,"maxTransactions":50000}""", fixture.json.writeValueAsString(CaptureMarketSettings()))
         assertFalse("cutoffMode" in fixture.json.writeValueAsString(CaptureCreateRequest("r", "n")))
+    }
+
+    private val decu = CaptureSuggestedWallets(listOf(CaptureWalletSuggestion("Decu", CaptureConsoleFixture.WALLET)))
+    private val decuToken = CaptureWalletSettings(CaptureConsoleFixture.WALLET, "wallet-token", 100, 5, "7mupUtwu17wevEfnyrE6XsWa1X9WWntAPeqdckd2pump")
+    private val decuMinute: Instant = Instant.parse("2026-10-16T20:13:00Z")
+    private val decuName = "Decu · 7mup…pump · 16 Oct 20:13"
+
+    @Test
+    fun `a blank name is generated, a repeat is numbered and a typed taken name is refused with the next free one`() {
+        val fixture = CaptureConsoleFixture(root, clock = Clock.fixed(decuMinute, ZoneOffset.UTC), suggested = decu)
+
+        val first = fixture.sessions.create(CaptureCreateRequest("decu-1", wallet = decuToken))
+        val second = fixture.sessions.create(CaptureCreateRequest("decu-2", " ", wallet = decuToken))
+        val taken = assertFailsWith<CaptureRequestException> {
+            fixture.sessions.create(CaptureCreateRequest("decu-3", "decu · 7MUP…pump · 16 Oct 20:13 (2)", wallet = decuToken))
+        }
+
+        assertEquals(decuName, first.name)
+        assertEquals("$decuName (2)", second.name)
+        assertEquals("decu · 7mup…pump · 16 oct 20:13", fixture.store.session("decu-1").nameKey)
+        assertEquals(409, taken.status)
+        assertEquals("NAME_TAKEN", taken.code)
+        assertEquals("$decuName (3)", taken.suggestion)
+        assertFalse(Files.exists(root.resolve("console/decu-3")))
+    }
+
+    @Test
+    fun `retrying a blank-name create later returns the session it created`() {
+        val clock = MutableClock(decuMinute)
+        val fixture = CaptureConsoleFixture(root, clock = clock, suggested = decu)
+        val first = fixture.sessions.create(CaptureCreateRequest("decu-1", wallet = decuToken))
+        clock.now = decuMinute.plusSeconds(600)
+
+        val retried = fixture.sessions.create(CaptureCreateRequest("decu-1", "", wallet = decuToken))
+
+        assertEquals(first.name, retried.name)
+        assertEquals(1, fixture.sessions.page(0, 20).total)
+    }
+
+    @Test
+    fun `the generated time uses the request's zone and an unknown zone is a field error`() {
+        val fixture = CaptureConsoleFixture(root, clock = Clock.fixed(decuMinute, ZoneOffset.UTC), suggested = decu)
+
+        assertEquals("Decu · 7mup…pump · 16 Oct 22:13", fixture.sessions.create(CaptureCreateRequest("berlin", wallet = decuToken, timeZone = "Europe/Berlin")).name)
+        val error = assertFailsWith<CaptureRequestException> { fixture.sessions.create(CaptureCreateRequest("mars", wallet = decuToken, timeZone = "Mars/Olympus")) }
+        assertEquals(400, error.status)
+        assertEquals(setOf("timeZone"), error.fields.keys)
+    }
+
+    @Test
+    fun `the list is newest first by default with ties by id and the counts cover every session`() {
+        val clock = MutableClock(Instant.parse("2026-10-10T09:00:00Z"))
+        val fixture = CaptureConsoleFixture(root, clock = clock)
+        fixture.create("old")
+        clock.now = decuMinute
+        fixture.create("new-b")
+        fixture.create("new-a")
+
+        val page = fixture.sessions.page(0, 20)
+
+        assertEquals(listOf("new-a", "new-b", "old"), page.items.map { it.id })
+        assertEquals(3, page.total)
+        assertEquals(CaptureSummaryStatus.entries.toSet(), page.statusCounts.keys)
+        assertEquals(page.total, page.statusCounts.values.sum())
+        assertEquals(3, page.statusCounts[CaptureSummaryStatus.NOT_STARTED])
+    }
+
+    @Test
+    fun `each sort orders the list and the status filter keeps only matching sessions while counts cover all`() {
+        val clock = MutableClock(Instant.parse("2026-10-10T09:00:00Z"))
+        val fixture = CaptureConsoleFixture(root, clock = clock)
+        listOf("b-session", "a-session", "c-session").forEach { id -> fixture.create(id); clock.now = clock.now.plusSeconds(60) }
+        fixture.workflow.failure = CaptureValidationException("BROKEN")
+        fixture.operations.start("a-session", CaptureOperationRequest("inspect-x", CaptureNames.INSPECT, fixture.sessions.find("a-session").marketAttempt?.id))
+        fixture.executor.runAll()
+        fun ids(sort: String, status: String? = null) = fixture.sessions.page(0, 20, sort, status).items.map { it.id }
+
+        assertEquals(listOf("b-session", "a-session", "c-session"), ids("createdAt,asc"))
+        assertEquals(listOf("a-session", "b-session", "c-session"), ids("name,asc"))
+        assertEquals(listOf("a-session", "c-session", "b-session"), ids("attention"))
+        val attention = fixture.sessions.page(0, 20, "createdAt,desc", "NEEDS_ATTENTION")
+        assertEquals(listOf("a-session"), attention.items.map { it.id })
+        assertEquals(1, attention.total)
+        assertEquals(2, attention.statusCounts[CaptureSummaryStatus.NOT_STARTED])
+        assertEquals(listOf("a-session"), fixture.sessions.page(1, 1).items.map { it.id })
+        assertEquals(setOf("sort"), assertFailsWith<CaptureRequestException> { fixture.sessions.page(0, 20, "size,desc") }.fields.keys)
+        assertEquals(setOf("status"), assertFailsWith<CaptureRequestException> { fixture.sessions.page(0, 20, status = "LOST") }.fields.keys)
+    }
+
+    @Test
+    fun `renaming is idempotent per request id and follows the same uniqueness rules`() {
+        val fixture = CaptureConsoleFixture(root)
+        fixture.create("session-1")
+        fixture.create("session-2")
+
+        val renamed = fixture.sessions.rename("session-1", CaptureRenameRequest("rename-1", "  Decu   first "))
+        val taken = assertFailsWith<CaptureRequestException> { fixture.sessions.rename("session-2", CaptureRenameRequest("rename-2", "DECU FIRST")) }
+
+        assertEquals("Decu first", renamed.name)
+        assertEquals("Decu first", renamed.displayName)
+        assertEquals("decu first", fixture.store.session("session-1").nameKey)
+        assertEquals("Decu first", fixture.sessions.rename("session-1", CaptureRenameRequest("rename-1", "Decu first")).name)
+        conflict("REQUEST_CONFLICT") { fixture.sessions.rename("session-1", CaptureRenameRequest("rename-1", "Other")) }
+        assertEquals("NAME_TAKEN", taken.code)
+        assertEquals("DECU FIRST (2)", taken.suggestion)
+        assertEquals("decu FIRST", fixture.sessions.rename("session-1", CaptureRenameRequest("rename-3", "decu FIRST")).name)
+        assertEquals(setOf("name"), assertFailsWith<CaptureRequestException> { fixture.sessions.rename("session-2", CaptureRenameRequest("rename-4", "  ")) }.fields.keys)
+    }
+
+    @Test
+    fun `a name check reports the stored form and the next free name when it is taken`() {
+        val fixture = CaptureConsoleFixture(root)
+        fixture.create("session-1")
+
+        assertEquals(CaptureNameCheck(true, "Fresh name", null), fixture.sessions.checkName("  Fresh   name "))
+        assertEquals(CaptureNameCheck(false, "sample SESSION-1", "sample SESSION-1 (2)"), fixture.sessions.checkName("sample SESSION-1"))
+        assertEquals(400, assertFailsWith<CaptureRequestException> { fixture.sessions.checkName("a".repeat(121)) }.status)
+    }
+
+    @Test
+    fun `legacy duplicate names are numbered on read and their files stay byte-identical`() {
+        val fixture = CaptureConsoleFixture(root)
+        fun legacy(id: String, createdAt: String): Path {
+            val file = root.resolve("console/$id/session.json")
+            Files.createDirectories(file.parent)
+            Files.writeString(file, """{"version":1,"id":"$id","requestId":"$id","fingerprint":"f","name":"runitback","createdAt":"$createdAt",""" +
+                """"wallet":null,"walletAttemptId":"w-$id","marketAttemptId":null,"ratesAttemptId":null,"inspection":null,"operationId":null}""")
+            return file
+        }
+        val files = listOf(legacy("legacy-b", "2026-10-10T09:00:00Z"), legacy("legacy-a", "2026-10-10T09:00:00Z"), legacy("legacy-c", "2026-10-09T09:00:00Z"))
+        val before = files.map(Files::readAllBytes)
+
+        val listed = fixture.sessions.page(0, 20, "createdAt,asc").items.map { it.id to it.displayName }
+        val found = fixture.sessions.find("legacy-b").displayName
+        val taken = assertFailsWith<CaptureRequestException> { fixture.sessions.create(CaptureCreateRequest("new", "runitback (2)", wallet = CaptureWalletSettings(CaptureConsoleFixture.WALLET))) }
+
+        assertEquals(listOf("legacy-c" to "runitback", "legacy-a" to "runitback (2)", "legacy-b" to "runitback (3)"), listed)
+        assertEquals("runitback (3)", found)
+        assertEquals("runitback (4)", taken.suggestion)
+        assertTrue(before.zip(files.map(Files::readAllBytes)).all { (old, now) -> old.contentEquals(now) })
+    }
+
+    @Test
+    fun `the summary counts cases from their records and ignores records of earlier attempts`() {
+        val fixture = CaptureConsoleFixture(root)
+        val session = fixture.store.session(fixture.create().id)
+        val at = FakeCaptureWorkflow.AT
+        fixture.store.save(session.id, CaptureOperationRecord("export-a", "export-a", "f", CaptureNames.EXPORT, session.marketAttemptId, CaptureNames.SUCCEEDED, at, at, at,
+            CaptureBudget(), null, walletAttemptId = session.walletAttemptId, marketAttemptId = session.marketAttemptId, ratesAttemptId = session.ratesAttemptId,
+            artifact = "console/${session.id}/generated/cases/case-a/dataset.json", caseId = "case-a"), true)
+        fixture.store.save(session.id, CaptureCaseRecord(caseId = "case-a", walletAttemptId = session.walletAttemptId, marketAttemptId = requireNotNull(session.marketAttemptId),
+            ratesAttemptId = session.ratesAttemptId, operationId = "export-a", exportOperationId = "export-a"))
+        fixture.store.save(session.id, CaptureCaseRecord(caseId = "case-old", walletAttemptId = session.walletAttemptId, marketAttemptId = "market-old", ratesAttemptId = null, datasetId = "dataset-old"))
+
+        val summary = fixture.sessions.find(session.id).summary
+
+        assertEquals(CaptureSummaryStatus.READY_TO_REPLAY, summary.status)
+        assertEquals(CaptureNextAction(CaptureNextActionKind.REGISTER_DATASET, CaptureStepStage.DATASET, null, "case-a", null), summary.nextAction)
+        assertEquals(CaptureCaseCounts(total = 1, ready = 1, blocked = 0, downloading = 0), summary.cases)
     }
 }

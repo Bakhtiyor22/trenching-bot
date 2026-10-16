@@ -1,5 +1,7 @@
 package com.trenching.bot.console.capture
 
+import com.trenching.bot.apiusage.ApiTask
+import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.chaincapture.CaptureCheckpointObserver
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.MintAddress
@@ -166,7 +168,8 @@ class CaptureCaseService(
             operation = operation.copy(caseInspection = before)
             when (initial.step) {
                 CaptureNames.RATES -> {
-                    val result = workflow.execute(CaptureStepCommand.CaseRates(paths.wallet, requireNotNull(paths.market), caseId, ratesDirectory(session, caseId)), observer(id, operation.id) { saved -> operation = saved })
+                    val result = workflow.execute(CaptureStepCommand.CaseRates(paths.wallet, requireNotNull(paths.market), caseId, ratesDirectory(session, caseId),
+                        ApiUsageContext(ApiTask.CASE_RATES, session.id)), observer(id, operation.id) { saved -> operation = saved })
                     val rates = (result as? CaptureStepResult.CaseRates)?.capture
                         ?: throw CaptureValidationException("CASE_RESULT_MISMATCH")
                     val after = workflow.inspectCase(paths.wallet, requireNotNull(paths.market), caseId)

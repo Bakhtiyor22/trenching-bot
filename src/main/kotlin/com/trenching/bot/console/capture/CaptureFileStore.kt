@@ -77,6 +77,7 @@ class CaptureFileStore(val paths: CapturePathPolicy, private val json: ObjectMap
     }
     fun sessionOrNull(id: String): CaptureSessionRecord? = if (Files.exists(paths.resolve("console/${id(id)}/session.json"))) session(id) else null
     fun sessions(): List<String> = Files.list(paths.resolve("console")).use { stream -> stream.filter { Files.isDirectory(it) }.map { it.fileName.toString() }.filter { it.matches(Regex("[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}")) }.sorted().toList() }
+    fun sessionRecords(): List<CaptureSessionRecord> = sessions().map(::session)
     fun save(session: CaptureSessionRecord, create: Boolean = false) = write("console/${id(session.id)}/session.json", session, create)
     fun attempt(session: String, id: String): CaptureAttemptRecord = read("console/${id(session)}/attempt-${id(id)}.json", CaptureAttemptRecord::class.java)
     fun attemptOrNull(session: String, id: String): CaptureAttemptRecord? = if (Files.exists(paths.resolve("console/${id(session)}/attempt-${id(id)}.json"))) attempt(session,id) else null
@@ -88,6 +89,7 @@ class CaptureFileStore(val paths: CapturePathPolicy, private val json: ObjectMap
     fun operations(session: String): List<CaptureOperationRecord> = names(session, "operation-").map { read(it, CaptureOperationRecord::class.java) }
     fun captureCase(session: String, caseId: String): CaptureCaseRecord = read("console/${id(session)}/case-${id(caseId)}.json", CaptureCaseRecord::class.java)
     fun captureCaseOrNull(session: String, caseId: String): CaptureCaseRecord? = if (Files.exists(paths.resolve("console/${id(session)}/case-${id(caseId)}.json"))) captureCase(session, caseId) else null
+    fun captureCases(session: String): List<CaptureCaseRecord> = names(session, "case-").map { read(it, CaptureCaseRecord::class.java) }
     fun save(session: String, record: CaptureCaseRecord) = write("console/${id(session)}/case-${id(record.caseId)}.json", record, false)
     fun saveCaseProvenance(path: String, record: CaptureCaseExportRecord) = write(path, record, false)
     fun fingerprint(value: Any): String = java.security.MessageDigest.getInstance("SHA-256").digest(json.writeValueAsBytes(value)).joinToString("") { "%02x".format(it) }

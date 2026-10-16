@@ -9,6 +9,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.trenching.bot.console.application.ConsoleMetrics
 import com.trenching.bot.console.application.RunLaunchService
+import com.trenching.bot.console.domain.PercentConversion
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV5
@@ -129,6 +130,49 @@ class ConsoleApiIntegrationTest {
         val (loggedDataset, mint, decidedAt, throughSlot) = refusal.argumentArray.map(Any::toString)
         assertEquals(listOf(datasetId, takeProfit.base.value, "1006"), listOf(loggedDataset, mint, throughSlot))
         assertTrue(decidedAt.toLong() > 1006, decidedAt)
+    }
+
+    @Test
+    fun `a run from the preset in percents is the same run as the preset in basis points`() {
+        val datasetId = upload(variant(json, "percent"), "percent.json").path("dataset").path("id").asString()
+        val shared = """"notional":"0.1","minMarketCapUsd":"10000","latencySlots":1,"transactionCostSol":"0.001","maxAgeSlots":2,
+            |"horizonSlots":4500,"quoteMint":"So11111111111111111111111111111111111111112"""".trimMargin()
+
+        val inBps = http.post("/api/runs", """{"datasetId":"$datasetId","config":{$shared,"dipBps":2000,"takeProfitBps":5500,"stopLossBps":4000}}""")
+        val inPercent = http.post("/api/runs", """{"datasetId":"$datasetId","presetId":"decu-dip-v2-on-dip-entry-v1",
+            |"config":{$shared,"dipPercent":"20","takeProfitPercent":"55","stopLossPercent":"40"}}""".trimMargin())
+
+        assertEquals(201, inBps.status, inBps.raw)
+        assertEquals(200, inPercent.status, inPercent.raw)
+        val run = inBps.body.path("run")
+        assertEquals(run.path("id").asString(), inPercent.body.path("run").path("id").asString())
+        assertEquals(run.path("configurationHash").asString(), inPercent.body.path("run").path("configurationHash").asString())
+        val detail = http.get("/api/runs/${run.path("id").asString()}").body
+        assertEquals(listOf("20", "55", "40"), listOf("dipPercent", "takeProfitPercent", "stopLossPercent").map { detail.path("config").path(it).asString() })
+        val fills = detail.path("scenarios").items().map { it.path("fill") }.filter { it.isObject }
+        assertTrue(fills.isNotEmpty(), detail.toString())
+        fills.forEach { fill ->
+            assertEquals(PercentConversion.toPercent(fill.path("feeBps").asLong()), fill.path("feePercent").asString())
+            assertEquals(PercentConversion.toPercent(fill.path("priceImpactBps").asLong()), fill.path("priceImpactPercent").asString())
+        }
+    }
+
+    @Test
+    fun `a percent with three decimals, a conflicting percent and an unknown preset are rejected and write nothing`() {
+        val datasetId = upload(variant(json, "bad-percent"), "bad-percent.json").path("dataset").path("id").asString()
+        val runsBefore = count("select count(*) from simulation_runs")
+
+        val precise = http.post("/api/runs", """{"datasetId":"$datasetId","config":{"dipPercent":"20.255"}}""")
+        val conflicting = http.post("/api/runs", """{"datasetId":"$datasetId","config":{"dipBps":1500,"dipPercent":"20"}}""")
+        val unknownPreset = http.post("/api/runs", """{"datasetId":"$datasetId","presetId":"made-up"}""")
+
+        assertError(400, "INVALID_PERCENT", precise)
+        assertEquals(setOf("dipPercent"), precise.body.path("fields").propertyNames().toSet())
+        assertError(400, "CONFLICTING_FIELDS", conflicting)
+        assertEquals(setOf("dipPercent"), conflicting.body.path("fields").propertyNames().toSet())
+        assertError(400, "INVALID_REQUEST", unknownPreset)
+        assertEquals("is not a known preset", unknownPreset.body.path("fields").path("presetId").asString())
+        assertEquals(runsBefore, count("select count(*) from simulation_runs"))
     }
 
     @Test
@@ -432,6 +476,11 @@ class ConsoleApiIntegrationTest {
         assertTrue(defaults.path("defaults").path("feeBps").isMissingNode)
         assertTrue(defaults.path("limits").path("slippageBps").isMissingNode)
         assertEquals(listOf(1500, 3000, 1500), listOf("dipBps", "takeProfitBps", "stopLossBps").map { defaults.path("defaults").path(it).asInt() })
+        assertEquals(listOf("15", "30", "15"),
+            listOf("dipPercent", "takeProfitPercent", "stopLossPercent").map { defaults.path("defaults").path(it).asString() })
+        listOf("dipPercent", "takeProfitPercent", "stopLossPercent").forEach { field ->
+            assertEquals(listOf("0.01", "99.99"), listOf("min", "max").map { defaults.path("limits").path(field).path(it).asString() }, field)
+        }
         assertDecimal("10000.000000000000", defaults.path("defaults").path("minMarketCapUsd"))
         assertEquals(4500, defaults.path("defaults").path("horizonSlots").asLong())
         assertEquals("dip-entry", defaults.path("defaults").path("strategyName").asString())

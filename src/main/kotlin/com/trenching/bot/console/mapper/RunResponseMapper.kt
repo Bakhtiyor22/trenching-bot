@@ -35,7 +35,8 @@ import org.mapstruct.ReportingPolicy
 
 /** Flattens the sealed outcomes: each variant is passed as its own nullable source so MapStruct null-guards it. */
 @Mapper(componentModel = MappingConstants.ComponentModel.SPRING,
-    uses = [ConsoleValueMapper::class, PairResponseMapper::class, ObservationResponseMapper::class, ConfigResponseMapper::class],
+    uses = [ConsoleValueMapper::class, PairResponseMapper::class, ObservationResponseMapper::class, ConfigResponseMapper::class,
+        PercentMapper::class],
     unmappedTargetPolicy = ReportingPolicy.ERROR)
 abstract class RunResponseMapper {
     abstract fun toResponse(run: RunSummary): RunSummaryResponse
@@ -73,8 +74,16 @@ abstract class RunResponseMapper {
 
     abstract fun toScenarioPosition(position: Position): ScenarioPositionResponse
 
+    @Mappings(value = [
+        Mapping(target = "feePercent", source = "feeBps", qualifiedByName = [PercentMapper.PERCENT]),
+        Mapping(target = "priceImpactPercent", source = "priceImpactBps", qualifiedByName = [PercentMapper.PERCENT]),
+    ])
     abstract fun toFill(fill: PaperFill): FillResponse
 
+    @Mappings(value = [
+        Mapping(target = "feePercent", source = "feeBps", qualifiedByName = [PercentMapper.PERCENT]),
+        Mapping(target = "priceImpactPercent", source = "priceImpactBps", qualifiedByName = [PercentMapper.PERCENT]),
+    ])
     abstract fun toClose(close: PositionClose): CloseResponse
 
     fun toEvent(event: RunEvent): RunEventResponse = event(event, (event.outcome as? NormalizationOutcome.Accepted)?.trade,

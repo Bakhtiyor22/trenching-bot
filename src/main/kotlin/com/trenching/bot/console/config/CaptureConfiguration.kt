@@ -1,5 +1,6 @@
 package com.trenching.bot.console.config
 
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.chaincapture.SharedTransactionCache
 import com.trenching.bot.console.capture.*
 import com.trenching.bot.console.mapper.CaptureResponseMapper
@@ -35,13 +36,15 @@ class CaptureConfiguration {
     }
 
 
-    @Bean fun captureWorkflow(properties: SolanaRpcProperties, wallet: WalletHistoryCaptureProperties, market: MarketHistoryCaptureProperties, capture: CaptureProperties, rateSource: SolUsdtRateSource, rates: ReferenceRateProperties, mapper: ObjectMapper, clock: Clock): CaptureWorkflow =
-        CaptureWorkflows.create(wallet.withEndpoint(properties.rpcUrl),market.withEndpoint(properties.rpcUrl),rateSource,rates.enabled,mapper,clock,SharedTransactionCache(capture.validatedRoot().resolve(TRANSACTION_CACHE_DIRECTORY),mapper))
+    @Bean fun captureWorkflow(properties: SolanaRpcProperties, wallet: WalletHistoryCaptureProperties, market: MarketHistoryCaptureProperties, capture: CaptureProperties, rateSource: SolUsdtRateSource, rates: ReferenceRateProperties, mapper: ObjectMapper, clock: Clock, recorder: ApiUsageRecorder): CaptureWorkflow =
+        CaptureWorkflows.create(wallet.withEndpoint(properties.rpcUrl),market.withEndpoint(properties.rpcUrl),rateSource,rates.enabled,mapper,clock,SharedTransactionCache(capture.validatedRoot().resolve(TRANSACTION_CACHE_DIRECTORY),mapper),recorder)
     @Bean(destroyMethod="close") fun captureFileStore(properties: CaptureProperties, mapper: ObjectMapper): CaptureFileStore = CaptureFileStore(CapturePathPolicy(properties.validatedRoot()),mapper).also { it.initialize() }
     @Bean(destroyMethod="close") fun captureOperationService(store: CaptureFileStore, workflow: CaptureWorkflow, mapper: CaptureResponseMapper, json: ObjectMapper, clock: Clock, rpc: SolanaRpcProperties, rates: ReferenceRateProperties): CaptureOperationService =
         CaptureOperationService(store,workflow,mapper,json,clock,Executors.newSingleThreadExecutor { task -> Thread(task,"capture-console-worker").apply { isDaemon=true } },!rpc.rpcUrl.isNullOrBlank(),rates.enabled,ExecutorCaptureRetryScheduler()).also { it.recover() }
     @Bean(destroyMethod="close") fun captureCaseService(store: CaptureFileStore, workflow: CaptureWorkflow, mapper: CaptureResponseMapper, datasets: com.trenching.bot.console.mapper.DatasetResponseMapper, catalog: ReplayDatasetCatalog, clock: Clock): CaptureCaseService =
         CaptureCaseService(store,workflow,mapper,datasets,catalog,clock,Executors.newSingleThreadExecutor { task -> Thread(task,"capture-case-worker").apply { isDaemon=true } }).also { it.recover() }
-    @Bean fun captureSessionService(store: CaptureFileStore, operations: CaptureOperationService, cases: CaptureCaseService, clock: Clock, rates: ReferenceRateProperties): CaptureSessionService = CaptureSessionService(store,operations,clock,CaptureIds { UUID.randomUUID().toString() },rates.enabled,cases)
+    @Bean fun captureSuggestedWallets(console: ConsoleProperties): CaptureSuggestedWallets = CaptureSuggestedWallets(console.suggestedWallets.map { CaptureWalletSuggestion(it.label, it.address) })
+    @Bean fun captureSessionService(store: CaptureFileStore, operations: CaptureOperationService, cases: CaptureCaseService, clock: Clock, rates: ReferenceRateProperties, suggested: CaptureSuggestedWallets): CaptureSessionService = CaptureSessionService(store,operations,clock,CaptureIds { UUID.randomUUID().toString() },rates.enabled,cases,suggested)
+    @Bean fun captureSetupService(store: CaptureFileStore, rpc: SolanaRpcProperties, rates: ReferenceRateProperties, suggested: CaptureSuggestedWallets): CaptureSetupService = CaptureSetupService(store,!rpc.rpcUrl.isNullOrBlank(),rates.enabled,suggested)
     @Bean fun captureCatalogService(store: CaptureFileStore, operations: CaptureOperationService, catalog: ReplayDatasetCatalog): CaptureCatalogService = CaptureCatalogService(store,operations,catalog)
 }

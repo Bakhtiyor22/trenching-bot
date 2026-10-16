@@ -1,5 +1,7 @@
 package com.trenching.bot.console.capture
 
+import com.trenching.bot.apiusage.ApiTask
+import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.chaincapture.*
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.WalletAddress
@@ -420,19 +422,20 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         CaptureNames.WALLET -> {
             val settings=requireNotNull(session.wallet)
             val scope=requireNotNull(CaptureWalletScope.of(settings.scope)) { "Unsupported wallet scope sessionId=${session.id}" }
-            CaptureStepCommand.Wallet(WalletHistoryCaptureRequest(WalletAddress.of(settings.wallet),paths.wallet,settings.limit,settings.scanPages,operation.budget.requestBudget,operation.budget.byteBudget,scope.historyScope(),timeout(operation),settings.mint?.let(MintAddress::of)))
+            CaptureStepCommand.Wallet(WalletHistoryCaptureRequest(WalletAddress.of(settings.wallet),paths.wallet,settings.limit,settings.scanPages,operation.budget.requestBudget,operation.budget.byteBudget,scope.historyScope(),timeout(operation),settings.mint?.let(MintAddress::of),usage(session,ApiTask.WALLET_STEP)))
         }
         CaptureNames.MARKET -> {
             val attempt=store.attempt(session.id,requireNotNull(session.marketAttemptId)); val settings=requireNotNull(attempt.market)
             CaptureStepCommand.Markets(ReplayMarketCaptureRequest(walletCaptureDirectory=paths.wallet,directory=requireNotNull(paths.market),scanPages=operation.scanPages ?: settings.scanPages,maxTransactions=settings.maxTransactions,
-                requestBudget=operation.budget.requestBudget,byteBudget=operation.budget.byteBudget,operationTimeout=timeout(operation),cutoffMode=CaptureCutoffModes.saved(operation.cutoffMode)))
+                requestBudget=operation.budget.requestBudget,byteBudget=operation.budget.byteBudget,operationTimeout=timeout(operation),cutoffMode=CaptureCutoffModes.saved(operation.cutoffMode),usage=usage(session,ApiTask.MARKET_STEP)))
         }
-        CaptureNames.RATES -> CaptureStepCommand.Rates(paths.wallet,requireNotNull(paths.market),requireNotNull(paths.rates))
+        CaptureNames.RATES -> CaptureStepCommand.Rates(paths.wallet,requireNotNull(paths.market),requireNotNull(paths.rates),usage(session,ApiTask.RATES_STEP))
         CaptureNames.EXPORT -> CaptureStepCommand.Export(RecordedReplayExportRequest(paths.wallet,requireNotNull(paths.market),requireNotNull(paths.rates),store.paths.resolve(generated(session,"dataset.json"))))
         CaptureNames.CALIBRATE -> CaptureStepCommand.Calibrate(paths.wallet,requireNotNull(paths.market),store.paths.resolve(generated(session,"calibration.json")))
         CaptureNames.QUALIFY -> CaptureStepCommand.Qualify(store.paths.resolve(exportedDataset(session)),paths)
         else -> CaptureStepCommand.Inspect(paths)
     }
+    private fun usage(session: CaptureSessionRecord, task: ApiTask) = ApiUsageContext(task, session.id)
     private fun exportedDataset(session: CaptureSessionRecord): String {
         val exportId=requireNotNull(session.exportOperationId) { "No successful export sessionId=${session.id}" }
         return requireNotNull(store.operation(session.id,exportId).artifact) { "Export has no artifact sessionId=${session.id} operationId=$exportId" }

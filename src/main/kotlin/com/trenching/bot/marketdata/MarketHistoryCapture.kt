@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.marketdata.infrastructure.capture.MarketCaptureFormat
 import java.nio.file.Path
 import java.time.Duration
@@ -22,6 +23,8 @@ data class MarketHistoryCaptureRequest(
     val cutoffMode: MarketCutoffMode = MarketCutoffMode.FULL,
     val cutoff: MarketCaptureCutoff? = null,
     val cutoffIdentity: CutoffIdentity? = null,
+    /** What this invocation's requests are counted under in API usage; not part of the capture's resume identity. */
+    val usage: ApiUsageContext = ApiUsageContext.UNATTRIBUTED,
 )
 
 data class MarketHistoryCaptureResult(

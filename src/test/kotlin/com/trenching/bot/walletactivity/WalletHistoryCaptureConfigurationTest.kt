@@ -1,6 +1,7 @@
 package com.trenching.bot.walletactivity
 
 import com.trenching.bot.chaincapture.CaptureValidationException
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.config.SimulationClock
 import java.time.Clock
 import java.time.Instant
@@ -16,6 +17,7 @@ class WalletHistoryCaptureConfigurationTest {
     private val context = ApplicationContextRunner()
         .withUserConfiguration(WalletHistoryCaptureConfiguration::class.java)
         .withBean(ObjectMapper::class.java, Supplier { JsonMapper.builder().build() })
+        .withBean(ApiUsageRecorder::class.java, Supplier { ApiUsageRecorder.NONE })
         .withBean(SimulationClock.NAME, Clock::class.java, Supplier { Clock.fixed(Instant.parse("2026-10-03T00:00:00Z"), ZoneOffset.UTC) })
 
     @Test

@@ -1,5 +1,6 @@
 package com.trenching.bot.walletactivity
 
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.chaincapture.CaptureCheckpointObserver
 import com.trenching.bot.chaincapture.CaptureRpcs
 import com.trenching.bot.chaincapture.SharedTransactionCache
@@ -23,7 +24,8 @@ class WalletHistoryCaptureConfiguration {
         properties: WalletHistoryCaptureProperties,
         objectMapper: ObjectMapper,
         @Qualifier(SimulationClock.NAME) clock: Clock,
-    ): WalletHistoryCapture = observedCapture(properties, objectMapper, clock, CaptureCheckpointObserver.NONE)
+        recorder: ApiUsageRecorder,
+    ): WalletHistoryCapture = observedCapture(properties, objectMapper, clock, CaptureCheckpointObserver.NONE, recorder = recorder)
 
     fun cachedCapture(
         properties: WalletHistoryCaptureProperties,
@@ -38,9 +40,10 @@ class WalletHistoryCaptureConfiguration {
         clock: Clock,
         observer: CaptureCheckpointObserver,
         transactionCache: SharedTransactionCache? = null,
+        recorder: ApiUsageRecorder = ApiUsageRecorder.NONE,
     ): WalletHistoryCapture {
         properties.validate()
-        return WalletHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache), objectMapper, clock, properties.maxConcurrentRequests, observer)
+        return WalletHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache, recorder = recorder), objectMapper, clock, properties.maxConcurrentRequests, observer)
     }
 
     @Bean

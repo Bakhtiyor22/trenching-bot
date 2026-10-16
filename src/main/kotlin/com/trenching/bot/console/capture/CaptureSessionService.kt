@@ -6,19 +6,24 @@ import com.trenching.bot.console.capture.CaptureNames.MARKET
 import com.trenching.bot.console.capture.CaptureNames.RATES
 import com.trenching.bot.console.capture.CaptureNames.INSPECT
 import java.time.Clock
+import java.time.Instant
+import java.time.ZoneId
 import org.slf4j.LoggerFactory
 
-class CaptureSessionService(private val store: CaptureFileStore, private val operations: CaptureOperationService, private val clock: Clock, private val ids: CaptureIds, private val ratesConfigured: Boolean, private val cases: CaptureCaseActivity = CaptureCaseActivity.NONE) {
+class CaptureSessionService(private val store: CaptureFileStore, private val operations: CaptureOperationService, private val clock: Clock, private val ids: CaptureIds, private val ratesConfigured: Boolean, private val cases: CaptureCaseActivity = CaptureCaseActivity.NONE, private val suggestedWallets: CaptureSuggestedWallets = CaptureSuggestedWallets()) {
     private val log = LoggerFactory.getLogger(CaptureSessionService::class.java)
+    private val caseFacts = CaptureCaseFactReader(store)
+    /** A blank name is generated from the wallet, its scope and the creation minute in [CaptureCreateRequest.timeZone]. */
     fun create(request: CaptureCreateRequest): CaptureSessionView = synchronized(store) {
         store.id(request.requestId)
-        val normalized = request.copy(name = request.name.trim())
+        val normalized = request.copy(name = request.name?.trim()?.takeIf { it.isNotEmpty() })
         val fingerprint = store.fingerprint(normalized)
         store.sessionOrNull(request.requestId)?.let { existing ->
             if (existing.fingerprint != fingerprint) CaptureValidation.conflict("REQUEST_CONFLICT", "Request id is already bound to different settings")
             return@synchronized view(existing)
         }
-        if (normalized.name.isBlank() || normalized.name.length > 120) CaptureValidation.invalid("name", "must contain 1 to 120 characters")
+        val typed = normalized.name?.let(CaptureValidation::name)
+        val zone = CaptureValidation.timeZone(request.timeZone)
         if ((request.wallet == null) == (request.attach == null)) CaptureValidation.invalid("wallet", "provide wallet settings or attached paths")
         request.wallet?.let(CaptureValidation::wallet)
         request.attach?.let { attach ->
@@ -31,17 +36,39 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
         val market = CaptureMarketSettings(cutoffMode = cutoffMode(request.cutoffMode, request.wallet))
         val id = request.requestId
         val at = clock.instant()
+        val name = uniqueName(typed, request, at, zone)
         val walletId = ids.next()
         val marketId = if (request.attach == null || request.attach.market != null) ids.next() else null
         val ratesId = if (request.attach == null || request.attach.rates != null) ids.next() else null
         store.save(id, CaptureAttemptRecord(walletId, request.requestId, fingerprint, WALLET, at, request.attach?.wallet ?: "console/$id/wallet", request.attach != null, null, walletId, null), true)
         marketId?.let { store.save(id, CaptureAttemptRecord(it, request.requestId, fingerprint, MARKET, at, request.attach?.market ?: "console/$id/markets/$it", request.attach?.market != null, market, walletId, null), true) }
         ratesId?.let { store.save(id, CaptureAttemptRecord(it, request.requestId, fingerprint, RATES, at, request.attach?.rates ?: "console/$id/rates/$it", request.attach?.rates != null, null, walletId, marketId), true) }
-        val record = CaptureSessionRecord(id = id, requestId = request.requestId, fingerprint = fingerprint, name = normalized.name, createdAt = at, wallet = request.wallet, walletAttemptId = walletId, marketAttemptId = marketId, ratesAttemptId = ratesId)
+        val record = CaptureSessionRecord(id = id, requestId = request.requestId, fingerprint = fingerprint, name = name, createdAt = at, wallet = request.wallet, walletAttemptId = walletId, marketAttemptId = marketId, ratesAttemptId = ratesId, nameKey = CaptureNamePolicy.key(name))
         store.save(record, true)
         // An attachment always inspects; a fresh session does when the worker is free, or the user inspects it later.
         if (request.attach != null || operations.idle()) inspect(id, marketId)
         view(store.session(id))
+    }
+    /** Renames a session under the same uniqueness rules as a typed name; the same request id always sets the same name. */
+    fun rename(id: String, request: CaptureRenameRequest): CaptureSessionView = synchronized(store) {
+        store.id(request.requestId)
+        val session = store.session(id)
+        val name = CaptureValidation.name(request.name)
+        session.renameRequests[request.requestId]?.let { previous ->
+            if (previous != name) CaptureValidation.conflict("REQUEST_CONFLICT", "Rename request id is already bound to another name")
+            return@synchronized view(session)
+        }
+        val taken = CaptureNamePolicy.takenKeys(store.sessionRecords(), excluding = id)
+        if (CaptureNamePolicy.key(name) in taken) CaptureValidation.nameTaken(CaptureNamePolicy.suggestion(name, taken))
+        store.save(session.copy(name = name, nameKey = CaptureNamePolicy.key(name), renameRequests = session.renameRequests + (request.requestId to name)))
+        log.info("capture_renamed sessionId={} requestId={}", id, request.requestId)
+        view(store.session(id))
+    }
+    fun checkName(name: String): CaptureNameCheck = synchronized(store) {
+        val normalized = CaptureValidation.name(name)
+        val taken = CaptureNamePolicy.takenKeys(store.sessionRecords())
+        val available = CaptureNamePolicy.key(normalized) !in taken
+        CaptureNameCheck(available, normalized, if (available) null else CaptureNamePolicy.suggestion(normalized, taken))
     }
     fun newAttempt(id: String, request: CaptureAttemptRequest): CaptureSessionView = synchronized(store) {
         val session = store.session(id)
@@ -75,21 +102,39 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
         log.info("capture_deleted sessionId={} managedFiles={}", id, files)
     }
     fun find(id: String): CaptureSessionView = synchronized(store) { view(store.session(id)) }
-    fun page(page: Int, size: Int): CapturePage<CaptureSessionView> = synchronized(store) {
+    /** Every session is summarized, because the status filter, the attention order and [CaptureSessionPage.statusCounts] need them all. */
+    fun page(page: Int, size: Int, sort: String = CaptureSessionSort.DEFAULT_VALUE, status: String? = null): CaptureSessionPage = synchronized(store) {
         paging(page,size)
-        val all = store.sessions()
-        CapturePage(all.drop(page * size).take(size).map { view(store.session(it)) }, page,size,all.size.toLong())
+        val order = CaptureSessionSort.of(sort) ?: CaptureValidation.invalid("sort", "must be one of ${CaptureSessionSort.entries.joinToString { it.value }}")
+        val filter = status?.let { value -> CaptureSummaryStatus.entries.firstOrNull { it.name == value } ?: CaptureValidation.invalid("status", "unsupported capture status") }
+        val records = store.sessionRecords()
+        val names = CaptureNamePolicy.displayNames(records)
+        val all = records.map { view(it, names.getValue(it.id)) }
+        val counts = CaptureSummaryStatus.entries.associateWith { value -> all.count { it.summary.status == value }.toLong() }
+        val kept = all.filter { filter == null || it.summary.status == filter }.sortedWith(order.comparator)
+        CaptureSessionPage(kept.drop(page * size).take(size), page, size, kept.size.toLong(), counts)
     }
     fun attempts(id: String, page: Int, size: Int): CapturePage<CaptureAttemptRecord> = synchronized(store) {
         paging(page,size); store.session(id)
         val all = store.attempts(id).sortedByDescending { it.createdAt }
         CapturePage(all.drop(page * size).take(size),page,size,all.size.toLong())
     }
-    private fun view(record: CaptureSessionRecord): CaptureSessionView = CaptureSessionView(record.id,record.name,record.createdAt,record.wallet,record.walletAttemptId,record.marketAttemptId?.let { store.attempt(record.id,it) },record.ratesAttemptId?.let { store.attempt(record.id,it) },record.inspection,record.operationId?.let { store.operation(record.id,it) }, record.exportOperationId != null,record.calibrationOperationId != null,record.datasetId,record.calibrationOperationId?.let { store.operation(record.id,it).calibration },record.qualifyOperationId?.let { store.operation(record.id,it).qualification } ?: record.qualification)
+    private fun uniqueName(typed: String?, request: CaptureCreateRequest, at: Instant, zone: ZoneId): String {
+        val taken = CaptureNamePolicy.takenKeys(store.sessionRecords())
+        if (typed == null) return CaptureNamePolicy.generated(CaptureNamePolicy.parts(request.wallet, request.attach, suggestedWallets), at, zone, taken)
+        if (CaptureNamePolicy.key(typed) in taken) CaptureValidation.nameTaken(CaptureNamePolicy.suggestion(typed, taken))
+        return typed
+    }
+    private fun view(record: CaptureSessionRecord): CaptureSessionView = view(record, CaptureNamePolicy.displayNames(store.sessionRecords()).getValue(record.id))
+    private fun view(record: CaptureSessionRecord, displayName: String): CaptureSessionView {
+        val operation = record.operationId?.let { store.operation(record.id, it) }
+        val summary = CaptureStatusRules.summarize(CaptureStatusInput(record.walletAttemptId, record.marketAttemptId, record.ratesAttemptId, record.wallet?.let { CaptureWalletScope.of(it.scope) },
+            record.inspection, operation, record.exportOperationId != null, record.datasetId, caseFacts.facts(record)))
+        return CaptureSessionView(record.id,record.name,displayName,record.createdAt,record.wallet,record.walletAttemptId,record.marketAttemptId?.let { store.attempt(record.id,it) },record.ratesAttemptId?.let { store.attempt(record.id,it) },record.inspection,operation, record.exportOperationId != null,record.calibrationOperationId != null,record.datasetId,record.calibrationOperationId?.let { store.operation(record.id,it).calibration },record.qualifyOperationId?.let { store.operation(record.id,it).qualification } ?: record.qualification, summary)
+    }
     /** Queues the offline inspection, so stage states reflect the evidence on disk without a manual Inspect. */
     private fun inspect(id: String, marketAttemptId: String?) { operations.start(id, CaptureOperationRequest(ids.next(), INSPECT, marketAttemptId)) }
     private fun cutoffMode(requested: String?, wallet: CaptureWalletSettings?): String =
         CaptureCutoffModes.forAttempt(requested, wallet?.let { CaptureWalletScope.of(it.scope) }, ratesConfigured).name
     private fun paging(page: Int, size: Int) { if (page !in 0..100000 || size !in 1..100) CaptureValidation.invalid("page", "page must be nonnegative and size between 1 and 100") }
 }
-

@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.apiusage.ApiUsageContext
 import java.nio.file.Path
 
 /**
@@ -22,6 +23,8 @@ data class ReferenceRateCaptureRequest(
     val marketCaptureDirectory: Path,
     val directory: Path,
     val caseId: MarketCaseId? = null,
+    /** What the rate requests are counted under in API usage. */
+    val usage: ApiUsageContext = ApiUsageContext.UNATTRIBUTED,
 )
 
 data class ReferenceRateCaptureResult(

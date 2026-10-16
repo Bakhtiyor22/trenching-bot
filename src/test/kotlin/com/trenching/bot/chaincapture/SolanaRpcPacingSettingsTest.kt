@@ -1,5 +1,6 @@
 package com.trenching.bot.chaincapture
 
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.marketdata.MarketHistoryCaptureConfiguration
 import com.trenching.bot.marketdata.MarketHistoryCaptureProperties
 import com.trenching.bot.config.SimulationClock
@@ -62,6 +63,7 @@ class SolanaRpcPacingSettingsTest {
             ApplicationContextRunner().withUserConfiguration(configuration)
                 .withBean(ObjectMapper::class.java, mapper)
                 .withBean(SimulationClock.NAME, Clock::class.java, clock)
+                .withBean(ApiUsageRecorder::class.java, Supplier { ApiUsageRecorder.NONE })
                 .withPropertyValues(property)
                 .run { context ->
                     assertThat(context).hasFailed()

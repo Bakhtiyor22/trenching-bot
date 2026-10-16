@@ -1,5 +1,7 @@
 package com.trenching.bot.replay
 
+import com.trenching.bot.apiusage.ApiTask
+import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.chaincapture.SolanaReadRpc
 import com.trenching.bot.common.Base58
 import com.trenching.bot.common.Slot
@@ -105,6 +107,19 @@ class OutcomeBoundedCaptureTest {
     }
 
     @Test
+    fun `a decided capture counts its market reads and its cutoff rates under the usage context of the request`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val chain = Chain(::takeProfitTape)
+        val rates = FixedRates()
+        val usage = ApiUsageContext(ApiTask.MARKET_STEP, "capture-1")
+
+        capture(chain, "decided", MarketCutoffMode.DECIDED, rates, usage)
+
+        assertEquals(setOf(usage), chain.usages)
+        assertEquals(setOf(usage), rates.usages)
+    }
+
+    @Test
     fun `a window without a dip stays undecided until it is fetched in full and is then decided at its last slot`() {
         RecordedWalletFixtures.save(mapper, wallet())
         val chain = Chain { NORMAL }
@@ -124,10 +139,11 @@ class OutcomeBoundedCaptureTest {
         else -> NORMAL
     }
 
-    private fun capture(chain: Chain, name: String, mode: MarketCutoffMode, rates: SolUsdtRateSource? = null): MarketHistoryCaptureResult =
+    private fun capture(chain: Chain, name: String, mode: MarketCutoffMode, rates: SolUsdtRateSource? = null,
+        usage: ApiUsageContext = ApiUsageContext.UNATTRIBUTED): MarketHistoryCaptureResult =
         ReplayMarketCaptureService(WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper),
             { MarketHistoryCaptureService(chain.rpc(), MarketHistoryArtifactStore(mapper), CLOCK) }, rates)
-            .capture(ReplayMarketCaptureRequest(wallet(), directory.resolve(name), 20, 1000, 1000, 104_857_600, cutoffMode = mode))
+            .capture(ReplayMarketCaptureRequest(wallet(), directory.resolve(name), 20, 1000, 1000, 104_857_600, cutoffMode = mode, usage = usage))
 
     private fun export(name: String): ReplayDataset {
         val output = directory.resolve("$name.json")
@@ -155,9 +171,11 @@ class OutcomeBoundedCaptureTest {
         private val slots = (SLOT + 1..SLOT + TRADES).toList()
         private val slotOf = slots.associateBy(::signature)
         val fetchedSlots = mutableListOf<Long>()
+        val usages: MutableSet<ApiUsageContext> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
         fun rpc() = SolanaReadRpc { method, params, budget ->
             budget.request()
+            usages += budget.usage
             when (method) {
                 "getGenesisHash" -> mapper.readTree("\"$GENESIS\"")
                 "getSignaturesForAddress" -> mapper.readTree(slots.sortedDescending()
@@ -194,6 +212,12 @@ class OutcomeBoundedCaptureTest {
     /** 150 USDT per SOL for every minute, counting the lookups. */
     private class FixedRates : SolUsdtRateSource {
         var requests = 0
+        val usages = mutableSetOf<ApiUsageContext>()
+
+        override fun minuteRates(minutes: Set<Instant>, usage: ApiUsageContext): Map<Instant, RateLookup> {
+            usages += usage
+            return minuteRates(minutes)
+        }
 
         override fun minuteRates(minutes: Set<Instant>): Map<Instant, RateLookup> {
             requests++

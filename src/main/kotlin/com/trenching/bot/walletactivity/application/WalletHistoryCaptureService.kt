@@ -53,7 +53,7 @@ internal class WalletHistoryCaptureService(
                 saved.limit != request.limit || saved.scanPageLimit != request.scanPages || saved.targetMint != request.targetMint?.value)) {
             throw CaptureValidationException("RESUME_IDENTITY")
         }
-        val budget = CaptureBudget(request.requestBudget, request.byteBudget, saved?.requestsUsed ?: 0, saved?.bytesUsed ?: 0, request.operationTimeout)
+        val budget = CaptureBudget(request.requestBudget, request.byteBudget, saved?.requestsUsed ?: 0, saved?.bytesUsed ?: 0, request.operationTimeout, request.usage)
         val genesis = ChainCaptureReads.requireMainnet(rpc, budget)
         var manifest = saved ?: started(request, genesis, budget)
         checkpoint(request, manifest, budget)

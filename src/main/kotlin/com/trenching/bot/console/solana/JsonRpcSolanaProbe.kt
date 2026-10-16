@@ -1,5 +1,6 @@
 package com.trenching.bot.console.solana
 
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.console.solana.ProbeOutcome.Unavailable.Companion.MALFORMED
 import com.trenching.bot.console.solana.dto.SignatureInfo
@@ -13,8 +14,9 @@ class JsonRpcSolanaProbe(
     endpoint: SolanaRpcEndpoint?,
     restClient: RestClient,
     private val objectMapper: ObjectMapper,
+    recorder: ApiUsageRecorder = ApiUsageRecorder.NONE,
 ) : SolanaProbe {
-    private val rpc = endpoint?.let { SolanaRpcClient(restClient, it, objectMapper) }
+    private val rpc = endpoint?.let { SolanaRpcClient(restClient, it, objectMapper, recorder) }
 
     override val host: String? = endpoint?.host
 

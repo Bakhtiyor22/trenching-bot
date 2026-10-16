@@ -1,5 +1,9 @@
 package com.trenching.bot.chaincapture
 
+import com.trenching.bot.apiusage.ApiCall
+import com.trenching.bot.apiusage.ApiCallOutcome
+import com.trenching.bot.apiusage.ApiProvider
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.common.ExceptionCauses
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -14,6 +18,7 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicLong
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
 import org.springframework.http.client.JdkClientHttpRequestFactory
@@ -24,12 +29,14 @@ import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import tools.jackson.databind.DeserializationFeature
 
+/** Every HTTP request it sends, each retry included, is recorded once in [recorder] under the budget's usage context. */
 class HttpSolanaReadRpc(
     private val settings: SolanaRpcSettings,
     private val mapper: ObjectMapper,
     private val clock: Clock,
     private val timing: CaptureTiming = SystemCaptureTiming,
     private val limiter: ProviderRequestLimiter = ProviderRequestLimiter.of(settings, timing),
+    private val recorder: ApiUsageRecorder = ApiUsageRecorder.NONE,
 ) : SolanaReadRpc {
     private val log = LoggerFactory.getLogger(HttpSolanaReadRpc::class.java)
     private val endpoint = endpoint(settings.endpoint)
@@ -68,20 +75,39 @@ class HttpSolanaReadRpc(
     private fun send(uri: URI, method: String, params: List<Any>, budget: CaptureBudget): CaptureHttpReply {
         budget.checkDeadline(timing.nanoTime())
         budget.request()
-        return try { request(uri, method, params, budget) } catch (exception: RestClientException) {
+        val received = AtomicLong()
+        val reply = try {
+            request(uri, method, params, budget, received)
+        } catch (exception: RestClientException) {
             transportFailure(exception)
-        } catch (exception: IOException) { transportFailure(exception) }
+        } catch (exception: IOException) {
+            transportFailure(exception)
+        } catch (exception: CaptureException) {
+            record(method, budget, ApiCallOutcome.FAILED, received.get())
+            throw exception
+        }
+        record(method, budget, outcome(reply), received.get())
+        return reply
+    }
+
+    private fun record(method: String, budget: CaptureBudget, outcome: ApiCallOutcome, responseBytes: Long) =
+        recorder.record(ApiCall(ApiProvider.SOLANA_RPC, method, budget.usage, outcome, responseBytes))
+
+    /** Only an HTTP 429 counts as rate limited; a JSON-RPC rate-limit error is a failed reply, like every other failure. */
+    private fun outcome(reply: CaptureHttpReply): ApiCallOutcome = when (reply) {
+        is CaptureHttpReply.Success -> ApiCallOutcome.OK
+        is CaptureHttpReply.Failed -> if (reply.category == CaptureCategory.RATE_LIMITED) ApiCallOutcome.RATE_LIMITED else ApiCallOutcome.FAILED
     }
 
     /** No HTTP response at all: a timeout, refused or reset connection, DNS or TLS failure, told apart by its root cause. */
     private fun transportFailure(exception: Exception) = CaptureHttpReply.Failed("IO", true, cause = ExceptionCauses.rootName(exception))
 
-    private fun request(uri: URI, method: String, params: List<Any>, budget: CaptureBudget): CaptureHttpReply =
+    private fun request(uri: URI, method: String, params: List<Any>, budget: CaptureBudget, received: AtomicLong): CaptureHttpReply =
         client.post().uri(uri).contentType(MediaType.APPLICATION_JSON)
             .body(mapper.writeValueAsString(mapOf("jsonrpc" to "2.0", "id" to 1, "method" to method, "params" to params)))
             .exchange { _, response ->
                 val status = response.statusCode.value()
-                val bytes = readBounded(response.body, budget)
+                val bytes = readBounded(response.body, budget, received)
                 when {
                     status == 401 || status == 403 -> CaptureHttpReply.Failed("AUTHENTICATION", false)
                     status == 429 -> CaptureHttpReply.Failed(CaptureCategory.RATE_LIMITED, true, retryAfter(response.headers.getFirst("Retry-After")), rateLimited = true)
@@ -91,7 +117,7 @@ class HttpSolanaReadRpc(
                 }
             }
 
-    private fun readBounded(input: java.io.InputStream, budget: CaptureBudget): ByteArray {
+    private fun readBounded(input: java.io.InputStream, budget: CaptureBudget, received: AtomicLong): ByteArray {
         val output = ByteArrayOutputStream()
         val buffer = ByteArray(8192)
         while (true) {
@@ -99,6 +125,7 @@ class HttpSolanaReadRpc(
             val readLimit = minOf(buffer.size.toLong(), budget.remainingBytes() + 1, ChainCaptureFormat.MAX_RESPONSE_BYTES - output.size() + 1).toInt()
             val count = input.read(buffer, 0, maxOf(1, readLimit))
             if (count < 0) break
+            received.addAndGet(count.toLong())
             budget.bytes(count.toLong())
             if (output.size().toLong() + count > ChainCaptureFormat.MAX_RESPONSE_BYTES) throw CaptureBudgetException("RESPONSE_BYTES", budget.requestsUsed, budget.bytesUsed)
             output.write(buffer, 0, count)

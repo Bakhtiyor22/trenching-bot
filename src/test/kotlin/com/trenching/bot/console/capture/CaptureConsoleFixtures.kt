@@ -100,26 +100,33 @@ class FakeCaptureWorkflow : CaptureWorkflow {
     }
 }
 
-class CaptureConsoleFixture(root: Path, rpcConfigured: Boolean = true, ratesConfigured: Boolean = true, retryScheduler: CaptureRetryScheduler = CaptureRetryScheduler.NONE) {
+/** A clock the test moves, so sessions can be created at distinct times. */
+class MutableClock(var now: Instant) : Clock() {
+    override fun getZone(): ZoneOffset = ZoneOffset.UTC
+    override fun withZone(zone: java.time.ZoneId): Clock = this
+    override fun instant(): Instant = now
+}
+
+class CaptureConsoleFixture(root: Path, rpcConfigured: Boolean = true, ratesConfigured: Boolean = true, retryScheduler: CaptureRetryScheduler = CaptureRetryScheduler.NONE,
+                            val clock: Clock = Clock.fixed(FakeCaptureWorkflow.AT, ZoneOffset.UTC), suggested: CaptureSuggestedWallets = CaptureSuggestedWallets()) {
     val json: JsonMapper = JsonMapper.builder().addModule(kotlinModule()).build()
-    val clock: Clock = Clock.fixed(FakeCaptureWorkflow.AT, ZoneOffset.UTC)
     val workflow = FakeCaptureWorkflow()
     val executor = ManualExecutor()
     val store = CaptureFileStore(CapturePathPolicy(root), json).also { it.initialize() }
     private var nextId = 0
     val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured, retryScheduler)
-    val sessions = CaptureSessionService(store, operations, clock, CaptureIds { "id-${++nextId}" }, ratesConfigured)
+    val sessions = CaptureSessionService(store, operations, clock, CaptureIds { "id-${++nextId}" }, ratesConfigured, suggestedWallets = suggested)
 
     /** Creates a wallet session and runs its automatic offline inspection, leaving the worker idle and the log empty. */
     fun create(requestId: String = "session-1"): CaptureSessionView {
-        sessions.create(CaptureCreateRequest(requestId, "Sample", wallet = CaptureWalletSettings(WALLET)))
+        sessions.create(CaptureCreateRequest(requestId, "Sample $requestId", wallet = CaptureWalletSettings(WALLET)))
         settle()
         return sessions.find(requestId)
     }
 
     /** Creates a wallet + token session for [CaptureTokenFixtures.MINT] and runs its automatic inspection. */
     fun createToken(requestId: String = "session-1"): CaptureSessionView {
-        sessions.create(CaptureCreateRequest(requestId, "Token", wallet = CaptureWalletSettings(WALLET, "wallet-token", 100, 5, CaptureTokenFixtures.MINT)))
+        sessions.create(CaptureCreateRequest(requestId, "Token $requestId", wallet = CaptureWalletSettings(WALLET, "wallet-token", 100, 5, CaptureTokenFixtures.MINT)))
         settle()
         return sessions.find(requestId)
     }

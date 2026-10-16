@@ -36,11 +36,15 @@ interface CaptureResponseMapper {
     }
     fun progress(value: CaptureCheckpoint): CaptureProgressResponse
     fun stage(value: CaptureStageSummary): CaptureStageResponse
-    fun sessions(value: CapturePage<CaptureSessionView>): CaptureSessionPageResponse
+    fun sessions(value: CaptureSessionPage): CaptureSessionPageResponse
+    fun statusCounts(value: Map<CaptureSummaryStatus, Long>): Map<String, Long>
+    fun summary(value: CaptureSummary): CaptureSummaryResponse
+    fun nameCheck(value: CaptureNameCheck): CaptureNameCheckResponse
+    fun error(code: String, message: String, fields: Map<String, String>, suggestion: String?): CaptureErrorResponse
     fun attempts(value: CapturePage<CaptureAttemptRecord>): CaptureAttemptPageResponse
     fun inspection(wallet: CaptureStageResponse, market: CaptureStageResponse, rates: CaptureStageResponse, canCalibrate: Boolean, canExport: Boolean, walletSummary: Map<String, String>, marketSummary: Map<String, String>, ratesSummary: Map<String, String>, marketWindows: List<CaptureWindowResponse>, targetToken: CaptureTargetTokenResponse?): CaptureInspectionResponse
     fun window(mint: String, fromSlot: Long, toSlot: Long, coverage: String, scanned: Int, selected: Int, detailGaps: Int?, observations: Int?): CaptureWindowResponse
-    fun config(rpcConfigured: Boolean, ratesConfigured: Boolean, walletDefaults: CaptureWalletSettings, walletTokenDefaults: CaptureWalletSettings, walletTokenBudgetDefaults: CaptureBudget, marketDefaults: CaptureMarketSettings, budgetDefaults: CaptureBudget, bounds: Map<String, Long>, windowSlots: Long): CaptureConfigResponse
+    fun config(value: CaptureConfigView): CaptureConfigResponse
     fun targetToken(mint: String, tokenProgram: String, tokenAccount: String, pumpAccumulator: String, pumpSwapAccumulator: String, tokenAccountFirstBuy: CaptureTokenAccountFirstBuyResponse, actualFirstBuy: CaptureActualFirstBuyResponse): CaptureTargetTokenResponse
     fun tokenAccountFirstBuy(state: String, signature: String?, slot: Long?, reason: String?, blocking: List<String>): CaptureTokenAccountFirstBuyResponse
     fun actualFirstBuy(state: String, signature: String?, slot: Long?, creationSignature: String?, creationSlot: Long?, creationTime: Instant?, reason: String?, blocking: List<String>, claim: String?, bound: CaptureVerificationBoundResponse?): CaptureActualFirstBuyResponse

@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.marketdata.infrastructure.rates.BinanceSolUsdtRateSource
 import com.trenching.bot.marketdata.infrastructure.rates.DisabledSolUsdtRateSource
 import java.time.Clock
@@ -14,8 +15,8 @@ class ReferenceRateConfigurationTest {
 
     @Test
     fun `rates are disabled unless enabled and then come from Binance`() {
-        assertIs<DisabledSolUsdtRateSource>(configuration.solUsdtRateSource(ReferenceRateProperties(), mapper, Clock.systemUTC()))
-        assertIs<BinanceSolUsdtRateSource>(configuration.solUsdtRateSource(ReferenceRateProperties(enabled = true), mapper, Clock.systemUTC()))
+        assertIs<DisabledSolUsdtRateSource>(configuration.solUsdtRateSource(ReferenceRateProperties(), mapper, Clock.systemUTC(), ApiUsageRecorder.NONE))
+        assertIs<BinanceSolUsdtRateSource>(configuration.solUsdtRateSource(ReferenceRateProperties(enabled = true), mapper, Clock.systemUTC(), ApiUsageRecorder.NONE))
     }
 
     @Test

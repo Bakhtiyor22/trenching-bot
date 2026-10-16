@@ -1,5 +1,11 @@
 package com.trenching.bot.console.solana
 
+import com.trenching.bot.apiusage.ApiCall
+import com.trenching.bot.apiusage.ApiCallOutcome
+import com.trenching.bot.apiusage.ApiProvider
+import com.trenching.bot.apiusage.ApiTask
+import com.trenching.bot.apiusage.ApiUsageContext
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.console.solana.SolanaRpcTestData.DEVNET_GENESIS
 import com.trenching.bot.console.solana.SolanaRpcTestData.RPC_HOST
 import com.trenching.bot.console.solana.SolanaRpcTestData.RPC_URL
@@ -35,7 +41,8 @@ import org.springframework.web.client.RestClient
 class JsonRpcSolanaProbeTest {
     private val builder = RestClient.builder()
     private val server = MockRestServiceServer.bindTo(builder).build()
-    private val probe = JsonRpcSolanaProbe(SolanaRpcEndpoint.from(RPC_URL), builder.build(), mapper)
+    private val calls = mutableListOf<ApiCall>()
+    private val probe = JsonRpcSolanaProbe(SolanaRpcEndpoint.from(RPC_URL), builder.build(), mapper) { calls += it }
 
     @Test
     fun `reports ok with the node version, confirmed slot, cluster and latency`() {
@@ -54,6 +61,33 @@ class JsonRpcSolanaProbeTest {
         assertEquals(412_345_678L, ok.slot)
         assertEquals(SolanaCluster.DEVNET, ok.cluster)
         assertTrue(ok.latencyMs >= 0)
+    }
+
+    @Test
+    fun `records every probe request as a connection check with its body bytes`() {
+        val health = result("\"ok\"")
+        server.respond("getHealth", health)
+        server.respond("getVersion", result("""{"solana-core":"3.0.6","feature-set":3294202862}"""))
+        server.respond("getSlot", result("412345678"))
+        server.respond("getGenesisHash", result("\"$DEVNET_GENESIS\""))
+
+        probe.check()
+
+        assertEquals(listOf("getHealth", "getVersion", "getSlot", "getGenesisHash"), calls.map { it.operation })
+        assertTrue(calls.all { it.provider == ApiProvider.SOLANA_RPC && it.outcome == ApiCallOutcome.OK })
+        assertTrue(calls.all { it.context == ApiUsageContext(ApiTask.CONNECTION_CHECK, null) })
+        assertEquals(health.length.toLong(), calls.first().responseBytes)
+    }
+
+    @Test
+    fun `records a 429 as rate limited and a json-rpc error as failed`() {
+        server.expectCall("getHealth").andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS))
+        server.respond("getHealth", error(-32005, "Node is unhealthy"))
+
+        probe.check()
+        probe.check()
+
+        assertEquals(listOf(ApiCallOutcome.RATE_LIMITED, ApiCallOutcome.FAILED), calls.map { it.outcome })
     }
 
     @Test
@@ -106,7 +140,7 @@ class JsonRpcSolanaProbeTest {
         FakeSolanaRpcServer.start().use { rpc ->
             rpc.hangUntilClosed()
             val realProbe = SolanaProbeConfiguration().solanaProbe(
-                properties(rpc.url(), readTimeout = Duration.ofMillis(300)), mapper)
+                properties(rpc.url(), readTimeout = Duration.ofMillis(300)), mapper, ApiUsageRecorder.NONE)
 
             assertEquals(ProbeOutcome.Timeout, realProbe.check())
             assertEquals(1, rpc.requestCount)
@@ -125,7 +159,7 @@ class JsonRpcSolanaProbeTest {
         val echoed = probe.check()
         val refusedPort = ServerSocket(0).use { it.localPort }
         val refused = SolanaProbeConfiguration()
-            .solanaProbe(properties("http://127.0.0.1:$refusedPort/?api-key=$SECRET"), mapper)
+            .solanaProbe(properties("http://127.0.0.1:$refusedPort/?api-key=$SECRET"), mapper, ApiUsageRecorder.NONE)
             .check()
 
         val rpcError = assertIs<ProbeOutcome.RpcError>(echoed)

@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.marketdata.infrastructure.rates.BinanceSolUsdtRateSource
 import com.trenching.bot.marketdata.infrastructure.rates.DisabledSolUsdtRateSource
@@ -21,10 +22,11 @@ class ReferenceRateConfiguration {
         properties: ReferenceRateProperties,
         objectMapper: ObjectMapper,
         @Qualifier(SimulationClock.NAME) clock: Clock,
+        recorder: ApiUsageRecorder,
     ): SolUsdtRateSource {
         if (!properties.enabled) return DisabledSolUsdtRateSource()
         val httpClient = HttpClient.newBuilder().connectTimeout(properties.connectTimeout).build()
         val requestFactory = JdkClientHttpRequestFactory(httpClient).apply { setReadTimeout(properties.readTimeout) }
-        return BinanceSolUsdtRateSource(RestClient.builder().requestFactory(requestFactory).build(), properties, objectMapper, clock)
+        return BinanceSolUsdtRateSource(RestClient.builder().requestFactory(requestFactory).build(), properties, objectMapper, clock, recorder)
     }
 }

@@ -32,16 +32,17 @@ class ReplayMarketCaptureService(
         }
         val planned = planning.plan(request.walletCaptureDirectory)
         val plan = planned.plan
-        val cutoff = rates?.let { cutoff(planned, it) }
+        val cutoff = rates?.let { cutoff(planned, it, request) }
         return marketCapture().capture(MarketHistoryCaptureRequest(request.directory, plan.windows, plan.parameters,
             request.scanPages, request.maxTransactions, request.requestBudget, request.byteBudget, request.operationTimeout,
-            request.cutoffMode, cutoff, cutoff?.let { DipOutcomeCutoff.IDENTITY }))
+            request.cutoffMode, cutoff, cutoff?.let { DipOutcomeCutoff.IDENTITY }, request.usage))
     }
 
     fun plan(walletCaptureDirectory: Path): ReplayMarketWindowPlan = planning.plan(walletCaptureDirectory).plan
 
-    private fun cutoff(planned: PlannedWalletHistory, rates: SolUsdtRateSource): DipOutcomeCutoff =
-        DipOutcomeCutoff(planned.history.wallet, planned.plan.windows.associateWith { planning.anchorTransactions(planned, it) }, rates)
+    private fun cutoff(planned: PlannedWalletHistory, rates: SolUsdtRateSource, request: ReplayMarketCaptureRequest): DipOutcomeCutoff =
+        DipOutcomeCutoff(planned.history.wallet, planned.plan.windows.associateWith { planning.anchorTransactions(planned, it) }, rates,
+            usage = request.usage)
 
     private companion object {
         const val RATES_NOT_CONFIGURED = "RATES_NOT_CONFIGURED"

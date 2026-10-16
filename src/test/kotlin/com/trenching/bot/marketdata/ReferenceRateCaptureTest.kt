@@ -1,5 +1,7 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.apiusage.ApiTask
+import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
@@ -24,6 +26,7 @@ class ReferenceRateCaptureTest {
     private val mapper = JsonMapper.builder().build()
     private val store = ReferenceRateArtifactStore(mapper)
     private val requested = mutableListOf<Set<Instant>>()
+    private val usages = mutableListOf<ApiUsageContext>()
     private var available = setOf(FIRST, SECOND)
     private var tradeTimes = listOf(FIRST.plusSeconds(5), FIRST.plusSeconds(40), SECOND.plusSeconds(1))
 
@@ -48,6 +51,15 @@ class ReferenceRateCaptureTest {
 
         assertEquals(listOf(setOf(FIRST)), requested)
         assertEquals(listOf(FIRST.toString()), result.manifest.records.map { it.minute })
+    }
+
+    @Test
+    fun `asks the source for rates under the usage context of the request`() {
+        val usage = ApiUsageContext(ApiTask.CASE_RATES, "capture-1")
+
+        service().capture(request().copy(usage = usage))
+
+        assertEquals(listOf(usage), usages)
     }
 
     @Test
@@ -107,6 +119,11 @@ class ReferenceRateCaptureTest {
                 if (minute in available) RateLookup.Available(if (minute == FIRST) BigDecimal("200") else BigDecimal("201"), minute, SOURCE)
                 else RateLookup.Unavailable(RateUnavailableReason.RATE_LIMITED)
             }
+        }
+
+        override fun minuteRates(minutes: Set<Instant>, usage: ApiUsageContext): Map<Instant, RateLookup> {
+            usages += usage
+            return minuteRates(minutes)
         }
 
         override fun current(): RateLookup = error("Rate capture never asks for the current price")

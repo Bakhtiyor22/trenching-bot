@@ -47,7 +47,7 @@ internal class MarketHistoryCaptureService(
     private fun acquire(request: MarketHistoryCaptureRequest, windows: List<MarketCaptureWindow>): MarketHistoryCaptureResult {
         val saved = store.loadIfPresent(request.directory)
         if (saved != null && !sameIdentity(saved, request, windows)) throw CaptureValidationException("RESUME_IDENTITY")
-        val budget = CaptureBudget(request.requestBudget, request.byteBudget, saved?.requestsUsed ?: 0, saved?.bytesUsed ?: 0, request.operationTimeout)
+        val budget = CaptureBudget(request.requestBudget, request.byteBudget, saved?.requestsUsed ?: 0, saved?.bytesUsed ?: 0, request.operationTimeout, request.usage)
         val genesis = ChainCaptureReads.requireMainnet(rpc, budget)
         var manifest = saved ?: MarketHistoryManifest(
             schemaVersion = MarketCaptureFormat.VERSION, genesisHash = genesis, commitment = ChainCaptureFormat.COMMITMENT,

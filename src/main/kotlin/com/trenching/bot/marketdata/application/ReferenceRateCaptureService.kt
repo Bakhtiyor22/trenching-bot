@@ -38,7 +38,7 @@ internal class ReferenceRateCaptureService(
             if (saved != null && saved.records.map { Instant.parse(it.minute) } != minutes) throw CaptureValidationException("RESUME_IDENTITY")
             val previous = saved?.records?.associateBy { Instant.parse(it.minute) }.orEmpty()
             val missing = minutes.filter { previous[it]?.rate == null }.toSet()
-            val looked = if (missing.isEmpty()) emptyMap() else source.minuteRates(missing)
+            val looked = if (missing.isEmpty()) emptyMap() else source.minuteRates(missing, request.usage)
             val records = minutes.map { minute ->
                 previous[minute]?.takeIf { it.rate != null } ?: record(minute, looked[minute])
             }

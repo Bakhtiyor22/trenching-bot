@@ -5,7 +5,7 @@ import com.trenching.bot.console.capture.*
 import com.trenching.bot.console.config.*
 import com.trenching.bot.console.mapper.CaptureResponseMapper
 import com.trenching.bot.console.mapper.DatasetResponseMapper
-import com.trenching.bot.marketdata.ReferenceRateProperties
+import com.trenching.bot.console.mapper.RecommendationResponseMapper
 import org.springframework.context.annotation.Profile
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
@@ -17,10 +17,13 @@ import org.springframework.web.bind.annotation.*
 @RequestMapping("/api/captures")
 @Profile("local & !prod")
 @ConditionalOnConsoleEnabled
-class CaptureController(private val sessions: CaptureSessionService, private val operations: CaptureOperationService, private val cases: CaptureCaseService, private val catalog: CaptureCatalogService, private val mapper: CaptureResponseMapper, private val datasets: DatasetResponseMapper, private val rpc: SolanaRpcProperties, private val rates: ReferenceRateProperties) {
-    @GetMapping("/config") fun config(): CaptureConfigResponse = mapper.config(!rpc.rpcUrl.isNullOrBlank(),rates.enabled,CaptureWalletSettings(""),CaptureDefaults.walletToken,CaptureDefaults.walletTokenBudget,CaptureMarketSettings(),CaptureBudget(),CaptureValidation.bounds,4500)
-    @GetMapping fun page(@RequestParam(defaultValue="0") page: Int,@RequestParam(defaultValue="20") size: Int): CaptureSessionPageResponse = mapper.sessions(sessions.page(page,size))
+class CaptureController(private val sessions: CaptureSessionService, private val setup: CaptureSetupService, private val operations: CaptureOperationService, private val cases: CaptureCaseService, private val catalog: CaptureCatalogService, private val mapper: CaptureResponseMapper, private val datasets: DatasetResponseMapper, private val recommendations: RecommendationResponseMapper) {
+    @GetMapping("/config") fun config(): CaptureConfigResponse = mapper.config(setup.config())
+    @GetMapping("/recommendations") fun recommendations(@RequestParam(required=false) wallet: String?,@RequestParam(required=false) scope: String?,@RequestParam(required=false) mint: String?): List<RecommendationResponse> = recommendations.toResponses(setup.recommendations(wallet,scope,mint))
+    @GetMapping("/names/check") fun checkName(@RequestParam name: String): CaptureNameCheckResponse = mapper.nameCheck(sessions.checkName(name))
+    @GetMapping fun page(@RequestParam(defaultValue="0") page: Int,@RequestParam(defaultValue="20") size: Int,@RequestParam(defaultValue=CaptureSessionSort.DEFAULT_VALUE) sort: String,@RequestParam(required=false) status: String?): CaptureSessionPageResponse = mapper.sessions(sessions.page(page,size,sort,status))
     @PostMapping fun create(@RequestBody request: CaptureCreateRequest): CaptureSessionResponse = mapper.session(sessions.create(request))
+    @PatchMapping("/{id}") fun rename(@PathVariable id: String,@RequestBody request: CaptureRenameRequest): CaptureSessionResponse = mapper.session(sessions.rename(id,request))
     @DeleteMapping("/{id}") @ResponseStatus(HttpStatus.NO_CONTENT) fun delete(@PathVariable id: String) = sessions.delete(id)
     @GetMapping("/{id}") fun find(@PathVariable id: String): CaptureSessionResponse = mapper.session(sessions.find(id))
     @GetMapping("/{id}/attempts") fun attempts(@PathVariable id: String,@RequestParam(defaultValue="0") page: Int,@RequestParam(defaultValue="20") size: Int): CaptureAttemptPageResponse = mapper.attempts(sessions.attempts(id,page,size))

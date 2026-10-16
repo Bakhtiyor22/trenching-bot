@@ -1,5 +1,6 @@
 package com.trenching.bot.chaincapture
 
+import com.trenching.bot.apiusage.ApiUsageContext
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -7,7 +8,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * One invocation's allowance, safe to share between the threads of one capture. [operationTimeout] overrides the
- * transport's default deadline for this invocation only.
+ * transport's default deadline for this invocation only. [usage] attributes every request it pays for in API usage.
  */
 class CaptureBudget(
     val maxRequests: Int,
@@ -15,6 +16,7 @@ class CaptureBudget(
     val initialRequests: Int = 0,
     val initialBytes: Long = 0,
     val operationTimeout: Duration? = null,
+    val usage: ApiUsageContext = ApiUsageContext.UNATTRIBUTED,
 ) {
     private val deadlineNanos = AtomicReference<Long?>(null)
     private val requests = AtomicInteger()

@@ -3,6 +3,8 @@ package com.trenching.bot.console
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.console.api.dto.ConsoleConfigRequest
 import com.trenching.bot.console.application.ConsoleConfigValidator
+import com.trenching.bot.console.domain.AgreedStrategyPreset
+import com.trenching.bot.console.domain.ConfigErrorCode
 import com.trenching.bot.console.domain.ConfigValidation
 import com.trenching.bot.console.domain.NumberRange
 import com.trenching.bot.console.domain.SimulationConfigLimits
@@ -27,7 +29,9 @@ class ConsoleConfigRequestTest {
 
     private fun config(body: String): SimulationConfig = assertIs<ConfigValidation.Valid>(validate(body)).config
 
-    private fun fields(body: String): Map<String, String> = assertIs<ConfigValidation.Invalid>(validate(body)).fields
+    private fun invalid(body: String): ConfigValidation.Invalid = assertIs<ConfigValidation.Invalid>(validate(body))
+
+    private fun fields(body: String): Map<String, String> = invalid(body).fields
 
     @Test
     fun `a missing config is the mvp configuration`() {
@@ -169,6 +173,69 @@ class ConsoleConfigRequestTest {
         fun withNotional(value: BigDecimal) = SimulationConfig.of(value, 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal.ZERO)
         withNotional(BigDecimal.ONE.movePointLeft(limits.notionalScale))
         assertFailsWith<IllegalArgumentException> { withNotional(BigDecimal.ONE.movePointLeft(limits.notionalScale + 1)) }
+    }
+
+    @Test
+    fun `levels sent as percents build the same configuration as the same levels in basis points`() {
+        val shared = """"notional":"0.1","minMarketCapUsd":"10000","latencySlots":1,"transactionCostSol":"0.001""""
+        val percents = config("""{$shared,"dipPercent":"20","takeProfitPercent":"55","stopLossPercent":"40"}""")
+
+        assertEquals(config("""{$shared,"dipBps":2000,"takeProfitBps":5500,"stopLossBps":4000}"""), percents)
+        assertEquals(AgreedStrategyPreset.CONFIG, percents)
+        assertEquals(1550, config("""{"dipPercent":"15.5"}""").dipBps)
+        assertEquals(1, config("""{"stopLossPercent":"0.01"}""").stopLossBps)
+    }
+
+    @Test
+    fun `a percent and basis points that agree are accepted together`() {
+        assertEquals(2000, config("""{"dipBps":2000,"dipPercent":"20.00"}""").dipBps)
+    }
+
+    @Test
+    fun `a percent and basis points that disagree are conflicting fields`() {
+        val invalid = invalid("""{"dipBps":1500,"dipPercent":"20"}""")
+
+        assertEquals(ConfigErrorCode.CONFLICTING_FIELDS, invalid.code)
+        assertEquals(mapOf("dipPercent" to "must equal dipBps when both are sent: dipBps 1500 is 15 percent"), invalid.fields)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["\"20.255\"", "\"-1\"", "\"1e2\"", "\"\"", "20", "true"])
+    fun `a percent that is not a decimal string with at most two decimals is an invalid percent on its field`(value: String) {
+        val invalid = invalid("""{"dipPercent":$value}""")
+
+        assertEquals(ConfigErrorCode.INVALID_PERCENT, invalid.code)
+        assertEquals(mapOf("dipPercent" to "must be a percent string with at most 2 decimals, such as \"20\" or \"15.5\""), invalid.fields)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["0", "100", "100.00"])
+    fun `a percent outside the level range names the range`(value: String) {
+        val invalid = invalid("""{"takeProfitPercent":"$value"}""")
+
+        assertEquals(ConfigErrorCode.INVALID_PERCENT, invalid.code)
+        assertEquals(mapOf("takeProfitPercent" to "must be between 0.01 and 99.99 percent"), invalid.fields)
+    }
+
+    @Test
+    fun `an invalid percent next to another invalid field reports both under the percent code`() {
+        val invalid = invalid("""{"stopLossPercent":"40.001","latencySlots":0}""")
+
+        assertEquals(ConfigErrorCode.INVALID_PERCENT, invalid.code)
+        assertEquals(setOf("stopLossPercent", "latencySlots"), invalid.fields.keys)
+    }
+
+    @Test
+    fun `an invalid basis point value never also reports a conflict with its percent`() {
+        val invalid = invalid("""{"dipBps":0,"dipPercent":"20"}""")
+
+        assertEquals(ConfigErrorCode.CONFIG_INVALID, invalid.code)
+        assertEquals(setOf("dipBps"), invalid.fields.keys)
+    }
+
+    @Test
+    fun `a request with basis points only keeps the config invalid code`() {
+        assertEquals(ConfigErrorCode.CONFIG_INVALID, invalid("""{"dipBps":0}""").code)
     }
 
     @Test

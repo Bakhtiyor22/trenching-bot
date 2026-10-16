@@ -1,5 +1,6 @@
 package com.trenching.bot.console.solana
 
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.console.config.SolanaRpcProperties
 import java.net.http.HttpClient
 import org.springframework.boot.context.properties.EnableConfigurationProperties
@@ -13,8 +14,8 @@ import tools.jackson.databind.ObjectMapper
 @EnableConfigurationProperties(SolanaRpcProperties::class)
 class SolanaProbeConfiguration {
     @Bean
-    fun solanaProbe(properties: SolanaRpcProperties, objectMapper: ObjectMapper): SolanaProbe =
-        JsonRpcSolanaProbe(SolanaRpcEndpoint.from(properties.rpcUrl), restClient(properties), objectMapper)
+    fun solanaProbe(properties: SolanaRpcProperties, objectMapper: ObjectMapper, recorder: ApiUsageRecorder): SolanaProbe =
+        JsonRpcSolanaProbe(SolanaRpcEndpoint.from(properties.rpcUrl), restClient(properties), objectMapper, recorder)
 
     private fun restClient(properties: SolanaRpcProperties): RestClient {
         val httpClient = HttpClient.newBuilder()

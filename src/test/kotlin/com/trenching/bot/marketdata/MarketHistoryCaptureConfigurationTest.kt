@@ -1,6 +1,7 @@
 package com.trenching.bot.marketdata
 
 import com.trenching.bot.chaincapture.CaptureValidationException
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.config.SimulationClock
 import java.time.Clock
 import java.time.Duration
@@ -18,6 +19,7 @@ class MarketHistoryCaptureConfigurationTest {
     private val context = ApplicationContextRunner()
         .withUserConfiguration(MarketHistoryCaptureConfiguration::class.java)
         .withBean(ObjectMapper::class.java, Supplier { JsonMapper.builder().build() })
+        .withBean(ApiUsageRecorder::class.java, Supplier { ApiUsageRecorder.NONE })
         .withBean(SimulationClock.NAME, Clock::class.java, Supplier { Clock.fixed(Instant.parse("2026-10-04T00:00:00Z"), ZoneOffset.UTC) })
 
     @Test

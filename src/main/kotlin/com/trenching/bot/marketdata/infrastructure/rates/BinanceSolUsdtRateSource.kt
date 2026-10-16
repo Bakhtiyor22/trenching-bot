@@ -1,5 +1,11 @@
 package com.trenching.bot.marketdata.infrastructure.rates
 
+import com.trenching.bot.apiusage.ApiCall
+import com.trenching.bot.apiusage.ApiCallOutcome
+import com.trenching.bot.apiusage.ApiProvider
+import com.trenching.bot.apiusage.ApiTask
+import com.trenching.bot.apiusage.ApiUsageContext
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.common.ExceptionCauses
 import com.trenching.bot.marketdata.RateLookup
 import com.trenching.bot.marketdata.RateUnavailableReason
@@ -16,6 +22,7 @@ import java.time.temporal.ChronoUnit
 import java.util.concurrent.TimeoutException
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
+import org.springframework.http.HttpStatusCode
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
 import org.springframework.web.util.UriComponentsBuilder
@@ -28,12 +35,14 @@ import tools.jackson.databind.ObjectMapper
  * the ticker for the current price. One GET at a time, no retries, no key. Completed minutes are cached in memory;
  * failures become [RateUnavailableReason]s whose text never carries the URL. After a rate limit or region block, every
  * lookup answers with that reason for `tickerCacheTtl` without calling Binance, which bans IPs that keep calling after a 429.
+ * Every GET it sends is recorded once in [recorder]; a minute answered from the cache sends nothing.
  */
 class BinanceSolUsdtRateSource(
     private val restClient: RestClient,
     private val properties: ReferenceRateProperties,
     private val mapper: ObjectMapper,
     private val clock: Clock,
+    private val recorder: ApiUsageRecorder = ApiUsageRecorder.NONE,
 ) : SolUsdtRateSource {
     private val log = LoggerFactory.getLogger(BinanceSolUsdtRateSource::class.java)
     private val cache = object : LinkedHashMap<Instant, BigDecimal>() {
@@ -42,7 +51,9 @@ class BinanceSolUsdtRateSource(
     @Volatile private var ticker: RateLookup.Available? = null
     @Volatile private var backoff: Backoff? = null
 
-    override fun minuteRates(minutes: Set<Instant>): Map<Instant, RateLookup> {
+    override fun minuteRates(minutes: Set<Instant>): Map<Instant, RateLookup> = minuteRates(minutes, ApiUsageContext.UNATTRIBUTED)
+
+    override fun minuteRates(minutes: Set<Instant>, usage: ApiUsageContext): Map<Instant, RateLookup> {
         minutes.forEach { require(it == it.truncatedTo(ChronoUnit.MINUTES)) { "Rate minute must be a minute start minute=$it" } }
         val currentMinute = clock.instant().truncatedTo(ChronoUnit.MINUTES)
         val result = mutableMapOf<Instant, RateLookup>()
@@ -64,7 +75,7 @@ class BinanceSolUsdtRateSource(
                 continue
             }
             requests++
-            when (val fetched = klines(range.first(), range.last())) {
+            when (val fetched = klines(range.first(), range.last(), usage)) {
                 is Fetch.Failed -> {
                     failure = fetched.reason
                     range.forEach { result[it] = RateLookup.Unavailable(fetched.reason) }
@@ -88,7 +99,8 @@ class BinanceSolUsdtRateSource(
         ticker?.takeIf { Duration.between(it.at, now) < properties.tickerCacheTtl }?.let { return it }
         activeBackoff()?.let { return RateLookup.Unavailable(it) }
         val uri = UriComponentsBuilder.fromUriString(properties.baseUrl).path(TICKER_PATH).queryParam("symbol", SYMBOL).build().toUri()
-        return when (val fetched = get(uri) { body -> positive(body.path("price"))?.let { Fetch.Rates(mapOf(now to it)) } }) {
+        val fetched = get(uri, TICKER_PATH, LIVE_PRICE) { body -> positive(body.path("price"))?.let { Fetch.Rates(mapOf(now to it)) } }
+        return when (fetched) {
             is Fetch.Failed -> {
                 log.warn("reference_rates ticker failed reason={} cause={}", fetched.reason, fetched.cause)
                 startBackoff(fetched.reason)
@@ -114,12 +126,12 @@ class BinanceSolUsdtRateSource(
         return ranges
     }
 
-    private fun klines(from: Instant, to: Instant): Fetch {
+    private fun klines(from: Instant, to: Instant, usage: ApiUsageContext): Fetch {
         val uri = UriComponentsBuilder.fromUriString(properties.baseUrl).path(KLINES_PATH)
             .queryParam("symbol", SYMBOL).queryParam("interval", INTERVAL)
             .queryParam("startTime", from.toEpochMilli()).queryParam("endTime", to.toEpochMilli() + MINUTE_MILLIS - 1)
             .queryParam("limit", KLINE_LIMIT).build().toUri()
-        return get(uri, ::opens)
+        return get(uri, KLINES_PATH, usage, ::opens)
     }
 
     /** Open time and open price of each kline row, or null when any row is not a minute-aligned positive price. */
@@ -137,22 +149,40 @@ class BinanceSolUsdtRateSource(
     private fun positive(node: JsonNode): BigDecimal? =
         node.takeIf { it.isString }?.asString()?.toBigDecimalOrNull()?.takeIf { it.signum() > 0 }
 
-    private fun get(uri: URI, parse: (JsonNode) -> Fetch.Rates?): Fetch = try {
-        restClient.get().uri(uri).exchange { _, response ->
-            val status = response.statusCode
-            when {
-                status.isSameCodeAs(HttpStatus.TOO_MANY_REQUESTS) || status.isSameCodeAs(HttpStatus.I_AM_A_TEAPOT) ->
-                    Fetch.Failed(RateUnavailableReason.RATE_LIMITED)
-                status.isSameCodeAs(HttpStatus.UNAVAILABLE_FOR_LEGAL_REASONS) || status.isSameCodeAs(HttpStatus.FORBIDDEN) ->
-                    Fetch.Failed(RateUnavailableReason.REGION_BLOCKED)
-                !status.is2xxSuccessful -> Fetch.Failed(RateUnavailableReason.UNAVAILABLE)
-                else -> parse(mapper.readTree(response.bodyTo(String::class.java).orEmpty())) ?: Fetch.Failed(RateUnavailableReason.MALFORMED)
+    /** One GET of [operation], recorded as one call whatever its outcome. */
+    private fun get(uri: URI, operation: String, usage: ApiUsageContext, parse: (JsonNode) -> Fetch.Rates?): Fetch {
+        val reply = try {
+            restClient.get().uri(uri).exchange { _, response -> Reply(response.statusCode, response.bodyTo(ByteArray::class.java) ?: EMPTY_BODY) }
+        } catch (exception: RestClientException) {
+            recorder.record(ApiCall(ApiProvider.BINANCE, operation, usage, ApiCallOutcome.FAILED, 0))
+            return Fetch.Failed(classify(exception), ExceptionCauses.rootName(exception))
+        }
+        val fetched = fetched(reply, parse)
+        recorder.record(ApiCall(ApiProvider.BINANCE, operation, usage, outcome(reply.status, fetched), reply.body.size.toLong()))
+        return fetched
+    }
+
+    private fun fetched(reply: Reply, parse: (JsonNode) -> Fetch.Rates?): Fetch {
+        val status = reply.status
+        return when {
+            status.isSameCodeAs(HttpStatus.TOO_MANY_REQUESTS) || status.isSameCodeAs(HttpStatus.I_AM_A_TEAPOT) ->
+                Fetch.Failed(RateUnavailableReason.RATE_LIMITED)
+            status.isSameCodeAs(HttpStatus.UNAVAILABLE_FOR_LEGAL_REASONS) || status.isSameCodeAs(HttpStatus.FORBIDDEN) ->
+                Fetch.Failed(RateUnavailableReason.REGION_BLOCKED)
+            !status.is2xxSuccessful -> Fetch.Failed(RateUnavailableReason.UNAVAILABLE)
+            else -> try {
+                parse(mapper.readTree(reply.body)) ?: Fetch.Failed(RateUnavailableReason.MALFORMED)
+            } catch (_: JacksonException) {
+                Fetch.Failed(RateUnavailableReason.MALFORMED)
             }
         }
-    } catch (_: JacksonException) {
-        Fetch.Failed(RateUnavailableReason.MALFORMED)
-    } catch (exception: RestClientException) {
-        Fetch.Failed(classify(exception), ExceptionCauses.rootName(exception))
+    }
+
+    /** Only an HTTP 429 is a rate-limited response; a 418 ban, like every other failure, is a failed request. */
+    private fun outcome(status: HttpStatusCode, fetched: Fetch): ApiCallOutcome = when {
+        status.isSameCodeAs(HttpStatus.TOO_MANY_REQUESTS) -> ApiCallOutcome.RATE_LIMITED
+        fetched is Fetch.Rates -> ApiCallOutcome.OK
+        else -> ApiCallOutcome.FAILED
     }
 
     private fun classify(exception: RestClientException): RateUnavailableReason {
@@ -173,6 +203,8 @@ class BinanceSolUsdtRateSource(
 
     private data class Backoff(val reason: RateUnavailableReason, val until: Instant)
 
+    private class Reply(val status: HttpStatusCode, val body: ByteArray)
+
     private companion object {
         const val SYMBOL = "SOLUSDT"
         const val INTERVAL = "1m"
@@ -183,6 +215,8 @@ class BinanceSolUsdtRateSource(
         const val KLINE_SOURCE = "binance:SOLUSDT:1m:open"
         const val TICKER_SOURCE = "binance:SOLUSDT:ticker"
         val BACKOFF_REASONS = setOf(RateUnavailableReason.RATE_LIMITED, RateUnavailableReason.REGION_BLOCKED)
+        val LIVE_PRICE = ApiUsageContext(ApiTask.LIVE_PRICE, null)
+        val EMPTY_BODY = ByteArray(0)
 
         /** Binance listed SOLUSDT on 2020-08-11; earlier minutes cannot have a rate. */
         val FIRST_MINUTE: Instant = Instant.parse("2020-08-11T00:00:00Z")

@@ -6,8 +6,11 @@ data class ConfigResponse(
     val notional: String,
     val maxAgeSlots: Long,
     val dipBps: Int,
+    val dipPercent: String,
     val takeProfitBps: Int,
+    val takeProfitPercent: String,
     val stopLossBps: Int,
+    val stopLossPercent: String,
     val minMarketCapUsd: String,
     val horizonSlots: Long,
     val latencySlots: Long,
@@ -21,7 +24,8 @@ data class ConfigDefaultsResponse(
 )
 
 /**
- * Inclusive ranges; a null `max` is unbounded above. A notional has at most [notionalScale] decimals (whole lamports)
+ * Inclusive ranges; a null `max` is unbounded above. Each level's percent range is its basis point range as exact percent
+ * strings. A notional has at most [notionalScale] decimals (whole lamports)
  * and [notionalPrecision] digits; a transaction cost is rounded to [transactionCostScale] decimals.
  */
 data class ConfigLimitsResponse(
@@ -29,8 +33,11 @@ data class ConfigLimitsResponse(
     val notionalPrecision: Int,
     val maxAgeSlots: RangeResponse,
     val dipBps: RangeResponse,
+    val dipPercent: DecimalRangeResponse,
     val takeProfitBps: RangeResponse,
+    val takeProfitPercent: DecimalRangeResponse,
     val stopLossBps: RangeResponse,
+    val stopLossPercent: DecimalRangeResponse,
     val minMarketCapUsd: RangeResponse,
     val horizonSlots: RangeResponse,
     val latencySlots: RangeResponse,

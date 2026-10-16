@@ -10,10 +10,18 @@ data class CaptureWalletSettings(val wallet: String, val scope: String = "pumpfu
 data class CaptureMarketSettings(val scanPages: Int = 50, val maxTransactions: Int = 50000, @get:JsonInclude(JsonInclude.Include.NON_NULL) val cutoffMode: String? = null)
 data class CaptureBudget(val requestBudget: Int = 400, val byteBudget: Long = 104857600, val operationTimeoutMinutes: Int = 10)
 data class CaptureAttachment(val wallet: String, val market: String? = null, val rates: String? = null)
-/** [cutoffMode] sets the new market attempt's mode; absent, the wallet scope decides it. */
-data class CaptureCreateRequest(val requestId: String, val name: String, val wallet: CaptureWalletSettings? = null, val attach: CaptureAttachment? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val cutoffMode: String? = null)
+/**
+ * [cutoffMode] sets the new market attempt's mode; absent, the wallet scope decides it. A blank [name] is generated, with its
+ * time in the IANA [timeZone] (UTC when absent). Absent optional fields are left out of the JSON, so earlier fingerprints stay valid.
+ */
+data class CaptureCreateRequest(val requestId: String, @get:JsonInclude(JsonInclude.Include.NON_NULL) val name: String? = null, val wallet: CaptureWalletSettings? = null, val attach: CaptureAttachment? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val cutoffMode: String? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val timeZone: String? = null)
+data class CaptureRenameRequest(val requestId: String, val name: String)
 data class CaptureAttemptRequest(val requestId: String, val stage: String, val market: CaptureMarketSettings? = null)
-data class CaptureRecoveryConfig(val totalRequestBudget: Int, val totalByteBudget: Long, val maxAttempts: Int = 3)
+data class CaptureRecoveryConfig(val totalRequestBudget: Int, val totalByteBudget: Long, val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS) {
+    companion object {
+        const val DEFAULT_MAX_ATTEMPTS = 3
+    }
+}
 /** [cutoffMode] overrides the market attempt's for one MARKET operation; `FULL` on a decided window captures the rest of it. */
 data class CaptureOperationRequest(val requestId: String, val step: String, val attemptId: String? = null, val budget: CaptureBudget = CaptureBudget(), val scanPages: Int? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val recovery: CaptureRecoveryConfig? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val caseId: String? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val cutoffMode: String? = null)
 data class CaptureOperationControlRequest(val requestId: String)
@@ -27,10 +35,16 @@ data class CaptureOperationResponse(val id: String, val requestId: String, val s
 data class CaptureCaseProgressResponse(val phase: String, val at: Instant, val operationRequests: Int?, val operationBytes: Long?, val processed: Int?, val selected: Int?)
 data class CaptureCaseResponse(val caseId: String, val wallet: String, val mint: String, val anchorSignature: String, val anchorSlot: Long, val instructionIndex: Int, val fromSlot: Long, val toSlot: Long, val windowParameters: Map<String, Long>, val selected: Int, val captured: Int, val gaps: Int, val marketStage: String, val coverage: String, val progress: CaptureCaseProgressResponse?, val readiness: String, val captureComplete: Boolean, val validated: Boolean, val ready: Boolean, val exportReady: Boolean, val canRegisterDataset: Boolean, val canCaptureRates: Boolean, val canExport: Boolean, val blocker: String?, val operationId: String?, val operationState: String?, val datasetId: String?, val observedThrough: Long? = null)
 data class CaptureCasesResponse(val items: List<CaptureCaseResponse>)
-data class CaptureSessionResponse(val id: String, val name: String, val createdAt: Instant, val wallet: CaptureWalletSettings?, val walletAttemptId: String, val marketAttempt: CaptureAttemptResponse?, val ratesAttempt: CaptureAttemptResponse?, val inspection: CaptureInspectionResponse?, val operation: CaptureOperationResponse?, val datasetReady: Boolean, val calibrationReady: Boolean, val datasetId: String?, val calibration: JsonNode?, val qualification: CaptureQualificationResponse?)
-data class CaptureSessionPageResponse(val items: List<CaptureSessionResponse>, val page: Int, val size: Int, val total: Long)
+data class CaptureSessionResponse(val id: String, val name: String, val displayName: String, val createdAt: Instant, val wallet: CaptureWalletSettings?, val walletAttemptId: String, val marketAttempt: CaptureAttemptResponse?, val ratesAttempt: CaptureAttemptResponse?, val inspection: CaptureInspectionResponse?, val operation: CaptureOperationResponse?, val datasetReady: Boolean, val calibrationReady: Boolean, val datasetId: String?, val calibration: JsonNode?, val qualification: CaptureQualificationResponse?, val summary: CaptureSummaryResponse)
+/** [total] counts the sessions the status filter keeps; [statusCounts] counts every session by summary status, zero counts included. */
+data class CaptureSessionPageResponse(val items: List<CaptureSessionResponse>, val page: Int, val size: Int, val total: Long, val statusCounts: Map<String, Long>)
 data class CaptureAttemptPageResponse(val items: List<CaptureAttemptResponse>, val page: Int, val size: Int, val total: Long)
-data class CaptureConfigResponse(val rpcConfigured: Boolean, val ratesConfigured: Boolean, val walletDefaults: CaptureWalletSettings, val walletTokenDefaults: CaptureWalletSettings, val walletTokenBudgetDefaults: CaptureBudget, val marketDefaults: CaptureMarketSettings, val budgetDefaults: CaptureBudget, val bounds: Map<String, Long>, val windowSlots: Long)
+data class CaptureConfigResponse(val rpcConfigured: Boolean, val ratesConfigured: Boolean, val walletDefaults: CaptureWalletSettings, val walletTokenDefaults: CaptureWalletSettings, val walletTokenBudgetDefaults: CaptureBudget, val marketDefaults: CaptureMarketSettings, val budgetDefaults: CaptureBudget, val bounds: Map<String, Long>, val windowSlots: Long, val suggestedWallets: List<CaptureSuggestedWalletResponse>, val recentWallets: List<CaptureRecentWalletResponse>)
+data class CaptureSuggestedWalletResponse(val label: String, val address: String, val reasonCode: String)
+data class CaptureRecentWalletResponse(val address: String, val label: String?, val lastUsedAt: Instant)
+data class CaptureNameCheckResponse(val available: Boolean, val normalized: String, val suggestion: String?)
+/** The console error body, plus the free [suggestion] a `NAME_TAKEN` conflict offers. */
+data class CaptureErrorResponse(val code: String, val message: String, val fields: Map<String, String>, @get:JsonInclude(JsonInclude.Include.NON_NULL) val suggestion: String?)
 
 data class CaptureWindowResponse(val mint: String, val fromSlot: Long, val toSlot: Long, val coverage: String, val scanned: Int, val selected: Int, val detailGaps: Int?, val observations: Int?)
 

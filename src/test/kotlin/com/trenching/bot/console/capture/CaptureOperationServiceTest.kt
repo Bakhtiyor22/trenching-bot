@@ -1,5 +1,7 @@
 package com.trenching.bot.console.capture
 
+import com.trenching.bot.apiusage.ApiTask
+import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.chaincapture.ProviderRequestLimiter
 import com.trenching.bot.chaincapture.CaptureCheckpoint
@@ -396,7 +398,7 @@ class CaptureOperationServiceTest {
         )
 
         cases.forEachIndexed { index, (settings, scope) ->
-            val session = fixture.sessions.create(CaptureCreateRequest("session-$index", "Scope", wallet = settings))
+            val session = fixture.sessions.create(CaptureCreateRequest("session-$index", "Scope $index", wallet = settings))
             fixture.settle()
             fixture.operations.start(session.id, CaptureOperationRequest("wallet-$index", CaptureNames.WALLET, session.walletAttemptId))
             fixture.executor.runAll()
@@ -406,6 +408,7 @@ class CaptureOperationServiceTest {
             assertEquals(settings.limit, request.limit)
             assertEquals(settings.scanPages, request.scanPages)
             assertEquals(settings.mint?.let(MintAddress::of), request.targetMint)
+            assertEquals(ApiUsageContext(ApiTask.WALLET_STEP, session.id), request.usage)
             fixture.settle()
         }
     }
@@ -618,6 +621,8 @@ class CaptureOperationServiceTest {
         fixture.executor.runAll()
 
         assertEquals(listOf(MarketCutoffMode.DECIDED, MarketCutoffMode.FULL), fixture.marketModes())
+        assertEquals(List(2) { ApiUsageContext(ApiTask.MARKET_STEP, "session-1") },
+            fixture.workflow.executed.filterIsInstance<CaptureStepCommand.Markets>().map { it.request.usage })
         assertEquals("DECIDED", fixture.operations.find("session-1", "market-1").cutoffMode)
         assertEquals("FULL", fixture.operations.find("session-1", "market-2").cutoffMode)
     }

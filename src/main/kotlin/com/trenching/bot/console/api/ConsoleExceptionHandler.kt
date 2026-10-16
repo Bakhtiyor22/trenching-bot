@@ -23,11 +23,11 @@ import org.springframework.web.multipart.MultipartException
 import org.springframework.web.multipart.support.MissingServletRequestPartException
 
 /**
- * One error envelope for the dataset, run, config and dashboard endpoints. Multipart is resolved
+ * One error envelope for the dataset, run, config, dashboard and usage endpoints. Multipart is resolved
  * lazily (`application.yml`) so an oversized upload fails inside a handler and reaches this advice.
  */
-@RestControllerAdvice(assignableTypes = [DatasetController::class, RunController::class, ChartController::class, ConfigController::class,
-    DashboardController::class])
+@RestControllerAdvice(assignableTypes = [DatasetController::class, RunController::class, RunSetupController::class, ChartController::class,
+    ConfigController::class, DashboardController::class, UsageController::class])
 @ConditionalOnConsoleEnabled
 class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper) {
     @ExceptionHandler
@@ -61,7 +61,7 @@ class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper
     @ExceptionHandler
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     fun configInvalid(e: ConfigInvalidException): ConsoleErrorResponse =
-        consoleErrorMapper.toResponse(CONFIG_INVALID, CONFIG_INVALID_MESSAGE, e.fields)
+        consoleErrorMapper.toResponse(e.code.name, e.code.message, e.fields)
 
     @ExceptionHandler
     @ResponseStatus(HttpStatus.BAD_REQUEST)
@@ -100,12 +100,10 @@ class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper
         const val RUN_NOT_FOUND = "RUN_NOT_FOUND"
         const val RUN_CONFLICT = "RUN_CONFLICT"
         const val MARKET_COVERAGE_ENDED = "MARKET_COVERAGE_ENDED"
-        const val CONFIG_INVALID = "CONFIG_INVALID"
         const val INVALID_REQUEST = "INVALID_REQUEST"
         const val UPLOAD_TOO_LARGE = "UPLOAD_TOO_LARGE"
         const val REQUIRED = "is required"
         const val INVALID_VALUE = "has an invalid value"
-        const val CONFIG_INVALID_MESSAGE = "Simulation configuration is invalid"
         const val INVALID_PARAMETER_MESSAGE = "Request parameter has an invalid value"
         const val UNREADABLE_MESSAGE = "Request body must be valid JSON of the expected shape"
         const val MISSING_PART_MESSAGE = "Multipart request is missing a required part"

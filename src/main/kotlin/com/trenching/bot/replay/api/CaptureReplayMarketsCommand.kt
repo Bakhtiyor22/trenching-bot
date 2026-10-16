@@ -1,5 +1,6 @@
 package com.trenching.bot.replay.api
 
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.chaincapture.SharedTransactionCache
 import com.trenching.bot.marketdata.MarketHistoryCaptureConfiguration
 import com.trenching.bot.marketdata.MarketHistoryCaptureProperties
@@ -25,7 +26,7 @@ fun main(args: Array<String>) {
         marketCapture = {
             markets.cachedCapture(MarketHistoryCaptureProperties(endpoint = System.getenv("SOLANA_RPC_URL")), mapper, clock, cacheDirectory?.let { SharedTransactionCache(it, mapper) })
         },
-        cutoffRates = ReferenceRateConfiguration().solUsdtRateSource(ReferenceRateProperties(enabled = true), mapper, clock),
+        cutoffRates = ReferenceRateConfiguration().solUsdtRateSource(ReferenceRateProperties(enabled = true), mapper, clock, ApiUsageRecorder.NONE),
     )
     val commands = ReplayMarketCommands(
         capture = service::capture,

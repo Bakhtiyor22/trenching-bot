@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.chaincapture.CaptureCheckpointObserver
 import com.trenching.bot.chaincapture.CaptureRpcs
 import com.trenching.bot.chaincapture.SharedTransactionCache
@@ -23,7 +24,8 @@ class MarketHistoryCaptureConfiguration {
         properties: MarketHistoryCaptureProperties,
         objectMapper: ObjectMapper,
         @Qualifier(SimulationClock.NAME) clock: Clock,
-    ): MarketHistoryCapture = observedCapture(properties, objectMapper, clock, CaptureCheckpointObserver.NONE)
+        recorder: ApiUsageRecorder,
+    ): MarketHistoryCapture = observedCapture(properties, objectMapper, clock, CaptureCheckpointObserver.NONE, recorder = recorder)
 
     fun cachedCapture(
         properties: MarketHistoryCaptureProperties,
@@ -38,9 +40,10 @@ class MarketHistoryCaptureConfiguration {
         clock: Clock,
         observer: CaptureCheckpointObserver,
         transactionCache: SharedTransactionCache? = null,
+        recorder: ApiUsageRecorder = ApiUsageRecorder.NONE,
     ): MarketHistoryCapture {
         properties.validate()
-        return MarketHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache), MarketHistoryArtifactStore(objectMapper), clock, properties.maxConcurrentRequests, observer)
+        return MarketHistoryCaptureService(CaptureRpcs.create(properties, objectMapper, clock, transactionCache, recorder = recorder), MarketHistoryArtifactStore(objectMapper), clock, properties.maxConcurrentRequests, observer)
     }
 
     @Bean

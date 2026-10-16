@@ -1,5 +1,11 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.apiusage.ApiCall
+import com.trenching.bot.apiusage.ApiCallOutcome
+import com.trenching.bot.apiusage.ApiProvider
+import com.trenching.bot.apiusage.ApiTask
+import com.trenching.bot.apiusage.ApiUsageContext
+import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.marketdata.infrastructure.rates.BinanceSolUsdtRateSource
 import com.trenching.bot.marketdata.infrastructure.rates.DisabledSolUsdtRateSource
 import java.math.BigDecimal
@@ -30,6 +36,8 @@ class BinanceSolUsdtRateSourceTest {
     private val builder = RestClient.builder()
     private val server = MockRestServiceServer.bindTo(builder).build()
     private val clock = MutableClock(NOW)
+    private val calls = mutableListOf<ApiCall>()
+    private val recorder = ApiUsageRecorder { calls += it }
 
     @AfterEach
     fun verify() = server.verify()
@@ -181,6 +189,50 @@ class BinanceSolUsdtRateSourceTest {
     }
 
     @Test
+    fun `each klines request is recorded once under the capture it was sent for, and cached minutes are not requests`() {
+        val body = klines(FIRST to "230")
+        expectKlines(FIRST, FIRST, body)
+        val usage = ApiUsageContext(ApiTask.RATES_STEP, "capture-1")
+        val source = source()
+
+        source.minuteRates(setOf(FIRST), usage)
+        source.minuteRates(setOf(FIRST), usage)
+
+        assertEquals(listOf(ApiCall(ApiProvider.BINANCE, "/api/v3/klines", usage, ApiCallOutcome.OK, body.length.toLong())), calls)
+    }
+
+    @Test
+    fun `klines asked for without a context and the ticker are recorded unattributed and as a live price`() {
+        val ticker = """{"symbol":"SOLUSDT","price":"212.34000000"}"""
+        expectKlines(FIRST, FIRST, klines(FIRST to "230"))
+        server.expect(requestTo("$BASE/api/v3/ticker/price?symbol=SOLUSDT")).andRespond(withSuccess(ticker, MediaType.APPLICATION_JSON))
+        val source = source()
+
+        source.minuteRates(setOf(FIRST))
+        source.current()
+
+        assertEquals(listOf("/api/v3/klines" to ApiUsageContext.UNATTRIBUTED, "/api/v3/ticker/price" to ApiUsageContext(ApiTask.LIVE_PRICE, null)),
+            calls.map { it.operation to it.context })
+        assertEquals(ticker.length.toLong(), calls.last().responseBytes)
+    }
+
+    @Test
+    fun `a 429 is rate limited while a ban, a server error, a timeout and a malformed answer are failed requests`() {
+        server.expect(requestTo(klinesUrl(FIRST, FIRST))).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS))
+        listOf(HttpStatus.I_AM_A_TEAPOT, HttpStatus.INTERNAL_SERVER_ERROR).forEach { status ->
+            server.expect(requestTo(klinesUrl(FIRST, FIRST))).andRespond(withStatus(status))
+        }
+        server.expect(requestTo(klinesUrl(FIRST, FIRST))).andRespond(withException(SocketTimeoutException()))
+        server.expect(requestTo(klinesUrl(FIRST, FIRST))).andRespond(withSuccess("{}", MediaType.APPLICATION_JSON))
+
+        repeat(5) { source().minuteRates(setOf(FIRST)) }
+
+        assertEquals(listOf(ApiCallOutcome.RATE_LIMITED, ApiCallOutcome.FAILED, ApiCallOutcome.FAILED, ApiCallOutcome.FAILED, ApiCallOutcome.FAILED),
+            calls.map { it.outcome })
+        assertEquals(listOf(0L, 0L, 0L, 0L, 2L), calls.map { it.responseBytes })
+    }
+
+    @Test
     fun `refuses a requested minute that is not a minute start`() {
         assertFailsWith<IllegalArgumentException> { source().minuteRates(setOf(FIRST.plusSeconds(1))) }
     }
@@ -194,7 +246,7 @@ class BinanceSolUsdtRateSourceTest {
 
     private fun source(maxRequests: Int = 20, maxCachedMinutes: Int = 100_000) = BinanceSolUsdtRateSource(builder.build(),
         ReferenceRateProperties(enabled = true, baseUrl = BASE, maxRequestsPerLookup = maxRequests, maxCachedMinutes = maxCachedMinutes),
-        JsonMapper.builder().build(), clock)
+        JsonMapper.builder().build(), clock, recorder)
 
     private fun expectKlines(from: Instant, to: Instant, body: String) {
         server.expect(requestTo(klinesUrl(from, to))).andExpect(method(HttpMethod.GET)).andRespond(withSuccess(body, MediaType.APPLICATION_JSON))

@@ -1,5 +1,7 @@
 package com.trenching.bot.console.capture
 
+import com.trenching.bot.apiusage.ApiTask
+import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.chaincapture.CaptureCheckpointObserver
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.MintAddress
@@ -59,6 +61,7 @@ class CaptureCaseServiceTest {
         cases.captureRates("session-1", initial.caseId, "case-rates")
         worker.runAll()
         val rated = cases.cases("session-1").items.single()
+        assertEquals(listOf(ApiUsageContext(ApiTask.CASE_RATES, "session-1")), workflow.rateUsages)
         assertTrue(rated.validated)
         assertTrue(rated.canExport)
         assertEquals(main.id, fixture.sessions.find("session-1").operation?.id)
@@ -134,6 +137,7 @@ class CaptureCaseServiceTest {
         private val summary = CaptureCaseInspection(MarketCaseId.from(window), wallet, mint, signature, 100, 2, window,
             parameters, MarketWindowCoverage.COMPLETE, 4, 4, 0, CaptureCaseStage.READY_TO_VALIDATE, false,
             "MARKET_CASE_NOT_VALIDATED", 0, observedThrough)
+        val rateUsages = mutableListOf<ApiUsageContext>()
 
         override fun inspectCases(walletDirectory: Path, marketDirectory: Path) = CaptureCaseInventory(listOf(summary))
 
@@ -144,8 +148,11 @@ class CaptureCaseServiceTest {
         }
 
         override fun execute(command: CaptureStepCommand, checkpoints: CaptureCheckpointObserver): CaptureStepResult = when (command) {
-            is CaptureStepCommand.CaseRates -> CaptureStepResult.CaseRates(ReferenceRateCaptureResult(command.directory,
-                ReferenceRateManifest(1, "2026-10-10T09:00:00Z", emptyList(), ratesComplete)))
+            is CaptureStepCommand.CaseRates -> {
+                rateUsages += command.usage
+                CaptureStepResult.CaseRates(ReferenceRateCaptureResult(command.directory,
+                    ReferenceRateManifest(1, "2026-10-10T09:00:00Z", emptyList(), ratesComplete)))
+            }
             is CaptureStepCommand.ExportCase -> {
                 Files.createDirectories(command.request.output.parent)
                 Files.writeString(command.request.output, "{\"schemaVersion\":3}")

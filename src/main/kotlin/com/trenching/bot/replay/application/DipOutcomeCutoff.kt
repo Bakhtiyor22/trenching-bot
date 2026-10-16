@@ -1,5 +1,6 @@
 package com.trenching.bot.replay.application
 
+import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.marketdata.CutoffDecision
@@ -29,13 +30,15 @@ import org.slf4j.LoggerFactory
  * without a SOL/USDT rate, so a trigger is never replayed without its rate. Rates are looked up once per minute for one
  * capture invocation and never stored: export and qualification replay with the recorded rates, which re-checks every decision.
  *
- * [anchors] holds, per planned window, the wallet transactions of its anchor buy that trade its mint.
+ * [anchors] holds, per planned window, the wallet transactions of its anchor buy that trade its mint. Rate requests are
+ * counted in API usage under [usage].
  */
 internal class DipOutcomeCutoff(
     private val trackedWallet: WalletAddress,
     private val anchors: Map<MarketCaptureWindow, List<WalletTransaction>>,
     private val rates: SolUsdtRateSource,
     private val runner: ReplayRunner = ReplayRunner(),
+    private val usage: ApiUsageContext = ApiUsageContext.UNATTRIBUTED,
 ) : MarketCaptureCutoff {
     private val log = LoggerFactory.getLogger(DipOutcomeCutoff::class.java)
     private val knownRates = HashMap<Instant, ReferenceRate>()
@@ -63,7 +66,7 @@ internal class DipOutcomeCutoff(
     private fun lookUpRates(minutes: Set<Instant>) {
         if (minutes.isEmpty()) return
         try {
-            rates.minuteRates(minutes).forEach { (minute, lookup) ->
+            rates.minuteRates(minutes, usage).forEach { (minute, lookup) ->
                 if (lookup is RateLookup.Available) knownRates[minute] = ReferenceRate(minute, lookup.rate, lookup.source)
             }
         } catch (exception: RuntimeException) {

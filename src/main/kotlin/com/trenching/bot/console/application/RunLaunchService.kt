@@ -1,6 +1,7 @@
 package com.trenching.bot.console.application
 
 import com.trenching.bot.console.api.dto.RunStartRequest
+import com.trenching.bot.console.domain.AgreedStrategyPreset
 import com.trenching.bot.console.domain.ConfigDefaults
 import com.trenching.bot.console.domain.ConfigInvalidException
 import com.trenching.bot.console.domain.ConfigValidation
@@ -32,18 +33,24 @@ class RunLaunchService(
     fun start(request: RunStartRequest): RunStart {
         val datasetId = request.datasetId?.trim()?.takeIf { it.isNotEmpty() }
             ?: throw InvalidConsoleRequestException(DATASET_ID, "is required")
+        val presetId = request.presetId?.also(::requireKnownPreset)
         val config = when (val validation = validator.validate(request.config)) {
             is ConfigValidation.Valid -> validation.config
             is ConfigValidation.Invalid -> {
-                log.warn("console run rejected datasetId={} invalidFields={}", datasetId, validation.fields.keys)
-                throw ConfigInvalidException(validation.fields)
+                log.warn("console run rejected datasetId={} code={} invalidFields={}", datasetId, validation.code, validation.fields.keys)
+                throw ConfigInvalidException(validation.fields, validation.code)
             }
         }
         catalog.find(datasetId) ?: throw DatasetNotFoundException(datasetId)
         val started = timed { run(datasetId, config) }
         meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME,
             if (started.created) ConsoleMetrics.CREATED else ConsoleMetrics.EXISTING).increment()
+        log.info("console run started runId={} datasetId={} created={} presetId={}", started.run.id, datasetId, started.created, presetId)
         return started
+    }
+
+    private fun requireKnownPreset(presetId: String) {
+        if (presetId != AgreedStrategyPreset.ID) throw InvalidConsoleRequestException(PRESET_ID, "is not a known preset")
     }
 
     private fun run(datasetId: String, config: SimulationConfig): RunStart = try {
@@ -71,5 +78,6 @@ class RunLaunchService(
 
     private companion object {
         const val DATASET_ID = "datasetId"
+        const val PRESET_ID = "presetId"
     }
 }

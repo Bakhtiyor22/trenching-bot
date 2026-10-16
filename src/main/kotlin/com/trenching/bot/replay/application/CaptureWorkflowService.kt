@@ -42,12 +42,12 @@ class CaptureWorkflowService(
             val market = markets.decode(command.market)
             RecordedMarketVerification.requireMatching(planned.plan, market)
             if (market.observations.isEmpty()) throw com.trenching.bot.chaincapture.CaptureValidationException("NO_OBSERVATIONS")
-            CaptureStepResult.Rates(rateCapture(checkpoints).capture(ReferenceRateCaptureRequest(command.market, command.directory)))
+            CaptureStepResult.Rates(rateCapture(checkpoints).capture(ReferenceRateCaptureRequest(command.market, command.directory, usage = command.usage)))
         }
         is CaptureStepCommand.CaseRates -> {
             verifiedCase(command.wallet, command.market, command.caseId)
             CaptureStepResult.CaseRates(rateCapture(checkpoints).capture(
-                ReferenceRateCaptureRequest(command.market, command.directory, command.caseId)))
+                ReferenceRateCaptureRequest(command.market, command.directory, command.caseId, command.usage)))
         }
         is CaptureStepCommand.Inspect -> CaptureStepResult.Inspected(inspect(command.paths))
         is CaptureStepCommand.Export -> CaptureStepResult.Exported(

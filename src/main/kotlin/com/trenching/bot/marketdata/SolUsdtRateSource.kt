@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata
 
+import com.trenching.bot.apiusage.ApiUsageContext
 import java.math.BigDecimal
 import java.time.Instant
 
@@ -10,6 +11,9 @@ import java.time.Instant
 interface SolUsdtRateSource {
     /** The rate of each requested minute start (UTC, zero seconds); every requested minute is a key of the result. */
     fun minuteRates(minutes: Set<Instant>): Map<Instant, RateLookup>
+
+    /** [minuteRates], with any request it sends counted as API usage under [usage]. */
+    fun minuteRates(minutes: Set<Instant>, usage: ApiUsageContext): Map<Instant, RateLookup> = minuteRates(minutes)
 
     /** The latest SOL/USDT price. */
     fun current(): RateLookup
