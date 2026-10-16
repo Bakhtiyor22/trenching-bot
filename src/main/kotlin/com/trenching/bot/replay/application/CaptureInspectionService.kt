@@ -73,7 +73,9 @@ internal class CaptureInspectionService(
                 else -> CaptureStageSummary(CaptureStageState.READY)
             }
         }.let { if (it.state == CaptureStageState.NOT_STARTED) absent(marketReady, "MARKET_CAPTURE_NOT_READY") else it }
-        return CaptureInspection(wallet, market, rateSummary, marketReady, marketReady && rateSummary.state == CaptureStageState.READY,
+        val canCalibrate = marketReady && RecordedMarketVerification.coversCalibration(
+            requireNotNull(walletDecoded).buyFacts, requireNotNull(marketDecoded))
+        return CaptureInspection(wallet, market, rateSummary, canCalibrate, marketReady && rateSummary.state == CaptureStageState.READY,
             walletCapture, walletDecoded, marketCapture, marketDecoded, rateCapture, walletDecoded?.targetToken)
     }
 

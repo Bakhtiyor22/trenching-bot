@@ -1,6 +1,8 @@
 package com.trenching.bot.replay
 
+import com.trenching.bot.common.Slot
 import com.trenching.bot.replay.api.ReplayCommand
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.MarketCoverageEndedException
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV5
@@ -18,6 +20,28 @@ import org.junit.jupiter.api.io.TempDir
 class ReplayCommandTest {
     @TempDir lateinit var directory: Path
     private val output = ByteArrayOutputStream()
+
+    @Test
+    fun `a dataset missing the start of its market window is refused without writing a report`() {
+        val full = DipSampleV5.dataset()
+        val pair = DipSample.pair(DipSample.TAKE_PROFIT)
+        val late = full.copy(
+            transactions = full.transactions.filter { it.pair == pair },
+            observations = full.observations.filter { it.pair == pair && it.slot.value >= 1004 },
+            coverage = listOf(MarketCoverage.of(pair,
+                Slot.of(1004), Slot.of(5500))),
+        )
+        val dataset = directory.resolve("missing-start.json")
+        Files.writeString(dataset, DipSampleV5.json(late))
+        val report = directory.resolve("report.json")
+
+        assertFailsWith<MarketCoverageEndedException> {
+            ReplayCommand.execute(arrayOf(dataset.toString(), report.toString()), PrintStream(output))
+        }
+
+        assertFalse(Files.exists(report))
+        assertEquals("", output.toString())
+    }
 
     @Test
     fun `a v5 dataset whose coverage ends before an outcome is decided is refused and writes no report`() {

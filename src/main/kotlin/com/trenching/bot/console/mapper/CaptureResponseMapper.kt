@@ -19,18 +19,21 @@ interface CaptureResponseMapper {
     fun captureCase(value: CaptureCaseView): CaptureCaseResponse
     fun cases(value: CaptureCasesView): CaptureCasesResponse = CaptureCasesResponse(items = value.items.map(::captureCase))
     fun caseProgress(value: CaptureProgressResponse): CaptureCaseProgressResponse
-    fun recovery(value: CaptureRecoveryRecord): CaptureRecoveryResponse = CaptureRecoveryResponse(
-        enabled = true,
-        totalRequestBudget = value.totalRequestBudget,
-        totalByteBudget = value.totalByteBudget,
-        maxAttempts = value.maxAttempts,
-        attemptsUsed = value.attemptsUsed,
-        requestsUsed = value.requestsUsed,
-        bytesUsed = value.bytesUsed,
-        reservedRequests = value.reservedRequests,
-        reservedBytes = value.reservedBytes,
-        nextRetryAt = value.nextRetryAt,
-    )
+    /** Nullable on purpose: MapStruct passes an operation's optional recovery here without a null check. */
+    fun recovery(value: CaptureRecoveryRecord?): CaptureRecoveryResponse? = value?.let {
+        CaptureRecoveryResponse(
+            enabled = true,
+            totalRequestBudget = it.totalRequestBudget,
+            totalByteBudget = it.totalByteBudget,
+            maxAttempts = it.maxAttempts,
+            attemptsUsed = it.attemptsUsed,
+            requestsUsed = it.requestsUsed,
+            bytesUsed = it.bytesUsed,
+            reservedRequests = it.reservedRequests,
+            reservedBytes = it.reservedBytes,
+            nextRetryAt = it.nextRetryAt,
+        )
+    }
     fun progress(value: CaptureCheckpoint): CaptureProgressResponse
     fun stage(value: CaptureStageSummary): CaptureStageResponse
     fun sessions(value: CapturePage<CaptureSessionView>): CaptureSessionPageResponse

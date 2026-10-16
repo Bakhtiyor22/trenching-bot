@@ -4,6 +4,7 @@ import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
+import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.marketdata.*
 import com.trenching.bot.replay.application.CaptureWorkflowService
 import com.trenching.bot.replay.application.ExecutionCalibrationService
@@ -14,7 +15,9 @@ import com.trenching.bot.replay.domain.CaseClassification
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
 import com.trenching.bot.replay.domain.ReplayVerdict
 import com.trenching.bot.replay.infrastructure.fixture.CalibrationReportWriter
+import com.trenching.bot.walletactivity.RecordedWalletHistory
 import com.trenching.bot.walletactivity.WalletHistoryCaptureConfiguration
+import com.trenching.bot.walletactivity.WalletHistoryDecodeResult
 import java.math.BigDecimal
 import java.nio.file.Files
 import java.nio.file.Path
@@ -52,8 +55,11 @@ class CaptureWorkflowTest {
             return result.manifest.records.map { ReferenceRate(Instant.parse(it.minute), BigDecimal(requireNotNull(it.rate)), requireNotNull(it.source)) }
         }
     }
-    private fun workflow(decoded: MarketHistoryDecodeResult = decoded(), ratesResult: ReferenceRateCaptureResult = rateResult()) =
-        CaptureWorkflowService(wallets, recordedMarkets(decoded), recordedRates(ratesResult),
+    private fun workflow(decoded: MarketHistoryDecodeResult = decoded(), ratesResult: ReferenceRateCaptureResult = rateResult(), history: WalletHistoryDecodeResult? = null) =
+        CaptureWorkflowService(if (history == null) wallets else object : RecordedWalletHistory {
+            override fun inspect(directory: Path) = wallets.inspect(directory)
+            override fun decode(directory: Path, wallet: WalletAddress) = history
+        }, recordedMarkets(decoded), recordedRates(ratesResult),
             { error("Wallet provider must not be constructed") }, { error("Market provider must not be constructed") },
             { object : ReferenceRateCapture {
                 override fun capture(request: ReferenceRateCaptureRequest): ReferenceRateCaptureResult {
@@ -61,6 +67,29 @@ class CaptureWorkflowTest {
                     return rateResult()
                 }
             } }, mapper, cutoffRates = null)
+
+    @Test
+    fun `inspection enables calibration only when coverage reaches the slot before every buy`() {
+        RecordedWalletFixtures.save(mapper, wallet)
+        val history = wallets.decode(wallet, WalletAddress.of(RecordedWalletFixtures.WALLET))
+        val laterSlot = Slot.of(RecordedWalletFixtures.SLOT + 200)
+        val laterSignature = TransactionSignature.of("1".repeat(63) + "2")
+        val withLaterBuy = history.copy(
+            transactions = history.transactions + history.transactions.first().copy(slot = laterSlot, signature = laterSignature),
+            buyFacts = history.buyFacts + history.buyFacts.first().copy(slot = laterSlot, signature = laterSignature),
+        )
+        val partial = decoded().let { market ->
+            market.copy(windows = market.windows.map { it.copy(observedThrough = Slot.of(RecordedWalletFixtures.SLOT + 40)) })
+        }
+
+        val inspection = workflow(partial, history = withLaterBuy).inspect(CapturePaths(wallet, market, rates))
+
+        assertEquals(CaptureStageState.READY, inspection.market.state)
+        assertTrue(inspection.canExport)
+        assertFalse(inspection.canCalibrate)
+        val sufficient = partial.copy(windows = partial.windows.map { it.copy(observedThrough = Slot.of(laterSlot.value - 1)) })
+        assertTrue(workflow(sufficient, history = withLaterBuy).inspect(CapturePaths(wallet, market, rates)).canCalibrate)
+    }
 
     @Test
     fun `acquisition complete market with incomplete coverage refuses rates before constructing provider`() {

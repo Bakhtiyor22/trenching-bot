@@ -33,7 +33,9 @@ import com.trenching.bot.replay.domain.UnpredictableReason
 import com.trenching.bot.replay.infrastructure.fixture.CalibrationReportWriter
 import com.trenching.bot.walletactivity.PumpFunBuyFacts
 import com.trenching.bot.walletactivity.PumpFunBuyInstruction
+import com.trenching.bot.walletactivity.RecordedWalletHistory
 import com.trenching.bot.walletactivity.WalletHistoryCaptureConfiguration
+import com.trenching.bot.walletactivity.WalletHistoryDecodeResult
 import com.trenching.bot.walletactivity.WalletHistoryDecoderVersion
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -381,14 +383,70 @@ class ExecutionCalibrationTest {
         assertEquals("5000.5", json.path("medianTransactionFeeLamports").asString())
         assertEquals("-1.5", json.path("medianOtherLamports").asString())
     }
-    private fun service(market: MarketHistoryDecodeResult): ExecutionCalibrationService {
+    @Test
+    fun `a later buy beyond a decided prefix refuses calibration instead of using its stale last trade`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val partial = plannedMarket().let { market ->
+            market.copy(windows = market.windows.map { it.copy(observedThrough = Slot.of(SLOT + 40)) },
+                observations = listOf(observation("at-cutoff", SLOT + 40, LAUNCH_STATE)))
+        }
+
+        assertCategory("MARKET_COVERAGE_ENDED") {
+            service(partial, laterBuySlot = SLOT + 200).calibrate(wallet(), markets())
+        }
+
+        val extended = partial.copy(windows = partial.windows.map { it.copy(observedThrough = it.window.toSlot) },
+            observations = partial.observations + observation("before-later-buy", SLOT + 199, OTHER_STATE))
+        val report = service(extended, laterBuySlot = SLOT + 200).calibrate(wallet(), markets())
+        assertEquals("before-later-buy", assertIs<LatencyCheck.Checked>(report.buys.last().latency).observationId)
+    }
+
+    @Test
+    fun `a decided prefix through the slot before a later buy is sufficient for calibration`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val partial = plannedMarket().let { market ->
+            market.copy(windows = market.windows.map { it.copy(observedThrough = Slot.of(SLOT + 40)) },
+                observations = listOf(observation("at-cutoff", SLOT + 40, LAUNCH_STATE)))
+        }
+
+        val report = service(partial, laterBuySlot = SLOT + 41).calibrate(wallet(), markets())
+
+        assertEquals(Slot.of(SLOT + 40), assertIs<LatencyCheck.Checked>(report.buys.last().latency).observationSlot)
+    }
+
+    @Test
+    fun `a decided prefix without observations still calibrates its anchor buy without a prior state`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val partial = plannedMarket().let { market ->
+            market.copy(windows = market.windows.map { it.copy(observedThrough = Slot.of(SLOT)) }, observations = emptyList())
+        }
+
+        val report = service(partial).calibrate(wallet(), markets())
+
+        assertEquals(LatencyCheck.NoPriorState, report.buys.single().latency)
+    }
+
+    private fun service(market: MarketHistoryDecodeResult, laterBuySlot: Long? = null): ExecutionCalibrationService {
         val markets = object : RecordedMarketHistory {
             override fun inspect(directory: Path): MarketHistoryCaptureResult =
                 MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper).inspect(directory)
 
             override fun decode(directory: Path): MarketHistoryDecodeResult = market
         }
-        return ExecutionCalibrationService(WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper), markets)
+        val recorded = WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper)
+        val wallets = object : RecordedWalletHistory {
+            override fun inspect(directory: Path) = recorded.inspect(directory)
+            override fun decode(directory: Path, wallet: WalletAddress): WalletHistoryDecodeResult {
+                val history = recorded.decode(directory, wallet)
+                return laterBuySlot?.let { slot ->
+                    history.copy(transactions = history.transactions + history.transactions.first().copy(
+                        signature = TransactionSignature.of(SIGNATURE_A), slot = Slot.of(slot)),
+                        buyFacts = history.buyFacts + history.buyFacts.first().copy(
+                            signature = TransactionSignature.of(SIGNATURE_A), slot = Slot.of(slot)))
+                } ?: history
+            }
+        }
+        return ExecutionCalibrationService(wallets, markets)
     }
 
     private fun plannedMarket(): MarketHistoryDecodeResult =

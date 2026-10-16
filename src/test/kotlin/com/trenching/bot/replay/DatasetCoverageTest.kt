@@ -12,6 +12,7 @@ import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.CoverageShortfall
 import com.trenching.bot.replay.domain.DatasetCoverage
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.ScenarioDecision
 import com.trenching.bot.replay.domain.ScenarioResult
 import com.trenching.bot.strategy.domain.SimulationConfig
@@ -150,6 +151,34 @@ class DatasetCoverageTest {
 
         assertEquals(listOf(noDip), shortfalls.map(CoverageShortfall::pair))
         assertEquals(null, shortfalls.single().throughSlot)
+    }
+
+    @Test
+    fun `coverage starting after the buy's next slot cannot decide a scenario`() {
+        val pair = DipSample.pair(DipSample.TAKE_PROFIT)
+        val full = DipSampleV5.dataset()
+        val late = full.copy(
+            transactions = full.transactions.filter { it.pair == pair },
+            observations = full.observations.filter { it.pair == pair && it.slot.value >= 1004 },
+            coverage = listOf(MarketCoverage.of(pair, Slot.of(1004), Slot.of(5500))),
+        )
+        val lateReport = ReplayRunner().run(late, config)
+
+        val shortfall = DatasetCoverage.undecided(lateReport, late).single()
+
+        assertEquals(pair, shortfall.pair)
+        assertEquals(Slot.of(5500), shortfall.decidedAt)
+        assertEquals(null, shortfall.throughSlot)
+    }
+
+    @Test
+    fun `coverage beginning before the buy's next slot still covers its outcome`() {
+        val full = DipSampleV5.dataset()
+        val earlier = full.copy(coverage = full.coverage.map {
+            MarketCoverage.of(it.pair, Slot.of(0), it.throughSlot)
+        })
+
+        assertEquals(emptyList(), DatasetCoverage.undecided(ReplayRunner().run(earlier, config), earlier))
     }
 
     /** The take-profit cycle's intent (trigger at slot 1002, horizon end 5500), filled against [observations] instead. */

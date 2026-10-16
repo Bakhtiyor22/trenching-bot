@@ -400,7 +400,7 @@ Total −3.580241077133. These are modelled paper results on observed curve pric
 .\gradlew.bat calibrateExecution -PwalletCaptureDirectory=build/captures/decu-pumpfun-buys -PmarketCaptureDirectory=build/captures/decu-dip-markets "-Preport=build/captures/execution-calibration.json"
 ```
 
-This command reads and verifies only local captures. It needs neither RPC credentials, reference rates nor PostgreSQL. It uses the same completeness, market-window matching and exclusion checks as export. `walletCaptureDirectory` is required; `marketCaptureDirectory` defaults to `build/captures/replay-markets` and `report` to `build/captures/execution-calibration.json`. It creates the report directory and replaces an existing report.
+This command reads and verifies only local captures. It needs neither RPC credentials, reference rates nor PostgreSQL. It uses the same completeness, market-window matching and exclusion checks as export. `walletCaptureDirectory` is required; `marketCaptureDirectory` defaults to `build/captures/replay-markets` and `report` to `build/captures/execution-calibration.json`. It creates the report directory and replaces an existing report. Each mint's market coverage must reach the slot immediately before every buy being calibrated; otherwise calibration refuses `MARKET_COVERAGE_ENDED` without writing a report. The console disables calibration for the same gap. Extending a decided capture can supply the missing slots; the anchor buy itself still reports `NO_PRIOR_STATE` because its market window starts after it.
 
 Every decoded buy contributes three checks:
 
