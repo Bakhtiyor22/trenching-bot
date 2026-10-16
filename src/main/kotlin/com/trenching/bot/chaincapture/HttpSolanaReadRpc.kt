@@ -1,5 +1,6 @@
 package com.trenching.bot.chaincapture
 
+import com.trenching.bot.common.ExceptionCauses
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URI
@@ -43,7 +44,9 @@ class HttpSolanaReadRpc(
         val uri = endpoint ?: throw CaptureProviderException("NOT_CONFIGURED")
         budget.startDeadline(timing.nanoTime(), budget.operationTimeout ?: settings.operationTimeout)
         var last = CaptureHttpReply.Failed("UNAVAILABLE", true)
+        var attempts = 0
         for (attempt in 1..MAX_ATTEMPTS) {
+            attempts = attempt
             when (val reply = limiter.withStart(budget) { send(uri, method, params, budget) }) {
                 is CaptureHttpReply.Success -> return reply.result
                 is CaptureHttpReply.Failed -> {
@@ -53,21 +56,25 @@ class HttpSolanaReadRpc(
                     budget.counters.retry()
                     val backoff = Duration.ofMillis((BASE_BACKOFF_MILLIS shl (attempt - 1)) + timing.jitterMillis(attempt))
                     val delay = maxOf(backoff, reply.retryAfter ?: Duration.ZERO)
-                    log.warn("chain_capture rpc_retry operation={} category={} attempt={}", method, reply.category, attempt)
+                    log.warn("chain_capture rpc_retry operation={} category={} cause={} attempt={}", method, reply.category, reply.cause, attempt)
                     if (reply.rateLimited) limiter.holdStarts(delay, budget) else pause(delay, budget)
                 }
             }
         }
+        log.warn("chain_capture rpc_failed operation={} category={} cause={} attempts={}", method, last.category, last.cause, attempts)
         throw CaptureProviderException(last.category, last.retryAfter, budget.requestsUsed, budget.bytesUsed)
     }
 
     private fun send(uri: URI, method: String, params: List<Any>, budget: CaptureBudget): CaptureHttpReply {
         budget.checkDeadline(timing.nanoTime())
         budget.request()
-        return try { request(uri, method, params, budget) } catch (_: RestClientException) {
-            CaptureHttpReply.Failed("IO", true)
-        } catch (_: IOException) { CaptureHttpReply.Failed("IO", true) }
+        return try { request(uri, method, params, budget) } catch (exception: RestClientException) {
+            transportFailure(exception)
+        } catch (exception: IOException) { transportFailure(exception) }
     }
+
+    /** No HTTP response at all: a timeout, refused or reset connection, DNS or TLS failure, told apart by its root cause. */
+    private fun transportFailure(exception: Exception) = CaptureHttpReply.Failed("IO", true, cause = ExceptionCauses.rootName(exception))
 
     private fun request(uri: URI, method: String, params: List<Any>, budget: CaptureBudget): CaptureHttpReply =
         client.post().uri(uri).contentType(MediaType.APPLICATION_JSON)

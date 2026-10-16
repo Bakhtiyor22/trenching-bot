@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata.infrastructure.rates
 
+import com.trenching.bot.common.ExceptionCauses
 import com.trenching.bot.marketdata.RateLookup
 import com.trenching.bot.marketdata.RateUnavailableReason
 import com.trenching.bot.marketdata.ReferenceRateProperties
@@ -151,11 +152,11 @@ class BinanceSolUsdtRateSource(
     } catch (_: JacksonException) {
         Fetch.Failed(RateUnavailableReason.MALFORMED)
     } catch (exception: RestClientException) {
-        Fetch.Failed(classify(exception), exception.javaClass.simpleName)
+        Fetch.Failed(classify(exception), ExceptionCauses.rootName(exception))
     }
 
     private fun classify(exception: RestClientException): RateUnavailableReason {
-        val causes = generateSequence<Throwable>(exception) { it.cause }.toList()
+        val causes = ExceptionCauses.chain(exception)
         return when {
             causes.any { it is HttpTimeoutException || it is SocketTimeoutException || it is TimeoutException } -> RateUnavailableReason.TIMEOUT
             causes.any { it is JacksonException } -> RateUnavailableReason.MALFORMED
@@ -166,7 +167,7 @@ class BinanceSolUsdtRateSource(
     private sealed interface Fetch {
         data class Rates(val opens: Map<Instant, BigDecimal>) : Fetch
 
-        /** [cause] is an exception's class name for diagnosis; its message is never kept, because it quotes the URL. */
+        /** [cause] is the innermost exception's class name for diagnosis; its message is never kept, because it quotes the URL. */
         data class Failed(val reason: RateUnavailableReason, val cause: String? = null) : Fetch
     }
 

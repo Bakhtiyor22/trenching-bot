@@ -1,5 +1,8 @@
 package com.trenching.bot.walletactivity
 
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import com.sun.net.httpserver.HttpServer
 import com.trenching.bot.chaincapture.CaptureBudget
 import com.trenching.bot.chaincapture.CaptureBudgetException
@@ -21,6 +24,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.slf4j.LoggerFactory
 import com.trenching.bot.walletactivity.application.WalletHistoryCaptureService
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
 import com.trenching.bot.common.WalletAddress
@@ -369,8 +373,18 @@ class HttpSolanaReadRpcTest {
                 val client = HttpSolanaReadRpc(WalletHistoryCaptureProperties(
                     endpoint = "http://127.0.0.1:${server.server.address.port}/", readTimeout = Duration.ofMillis(50),
                 ), mapper, clock, timing, legacyPacing(timing))
-                assertFailsWith<CaptureProviderException> { client.call("getGenesisHash", emptyList(), budget) }
+                val logs = ListAppender<ILoggingEvent>().also { it.start() }
+                val logger = LoggerFactory.getLogger(HttpSolanaReadRpc::class.java) as Logger
+                logger.addAppender(logs)
+                try {
+                    val failure = assertFailsWith<CaptureProviderException> { client.call("getGenesisHash", emptyList(), budget) }
+                    assertEquals("IO", failure.category)
+                } finally { logger.detachAppender(logs) }
                 assertEquals(3, budget.requestsUsed)
+                val messages = logs.list.map { it.formattedMessage }
+                assertEquals(3, messages.count { Regex("cause=\\w*Timeout\\w*Exception\\b").containsMatchIn(it) }, messages.toString())
+                assertTrue(messages.any { it.startsWith("chain_capture rpc_failed operation=getGenesisHash category=IO") }, messages.toString())
+                assertTrue(messages.none { "127.0.0.1" in it }, "the endpoint never reaches the log")
             } finally { release.countDown() }
         }
     }
