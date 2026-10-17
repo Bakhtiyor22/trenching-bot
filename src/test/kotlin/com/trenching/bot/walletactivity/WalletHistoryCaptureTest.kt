@@ -58,7 +58,7 @@ class WalletHistoryCaptureTest {
     @Test
     fun `rejects unbounded selection before any provider request`() {
         val service = service { _, _, _ -> error("Must not call provider") }
-        assertFailsWith<CaptureValidationException> { service.capture(WalletHistoryCaptureRequest(wallet, directory, limit = 101)) }
+        assertFailsWith<CaptureValidationException> { service.capture(WalletHistoryCaptureRequest(wallet, directory, limit = WalletHistoryCaptureLimits.MAX_TRANSACTIONS + 1)) }
     }
 
     @Test

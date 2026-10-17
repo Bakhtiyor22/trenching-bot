@@ -125,7 +125,7 @@ class CaptureControllerTest {
 
         val recommendations = fixture.tree(controller(fixture, ratesConfigured = true).recommendations(CaptureConsoleFixture.WALLET, "wallet-references", null))
 
-        assertEquals(listOf("SCOPE_WALLET_TOKEN", "CUTOFF_DECIDED", "ENABLE_RECOVERY", "DECU_PUMPFUN_SCOPE"), recommendations.map { it["id"].asString() })
+        assertEquals(listOf("SCOPE_WALLET_TOKEN", "CUTOFF_DECIDED", "ENABLE_RECOVERY", "DECU_PUMPFUN_SCOPE"), (recommendations as Iterable<JsonNode>).map { it["id"].asString() })
         assertEquals(fixture.json.readTree("""{"id":"CUTOFF_DECIDED","appliesTo":"CAPTURE","setting":{"field":"cutoffMode","value":"DECIDED"},""" +
             """"facts":{"dipPercent":"15","takeProfitPercent":"30","stopLossPercent":"15"},"caveatCode":"CUTOFF_USES_LEGACY_DEFAULTS"}"""), recommendations[1])
         assertEquals(fixture.json.readTree("""{"requests":1200,"bytes":314572800,"attempts":3}"""), recommendations[2]["facts"])

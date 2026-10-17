@@ -10,6 +10,7 @@ import com.trenching.bot.console.api.dto.CaptureOperationRequest
 import com.trenching.bot.console.api.dto.CaptureRenameRequest
 import com.trenching.bot.console.api.dto.CaptureWalletSettings
 import com.trenching.bot.replay.CaptureStepCommand
+import com.trenching.bot.walletactivity.WalletHistoryCaptureLimits
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Clock
@@ -80,7 +81,7 @@ class CaptureSessionServiceTest {
             fixture.sessions.create(CaptureCreateRequest("bad", "Sample", wallet = CaptureWalletSettings("not-a-wallet")))
         }.status)
         assertEquals(400, assertFailsWith<CaptureRequestException> {
-            fixture.sessions.create(CaptureCreateRequest("bad", "Sample", wallet = CaptureWalletSettings(CaptureConsoleFixture.WALLET, limit = 101)))
+            fixture.sessions.create(CaptureCreateRequest("bad", "Sample", wallet = CaptureWalletSettings(CaptureConsoleFixture.WALLET, limit = WalletHistoryCaptureLimits.MAX_TRANSACTIONS + 1)))
         }.status)
         assertEquals(0, fixture.sessions.page(0, 20).total)
     }
@@ -458,7 +459,7 @@ class CaptureSessionServiceTest {
         assertEquals("decu · 7mup…pump · 16 oct 20:13", fixture.store.session("decu-1").nameKey)
         assertEquals(409, taken.status)
         assertEquals("NAME_TAKEN", taken.code)
-        assertEquals("$decuName (3)", taken.suggestion)
+        assertEquals("decu · 7MUP…pump · 16 Oct 20:13 (3)", taken.suggestion)
         assertFalse(Files.exists(root.resolve("console/decu-3")))
     }
 

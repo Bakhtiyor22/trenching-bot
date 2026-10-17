@@ -9,6 +9,7 @@ import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.replay.api.WalletHistoryCommands
 import com.trenching.bot.walletactivity.WalletHistoryCapture
 import com.trenching.bot.walletactivity.WalletHistoryCaptureConfiguration
+import com.trenching.bot.walletactivity.WalletHistoryCaptureLimits
 import com.trenching.bot.walletactivity.WalletHistoryCaptureRequest
 import com.trenching.bot.walletactivity.WalletHistoryCaptureResult
 import com.trenching.bot.walletactivity.WalletHistoryDecodeOutcome
@@ -91,7 +92,7 @@ class WalletHistoryCommandsTest {
         val base = arrayOf("--wallet", wallet, "--directory", directory.toString())
         val invalid = listOf(emptyArray(), arrayOf("--wallet"), base + arrayOf("--endpoint", "private"),
             base + arrayOf("--wallet", wallet), base + arrayOf("--limit", "0"),
-            base + arrayOf("--limit", "101"), base + arrayOf("--request-budget", "0"),
+            base + arrayOf("--limit", "${WalletHistoryCaptureLimits.MAX_TRANSACTIONS + 1}"), base + arrayOf("--request-budget", "0"),
             base + arrayOf("--byte-budget", "-1"), base + arrayOf("--byte-budget", "overflow"),
             base + arrayOf("--scan-pages", "0"), base + arrayOf("--scan-pages", "51"), base + arrayOf("--scan-pages", "many"))
         invalid.forEach { assertEquals(2, commands().capture(it)) }

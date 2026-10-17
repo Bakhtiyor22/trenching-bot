@@ -102,11 +102,13 @@ class BoundedParallelFetchTest {
     fun `in flight items finish after a fatal error and are returned in input order`() {
         val failure = CaptureProviderException("AUTHENTICATION")
         val failed = CountDownLatch(1)
+        // Item 1 fails only once item 2 runs, so all three slots are in flight when the run turns fatal.
+        val secondInFlight = CountDownLatch(1)
         val result = fetcher.fetch((0 until 10).toList(), 3, budget, { false }) { item ->
             when (item) {
                 0 -> { failed.await(5, TimeUnit.SECONDS); Thread.sleep(50); item }
-                1 -> { failed.countDown(); throw failure }
-                else -> { failed.await(5, TimeUnit.SECONDS); item }
+                1 -> { secondInFlight.await(5, TimeUnit.SECONDS); failed.countDown(); throw failure }
+                else -> { secondInFlight.countDown(); failed.await(5, TimeUnit.SECONDS); item }
             }
         }
         assertSame(failure, result.failure)
