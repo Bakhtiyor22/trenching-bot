@@ -54,17 +54,17 @@ describe('NewRunPage', () => {
     expect(screen.queryByRole('button', { name: /Start run/ })).not.toBeInTheDocument();
   });
 
-  it('prefills the dip-entry defaults', async () => {
+  it('prefills the agreed preset and labels its gaps', async () => {
     renderNewRun();
     expect(await screen.findByLabelText(/Notional/)).toHaveValue('0.1');
     expect(screen.getByLabelText(/Latency \(slots\)/)).toHaveValue('1');
     expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).toHaveValue('0.001000000000');
     expect(screen.queryByLabelText(/Fee \(bps\)/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Slippage/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/Dip below first buy/)).toHaveValue('1500');
-    expect(screen.getByLabelText(/Take profit/)).toHaveValue('3000');
-    expect(screen.getByLabelText(/Stop loss/)).toHaveValue('1500');
-    expect(screen.getByLabelText(/Minimum market cap/)).toHaveValue('10000');
+    expect(screen.getByLabelText(/Dip below first buy/)).toHaveValue('20');
+    expect(screen.getByLabelText(/Take profit/)).toHaveValue('55');
+    expect(screen.getByLabelText(/Stop loss/)).toHaveValue('40');
+    expect(screen.getByLabelText(/Minimum market cap/)).toHaveValue('10000.000000000000');
     expect(screen.getByLabelText(/Horizon/)).toHaveValue('4500');
   });
 
@@ -90,8 +90,15 @@ describe('NewRunPage', () => {
     expect(latencyInput).toHaveAttribute('aria-invalid', 'true');
     expect(errorIdsOf(latencyInput)).toContain(message.id);
     // Other inputs are not marked.
-    expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).not.toHaveAttribute('aria-invalid', 'true');
-    expect(screen.getByRole('alert')).toHaveTextContent('Simulation configuration is invalid');
+    expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).not.toHaveAttribute(
+      'aria-invalid',
+      'true',
+    );
+    expect(
+      screen
+        .getAllByRole('alert')
+        .some((alert) => alert.textContent?.includes('Simulation configuration is invalid')),
+    ).toBe(true);
   });
 
   it('sends notional and transaction cost as strings and integers as numbers, without fee or slippage, then opens the run', async () => {
@@ -155,8 +162,61 @@ describe('NewRunPage', () => {
     const cost = screen.getByLabelText(/Transaction cost \(SOL\)/);
     await user.clear(cost);
     await user.type(cost, '0.005');
-    await user.click(screen.getByRole('button', { name: /Reset to defaults/ }));
+    await user.click(screen.getByRole('button', { name: /Reset to agreed/ }));
     expect(screen.getByLabelText(/Latency \(slots\)/)).toHaveValue('1');
     expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).toHaveValue('0.001000000000');
+  });
+
+  it('rejects a three-decimal percent before making a run request', async () => {
+    let calls = 0;
+    server.use(
+      http.post('/api/runs', () => {
+        calls++;
+        return HttpResponse.json({ run: sampleRun, created: true });
+      }),
+    );
+    const { user } = renderNewRun();
+    const dip = await screen.findByLabelText(/Dip below first buy/);
+    await user.clear(dip);
+    await user.type(dip, '20.255');
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+    expect(await screen.findByText('Use a percent with at most 2 decimals')).toBeInTheDocument();
+    expect(calls).toBe(0);
+  });
+
+  it('uses clearly labelled engine defaults if the preset cannot be loaded', async () => {
+    server.use(
+      http.get('/api/runs/preset', () =>
+        HttpResponse.json(
+          { code: 'UNAVAILABLE', message: 'Preset unavailable', fields: {} },
+          { status: 503 },
+        ),
+      ),
+    );
+    renderNewRun();
+    expect(await screen.findByText('Agreed preset unavailable')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Dip below first buy/)).toHaveValue('15');
+    expect(screen.getAllByText('Engine default · not the agreed strategy').length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('submits percent strings and the preset id without their basis point twins', async () => {
+    let body: RunStartRequest | undefined;
+    server.use(
+      http.post('/api/runs', async ({ request }) => {
+        body = (await request.json()) as RunStartRequest;
+        return HttpResponse.json({ run: sampleRun, created: true });
+      }),
+    );
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Dip below first buy/);
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+    await screen.findByText('Run detail page');
+    expect(body).toMatchObject({
+      presetId: 'decu-dip-v2-on-dip-entry-v1',
+      config: { dipPercent: '20', takeProfitPercent: '55', stopLossPercent: '40' },
+    });
+    expect(body?.config).not.toHaveProperty('dipBps');
   });
 });

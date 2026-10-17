@@ -1,63 +1,224 @@
-import { Accordion, Anchor, Button, Group, NumberInput, ScrollArea, Select, SimpleGrid, Stack, Table, Tabs, Text, TextInput } from '@mantine/core';
-import { useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router';
-import { capturesApi, type CaptureConfig, type CaptureCreate, WALLET_TOKEN_SCOPE } from '../../api/captures';
+import {
+  Accordion,
+  Anchor,
+  Badge,
+  Button,
+  Group,
+  Progress,
+  ScrollArea,
+  Select,
+  Stack,
+  Table,
+  Text,
+} from '@mantine/core';
+import { Link, useSearchParams } from 'react-router';
+import { CAPTURE_STATUSES } from '../../api/captures';
 import { ShortId, Timestamp } from '../../components/DisplayValues';
-import { PageHeader, PagingFooter, Section } from '../../components/Panels';
-import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
-import { isSolanaAddress } from '../../lib/base58';
-import { paths } from '../../paths';
 import { ConfirmDelete } from '../../components/ConfirmDelete';
-import { CaptureStatus, CommandError } from './CaptureShared';
-import { isCaptureOperationOpen, useCaptureCommand, useCaptureConfig, useCaptures, useDeleteCapture } from './captureQueries';
-
-const SCOPE_HINTS: Record<string, string> = {
-  'pumpfun-user-buys': 'Select supported Pump.fun buys made by this wallet.',
-  'wallet-references': 'Address references can include activity by other users; they do not prove this wallet bought.',
-  [WALLET_TOKEN_SCOPE]: 'Captures one wallet’s history with one token, then verifies the wallet’s actual first Pump.fun curve buy before market capture. Whether the case qualifies is only known after market capture.',
-};
-const monospaceInput = { input: { fontFamily: 'var(--mantine-font-family-monospace)' } };
-
-function CreateCapture({config}: {config: CaptureConfig}) {
-  const navigate = useNavigate();
-  const [mode, setMode] = useState<string | null>('new');
-  const [name, setName] = useState('');
-  const [wallet, setWallet] = useState('');
-  const [scope, setScope] = useState(config.walletDefaults.scope);
-  const [limit, setLimit] = useState(config.walletDefaults.limit);
-  const [scanPages, setScanPages] = useState(config.walletDefaults.scanPages);
-  const [mint, setMint] = useState('');
-  const walletToken = scope === WALLET_TOKEN_SCOPE;
-  // Moving into or out of the wallet-token scope switches to that scope's sample defaults.
-  const changeScope = (next: string) => {
-    if ((next === WALLET_TOKEN_SCOPE) !== walletToken) {
-      const defaults = next === WALLET_TOKEN_SCOPE ? config.walletTokenDefaults : config.walletDefaults;
-      setLimit(defaults.limit); setScanPages(defaults.scanPages);
-    }
-    setScope(next);
-  };
-  const [walletPath, setWalletPath] = useState('');
-  const [marketPath, setMarketPath] = useState('');
-  const [ratesPath, setRatesPath] = useState('');
-  const [validation, setValidation] = useState('');
-  const create = useCaptureCommand<CaptureCreate, Awaited<ReturnType<typeof capturesApi.create>>>('create', capturesApi.create, result => { void navigate(paths.capture(result.id)); });
-  const locked = create.isPending || !!create.pendingCommand;
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    if (!name.trim()) { setValidation('Enter a session name.'); return; }
-    if (mode === 'new' && (!isSolanaAddress(wallet.trim()) || limit < 1 || limit > config.bounds.walletLimitMax || scanPages < 1 || scanPages > config.bounds.walletPagesMax)) { setValidation('Enter a valid wallet address and settings within the shown bounds.'); return; }
-    if (mode === 'new' && walletToken && !isSolanaAddress(mint.trim())) { setValidation('Enter a valid token mint address.'); return; }
-    if (mode === 'attach' && !walletPath.trim()) { setValidation('A wallet capture directory is required.'); return; }
-    setValidation('');
-    create.submit({ name: name.trim(), ...(mode === 'new' ? {wallet: {wallet: wallet.trim(), scope, limit, scanPages, ...(walletToken ? {mint: mint.trim()} : {})}} : {attach: {wallet: walletPath.trim(), ...(marketPath.trim() ? {market: marketPath.trim()} : {}), ...(ratesPath.trim() ? {rates: ratesPath.trim()} : {})}}) });
-  };
-  return <form onSubmit={submit}><Stack gap="md"><Tabs value={mode} onChange={setMode}><Tabs.List><Tabs.Tab value="new" disabled={locked}>New capture</Tabs.Tab><Tabs.Tab value="attach" disabled={locked}>Attach existing</Tabs.Tab></Tabs.List></Tabs><TextInput label="Session name" value={name} maxLength={120} disabled={locked} onChange={e => setName(e.currentTarget.value)} required />{mode === 'new' ? <><TextInput label="Wallet address" value={wallet} disabled={locked} onChange={e => setWallet(e.currentTarget.value)} styles={monospaceInput} autoComplete="off" spellCheck={false} required />{walletToken && <TextInput label="Token mint address" value={mint} disabled={locked} onChange={e => setMint(e.currentTarget.value)} styles={monospaceInput} autoComplete="off" spellCheck={false} required />}<SimpleGrid cols={{base:1, sm:2}}><Select label="Discovery scope" value={scope} disabled={locked} allowDeselect={false} onChange={v => changeScope(v ?? config.walletDefaults.scope)} data={[{value:'pumpfun-user-buys',label:'Pump.fun user buys'}, {value:'wallet-references',label:'Wallet references'}, {value:WALLET_TOKEN_SCOPE,label:'Wallet + token'}]} /><NumberInput label="Sample transactions" min={1} max={config.bounds.walletLimitMax} value={limit} disabled={locked} allowDecimal={false} onChange={v => setLimit(Number(v))} /></SimpleGrid><Text size="xs" c="dimmed">{SCOPE_HINTS[scope] ?? ''} Scope, sample size and wallet scan pages freeze when acquisition starts.</Text><Accordion variant="separated"><Accordion.Item value="advanced"><Accordion.Control>Advanced wallet settings</Accordion.Control><Accordion.Panel><NumberInput label="Wallet scan pages" value={scanPages} min={1} max={config.bounds.walletPagesMax} allowDecimal={false} disabled={locked} onChange={v=>setScanPages(Number(v))} /></Accordion.Panel></Accordion.Item></Accordion><Text size="sm" c="dimmed">Effective settings: {limit} transaction(s), {scanPages} scan pages. Choose the operation budget on the detail page before starting.</Text></> : <><Text size="sm" c="dimmed">Paths are relative to the backend capture root. Attachment verifies existing evidence offline and preserves its original location.</Text><TextInput label="Wallet capture directory" placeholder="my-wallet-capture" value={walletPath} onChange={e=>setWalletPath(e.currentTarget.value)} disabled={locked} required /><SimpleGrid cols={{base:1,sm:2}}><TextInput label="Market capture directory (optional)" value={marketPath} onChange={e=>setMarketPath(e.currentTarget.value)} disabled={locked}/><TextInput label="Rates capture directory (optional)" value={ratesPath} onChange={e=>setRatesPath(e.currentTarget.value)} disabled={locked}/></SimpleGrid></>}{validation && <Text c="red" role="alert" size="sm">{validation}</Text>}<CommandError error={create.error} uncertain={!!create.pendingCommand && !create.isPending} retry={create.retry}/><Group><Button type="submit" loading={create.isPending} disabled={!!create.pendingCommand}>{mode === 'new' ? 'Create session' : 'Attach and inspect'}</Button><Text size="xs" c="dimmed">Acquisition starts only when you explicitly start a stage.</Text></Group></Stack></form>;
-}
+import { PageHeader, PagingFooter, Section } from '../../components/Panels';
+import { CodeText } from '../../components/PlainLanguage';
+import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
+import { actionLabels, codeLabel, statusLabels } from '../../lib/codes';
+import { paths } from '../../paths';
+import { CaptureStepper } from './CaptureOverview';
+import { isCaptureOperationOpen, useCaptures, useDeleteCapture } from './captureQueries';
 
 export function CapturesPage() {
-  const config = useCaptureConfig();
-  const [page, setPage] = useState(0);
-  const captures = useCaptures(page);
-  const deleteCapture = useDeleteCapture();
-  return <Stack gap="lg"><PageHeader title="Captures" description="Collect bounded evidence, verify coverage, then export a replay dataset."/><Section title="Add a capture">{config.isPending ? <LoadingState label="Loading capture settings…"/> : config.isError ? <ErrorState error={config.error} onRetry={()=>void config.refetch()}/> : <CreateCapture config={config.data}/>}</Section><Section title="Capture sessions">{captures.isPending ? <LoadingState/> : captures.isError ? <ErrorState error={captures.error} onRetry={()=>void captures.refetch()}/> : !captures.data.items.length ? <EmptyState title="No captures yet" description="Create a small wallet sample or attach existing CLI evidence."/> : <><ScrollArea><Table miw={650} verticalSpacing="sm" highlightOnHover><Table.Thead><Table.Tr><Table.Th>Name</Table.Th><Table.Th>Wallet</Table.Th><Table.Th>Latest operation</Table.Th><Table.Th>Created</Table.Th><Table.Th aria-label="Actions" /></Table.Tr></Table.Thead><Table.Tbody>{captures.data.items.map(item=><Table.Tr key={item.id}><Table.Td><Anchor component={Link} to={paths.capture(item.id)} fw={600}>{item.name}</Anchor></Table.Td><Table.Td>{item.wallet ? <ShortId value={item.wallet.wallet}/> : 'Attached evidence'}</Table.Td><Table.Td><Group gap="xs">{item.operation?.step}<CaptureStatus state={item.operation?.state ?? 'NOT_STARTED'}/></Group></Table.Td><Table.Td><Timestamp iso={item.createdAt}/></Table.Td><Table.Td><ConfirmDelete compact label="Delete" title="Delete this capture?" disabled={isCaptureOperationOpen(item.operation?.state)} onConfirm={()=>deleteCapture.mutateAsync(item.id)}>Removes “{item.name}” and every file the console created for it: captured wallet, market and rates evidence, exports and calibration reports. Attached capture directories are only referenced and stay untouched, and datasets already imported stay in Datasets.</ConfirmDelete></Table.Td></Table.Tr>)}</Table.Tbody></Table></ScrollArea><PagingFooter page={page+1} pages={Math.max(1,Math.ceil(captures.data.total/20))} total={captures.data.total} onChange={p=>setPage(p-1)} noun="sessions"/></>}</Section></Stack>;
+  const [params, setParams] = useSearchParams();
+  const page = Math.max(0, Number(params.get('page')) || 0);
+  const sort = params.get('sort') ?? 'createdAt,desc';
+  const status = params.get('status');
+  const captures = useCaptures(page, sort, status);
+  const remove = useDeleteCapture();
+  function change(key: string, value: string | null) {
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      if (value) next.set(key, value);
+      else next.delete(key);
+      if (key !== 'page') next.delete('page');
+      return next;
+    });
+  }
+  return (
+    <Stack gap="lg">
+      <PageHeader
+        title="Captures"
+        description="Record a wallet’s trades, check the token’s market, then prepare a dataset for a paper run."
+        actions={
+          <Button component={Link} to={paths.newCapture}>
+            New capture
+          </Button>
+        }
+      />
+      <Accordion variant="separated">
+        <Accordion.Item value="steps">
+          <Accordion.Control>What do the four steps mean?</Accordion.Control>
+          <Accordion.Panel>
+            <Text size="sm">
+              1. Wallet: find the reference buy. 2. Markets: record the trades that follow. 3.
+              Rates: record SOL/USDT prices and validate the evidence. 4. Dataset: export and
+              register the evidence for a replay.
+            </Text>
+          </Accordion.Panel>
+        </Accordion.Item>
+      </Accordion>
+      <Group justify="space-between" align="flex-start">
+        <Group gap="xs" aria-label="Capture status filters">
+          <Button
+            variant={!status ? 'filled' : 'default'}
+            size="xs"
+            onClick={() => change('status', null)}
+          >
+            All
+          </Button>
+          {CAPTURE_STATUSES.map((value) => (
+            <Button
+              key={value}
+              size="xs"
+              variant={status === value ? 'filled' : 'default'}
+              onClick={() => change('status', value)}
+            >
+              {statusLabels[value]} ({captures.data?.statusCounts?.[value] ?? 0})
+            </Button>
+          ))}
+        </Group>
+        <Select
+          label="Sort captures"
+          value={sort}
+          allowDeselect={false}
+          onChange={(value) => change('sort', value)}
+          data={[
+            { value: 'createdAt,desc', label: 'Newest first' },
+            { value: 'createdAt,asc', label: 'Oldest first' },
+            { value: 'name,asc', label: 'Name' },
+            { value: 'attention', label: 'Needs attention first' },
+          ]}
+        />
+      </Group>
+      <Section title="Capture sessions">
+        {captures.isPending ? (
+          <LoadingState />
+        ) : captures.isError ? (
+          <ErrorState error={captures.error} onRetry={() => void captures.refetch()} />
+        ) : !captures.data.items.length ? (
+          <EmptyState
+            title={status ? 'No captures with this status' : 'No captures yet'}
+            description="Create a capture to start recording a token, or attach existing evidence."
+          />
+        ) : (
+          <>
+            <ScrollArea>
+              <Table miw={850} verticalSpacing="md">
+                <Table.Thead>
+                  <Table.Tr>
+                    {['Capture', 'Progress', 'Created', 'Next step', ''].map((title, index) => (
+                      <Table.Th key={index}>{title}</Table.Th>
+                    ))}
+                  </Table.Tr>
+                </Table.Thead>
+                <Table.Tbody>
+                  {captures.data.items.map((item) => (
+                    <Table.Tr key={item.id}>
+                      <Table.Td>
+                        <Stack gap={5}>
+                          <Anchor component={Link} to={paths.capture(item.id)} fw={600}>
+                            {item.displayName ?? item.name}
+                          </Anchor>
+                          {item.wallet ? (
+                            <ShortId value={item.wallet.wallet} />
+                          ) : (
+                            <Text size="xs">Attached evidence</Text>
+                          )}
+                          {item.wallet?.mint && <ShortId value={item.wallet.mint} />}
+                        </Stack>
+                      </Table.Td>
+                      <Table.Td miw={280}>
+                        {item.summary ? (
+                          <Stack gap="xs">
+                            <Badge
+                              variant="light"
+                              color={item.summary.status === 'NEEDS_ATTENTION' ? 'yellow' : 'teal'}
+                            >
+                              {statusLabels[item.summary.status]}
+                            </Badge>
+                            <Text size="xs">
+                              Step {item.summary.currentStep.index} of 4 ·{' '}
+                              {item.summary.currentStep.stage.toLowerCase()}
+                            </Text>
+                            <CaptureStepper session={item} />
+                            {item.summary.progress && (
+                              <>
+                                <Progress
+                                  value={Number(item.summary.progress.percent)}
+                                  aria-label="Capture progress"
+                                />
+                                <Text size="xs">
+                                  {item.summary.progress.percent}% ·{' '}
+                                  {item.summary.progress.processed} /{' '}
+                                  {item.summary.progress.selected} transactions
+                                </Text>
+                              </>
+                            )}
+                            {item.summary.reasonCode && (
+                              <Text size="xs">{codeLabel(item.summary.reasonCode)}</Text>
+                            )}
+                            <CodeText code={item.summary.reasonCode} />
+                          </Stack>
+                        ) : (
+                          <Text size="sm">{item.operation?.state ?? 'Not started'}</Text>
+                        )}
+                      </Table.Td>
+                      <Table.Td>
+                        <Timestamp iso={item.createdAt} />
+                      </Table.Td>
+                      <Table.Td>
+                        <Button
+                          component={Link}
+                          to={paths.capture(item.id)}
+                          variant="light"
+                          disabled={captures.data.items.some((session) =>
+                            isCaptureOperationOpen(session.operation?.state),
+                          )}
+                          title={
+                            captures.data.items.some((session) =>
+                              isCaptureOperationOpen(session.operation?.state),
+                            )
+                              ? 'A capture operation is running. Open the capture name to inspect it.'
+                              : undefined
+                          }
+                        >
+                          {item.summary
+                            ? actionLabels[item.summary.nextAction.kind]
+                            : 'Open capture'}
+                        </Button>
+                      </Table.Td>
+                      <Table.Td>
+                        <ConfirmDelete
+                          compact
+                          label="Delete"
+                          title="Delete this capture?"
+                          disabled={isCaptureOperationOpen(item.operation?.state)}
+                          onConfirm={() => remove.mutateAsync(item.id)}
+                        >
+                          Removes “{item.name}” and its managed evidence. Attached evidence and
+                          imported datasets stay.
+                        </ConfirmDelete>
+                      </Table.Td>
+                    </Table.Tr>
+                  ))}
+                </Table.Tbody>
+              </Table>
+            </ScrollArea>
+            <PagingFooter
+              page={page + 1}
+              pages={Math.max(1, Math.ceil(captures.data.total / 20))}
+              total={captures.data.total}
+              onChange={(value) => change('page', String(value - 1))}
+              noun="captures"
+            />
+          </>
+        )}
+      </Section>
+    </Stack>
+  );
 }

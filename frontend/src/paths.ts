@@ -18,7 +18,10 @@ export const paths = {
   solana: '/solana',
   captures: '/captures',
   capture: (id: string) => `/captures/${encodeURIComponent(id)}`,
+  newCapture: '/captures/new',
+  usage: '/usage',
+  runChart: (id: string) => `/runs/${encodeURIComponent(id)}/chart`,
   compare: '/compare',
-  compareRuns: (ids: string[]) => `/compare?${COMPARE_PARAM}=${ids.map(encodeURIComponent).join(',')}`,
+  compareRuns: (ids: string[]) =>
+    `/compare?${COMPARE_PARAM}=${ids.map(encodeURIComponent).join(',')}`,
 } as const;
-

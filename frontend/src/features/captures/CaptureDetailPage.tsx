@@ -14,8 +14,8 @@ import {
   Text,
 } from '@mantine/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import {
   capturesApi,
   type CaptureAttemptRequest,
@@ -44,6 +44,7 @@ import { paths } from '../../paths';
 import { CalibrationResults } from './CalibrationResults';
 import { CaptureCases } from './CaptureCases';
 import { TokenVerdict } from './TokenVerdict';
+import { CaptureOverview } from './CaptureOverview';
 import { BudgetFields, CaptureStatus, CommandError } from './CaptureShared';
 import { reasonText } from './captureReasons';
 import {
@@ -322,6 +323,7 @@ function AttemptHistory({ id, session }: { id: string; session: CaptureSession }
   );
 }
 function CaptureWorkspace({ session, config }: { session: CaptureSession; config: CaptureConfig }) {
+  const initialState = useLocation().state as { recovery?: boolean } | null;
   const client = useQueryClient();
   const navigate = useNavigate();
   const deleteCapture = useDeleteCapture();
@@ -331,7 +333,9 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
     walletToken ? config.walletTokenBudgetDefaults : config.budgetDefaults,
   );
   const [marketBudget, setMarketBudget] = useState<CaptureBudget>(config.budgetDefaults);
-  const [walletRecoveryEnabled, setWalletRecoveryEnabled] = useState(false);
+  const [walletRecoveryEnabled, setWalletRecoveryEnabled] = useState(
+    Boolean(initialState?.recovery),
+  );
   const [marketRecoveryEnabled, setMarketRecoveryEnabled] = useState(false);
   const [walletTotalRequests, setWalletTotalRequests] = useState(
     (walletToken ? config.walletTokenBudgetDefaults : config.budgetDefaults).requestBudget * 3,
@@ -475,7 +479,7 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
   return (
     <Stack gap="lg">
       <PageHeader
-        title={session.name}
+        title={session.displayName ?? session.name}
         description={
           session.wallet
             ? `${session.wallet.scope} · ${session.wallet.limit} sampled transaction(s)`
@@ -506,6 +510,8 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
           </>
         }
       />
+      <CaptureOverview session={session} config={config} />
+      <StartWalletOnCreate session={session} config={config} />
       {session.wallet && (
         <Text ff="monospace" size="sm" style={{ overflowWrap: 'anywhere' }}>
           {session.wallet.wallet}
@@ -693,80 +699,93 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
                                   onChange={(v) => setScanPages(Number(v))}
                                 />
                               )}
+                              <Checkbox
+                                label="Enable automatic recovery for this stage"
+                                checked={
+                                  step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled
+                                }
+                                onChange={(event) =>
+                                  (step === 'WALLET'
+                                    ? setWalletRecoveryEnabled
+                                    : setMarketRecoveryEnabled)(event.currentTarget.checked)
+                                }
+                                disabled={locked}
+                              />
+                              {(step === 'WALLET'
+                                ? walletRecoveryEnabled
+                                : marketRecoveryEnabled) && (
+                                <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                                  <NumberInput
+                                    label="Total request budget"
+                                    value={
+                                      step === 'WALLET' ? walletTotalRequests : marketTotalRequests
+                                    }
+                                    min={stageBudget.requestBudget}
+                                    max={config.bounds.recoveryRequestsMax}
+                                    allowDecimal={false}
+                                    disabled={locked}
+                                    onChange={(value) =>
+                                      (step === 'WALLET'
+                                        ? setWalletTotalRequests
+                                        : setMarketTotalRequests)(Number(value))
+                                    }
+                                  />
+                                  <NumberInput
+                                    label="Total byte budget"
+                                    value={step === 'WALLET' ? walletTotalBytes : marketTotalBytes}
+                                    min={stageBudget.byteBudget}
+                                    max={config.bounds.recoveryBytesMax}
+                                    allowDecimal={false}
+                                    disabled={locked}
+                                    onChange={(value) =>
+                                      (step === 'WALLET'
+                                        ? setWalletTotalBytes
+                                        : setMarketTotalBytes)(Number(value))
+                                    }
+                                  />
+                                  <NumberInput
+                                    label="Maximum attempts"
+                                    value={maxAttempts}
+                                    min={1}
+                                    max={config.bounds.recoveryAttemptsMax}
+                                    allowDecimal={false}
+                                    disabled={locked}
+                                    onChange={(value) => setMaxAttempts(Number(value))}
+                                  />
+                                </SimpleGrid>
+                              )}
+                              <Text size="xs" c="dimmed">
+                                {(step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled)
+                                  ? 'Automatic recovery can start another invocation after a recoverable stop. It stops at the total request and byte budgets or the attempt limit.'
+                                  : 'Automatic recovery is off for this stage.'}{' '}
+                                The allowance above remains the limit for each invocation.
+                              </Text>
+                              <Text size="sm" c="dimmed">
+                                Budget for this run:{' '}
+                                {count(
+                                  (step === 'WALLET' ? walletBudget : marketBudget).requestBudget,
+                                )}{' '}
+                                requests ·{' '}
+                                {count(
+                                  (step === 'WALLET' ? walletBudget : marketBudget).byteBudget,
+                                )}{' '}
+                                bytes ·{' '}
+                                {
+                                  (step === 'WALLET' ? walletBudget : marketBudget)
+                                    .operationTimeoutMinutes
+                                }
+                                -minute deadline.
+                                {step === 'MARKET'
+                                  ? ` ${scanPages} pages per window · ${count(session.marketAttempt?.market?.maxTransactions)} transaction capacity.`
+                                  : ` ${session.wallet?.scanPages ?? '—'} scan pages.`}{' '}
+                                {(step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled)
+                                  ? ' Automatic recovery renews the per-invocation allowance within the total recovery limits.'
+                                  : ' The allowance renews only when you explicitly start or resume.'}
+                              </Text>
                             </Stack>
                           </Accordion.Panel>
                         </Accordion.Item>
                       </Accordion>
-                      <Checkbox
-                        label="Enable automatic recovery for this stage"
-                        checked={step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled}
-                        onChange={(event) =>
-                          (step === 'WALLET' ? setWalletRecoveryEnabled : setMarketRecoveryEnabled)(
-                            event.currentTarget.checked,
-                          )
-                        }
-                        disabled={locked}
-                      />
-                      {(step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled) && (
-                        <SimpleGrid cols={{ base: 1, sm: 3 }}>
-                          <NumberInput
-                            label="Total request budget"
-                            value={step === 'WALLET' ? walletTotalRequests : marketTotalRequests}
-                            min={stageBudget.requestBudget}
-                            max={config.bounds.recoveryRequestsMax}
-                            allowDecimal={false}
-                            disabled={locked}
-                            onChange={(value) =>
-                              (step === 'WALLET' ? setWalletTotalRequests : setMarketTotalRequests)(
-                                Number(value),
-                              )
-                            }
-                          />
-                          <NumberInput
-                            label="Total byte budget"
-                            value={step === 'WALLET' ? walletTotalBytes : marketTotalBytes}
-                            min={stageBudget.byteBudget}
-                            max={config.bounds.recoveryBytesMax}
-                            allowDecimal={false}
-                            disabled={locked}
-                            onChange={(value) =>
-                              (step === 'WALLET' ? setWalletTotalBytes : setMarketTotalBytes)(
-                                Number(value),
-                              )
-                            }
-                          />
-                          <NumberInput
-                            label="Maximum attempts"
-                            value={maxAttempts}
-                            min={1}
-                            max={config.bounds.recoveryAttemptsMax}
-                            allowDecimal={false}
-                            disabled={locked}
-                            onChange={(value) => setMaxAttempts(Number(value))}
-                          />
-                        </SimpleGrid>
-                      )}
-                      <Text size="xs" c="dimmed">
-                        {(step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled)
-                          ? 'Automatic recovery can start another invocation after a recoverable stop. It stops at the total request and byte budgets or the attempt limit.'
-                          : 'Automatic recovery is off for this stage.'}{' '}
-                        The allowance above remains the limit for each invocation.
-                      </Text>
-                      <Text size="sm" c="dimmed">
-                        Budget for this run:{' '}
-                        {count((step === 'WALLET' ? walletBudget : marketBudget).requestBudget)}{' '}
-                        requests ·{' '}
-                        {count((step === 'WALLET' ? walletBudget : marketBudget).byteBudget)} bytes
-                        ·{' '}
-                        {(step === 'WALLET' ? walletBudget : marketBudget).operationTimeoutMinutes}
-                        -minute deadline.
-                        {step === 'MARKET'
-                          ? ` ${scanPages} pages per window · ${count(session.marketAttempt?.market?.maxTransactions)} transaction capacity.`
-                          : ` ${session.wallet?.scanPages ?? '—'} scan pages.`}{' '}
-                        {(step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled)
-                          ? ' Automatic recovery renews the per-invocation allowance within the total recovery limits.'
-                          : ' The allowance renews only when you explicitly start or resume.'}
-                      </Text>
                     </>
                   )}
                   <Group>
@@ -939,4 +958,56 @@ export function CaptureDetailPage() {
       />
     );
   return <CaptureWorkspace key={id} session={session.data} config={config.data} />;
+}
+
+function StartWalletOnCreate({
+  session,
+  config,
+}: {
+  session: CaptureSession;
+  config: CaptureConfig;
+}) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const client = useQueryClient();
+  const sent = useRef(false);
+  const state = location.state as { startWallet?: boolean; recovery?: boolean } | null;
+  const command = useCaptureCommand<CaptureOperationRequest, CaptureOperation>(
+    `${session.id}:create-start`,
+    (body) => capturesApi.operate(session.id, body),
+    async () => {
+      await client.invalidateQueries({ queryKey: captureKeys.all });
+    },
+  );
+  useEffect(() => {
+    if (!state?.startWallet || sent.current || isCaptureOperationActive(session.operation?.state))
+      return;
+    sent.current = true;
+    const budget =
+      session.wallet?.scope === WALLET_TOKEN_SCOPE
+        ? config.walletTokenBudgetDefaults
+        : config.budgetDefaults;
+    command.submit({
+      step: 'WALLET',
+      attemptId: session.walletAttemptId,
+      budget,
+      ...(state.recovery
+        ? {
+            recovery: {
+              totalRequestBudget: budget.requestBudget * 3,
+              totalByteBudget: budget.byteBudget * 3,
+              maxAttempts: 3,
+            },
+          }
+        : {}),
+    });
+    void navigate(location.pathname, { replace: true, state: null });
+  }, [state, session, config, command, navigate, location.pathname]);
+  return (
+    <CommandError
+      error={command.error}
+      uncertain={!!command.pendingCommand && !command.isPending}
+      retry={command.retry}
+    />
+  );
 }

@@ -5,6 +5,7 @@ import { pairKey } from '../../api/endpoints';
 import { useDataset, useDatasetObservations, useDeleteDataset } from '../../api/queries';
 import type { ObservedChartMarker, PaperChartFill } from '../../api/types';
 import { TradeChart } from '../../components/TradeChart';
+import { SourceLinks } from '../../components/SourceLinks';
 import { ConfirmDelete } from '../../components/ConfirmDelete';
 import { Mint, ShortId, Timestamp } from '../../components/DisplayValues';
 import { ObservationTable } from '../../components/ObservationTable';
@@ -74,6 +75,7 @@ export function DatasetDetailPage() {
 
   return (
     <Stack gap="lg">
+      <SourceLinks source={data.source} />
       <PageHeader
         title={data.name}
         description="Stored replay dataset. Its id is the dataset checksum."

@@ -11,13 +11,23 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
   readonly fields: Record<string, string>;
+  readonly suggestion?: string;
+  readonly retryAfterSeconds?: number;
 
-  constructor(status: number, code: string, message: string, fields: Record<string, string> = {}) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    fields: Record<string, string> = {},
+    details?: Pick<ApiErrorBody, 'suggestion' | 'retryAfterSeconds'>,
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.fields = fields;
+    this.suggestion = details?.suggestion;
+    this.retryAfterSeconds = details?.retryAfterSeconds;
   }
 
   /** True for a client error (4xx): retrying the same request cannot succeed. */
@@ -51,7 +61,13 @@ async function toApiError(response: Response): Promise<ApiError> {
     try {
       const parsed: unknown = JSON.parse(text);
       if (isErrorBody(parsed)) {
-        return new ApiError(response.status, parsed.code, parsed.message, parsed.fields ?? {});
+        return new ApiError(
+          response.status,
+          parsed.code,
+          parsed.message,
+          parsed.fields ?? {},
+          parsed,
+        );
       }
     } catch {
       // Not JSON (e.g. a proxy error page): fall through to a generic message.
@@ -83,7 +99,11 @@ export async function request<T>(url: string, init: RequestInit = {}): Promise<T
   try {
     return JSON.parse(text) as T;
   } catch {
-    throw new ApiError(response.status, BAD_RESPONSE, 'The backend returned a response that is not JSON.');
+    throw new ApiError(
+      response.status,
+      BAD_RESPONSE,
+      'The backend returned a response that is not JSON.',
+    );
   }
 }
 

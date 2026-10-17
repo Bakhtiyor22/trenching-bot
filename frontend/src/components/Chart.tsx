@@ -43,7 +43,14 @@ const axis = {
 
 // The dark console theme: the canvas palette, hairline axes and mono axis labels.
 echarts.registerTheme(TERMINAL_THEME, {
-  color: [terminal.accent, terminal.info, terminal.gain, terminal.loss, terminal.violet, terminal.dimmed],
+  color: [
+    terminal.accent,
+    terminal.info,
+    terminal.gain,
+    terminal.loss,
+    terminal.violet,
+    terminal.dimmed,
+  ],
   backgroundColor: 'transparent',
   textStyle: { color: terminal.text },
   categoryAxis: axis,
@@ -70,7 +77,7 @@ export type ChartEvents = Record<string, (params: unknown) => void>;
 
 export interface ChartProps {
   option: EChartsOption;
-  height?: number;
+  height?: number | string;
   /** Accessible description of what the chart shows. */
   ariaLabel: string;
   onEvents?: ChartEvents;
@@ -82,9 +89,18 @@ export interface ChartProps {
  * ECharts wrapper. Charts are the only place where decimal strings become JS numbers; tables and
  * tooltips that show amounts use the original strings.
  */
-export function Chart({ option, height = 300, ariaLabel, onEvents, onReady, onDispose }: ChartProps) {
+export function Chart({
+  option,
+  height = 300,
+  ariaLabel,
+  onEvents,
+  onReady,
+  onDispose,
+}: ChartProps) {
   const dispose = useRef(onDispose);
-  useEffect(() => { dispose.current = onDispose; }, [onDispose]);
+  useEffect(() => {
+    dispose.current = onDispose;
+  }, [onDispose]);
   useEffect(() => () => dispose.current?.(), []);
   const scheme = useComputedColorScheme('dark');
   const themed: EChartsOption = {

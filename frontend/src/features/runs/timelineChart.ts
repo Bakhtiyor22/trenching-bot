@@ -1,7 +1,15 @@
+import { levelPercent } from '../../lib/percent';
 import type { EChartsOption, SeriesOption } from 'echarts';
 import { pairKey } from '../../api/endpoints';
 import type { ChartResponse, Observation, RunUsdtView, Scenario } from '../../api/types';
-import { chartCandleOption, itemTooltip, observationSeries, slotAxes, type ChartView, type MarketChartStyle } from '../../charts/priceChart';
+import {
+  chartCandleOption,
+  itemTooltip,
+  observationSeries,
+  slotAxes,
+  type ChartView,
+  type MarketChartStyle,
+} from '../../charts/priceChart';
 import { compactDecimal, formatDecimal, toChartNumber } from '../../lib/decimal';
 import { formatSlot, humanizeCode, signedBps, usdtRateNote } from '../../lib/format';
 import { FONT_MONO, terminal } from '../../theme';
@@ -12,7 +20,12 @@ export const REJECTED_COLOR = terminal.loss;
 export const SOURCE_COLOR = terminal.dimmed;
 /** Legend name shared by the level lines, so one click hides or shows them all. */
 export const LEVELS_SERIES = 'Levels';
-export const LEVEL_COLORS = { reference: '#C3CDD5', dip: terminal.info, takeProfit: terminal.gain, stopLoss: terminal.loss } as const;
+export const LEVEL_COLORS = {
+  reference: '#C3CDD5',
+  dip: terminal.info,
+  takeProfit: terminal.gain,
+  stopLoss: terminal.loss,
+} as const;
 
 export interface PriceMarker {
   slot: number;
@@ -90,7 +103,8 @@ export function usdtValues(view: RunUsdtView): TimelineValues {
     costBasis: (s) => fill(s)?.costBasisUsdt ?? null,
     netProceeds: (s) => close(s)?.netProceedsUsdt ?? null,
     realizedPnl: (s) => close(s)?.realizedPnlUsdt ?? null,
-    observationNote: (o) => usdtRateNote(observations.get(o.id)?.rate, observations.get(o.id)?.minute),
+    observationNote: (o) =>
+      usdtRateNote(observations.get(o.id)?.rate, observations.get(o.id)?.minute),
     entryNote: (s) => usdtRateNote(fill(s)?.rate, fill(s)?.minute),
     exitNote: (s) => usdtRateNote(close(s)?.rate, close(s)?.minute),
     // The strategy compares levels in SOL; each trade converts at its own minute, so a level has no one USDT value.
@@ -99,7 +113,10 @@ export function usdtValues(view: RunUsdtView): TimelineValues {
 }
 
 /** Markers for the cycle of one pair: its first buy, price levels, entry fill and exit, or why it never entered. */
-export function timelineMarkers(scenarios: Scenario[], values: TimelineValues = quoteValues('')): TimelineMarkers {
+export function timelineMarkers(
+  scenarios: Scenario[],
+  values: TimelineValues = quoteValues(''),
+): TimelineMarkers {
   const unit = values.unit ? ` ${values.unit}` : '';
   const sourceSlots = [...new Set(scenarios.map((s) => s.sourceSlot))].sort((a, b) => a - b);
   const entries: PriceMarker[] = [];
@@ -135,7 +152,7 @@ export function timelineMarkers(scenarios: Scenario[], values: TimelineValues = 
           `Dip at slot ${formatSlot(s.targetSlot)}, filled at slot ${formatSlot(s.fill.actualSlot)}`,
           `Execution price <b>${formatDecimal(entryPrice)}</b>${unit}`,
           `Quantity ${formatDecimal(s.fill.quantity)} · cost ${formatDecimal(values.costBasis(s))}${unit}`,
-          `Fees ${s.fill.feeBps} bps · impact ${signedBps(s.fill.priceImpactBps)}`,
+          `Fees ${levelPercent(s.fill.feePercent, s.fill.feeBps)} · impact ${signedBps(s.fill.priceImpactBps, s.fill.priceImpactPercent)}`,
           ...noteLine(values.entryNote(s)),
         ].join('<br/>'),
       });
@@ -150,7 +167,7 @@ export function timelineMarkers(scenarios: Scenario[], values: TimelineValues = 
         tooltip: [
           `<b>Exit</b> at slot ${formatSlot(close.slot)} (${humanizeCode(close.reason)})`,
           `Execution price <b>${formatDecimal(exitPrice)}</b>${unit}`,
-          `Fees ${close.feeBps} bps · impact ${signedBps(close.priceImpactBps)}`,
+          `Fees ${levelPercent(close.feePercent, close.feeBps)} · impact ${signedBps(close.priceImpactBps, close.priceImpactPercent)}`,
           `Net proceeds ${formatDecimal(values.netProceeds(s))}${unit}`,
           `Realized P&L <b>${formatDecimal(values.realizedPnl(s))}</b>${unit}`,
           ...noteLine(values.exitNote(s)),
@@ -171,7 +188,12 @@ function noteLine(note: string | null): string[] {
   return note ? [note] : [];
 }
 
-function markerSeries(name: string, markers: PriceMarker[], color: string, rotate = 0): SeriesOption {
+function markerSeries(
+  name: string,
+  markers: PriceMarker[],
+  color: string,
+  rotate = 0,
+): SeriesOption {
   return {
     type: 'scatter',
     name,
@@ -187,7 +209,11 @@ function markerSeries(name: string, markers: PriceMarker[], color: string, rotat
       fontWeight: 'bold',
       color,
     },
-    data: markers.map((m) => ({ value: [m.slot, toChartNumber(m.price)], marker: m.label, tip: m.tooltip })),
+    data: markers.map((m) => ({
+      value: [m.slot, toChartNumber(m.price)],
+      marker: m.label,
+      tip: m.tooltip,
+    })),
   };
 }
 
@@ -236,7 +262,11 @@ export function timelineOption(
           xAxis: m.slot,
           name: m.label,
           lineStyle: { color: REJECTED_COLOR, type: 'dashed' as const, width: 1.5 },
-          label: { formatter: m.label, color: REJECTED_COLOR, position: 'insideEndBottom' as const },
+          label: {
+            formatter: m.label,
+            color: REJECTED_COLOR,
+            position: 'insideEndBottom' as const,
+          },
         })),
       ],
     },
@@ -260,7 +290,13 @@ export function timelineOption(
         silent: true,
         lineStyle: { color: m.color, type: 'dotted', width: 1.5 },
         itemStyle: { color: LEVEL_COLORS.reference },
-        endLabel: { show: true, formatter: `${m.label} ${compactDecimal(m.price)}`, color: m.color, fontFamily: FONT_MONO, fontSize: 11 },
+        endLabel: {
+          show: true,
+          formatter: `${m.label} ${compactDecimal(m.price)}`,
+          color: m.color,
+          fontFamily: FONT_MONO,
+          fontSize: 11,
+        },
         tooltip: { show: false },
         emphasis: { disabled: true },
         z: 0,
@@ -270,7 +306,13 @@ export function timelineOption(
 
   return {
     // Room on the right for the level labels at the end of each level line.
-    grid: { left: 12, right: levelLines.length ? 150 : 32, top: 48, bottom: 64, containLabel: true },
+    grid: {
+      left: 12,
+      right: levelLines.length ? 150 : 32,
+      top: 48,
+      bottom: 64,
+      containLabel: true,
+    },
     legend: { top: 0 },
     tooltip: { trigger: 'item', formatter: itemTooltip },
     ...axes,
@@ -291,22 +333,49 @@ export function scenarioPairs(scenarios: Scenario[]): string[] {
 }
 
 /** Recorded market series with SOL strategy levels spanning the visible time domain. */
-export function chartTimelineOption(response: ChartResponse, view: ChartView, scenarios: Scenario[], style: MarketChartStyle = 'line'): EChartsOption {
+export function chartTimelineOption(
+  response: ChartResponse,
+  view: ChartView,
+  scenarios: Scenario[],
+  style: MarketChartStyle = 'line',
+): EChartsOption {
   const option = chartCandleOption(response, view, style);
   if (view === 'mcap' && response.valuationBasis.available) return option;
-  const axis = (Array.isArray(option.xAxis) ? option.xAxis[0] : option.xAxis) as { min: number; max: number };
+  const axis = (Array.isArray(option.xAxis) ? option.xAxis[0] : option.xAxis) as {
+    min: number;
+    max: number;
+  };
   const levelMarkers = timelineMarkers(scenarios).levels;
   const levels: SeriesOption[] = levelMarkers.flatMap((level) => {
     const price = toChartNumber(level.price);
-    return price == null ? [] : [{
-      type: 'line', name: LEVELS_SERIES,
-      data: [[axis.min, price], [axis.max, price]],
-      showSymbol: false, silent: true,
-      lineStyle: { color: level.color, type: 'dotted', width: 1.5 },
-      itemStyle: { color: LEVEL_COLORS.reference },
-      endLabel: { show: true, formatter: `${level.label} ${compactDecimal(level.price)}`, color: level.color, fontFamily: FONT_MONO, fontSize: 11, align: 'right', distance: -6 },
-      tooltip: { show: false }, emphasis: { disabled: true }, z: 0,
-    }];
+    return price == null
+      ? []
+      : [
+          {
+            type: 'line',
+            name: LEVELS_SERIES,
+            data: [
+              [axis.min, price],
+              [axis.max, price],
+            ],
+            showSymbol: false,
+            silent: true,
+            lineStyle: { color: level.color, type: 'dotted', width: 1.5 },
+            itemStyle: { color: LEVEL_COLORS.reference },
+            endLabel: {
+              show: true,
+              formatter: `${level.label} ${compactDecimal(level.price)}`,
+              color: level.color,
+              fontFamily: FONT_MONO,
+              fontSize: 11,
+              align: 'right',
+              distance: -6,
+            },
+            tooltip: { show: false },
+            emphasis: { disabled: true },
+            z: 0,
+          },
+        ];
   });
   if (!levels.length) return option;
   const axes = Array.isArray(option.yAxis) ? option.yAxis : [option.yAxis ?? {}];

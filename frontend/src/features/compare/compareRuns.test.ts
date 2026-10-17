@@ -31,10 +31,7 @@ describe('inputRows', () => {
       'Configuration hash',
       'Take profit',
     ]);
-    expect(rows.find((r) => r.label === 'Take profit')?.values).toEqual([
-      '3000 bps (30%)',
-      '5000 bps (50%)',
-    ]);
+    expect(rows.find((r) => r.label === 'Take profit')?.values).toEqual(['30%', '50%']);
   });
 });
 

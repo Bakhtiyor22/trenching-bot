@@ -1,3 +1,5 @@
+import { CAPTURE_STATUSES, type CaptureSummary } from '../api/captures';
+import { captureSuggestion } from './setupHandlers';
 import { http, HttpResponse } from 'msw';
 import type {
   CaptureAttempt,
@@ -11,7 +13,15 @@ import type {
 } from '../api/captures';
 import { WALLET_TOKEN_SCOPE } from '../api/captures';
 import type { ApiErrorBody } from '../api/types';
-import { calibrationReport, captureConfig, captureSession, provenTarget, qualifyingVerdict, readyInspection, walletTokenSessions } from './captureFixtures';
+import {
+  calibrationReport,
+  captureConfig,
+  captureSession,
+  provenTarget,
+  qualifyingVerdict,
+  readyInspection,
+  walletTokenSessions,
+} from './captureFixtures';
 import { sampleDataset } from './fixtures';
 
 /**
@@ -23,11 +33,17 @@ let operations = new Map<string, CaptureOperation>();
 let caseResponses = new Map<string, CaptureCase[]>();
 
 export function resetCaptureMocks(): void {
-  sessions = new Map([captureSession, ...Object.values(walletTokenSessions)].map(session => [session.id, session]));
-  operations = new Map(captureSession.operation ? [[captureSession.operation.id, captureSession.operation]] : []);
+  sessions = new Map(
+    [captureSession, ...Object.values(walletTokenSessions)].map((session) => [session.id, session]),
+  );
+  operations = new Map(
+    captureSession.operation ? [[captureSession.operation.id, captureSession.operation]] : [],
+  );
   caseResponses = new Map();
 }
-export function setCaptureCases(id: string, items: CaptureCase[]): void { caseResponses.set(id, items); }
+export function setCaptureCases(id: string, items: CaptureCase[]): void {
+  caseResponses.set(id, items);
+}
 resetCaptureMocks();
 
 function error(status: number, code: string, message: string) {
@@ -35,7 +51,12 @@ function error(status: number, code: string, message: string) {
   return HttpResponse.json(body, { status });
 }
 
-function attempt(id: string, stage: 'MARKET' | 'RATES', walletAttemptId: string, marketAttemptId: string | null): CaptureAttempt {
+function attempt(
+  id: string,
+  stage: 'MARKET' | 'RATES',
+  walletAttemptId: string,
+  marketAttemptId: string | null,
+): CaptureAttempt {
   return {
     id,
     stage,
@@ -52,7 +73,7 @@ function created(body: CaptureCreate): CaptureSession {
   const marketAttemptId = `${body.requestId}-market`;
   return {
     id: body.requestId,
-    name: body.name,
+    name: body.name?.trim() || 'Decu · token · 17 Oct 00:00',
     createdAt: new Date().toISOString(),
     wallet: body.wallet ?? null,
     walletAttemptId,
@@ -87,8 +108,11 @@ function completed(session: CaptureSession, request: CaptureOperationRequest): C
   operations.set(operation.id, operation);
   // A wallet-token session verifies its first buy on inspection and is qualified after export (or an explicit QUALIFY).
   const walletToken = session.wallet?.scope === WALLET_TOKEN_SCOPE;
-  const inspection: CaptureInspection = session.inspection ?? (walletToken ? { ...readyInspection, targetToken: provenTarget } : readyInspection);
-  const replayed = session.qualification != null && session.qualification.replay.state !== 'NOT_RUN';
+  const inspection: CaptureInspection =
+    session.inspection ??
+    (walletToken ? { ...readyInspection, targetToken: provenTarget } : readyInspection);
+  const replayed =
+    session.qualification != null && session.qualification.replay.state !== 'NOT_RUN';
   const qualifies = walletToken && (request.step === 'EXPORT' || request.step === 'QUALIFY');
   return {
     ...session,
@@ -106,33 +130,114 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
   return [
     http.get('/api/captures/config', async () => {
       await wait();
-      return HttpResponse.json(captureConfig);
+      return HttpResponse.json({
+        ...captureConfig,
+        suggestedWallets: [captureSuggestion],
+        recentWallets: [],
+      });
     }),
     http.get('/api/captures', async ({ request }) => {
       await wait();
       const url = new URL(request.url);
       const page = Number(url.searchParams.get('page') ?? '0');
       const size = Number(url.searchParams.get('size') ?? '20');
-      const items = [...sessions.values()];
-      return HttpResponse.json({ items: items.slice(page * size, page * size + size), page, size, total: items.length });
+      const all = [...sessions.values()].map(withSummary);
+      const statusCounts = Object.fromEntries(
+        CAPTURE_STATUSES.map((status) => [
+          status,
+          all.filter((item) => item.summary?.status === status).length,
+        ]),
+      );
+      const sort = url.searchParams.get('sort') ?? 'createdAt,desc';
+      const status = url.searchParams.get('status');
+      const items = all
+        .filter((item) => !status || item.summary?.status === status)
+        .sort((a, b) =>
+          sort === 'name,asc'
+            ? a.name.localeCompare(b.name)
+            : (sort === 'createdAt,asc' ? 1 : -1) * a.createdAt.localeCompare(b.createdAt) ||
+              a.id.localeCompare(b.id),
+        );
+      return HttpResponse.json({
+        items: items.slice(page * size, page * size + size),
+        page,
+        size,
+        total: items.length,
+        statusCounts,
+      });
     }),
     http.post('/api/captures', async ({ request }) => {
       await wait();
       const body = (await request.json()) as CaptureCreate;
+      if (
+        ![...sessions.keys()].includes(body.requestId) &&
+        body.name?.trim() &&
+        [...sessions.values()].some(
+          (item) => item.name.toLowerCase() === body.name?.trim().toLowerCase(),
+        )
+      )
+        return HttpResponse.json(
+          {
+            code: 'NAME_TAKEN',
+            message: 'Capture name is already taken',
+            fields: { name: 'is already taken' },
+            suggestion: body.name + ' (2)',
+          },
+          { status: 409 },
+        );
       const session = sessions.get(body.requestId) ?? created(body);
       sessions.set(session.id, session);
-      return HttpResponse.json(session);
+      return HttpResponse.json(withSummary(session));
+    }),
+    http.get('/api/captures/names/check', async ({ request }) => {
+      await wait();
+      const name = new URL(request.url).searchParams.get('name')?.trim().replace(/\s+/g, ' ') ?? '';
+      const available = ![...sessions.values()].some(
+        (session) => session.name.toLowerCase() === name.toLowerCase(),
+      );
+      return HttpResponse.json({
+        available,
+        normalized: name,
+        suggestion: available ? null : name + ' (2)',
+      });
+    }),
+    http.patch('/api/captures/:id', async ({ params, request }) => {
+      await wait();
+      const session = found(params.id);
+      if (!session) return error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
+      const body = (await request.json()) as { name: string };
+      const name = body.name.trim().replace(/\s+/g, ' ');
+      if (
+        [...sessions.values()].some(
+          (item) => item.id !== session.id && item.name.toLowerCase() === name.toLowerCase(),
+        )
+      )
+        return HttpResponse.json(
+          {
+            code: 'NAME_TAKEN',
+            message: 'Capture name is already taken',
+            fields: { name: 'is already taken' },
+            suggestion: name + ' (2)',
+          },
+          { status: 409 },
+        );
+      const next = { ...session, name };
+      sessions.set(session.id, next);
+      return HttpResponse.json(withSummary(next));
     }),
     http.get('/api/captures/:id', async ({ params }) => {
       await wait();
       const session = found(params.id);
-      return session ? HttpResponse.json(session) : error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
+      return session
+        ? HttpResponse.json(withSummary(session))
+        : error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
     }),
     http.delete('/api/captures/:id', async ({ params }) => {
       await wait();
       const session = found(params.id);
       if (!session) return error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
-      if (session.operation?.state === 'RUNNING') return error(409, 'CAPTURE_BUSY', 'This capture has a running operation');
+      if (session.operation?.state === 'RUNNING')
+        return error(409, 'CAPTURE_BUSY', 'This capture has a running operation');
       sessions.delete(session.id);
       return new HttpResponse(null, { status: 204 });
     }),
@@ -140,7 +245,9 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       await wait();
       const session = found(params.id);
       if (!session) return error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
-      const items = [session.marketAttempt, session.ratesAttempt].filter((a): a is CaptureAttempt => a != null);
+      const items = [session.marketAttempt, session.ratesAttempt].filter(
+        (a): a is CaptureAttempt => a != null,
+      );
       return HttpResponse.json({ items, page: 0, size: 20, total: items.length });
     }),
     http.post('/api/captures/:id/attempts', async ({ params, request }) => {
@@ -149,10 +256,43 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       if (!session) return error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
       const body = (await request.json()) as CaptureAttemptRequest;
       // A new market attempt brings its own empty rates attempt; either kind is then inspected offline.
-      const reset: CaptureSession = body.stage === 'MARKET'
-        ? { ...session, marketAttempt: { ...attempt(body.requestId, 'MARKET', session.walletAttemptId, null), market: body.market ?? captureConfig.marketDefaults }, ratesAttempt: attempt(`${body.requestId}-rates`, 'RATES', session.walletAttemptId, body.requestId), inspection: null, datasetReady: false, calibrationReady: false, datasetId: null, calibration: null }
-        : { ...session, ratesAttempt: attempt(body.requestId, 'RATES', session.walletAttemptId, session.marketAttempt?.id ?? null), inspection: null, datasetReady: false, datasetId: null };
-      const next = completed(reset, { requestId: `${body.requestId}-inspect`, step: 'INSPECT', attemptId: reset.marketAttempt?.id });
+      const reset: CaptureSession =
+        body.stage === 'MARKET'
+          ? {
+              ...session,
+              marketAttempt: {
+                ...attempt(body.requestId, 'MARKET', session.walletAttemptId, null),
+                market: body.market ?? captureConfig.marketDefaults,
+              },
+              ratesAttempt: attempt(
+                `${body.requestId}-rates`,
+                'RATES',
+                session.walletAttemptId,
+                body.requestId,
+              ),
+              inspection: null,
+              datasetReady: false,
+              calibrationReady: false,
+              datasetId: null,
+              calibration: null,
+            }
+          : {
+              ...session,
+              ratesAttempt: attempt(
+                body.requestId,
+                'RATES',
+                session.walletAttemptId,
+                session.marketAttempt?.id ?? null,
+              ),
+              inspection: null,
+              datasetReady: false,
+              datasetId: null,
+            };
+      const next = completed(reset, {
+        requestId: `${body.requestId}-inspect`,
+        step: 'INSPECT',
+        attemptId: reset.marketAttempt?.id,
+      });
       sessions.set(next.id, next);
       return HttpResponse.json(next);
     }),
@@ -163,7 +303,8 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       const body = (await request.json()) as CaptureOperationRequest;
       const existing = operations.get(body.requestId);
       if (existing) return HttpResponse.json(existing, { status: 202 });
-      if (session.operation?.state === 'RUNNING') return error(409, 'CAPTURE_BUSY', 'Capture worker is busy or stopping');
+      if (session.operation?.state === 'RUNNING')
+        return error(409, 'CAPTURE_BUSY', 'Capture worker is busy or stopping');
       const next = completed(session, body);
       sessions.set(next.id, next);
       return HttpResponse.json(next.operation, { status: 202 });
@@ -171,7 +312,9 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
     http.get('/api/captures/:id/operations/:operationId', async ({ params }) => {
       await wait();
       const operation = operations.get(String(params.operationId));
-      return operation ? HttpResponse.json(operation) : error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
+      return operation
+        ? HttpResponse.json(operation)
+        : error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
     }),
     http.get('/api/captures/:id/cases', async ({ params }) => {
       await wait();
@@ -182,22 +325,75 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       const id = String(params.id);
       const caseId = String(params.caseId);
       const items = caseResponses.get(id) ?? [];
-      if (!items.some(item => item.caseId === caseId)) return error(404, 'CASE_NOT_FOUND', 'Capture case was not found');
-      caseResponses.set(id, items.map(item => item.caseId === caseId ? { ...item, datasetId: sampleDataset.id } : item));
+      if (!items.some((item) => item.caseId === caseId))
+        return error(404, 'CASE_NOT_FOUND', 'Capture case was not found');
+      caseResponses.set(
+        id,
+        items.map((item) =>
+          item.caseId === caseId ? { ...item, datasetId: sampleDataset.id } : item,
+        ),
+      );
       return HttpResponse.json({ dataset: sampleDataset, created: false });
     }),
     http.post('/api/captures/:id/dataset', async ({ params }) => {
       await wait();
       const session = found(params.id);
-      if (!session?.datasetReady) return error(404, 'ARTIFACT_NOT_FOUND', 'Successful artifact not found');
+      if (!session?.datasetReady)
+        return error(404, 'ARTIFACT_NOT_FOUND', 'Successful artifact not found');
       const created = session.datasetId == null;
       sessions.set(session.id, { ...session, datasetId: sampleDataset.id });
-      return HttpResponse.json({ dataset: sampleDataset, created }, { status: created ? 201 : 200 });
+      return HttpResponse.json(
+        { dataset: sampleDataset, created },
+        { status: created ? 201 : 200 },
+      );
     }),
     http.get('/api/captures/:id/downloads/:kind', ({ params }) => {
       const session = found(params.id);
-      if (params.kind === 'calibration' && session?.calibration) return HttpResponse.json(session.calibration);
+      if (params.kind === 'calibration' && session?.calibration)
+        return HttpResponse.json(session.calibration);
       return error(404, 'ARTIFACT_NOT_FOUND', 'Successful artifact not found');
     }),
   ];
+}
+
+function withSummary(session: CaptureSession): CaptureSession {
+  if (session.summary) return session;
+  const running = session.operation?.state === 'RUNNING';
+  const status = running
+    ? 'RUNNING'
+    : session.datasetId
+      ? 'DONE'
+      : session.datasetReady
+        ? 'READY_TO_REPLAY'
+        : 'NOT_STARTED';
+  const kind = running
+    ? 'WAIT'
+    : session.datasetId
+      ? 'START_RUN'
+      : session.datasetReady
+        ? 'REGISTER_DATASET'
+        : 'START_WALLET';
+  const summary: CaptureSummary = {
+    status,
+    reasonCode: session.operation?.code ?? null,
+    currentStep: {
+      index: session.datasetReady ? 4 : 1,
+      stage: session.datasetReady ? 'DATASET' : 'WALLET',
+    },
+    steps: ['WALLET', 'MARKETS', 'RATES', 'DATASET'].map((stage, index) => ({
+      stage: stage as 'WALLET' | 'MARKETS' | 'RATES' | 'DATASET',
+      state: session.datasetReady && index < 3 ? 'DONE' : 'TODO',
+    })),
+    progress: null,
+    nextAction: {
+      kind,
+      stage: session.datasetReady ? 'DATASET' : 'WALLET',
+      attemptId: session.walletAttemptId,
+      caseId: null,
+      maxRequests: session.datasetReady ? null : 400,
+    },
+    cases: { total: 0, ready: 0, blocked: 0, downloading: 0 },
+    lastProgressAt: null,
+  };
+  return { ...session, displayName: session.name, summary };
 }

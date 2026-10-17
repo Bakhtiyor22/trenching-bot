@@ -1,17 +1,13 @@
 import type { Config, ConfigLimits, Range, RunStartRequest } from '../../api/types';
 import { isSolanaAddress } from '../../lib/base58';
-import { validateDecimal } from '../../lib/decimal';
+import { trimFractionZeros, validateDecimal } from '../../lib/decimal';
+import { bpsToPercent } from '../../lib/percent';
 
 /** The editable integer `SimulationConfig` parameters of the dip-entry strategy. */
-export const INTEGER_FIELDS = [
-  'dipBps',
-  'takeProfitBps',
-  'stopLossBps',
-  'horizonSlots',
-  'latencySlots',
-  'maxAgeSlots',
-] as const;
+export const INTEGER_FIELDS = ['horizonSlots', 'latencySlots', 'maxAgeSlots'] as const;
 export type IntegerField = (typeof INTEGER_FIELDS)[number];
+export const PERCENT_FIELDS = ['dipPercent', 'takeProfitPercent', 'stopLossPercent'] as const;
+export type PercentField = (typeof PERCENT_FIELDS)[number];
 
 export interface RunFormValues {
   datasetId: string | null;
@@ -22,30 +18,34 @@ export interface RunFormValues {
   /** Kept as the typed text, like notional. */
   transactionCostSol: string;
   maxAgeSlots: number | string;
-  dipBps: number | string;
-  takeProfitBps: number | string;
-  stopLossBps: number | string;
+  dipPercent: string;
+  takeProfitPercent: string;
+  stopLossPercent: string;
   horizonSlots: number | string;
   latencySlots: number | string;
   quoteMint: string;
 }
 
-export const FIELD_LABELS: Record<IntegerField, string> = {
-  dipBps: 'Dip below first buy (bps)',
-  takeProfitBps: 'Take profit (bps)',
-  stopLossBps: 'Stop loss (bps)',
+export const FIELD_LABELS: Record<IntegerField | PercentField, string> = {
+  dipPercent: 'Dip below first buy (%)',
+  takeProfitPercent: 'Take profit (%)',
+  stopLossPercent: 'Stop loss (%)',
   horizonSlots: 'Horizon (slots)',
   latencySlots: 'Latency (slots)',
   maxAgeSlots: 'Max observation age (slots)',
 };
 
-export const FIELD_HINTS: Record<IntegerField | 'notional' | 'minMarketCapUsd' | 'transactionCostSol' | 'quoteMint', string> = {
+export const FIELD_HINTS: Record<
+  IntegerField | PercentField | 'notional' | 'minMarketCapUsd' | 'transactionCostSol' | 'quoteMint',
+  string
+> = {
   notional: 'Quote units spent per entry, as a plain decimal.',
-  transactionCostSol: 'SOL charged per transaction (network + priority fee or tip), on entry and on exit.',
+  transactionCostSol:
+    'SOL charged per transaction (network + priority fee or tip), on entry and on exit.',
   minMarketCapUsd: 'Minimum market cap in US dollars at the dip, from the dataset’s SOL/USDT rate.',
-  dipBps: 'Buy once a trade is this far below the wallet’s first price (1500 = 15%).',
-  takeProfitBps: 'Sell once a trade is this far above the entry price (3000 = 30%).',
-  stopLossBps: 'Sell once a trade is this far below the entry price (1500 = 15%).',
+  dipPercent: 'Buy once a trade is this percent below the wallet’s first price.',
+  takeProfitPercent: 'Sell once a trade is this percent above the entry price.',
+  stopLossPercent: 'Sell once a trade is this percent below the entry price.',
   horizonSlots: 'Slots after the wallet’s first buy that are watched; 4,500 is about 30 minutes.',
   latencySlots: 'Slots between a trigger and the trade that fills it (1 = next slot).',
   maxAgeSlots: 'How old (by price slot) an observation may be when used.',
@@ -55,13 +55,13 @@ export const FIELD_HINTS: Record<IntegerField | 'notional' | 'minMarketCapUsd' |
 export function formValuesFrom(config: Config, datasetId: string | null): RunFormValues {
   return {
     datasetId,
-    notional: config.notional,
+    notional: trimFractionZeros(config.notional),
     minMarketCapUsd: config.minMarketCapUsd,
     transactionCostSol: config.transactionCostSol,
     maxAgeSlots: config.maxAgeSlots,
-    dipBps: config.dipBps,
-    takeProfitBps: config.takeProfitBps,
-    stopLossBps: config.stopLossBps,
+    dipPercent: config.dipPercent ?? bpsToPercent(config.dipBps),
+    takeProfitPercent: config.takeProfitPercent ?? bpsToPercent(config.takeProfitBps),
+    stopLossPercent: config.stopLossPercent ?? bpsToPercent(config.stopLossBps),
     horizonSlots: config.horizonSlots,
     latencySlots: config.latencySlots,
     quoteMint: config.quoteMint,
@@ -88,12 +88,19 @@ function integerError(value: number | string, range: Range): string | null {
 function marketCapError(input: string, range: Range): string | null {
   const value = input.trim();
   if (value === '') return 'Required';
-  if (!/^[0-9]+(\.[0-9]+)?$/.test(value)) return 'Use a plain decimal such as 10000 (no sign, exponent or separators)';
+  if (!/^[0-9]+(\.[0-9]+)?$/.test(value))
+    return 'Use a plain decimal such as 10000 (no sign, exponent or separators)';
   const [integer = '0', fraction = ''] = value.split('.');
   const whole = BigInt(integer);
   const hasFraction = /[1-9]/.test(fraction);
-  if (whole < BigInt(range.min) || (range.max !== null && (whole > BigInt(range.max) || (whole === BigInt(range.max) && hasFraction)))) {
-    return range.max === null ? `Must be at least ${range.min}` : `Must be between ${range.min} and ${range.max}`;
+  if (
+    whole < BigInt(range.min) ||
+    (range.max !== null &&
+      (whole > BigInt(range.max) || (whole === BigInt(range.max) && hasFraction)))
+  ) {
+    return range.max === null
+      ? `Must be at least ${range.min}`
+      : `Must be between ${range.min} and ${range.max}`;
   }
   return null;
 }
@@ -104,7 +111,10 @@ export function smallestUnit(scale: number): string {
 }
 
 /** Client-side validation mirroring the backend limits; returns one message per invalid field. */
-export function validateRunForm(values: RunFormValues, limits: ConfigLimits): Record<string, string> {
+export function validateRunForm(
+  values: RunFormValues,
+  limits: ConfigLimits,
+): Record<string, string> {
   const errors: Record<string, string> = {};
   if (!values.datasetId) errors.datasetId = 'Choose a dataset';
   const maxIntegerDigits = limits.notionalPrecision - limits.notionalScale;
@@ -122,6 +132,14 @@ export function validateRunForm(values: RunFormValues, limits: ConfigLimits): Re
   if (transactionCost) errors.transactionCostSol = transactionCost;
   const marketCap = marketCapError(values.minMarketCapUsd, limits.minMarketCapUsd);
   if (marketCap) errors.minMarketCapUsd = marketCap;
+  for (const field of PERCENT_FIELDS) {
+    const value = values[field];
+    const range = limits[field] ?? { min: '0.01', max: '99.99' };
+    const error = !/^[0-9]+(\.[0-9]{1,2})?$/.test(value)
+      ? 'Use a percent with at most 2 decimals'
+      : validateDecimal(value, { maxFractionDigits: 2, maxIntegerDigits: 3, ...range });
+    if (error) errors[field] = error;
+  }
   for (const field of INTEGER_FIELDS) {
     const error = integerError(values[field], limits[field]);
     if (error) errors[field] = error;
@@ -139,9 +157,9 @@ export function toRunStartRequest(values: RunFormValues): RunStartRequest {
       minMarketCapUsd: values.minMarketCapUsd.trim(),
       transactionCostSol: values.transactionCostSol.trim(),
       maxAgeSlots: Number(values.maxAgeSlots),
-      dipBps: Number(values.dipBps),
-      takeProfitBps: Number(values.takeProfitBps),
-      stopLossBps: Number(values.stopLossBps),
+      dipPercent: values.dipPercent,
+      takeProfitPercent: values.takeProfitPercent,
+      stopLossPercent: values.stopLossPercent,
       horizonSlots: Number(values.horizonSlots),
       latencySlots: Number(values.latencySlots),
       quoteMint: values.quoteMint.trim(),

@@ -7,6 +7,8 @@ import { KeyValueTable, Section } from '../../components/Panels';
 import { Timestamp } from '../../components/DisplayValues';
 import { ErrorState } from '../../components/StateViews';
 import { paths } from '../../paths';
+import { codeLabel } from '../../lib/codes';
+import { CodeText } from '../../components/PlainLanguage';
 import { CaptureStatus, CommandError } from './CaptureShared';
 import {
   captureKeys,
@@ -84,7 +86,7 @@ function CaseCard({ sessionId, item }: { sessionId: string; item: CaptureCase })
             <Text fw={600} ff="monospace" style={{ overflowWrap: 'anywhere' }}>
               {item.mint}
             </Text>
-          <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
+            <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
               Case {item.caseId}
             </Text>
           </Stack>
@@ -137,12 +139,13 @@ function CaseCard({ sessionId, item }: { sessionId: string; item: CaptureCase })
             ]}
           />
         </SimpleGrid>
-      {item.blocker && (
-        <Alert
-          color={item.readiness === 'READY_TO_VALIDATE' ? 'blue' : 'amber'}
-          title={item.readiness === 'READY_TO_VALIDATE' ? 'Validation needed' : 'Case is blocked'}
-        >
-            {item.blocker}
+        {item.blocker && (
+          <Alert
+            color={item.readiness === 'READY_TO_VALIDATE' ? 'blue' : 'amber'}
+            title={item.readiness === 'READY_TO_VALIDATE' ? 'Validation needed' : 'Case is blocked'}
+          >
+            {codeLabel(item.blocker)}
+            <CodeText code={item.blocker} />
           </Alert>
         )}
         {operation.isError && (

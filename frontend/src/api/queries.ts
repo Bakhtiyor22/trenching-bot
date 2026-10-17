@@ -99,7 +99,8 @@ async function completeChart(
   let cursor = first.markers.nextCursor;
   while (cursor !== null) {
     signal.throwIfAborted();
-    if (cursors.has(cursor)) throw new ApiError(0, 'BAD_RESPONSE', 'The chart returned a repeated marker cursor.');
+    if (cursors.has(cursor))
+      throw new ApiError(0, 'BAD_RESPONSE', 'The chart returned a repeated marker cursor.');
     cursors.add(cursor);
     const page = await fetchPage({ ...request, cursor }, signal);
     items.push(...page.markers.items);
@@ -112,7 +113,8 @@ async function completeChart(
 export function useDatasetChart(id: string, request: ChartRequest, enabled = true) {
   return useQuery({
     queryKey: queryKeys.datasetChart(id, request),
-    queryFn: ({ signal }) => completeChart((page, pageSignal) => api.datasetChart(id, page, pageSignal), request, signal),
+    queryFn: ({ signal }) =>
+      completeChart((page, pageSignal) => api.datasetChart(id, page, pageSignal), request, signal),
     enabled,
     staleTime: Infinity,
   });
@@ -121,8 +123,10 @@ export function useDatasetChart(id: string, request: ChartRequest, enabled = tru
 export function useRunChart(id: string, request: ChartRequest, enabled = true) {
   return useQuery({
     queryKey: queryKeys.runChart(id, request),
-    queryFn: ({ signal }) => completeChart((page, pageSignal) => api.runChart(id, page, pageSignal), request, signal),
+    queryFn: ({ signal }) =>
+      completeChart((page, pageSignal) => api.runChart(id, page, pageSignal), request, signal),
     enabled,
+    placeholderData: keepPreviousData,
     staleTime: Infinity,
   });
 }

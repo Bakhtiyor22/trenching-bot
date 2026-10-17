@@ -36,6 +36,7 @@ import type {
   Scenario,
 } from '../../api/types';
 import { TradeChart } from '../../components/TradeChart';
+import { SourceLinks } from '../../components/SourceLinks';
 import { CopyValue, Decimal, Mint, Pnl, ShortId, Timestamp } from '../../components/DisplayValues';
 import { IconCompare, IconDownload, IconPlay } from '../../components/Icons';
 import { MarketLinks } from '../../components/MarketLinks';
@@ -101,10 +102,10 @@ function RunHeader({ detail }: { detail: RunDetail }) {
           rows={[
             ['Strategy', `${config.strategyName} v${config.strategyVersion}`],
             ['Notional', <Decimal key="n" value={config.notional} />],
-            ['Dip below first buy', bpsLabel(config.dipBps)],
+            ['Dip below first buy', bpsLabel(config.dipBps, config.dipPercent)],
             ['Minimum market cap', `$${formatDecimal(config.minMarketCapUsd)}`],
-            ['Take profit', bpsLabel(config.takeProfitBps)],
-            ['Stop loss', bpsLabel(config.stopLossBps)],
+            ['Take profit', bpsLabel(config.takeProfitBps, config.takeProfitPercent)],
+            ['Stop loss', bpsLabel(config.stopLossBps, config.stopLossPercent)],
             [
               'Horizon',
               `${formatSlot(config.horizonSlots)} slots (about ${horizonMinutes(config.horizonSlots)} min)`,
@@ -198,14 +199,24 @@ function Timeline({
   onOpenAction: (action: ObservedChartMarker | PaperChartFill) => void;
 }) {
   return (
-    <TradeChart
-      kind="run"
-      id={runId}
-      pair={pairKey(cycle.pair)}
-      scenarios={scenarios}
-      cycle={cycle}
-      onOpenAction={onOpenAction}
-    />
+    <Stack gap="sm">
+      <Button
+        component={Link}
+        to={`${paths.runChart(runId)}?pair=${encodeURIComponent(pairKey(cycle.pair))}`}
+        variant="light"
+      >
+        Open chart
+      </Button>
+      <TradeChart
+        kind="run"
+        id={runId}
+        pair={pairKey(cycle.pair)}
+        scenarios={scenarios}
+        cycle={cycle}
+        onOpenAction={onOpenAction}
+        height={280}
+      />
+    </Stack>
   );
 }
 
@@ -495,6 +506,7 @@ export function RunDetailPage() {
   };
   return (
     <Stack gap="lg">
+      <SourceLinks source={detail.source} runId={detail.run.id} />
       <PageHeader
         title={
           <Group gap="xs">

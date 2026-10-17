@@ -14,7 +14,9 @@ describe('scenarioEvents', () => {
       [1005, 'Take profit crossed'],
       [1006, 'Exit filled'],
     ]);
-    expect(events[2]!.detail).toBe('0.0₇8616345143543821057475551350438 · impact +19 bps · 125 bps fees');
+    expect(events[2]!.detail).toBe(
+      '0.0₇8616345143543821057475551350438 · impact +0.19% · 1.25% fees',
+    );
     expect(events[4]!.detail).toBe('0.0₆11474828329182461687631176780630 · P&L 0.028260434000 SOL');
   });
 

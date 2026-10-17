@@ -1,10 +1,11 @@
 import type { RunDetail } from '../../api/types';
 import { formatDecimal } from '../../lib/decimal';
 import { formatSlot, mintLabel } from '../../lib/format';
+import { levelPercent } from '../../lib/percent';
 
-/** Basis points with their percentage, e.g. "1500 bps (15%)". */
-export function bpsLabel(bps: number): string {
-  return `${bps} bps (${bps / 100}%)`;
+/** A server percent string, with an exact fallback for older recordings. */
+export function bpsLabel(bps: number, percent?: string): string {
+  return levelPercent(percent, bps);
 }
 
 /** Slots at Solana's nominal 400 ms, rounded to whole minutes. */
@@ -29,10 +30,13 @@ export const RUN_INPUTS: Array<{ label: string; value: (detail: RunDetail) => st
   { label: 'Engine version', value: (d) => d.run.engineVersion },
   { label: 'Strategy', value: (d) => `${d.config.strategyName} v${d.config.strategyVersion}` },
   { label: 'Notional', value: (d) => formatDecimal(d.config.notional) },
-  { label: 'Dip below first buy', value: (d) => bpsLabel(d.config.dipBps) },
+  { label: 'Dip below first buy', value: (d) => bpsLabel(d.config.dipBps, d.config.dipPercent) },
   { label: 'Minimum market cap', value: (d) => `$${formatDecimal(d.config.minMarketCapUsd)}` },
-  { label: 'Take profit', value: (d) => bpsLabel(d.config.takeProfitBps) },
-  { label: 'Stop loss', value: (d) => bpsLabel(d.config.stopLossBps) },
+  {
+    label: 'Take profit',
+    value: (d) => bpsLabel(d.config.takeProfitBps, d.config.takeProfitPercent),
+  },
+  { label: 'Stop loss', value: (d) => bpsLabel(d.config.stopLossBps, d.config.stopLossPercent) },
   { label: 'Horizon', value: (d) => `${formatSlot(d.config.horizonSlots)} slots` },
   { label: 'Latency', value: (d) => latencyLabel(d.config.latencySlots) },
   { label: 'Transaction cost', value: (d) => transactionCostLabel(d.config.transactionCostSol) },

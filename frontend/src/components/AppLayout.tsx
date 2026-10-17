@@ -46,6 +46,7 @@ const NAV_ITEMS: Array<{ to: string; label: string; icon: ReactNode; end?: boole
   { to: paths.datasets, label: 'Datasets', icon: <IconDatabase /> },
   { to: paths.newRun, label: 'New run', icon: <IconPlay /> },
   { to: paths.captures, label: 'Captures', icon: <IconCapture /> },
+  { to: paths.usage, label: 'API usage', icon: <IconList /> },
   { to: paths.solana, label: 'Solana', icon: <IconSatellite /> },
 ];
 
@@ -67,7 +68,13 @@ function ColorSchemeToggle() {
   const next = computed === 'dark' ? 'light' : 'dark';
   return (
     <Tooltip label={`Switch to ${next} mode`}>
-      <ActionIcon variant="subtle" color="gray" size="lg" onClick={() => setColorScheme(next)} aria-label={`Switch to ${next} mode`}>
+      <ActionIcon
+        variant="subtle"
+        color="gray"
+        size="lg"
+        onClick={() => setColorScheme(next)}
+        aria-label={`Switch to ${next} mode`}
+      >
         {computed === 'dark' ? <IconSun /> : <IconMoon />}
       </ActionIcon>
     </Tooltip>
@@ -79,12 +86,37 @@ export function BackendHealthIndicator() {
   const { data, isError, isPending } = useActuatorHealth();
   const status = isPending ? 'CHECKING' : isError ? 'UNREACHABLE' : (data?.status ?? 'UNKNOWN');
   const up = status === 'UP';
-  const color = up ? terminal.gain : status === 'CHECKING' || status === 'UNKNOWN' ? terminal.dimmed : terminal.loss;
-  const label = up ? 'Backend up' : status === 'CHECKING' ? 'Checking backend' : `Backend ${status.toLowerCase()}`;
+  const color = up
+    ? terminal.gain
+    : status === 'CHECKING' || status === 'UNKNOWN'
+      ? terminal.dimmed
+      : terminal.loss;
+  const label = up
+    ? 'Backend up'
+    : status === 'CHECKING'
+      ? 'Checking backend'
+      : `Backend ${status.toLowerCase()}`;
   return (
     <Tooltip label={`Actuator health: ${status}`}>
-      <Group gap={8} wrap="nowrap" px="sm" h={36} aria-label={label} visibleFrom="xs" style={{ border: `1px solid var(--mantine-color-default-border)`, borderRadius: 6 }}>
-        <span className={up ? 'console-live-dot' : undefined} style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: color }} />
+      <Group
+        gap={8}
+        wrap="nowrap"
+        px="sm"
+        h={36}
+        aria-label={label}
+        visibleFrom="xs"
+        style={{ border: `1px solid var(--mantine-color-default-border)`, borderRadius: 6 }}
+      >
+        <span
+          className={up ? 'console-live-dot' : undefined}
+          style={{
+            display: 'inline-block',
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: color,
+          }}
+        />
         <Text size="sm">{label}</Text>
       </Group>
     </Tooltip>
@@ -98,7 +130,14 @@ function SolTicker() {
   if (!rate) return null;
   return (
     <Tooltip label="Binance SOLUSDT through the backend, refreshed every 30 seconds">
-      <Group gap={8} wrap="nowrap" px="sm" h={36} visibleFrom="md" style={{ border: `1px solid var(--mantine-color-default-border)`, borderRadius: 6 }}>
+      <Group
+        gap={8}
+        wrap="nowrap"
+        px="sm"
+        h={36}
+        visibleFrom="md"
+        style={{ border: `1px solid var(--mantine-color-default-border)`, borderRadius: 6 }}
+      >
         <Text size="sm" c="dimmed" ff="monospace">
           SOL/USDT
         </Text>
@@ -117,11 +156,21 @@ function PaletteButton() {
       aria-label="Open command palette"
       h={36}
       px="sm"
-      style={{ border: `1px solid var(--mantine-color-default-border)`, borderRadius: 6, background: 'var(--mantine-color-default)', flex: '0 1 300px', minWidth: 0 }}
+      style={{
+        border: `1px solid var(--mantine-color-default-border)`,
+        borderRadius: 6,
+        background: 'var(--mantine-color-default)',
+        flex: '0 1 300px',
+        minWidth: 0,
+      }}
     >
       <Group gap={10} wrap="nowrap">
         <IconSearch size={15} color="var(--mantine-color-dimmed)" />
-        <Text size="sm" c="dimmed" style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <Text
+          size="sm"
+          c="dimmed"
+          style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+        >
           Search runs, datasets, mints
         </Text>
         <Group gap={2} wrap="nowrap" visibleFrom="sm">
@@ -163,7 +212,8 @@ function ShortcutsModal({ opened, onClose }: { opened: boolean; onClose: () => v
 
 /** Whether a nav item should be highlighted: "Runs" stays active on run detail, not on "New run". */
 function isActive(pathname: string, to: string, end?: boolean): boolean {
-  if (to === paths.runs) return pathname.startsWith(paths.runs) && !pathname.startsWith(paths.newRun);
+  if (to === paths.runs)
+    return pathname.startsWith(paths.runs) && !pathname.startsWith(paths.newRun);
   if (end) return pathname === to;
   return pathname === to || pathname.startsWith(`${to}/`);
 }
@@ -177,7 +227,15 @@ function Brand() {
         ff="monospace"
         fw={700}
         fz={13}
-        style={{ borderRadius: 6, background: terminal.accent, color: terminal.ground, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}
+        style={{
+          borderRadius: 6,
+          background: terminal.accent,
+          color: terminal.ground,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          flex: 'none',
+        }}
         aria-hidden
       >
         TB
@@ -198,6 +256,7 @@ export function AppLayout() {
   const [opened, { toggle, close }] = useDisclosure();
   const [help, { open: openHelp, close: closeHelp }] = useDisclosure();
   const { pathname } = useLocation();
+  const chartPage = /^\/runs\/[^/]+\/chart$/.test(pathname);
   const navigate = useNavigate();
 
   useHotkeys([
@@ -208,7 +267,7 @@ export function AppLayout() {
   return (
     <AppShell
       header={{ height: 60 }}
-      navbar={{ width: 220, breakpoint: 'sm', collapsed: { mobile: !opened } }}
+      navbar={{ width: 220, breakpoint: 'sm', collapsed: { mobile: !opened, desktop: chartPage } }}
       padding="lg"
     >
       <CommandPalette />
@@ -217,11 +276,24 @@ export function AppLayout() {
 
       <AppShell.Header>
         <Group h="100%" px="md" gap="sm" wrap="nowrap">
-          <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Toggle navigation" />
+          <Burger
+            opened={opened}
+            onClick={toggle}
+            hiddenFrom="sm"
+            size="sm"
+            aria-label="Toggle navigation"
+          />
           <Box hiddenFrom="sm">
             <Brand />
           </Box>
           <Box style={{ flex: 1 }} />
+          {chartPage && (
+            <Group visibleFrom="sm" gap="xs">
+              {NAV_ITEMS.map((item) => (
+                <ButtonNav key={item.to} to={item.to} label={item.label} />
+              ))}
+            </Group>
+          )}
           <PaletteButton />
           <SolTicker />
           <BackendHealthIndicator />
@@ -250,8 +322,16 @@ export function AppLayout() {
           </Stack>
         </AppShell.Section>
         <AppShell.Section>
-          <Text size="xs" c="dimmed" p="xs" lh={1.5} style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 6 }} aria-label="Paper trading notice">
-            Every fill, position and P&amp;L here is simulated from replayed data. Nothing is traded, and Solana is only ever read.
+          <Text
+            size="xs"
+            c="dimmed"
+            p="xs"
+            lh={1.5}
+            style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 6 }}
+            aria-label="Paper trading notice"
+          >
+            Every fill, position and P&amp;L here is simulated from replayed data. Nothing is
+            traded, and Solana is only ever read.
           </Text>
           <Group justify="space-between" mt="xs">
             <UnstyledButton onClick={openHelp} aria-label="Show keyboard shortcuts" p={6}>
@@ -273,5 +353,13 @@ export function AppLayout() {
         </Box>
       </AppShell.Main>
     </AppShell>
+  );
+}
+
+function ButtonNav({ to, label }: { to: string; label: string }) {
+  return (
+    <Text component={RouterNavLink} to={to} size="xs" c="dimmed" style={{ textDecoration: 'none' }}>
+      {label}
+    </Text>
   );
 }

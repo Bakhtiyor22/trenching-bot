@@ -1,6 +1,6 @@
 import type { Page } from './types';
 import type { DatasetRegistration } from './types';
-import { API_BASE, deleteRequest, getJson, postJson, withQuery } from './client';
+import { API_BASE, deleteRequest, getJson, postJson, request, withQuery } from './client';
 
 export type CaptureStep =
   'WALLET' | 'MARKET' | 'RATES' | 'INSPECT' | 'EXPORT' | 'CALIBRATE' | 'QUALIFY';
@@ -15,6 +15,7 @@ export interface WalletSettings {
   mint?: string | null;
 }
 export interface MarketSettings {
+  cutoffMode?: 'FULL' | 'DECIDED';
   scanPages: number;
   maxTransactions: number;
 }
@@ -234,6 +235,8 @@ export interface CalibrationReport {
   buys: CalibrationBuy[];
 }
 export interface CaptureSession {
+  displayName?: string;
+  summary?: CaptureSummary;
   id: string;
   name: string;
   createdAt: string;
@@ -258,6 +261,8 @@ export type CaptureBoundKey =
   | 'recoveryBytesMax'
   | 'recoveryAttemptsMax';
 export interface CaptureConfig {
+  suggestedWallets?: Array<{ label: string; address: string; reasonCode: string }>;
+  recentWallets?: Array<{ address: string; label: string | null; lastUsedAt: string }>;
   rpcConfigured: boolean;
   ratesConfigured: boolean;
   walletDefaults: WalletSettings;
@@ -270,7 +275,9 @@ export interface CaptureConfig {
 }
 export interface CaptureCreate {
   requestId: string;
-  name: string;
+  name?: string;
+  timeZone?: string;
+  cutoffMode?: 'FULL' | 'DECIDED';
   wallet?: WalletSettings;
   attach?: { wallet: string; market?: string; rates?: string };
 }
@@ -280,6 +287,7 @@ export interface CaptureAttemptRequest {
   market?: MarketSettings;
 }
 export interface CaptureOperationRequest {
+  cutoffMode?: 'FULL' | 'DECIDED';
   requestId: string;
   step: CaptureStep;
   attemptId?: string;
@@ -341,11 +349,73 @@ export interface CaptureCaseCommandRequest {
   requestId: string;
 }
 const base = `${API_BASE}/captures`;
+export const CAPTURE_STATUSES = [
+  'NOT_STARTED',
+  'RUNNING',
+  'WAITING_RETRY',
+  'PAUSED',
+  'STOPPED_LIMIT',
+  'STOPPED_DEADLINE',
+  'NEEDS_ATTENTION',
+  'READY_TO_REPLAY',
+  'DONE',
+  'CANCELLED',
+] as const;
+export type CaptureSummaryStatus = (typeof CAPTURE_STATUSES)[number];
+export type CaptureStageName = 'WALLET' | 'MARKETS' | 'RATES' | 'DATASET';
+export type NextActionKind =
+  | 'START_WALLET'
+  | 'RESUME_WALLET'
+  | 'RETRY_WALLET'
+  | 'START_MARKETS'
+  | 'RESUME_MARKETS'
+  | 'CAPTURE_RATES'
+  | 'REGISTER_DATASET'
+  | 'START_RUN'
+  | 'VIEW_RESULTS'
+  | 'INSPECT'
+  | 'WAIT'
+  | 'NONE';
+export interface CaptureSummary {
+  status: CaptureSummaryStatus;
+  reasonCode: string | null;
+  currentStep: { index: number; stage: CaptureStageName };
+  steps: Array<{
+    stage: CaptureStageName;
+    state: 'DONE' | 'ACTIVE' | 'STOPPED' | 'FAILED' | 'TODO';
+  }>;
+  progress: { processed: number; selected: number; percent: string } | null;
+  nextAction: {
+    kind: NextActionKind;
+    stage: CaptureStageName | null;
+    attemptId: string | null;
+    caseId: string | null;
+    maxRequests: number | null;
+  };
+  cases: { total: number; ready: number; blocked: number; downloading: number };
+  lastProgressAt: string | null;
+}
+export interface CaptureSessionPage extends Page<CaptureSession> {
+  statusCounts?: Record<CaptureSummaryStatus, number>;
+}
+export interface CaptureNameCheck {
+  available: boolean;
+  normalized: string;
+  suggestion: string | null;
+}
 const sessionUrl = (id: string) => `${base}/${encodeURIComponent(id)}`;
 export const capturesApi = {
   config: (signal?: AbortSignal) => getJson<CaptureConfig>(`${base}/config`, signal),
-  list: (page: number, signal?: AbortSignal) =>
-    getJson<Page<CaptureSession>>(withQuery(base, { page, size: 20 }), signal),
+  list: (page: number, signal?: AbortSignal, sort = 'createdAt,desc', status?: string | null) =>
+    getJson<CaptureSessionPage>(withQuery(base, { page, size: 20, sort, status }), signal),
+  checkName: (name: string, signal?: AbortSignal) =>
+    getJson<CaptureNameCheck>(withQuery(`${base}/names/check`, { name }), signal),
+  rename: (id: string, body: { requestId: string; name: string }) =>
+    request<CaptureSession>(sessionUrl(id), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
   session: (id: string, signal?: AbortSignal) => getJson<CaptureSession>(sessionUrl(id), signal),
   create: (body: CaptureCreate) => postJson<CaptureSession>(base, body),
   attempts: (id: string, page: number, signal?: AbortSignal) =>

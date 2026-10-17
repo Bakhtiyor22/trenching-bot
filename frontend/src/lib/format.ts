@@ -1,4 +1,5 @@
 /** Display helpers for ids, mints, times and telemetry. Money is formatted in `decimal.ts`. */
+import { levelPercent } from './percent';
 
 /** Wrapped SOL mint; shown as "SOL". */
 export const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
@@ -73,7 +74,10 @@ export function formatPercent(ratio: number | null | undefined): string {
 /** "MISSING_OBSERVATION" → "Missing observation". */
 export function humanizeCode(code: string | null | undefined): string {
   if (!code) return '—';
-  const words = code.toLowerCase().split(/[_\s]+/).filter(Boolean);
+  const words = code
+    .toLowerCase()
+    .split(/[_\s]+/)
+    .filter(Boolean);
   const sentence = words.join(' ');
   return sentence.charAt(0).toUpperCase() + sentence.slice(1);
 }
@@ -85,12 +89,15 @@ export function slotRange(range: { firstSlot: number | null; lastSlot: number | 
 }
 
 /** Where a USDT value came from: the SOL/USDT rate and the UTC minute whose Binance 1-minute open it is. */
-export function usdtRateNote(rate: string | null | undefined, minute: string | null | undefined): string | null {
+export function usdtRateNote(
+  rate: string | null | undefined,
+  minute: string | null | undefined,
+): string | null {
   if (!rate || !minute) return null;
   return `At ${rate} USDT per SOL, Binance 1-minute open of ${minute.slice(0, 16).replace('T', ' ')} UTC`;
 }
 
-/** Basis points with an explicit sign, e.g. "+19 bps" for a buy's price impact and "-22 bps" for a sale's. */
-export function signedBps(bps: number): string {
-  return `${bps > 0 ? '+' : ''}${bps} bps`;
+/** Price impact as a signed percent, with an exact fallback for older recordings. */
+export function signedBps(bps: number, percent?: string): string {
+  return levelPercent(percent, bps, true);
 }

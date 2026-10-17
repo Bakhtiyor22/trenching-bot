@@ -146,13 +146,13 @@ describe('RunDetailPage', () => {
     const [takeProfit] = await screen.findAllByRole('article');
     const card = within(takeProfit!);
 
-    expect(card.getByText('Fees (125 bps)')).toBeInTheDocument();
+    expect(card.getByText('Fees (1.25%)')).toBeInTheDocument();
     expect(card.getByText(ENTRY_FEE)).toBeInTheDocument();
-    expect(card.getByText('+19 bps')).toBeInTheDocument();
+    expect(card.getByText('+0.19%')).toBeInTheDocument();
     expect(card.getByText(COST_BASIS)).toBeInTheDocument();
-    expect(card.getByText('Exit fees (125 bps)')).toBeInTheDocument();
+    expect(card.getByText('Exit fees (1.25%)')).toBeInTheDocument();
     expect(card.getByText('0.001664690000')).toBeInTheDocument();
-    expect(card.getByText('-22 bps')).toBeInTheDocument();
+    expect(card.getByText('−0.22%')).toBeInTheDocument();
     expect(card.getByText('0.133175124000')).toBeInTheDocument();
     // Charged once on entry and once on exit.
     expect(card.getAllByText(TRANSACTION_COST)).toHaveLength(2);
@@ -300,8 +300,8 @@ describe('RunDetailPage', () => {
   it('shows the dip strategy configuration the run used', async () => {
     renderRun(SAMPLE_RUN_ID);
     await screen.findAllByRole('article');
-    expect(screen.getAllByText('1500 bps (15%)')).toHaveLength(2);
-    expect(screen.getByText('3000 bps (30%)')).toBeInTheDocument();
+    expect(screen.getAllByText('15%')).toHaveLength(2);
+    expect(screen.getByText('30%')).toBeInTheDocument();
     expect(screen.getByText('$10,000')).toBeInTheDocument();
     expect(screen.getByText('4,500 slots (about 30 min)')).toBeInTheDocument();
     expect(screen.getByText('1 slot after each trigger')).toBeInTheDocument();
@@ -318,8 +318,8 @@ describe('RunDetailPage', () => {
     const orders = screen.getByRole('tabpanel');
     expect(await within(orders).findAllByText(grouped(TAKE_PROFIT_QUANTITY))).toHaveLength(1);
     expect(within(orders).getAllByText(ENTRY_FEE)).toHaveLength(2);
-    expect(within(orders).getAllByText('fees 125 bps')).toHaveLength(2);
-    expect(within(orders).getByText(/impact \+19 bps/)).toBeInTheDocument();
+    expect(within(orders).getAllByText('fees 1.25%')).toHaveLength(2);
+    expect(within(orders).getByText(/impact \+0.19%/)).toBeInTheDocument();
     expect(within(orders).getAllByText(TRANSACTION_COST)).toHaveLength(2);
     expect(within(orders).getAllByText(COST_BASIS)).toHaveLength(2);
     expect(within(orders).getByText('NO_DIP')).toBeInTheDocument();
@@ -330,7 +330,7 @@ describe('RunDetailPage', () => {
     expect(within(positions).getByText(TAKE_PROFIT_LEVEL)).toBeInTheDocument();
     expect(within(positions).getByText(STOP_LOSS_LEVEL)).toBeInTheDocument();
     expect(within(positions).getByText('0.001664690000')).toBeInTheDocument();
-    expect(within(positions).getByText(/impact -22 bps/)).toBeInTheDocument();
+    expect(within(positions).getByText(/impact −0.22%/)).toBeInTheDocument();
     // Entry and exit transaction costs for both closed positions.
     expect(within(positions).getAllByText(TRANSACTION_COST)).toHaveLength(4);
   });

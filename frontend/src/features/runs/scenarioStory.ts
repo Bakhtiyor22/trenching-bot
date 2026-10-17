@@ -1,3 +1,4 @@
+import { levelPercent } from '../../lib/percent';
 import type { Scenario } from '../../api/types';
 import { compactDecimal, formatDecimal } from '../../lib/decimal';
 import { humanizeCode, shortId, signedBps } from '../../lib/format';
@@ -34,7 +35,7 @@ export function scenarioEvents(s: Scenario, unit: string): StoryEvent[] {
     events.push({
       slot: s.fill.actualSlot,
       title: 'Entry filled',
-      detail: `${compactDecimal(s.fill.executionPrice)} · impact ${signedBps(s.fill.priceImpactBps)} · ${s.fill.feeBps} bps fees`,
+      detail: `${compactDecimal(s.fill.executionPrice)} · impact ${signedBps(s.fill.priceImpactBps, s.fill.priceImpactPercent)} · ${levelPercent(s.fill.feePercent, s.fill.feeBps)} fees`,
       color: terminal.accent,
     });
   } else {

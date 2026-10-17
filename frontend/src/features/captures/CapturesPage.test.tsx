@@ -14,7 +14,7 @@ import {
   walletTokenSessions,
 } from '../../mocks/captureFixtures';
 import { BASE_MINT, WALLET } from '../../mocks/fixtures';
-import { CapturesPage } from './CapturesPage';
+import { NewCapturePage } from './NewCapturePage';
 import { CaptureDetailPage } from './CaptureDetailPage';
 
 function detail() {
@@ -35,14 +35,15 @@ describe('Capture console', () => {
         return HttpResponse.json(captureSession);
       }),
     );
-    const { user } = renderPage(<CapturesPage />, {
+    const { user } = renderPage(<NewCapturePage />, {
       path: '/captures',
       url: '/captures',
       extraRoutes: [{ path: '/captures/:id', element: <div>Created session</div> }],
     });
     await user.type(await screen.findByLabelText(/Session name/), 'First sample');
+    await user.clear(screen.getByLabelText(/Wallet address/));
     await user.type(screen.getByLabelText(/Wallet address/), WALLET);
-    await user.click(screen.getByRole('button', { name: 'Create session' }));
+    await user.click(screen.getByRole('button', { name: 'Create capture' }));
     expect(await screen.findByText('Created session')).toBeInTheDocument();
     expect(body).toMatchObject({
       name: 'First sample',
@@ -59,14 +60,15 @@ describe('Capture console', () => {
         return HttpResponse.json(captureSession);
       }),
     );
-    const { user } = renderPage(<CapturesPage />, {
+    const { user } = renderPage(<NewCapturePage />, {
       path: '/captures',
       url: '/captures',
       extraRoutes: [{ path: '/captures/:id', element: <div>Created session</div> }],
     });
     await user.type(await screen.findByLabelText(/Session name/), 'Token case');
+    await user.clear(screen.getByLabelText(/Wallet address/));
     await user.type(screen.getByLabelText(/Wallet address/), WALLET);
-    expect(screen.queryByLabelText(/Token mint address/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Token mint address/)).toBeInTheDocument();
     await user.click(screen.getByRole('combobox', { name: 'Discovery scope' }));
     await user.click(await screen.findByRole('option', { name: 'Wallet + token' }));
     expect(screen.getByText(/qualifies is only known after market capture/)).toBeInTheDocument();
@@ -75,25 +77,37 @@ describe('Capture console', () => {
     ).toBeInTheDocument();
     const mint = screen.getByLabelText(/Token mint address/);
     await user.type(mint, 'not-a-mint');
-    await user.click(screen.getByRole('button', { name: 'Create session' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Enter a valid token mint address.');
+    await user.click(screen.getByRole('button', { name: 'Create capture' }));
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole('alert')
+          .some((alert) => alert.textContent?.includes('Enter a valid token mint address.')),
+      ).toBe(true),
+    );
     await user.clear(mint);
     await user.type(mint, BASE_MINT);
-    await user.click(screen.getByRole('button', { name: 'Create session' }));
+    await user.click(screen.getByRole('button', { name: 'Create capture' }));
     expect(await screen.findByText('Created session')).toBeInTheDocument();
     expect(body).toMatchObject({
       name: 'Token case',
-      wallet: { wallet: WALLET, scope: 'wallet-token', limit: 1000, scanPages: 20, mint: BASE_MINT },
+      wallet: {
+        wallet: WALLET,
+        scope: 'wallet-token',
+        limit: 1000,
+        scanPages: 20,
+        mint: BASE_MINT,
+      },
     });
   });
   it('restores the default sample when leaving the wallet + token scope', async () => {
-    const { user } = renderPage(<CapturesPage />, { path: '/captures', url: '/captures' });
+    const { user } = renderPage(<NewCapturePage />, { path: '/captures', url: '/captures' });
     const scope = await screen.findByRole('combobox', { name: 'Discovery scope' });
     await user.click(scope);
     await user.click(await screen.findByRole('option', { name: 'Wallet + token' }));
     await user.click(scope);
     await user.click(await screen.findByRole('option', { name: 'Wallet references' }));
-    expect(screen.queryByLabelText(/Token mint address/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Token mint address/)).toBeInTheDocument();
     expect(
       screen.getByText(/Effective settings: 1 transaction\(s\), 20 scan pages/),
     ).toBeInTheDocument();
@@ -227,7 +241,7 @@ describe('Capture console', () => {
     const { user } = detail();
     await user.click(await screen.findByRole('button', { name: 'Advanced operation settings' }));
     await user.click(
-      screen.getByRole('checkbox', { name: 'Enable automatic recovery for this stage' }),
+      await screen.findByRole('checkbox', { name: 'Enable automatic recovery for this stage' }),
     );
     expect(screen.getByLabelText('Total request budget')).toHaveValue('3000');
     expect(screen.getByLabelText('Total byte budget')).toHaveValue('314572800');
@@ -366,7 +380,7 @@ describe('Capture console', () => {
       extraRoutes: [{ path: '/datasets/:id', element: <div>Existing dataset detail</div> }],
     });
     expect(await screen.findByText(/Case case-ready/)).toBeInTheDocument();
-    expect(screen.getByText('RATES_MISSING')).toBeInTheDocument();
+    expect(screen.getByText('Technical code: RATES_MISSING')).toBeInTheDocument();
     const exportButton = screen.getByRole('button', { name: 'Export validated case' });
     expect(exportButton).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Validate and prepare rates' })).toBeEnabled();
@@ -606,10 +620,13 @@ describe('Capture console', () => {
         });
       }),
     );
-    detail();
+    const { queryClient } = detail();
     const action = await screen.findByRole('button', { name: 'Export validated case' });
     expect(action).toBeDisabled();
     await waitFor(() => expect(action).toBeEnabled(), { timeout: 5000 });
+    await waitFor(() =>
+      expect(queryClient.isFetching({ queryKey: ['captures', CAPTURE_ID] })).toBe(0),
+    );
     const settledCasePolls = casePolls;
     const settledOperationPolls = operationPolls;
     await new Promise((resolve) => setTimeout(resolve, 2500));
@@ -696,7 +713,7 @@ describe('Capture console', () => {
         return HttpResponse.json(captureSession);
       }),
     );
-    const { user } = renderPage(<CapturesPage />, {
+    const { user } = renderPage(<NewCapturePage />, {
       path: '/captures',
       url: '/captures',
       extraRoutes: [{ path: '/captures/:id', element: <div>Attached session</div> }],

@@ -7,6 +7,7 @@ import { PagingFooter } from '../../components/Panels';
 import { useClientPaging } from '../../components/useClientPaging';
 import { EmptyState } from '../../components/StateViews';
 import { formatSlot, humanizeCode, signedBps } from '../../lib/format';
+import { levelPercent } from '../../lib/percent';
 import { recordedEventSignature, transactionLinks } from '../../lib/marketLinks';
 
 function Flag({ value, label }: { value: boolean; label: string }) {
@@ -127,13 +128,18 @@ export function EventsTable({ events }: { events: RunEvent[] }) {
 }
 
 /** What one trade paid besides the curve price: the program's fees, our own price impact and the transaction cost. */
-type ExecutionCosts = Pick<Close, 'fee' | 'feeBps' | 'priceImpactBps' | 'transactionCost'>;
+type ExecutionCosts = Pick<
+  Close,
+  'fee' | 'feeBps' | 'feePercent' | 'priceImpactBps' | 'priceImpactPercent' | 'transactionCost'
+>;
 
 function fillCosts(fill: Fill): ExecutionCosts {
   return {
     fee: fill.fee,
     feeBps: fill.feeBps,
+    feePercent: fill.feePercent,
     priceImpactBps: fill.priceImpactBps,
+    priceImpactPercent: fill.priceImpactPercent,
     transactionCost: fill.priorityFee,
   };
 }
@@ -150,10 +156,10 @@ function CostsCell({ costs }: { costs: ExecutionCosts | null }) {
     <Table.Td ta="right" style={{ whiteSpace: 'nowrap' }}>
       <Decimal value={costs.fee} />{' '}
       <Text span size="xs" c="dimmed">
-        fees {costs.feeBps} bps
+        fees {levelPercent(costs.feePercent, costs.feeBps)}
       </Text>
       <Text size="xs" c="dimmed">
-        impact {signedBps(costs.priceImpactBps)} · tx{' '}
+        impact {signedBps(costs.priceImpactBps, costs.priceImpactPercent)} · tx{' '}
         <Decimal value={costs.transactionCost} size="xs" />
       </Text>
     </Table.Td>

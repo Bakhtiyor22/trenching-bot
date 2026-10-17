@@ -15,6 +15,8 @@ export interface ApiErrorBody {
   code: ApiErrorCode | string;
   message: string;
   fields: Record<string, string>;
+  suggestion?: string;
+  retryAfterSeconds?: number;
 }
 
 export type ApiErrorCode =
@@ -43,6 +45,7 @@ export interface Pair {
 }
 
 export interface Dataset {
+  source?: DatasetSource;
   id: string;
   name: string;
   trackedWallet: string;
@@ -149,6 +152,12 @@ export interface ChartCluster {
 }
 
 export interface ChartResponse {
+  extent?: {
+    firstTime: IsoInstant;
+    lastTime: IsoInstant;
+    firstSlot: number;
+    lastSlot: number;
+  } | null;
   bucketSeconds: number;
   range: { from: IsoInstant; to: IsoInstant };
   trackedWallet: string | null;
@@ -182,8 +191,11 @@ export interface Config {
   maxAgeSlots: number;
   /** Entry once a trade is this far below the wallet's first price P0. */
   dipBps: number;
+  dipPercent?: DecimalString;
   takeProfitBps: number;
+  takeProfitPercent?: DecimalString;
   stopLossBps: number;
+  stopLossPercent?: DecimalString;
   /** Plain decimal US dollars. */
   minMarketCapUsd: DecimalString;
   /** Slots after the wallet's first buy that are watched; about 0.4 s each. */
@@ -212,6 +224,9 @@ export interface DecimalRange {
  * scale; a transaction cost has at most `transactionCostScale` decimals.
  */
 export interface ConfigLimits {
+  dipPercent?: DecimalRange;
+  takeProfitPercent?: DecimalRange;
+  stopLossPercent?: DecimalRange;
   notionalScale: number;
   notionalPrecision: number;
   maxAgeSlots: Range;
@@ -232,14 +247,18 @@ export interface ConfigDefaults {
 
 /** Body of `POST /api/runs`; a missing config (or field) uses the MVP default. */
 export interface RunStartRequest {
+  presetId?: string;
   datasetId: string;
   config?: {
     /** Plain decimal string; the backend rejects a JSON number. */
     notional?: DecimalString;
     maxAgeSlots?: number;
     dipBps?: number;
+    dipPercent?: DecimalString;
     takeProfitBps?: number;
+    takeProfitPercent?: DecimalString;
     stopLossBps?: number;
+    stopLossPercent?: DecimalString;
     /** Plain decimal string, like notional. */
     minMarketCapUsd?: DecimalString;
     horizonSlots?: number;
@@ -278,6 +297,8 @@ export interface RunStart {
  * `costBasis` = notional + fee + priorityFee.
  */
 export interface Fill {
+  feePercent?: DecimalString;
+  priceImpactPercent?: DecimalString;
   orderId: string;
   targetSlot: number;
   actualSlot: number;
@@ -296,6 +317,8 @@ export interface Fill {
 
 /** An exit: `netProceeds` = `grossProceeds` − `fee` (at `feeBps`) − `transactionCost`; `priceImpactBps` is negative for the sale. */
 export interface Close {
+  feePercent?: DecimalString;
+  priceImpactPercent?: DecimalString;
   slot: number;
   observationId: string;
   executionPrice: DecimalString;
@@ -339,6 +362,13 @@ export interface DipTrigger {
 
 /** One dip-entry cycle: the tracked wallet's first buy of a token, then the dip entry, if any, and its exit. */
 export interface Scenario {
+  timeline?: {
+    firstBuyAt: IsoInstant | null;
+    dipAt: IsoInstant | null;
+    entryAt: IsoInstant | null;
+    exitTriggerAt: IsoInstant | null;
+    exitAt: IsoInstant | null;
+  };
   intentId: string;
   sourceEventId: string;
   sourceSlot: number;
@@ -362,9 +392,18 @@ export interface Scenario {
 }
 
 export interface RunDetail {
+  source?: DatasetSource;
   run: RunSummary;
   config: Config;
   scenarios: Scenario[];
+}
+
+export interface DatasetSource {
+  datasetId: string;
+  datasetName: string | null;
+  captureId: string | null;
+  captureDisplayName: string | null;
+  caseId: string | null;
 }
 
 /** A run's values in USDT for display. Each converted value is null when its rate is unavailable, with the reason. */
@@ -512,12 +551,7 @@ export interface Dashboard {
 }
 
 export type SolanaCheckOutcome =
-  | 'OK'
-  | 'NOT_CONFIGURED'
-  | 'RATE_LIMITED'
-  | 'TIMEOUT'
-  | 'RPC_ERROR'
-  | 'UNAVAILABLE';
+  'OK' | 'NOT_CONFIGURED' | 'RATE_LIMITED' | 'TIMEOUT' | 'RPC_ERROR' | 'UNAVAILABLE';
 
 export type SolanaClusterName = 'devnet' | 'testnet' | 'mainnet-beta' | 'unknown';
 

@@ -33,6 +33,12 @@ export const routes: RouteObject[] = [
         lazy: async () => ({ Component: (await import('./features/runs/NewRunPage')).NewRunPage }),
       },
       {
+        path: 'runs/:id/chart',
+        lazy: async () => ({
+          Component: (await import('./features/results/RunChartPage')).RunChartPage,
+        }),
+      },
+      {
         path: 'runs/:id',
         lazy: async () => ({
           Component: (await import('./features/runs/RunDetailPage')).RunDetailPage,
@@ -48,6 +54,18 @@ export const routes: RouteObject[] = [
         path: 'captures',
         lazy: async () => ({
           Component: (await import('./features/captures/CapturesPage')).CapturesPage,
+        }),
+      },
+      {
+        path: 'captures/new',
+        lazy: async () => ({
+          Component: (await import('./features/captures/NewCapturePage')).NewCapturePage,
+        }),
+      },
+      {
+        path: 'usage',
+        lazy: async () => ({
+          Component: (await import('./features/usage/ApiUsagePage')).ApiUsagePage,
         }),
       },
       {
