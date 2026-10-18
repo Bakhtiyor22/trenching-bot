@@ -4,9 +4,9 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.console.application.ScenarioTimelines
 import com.trenching.bot.console.domain.CaptureSource
 import com.trenching.bot.console.domain.DatasetSource
-import com.trenching.bot.console.domain.RunDetail
 import com.trenching.bot.console.domain.RunScenario
 import com.trenching.bot.console.domain.SourcedRunDetail
+import com.trenching.bot.console.domain.TimedRunScenario
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.RunSummary
@@ -69,21 +69,21 @@ class RunResponseMapperTest {
         assertTrue(listOf("dipAt", "entryAt", "exitTriggerAt", "exitAt").all { timeline[it].isNull })
     }
 
-    private fun body(source: DatasetSource): JsonNode = json.readTree(json.writeValueAsString(mapper.toResponse(SourcedRunDetail(detail(), source))))
+    private fun body(source: DatasetSource): JsonNode = json.readTree(json.writeValueAsString(mapper.toResponse(detail(source))))
 
     private fun scenario(body: JsonNode, cycle: Int): JsonNode =
         body["scenarios"].single { it["pair"]["base"].asString() == DipSample.mint(cycle).value }
 
-    private fun detail(): RunDetail {
+    private fun detail(source: DatasetSource): SourcedRunDetail {
         val scenarios = report.scenarios.map { result ->
             val selected = (result.outcome as? FillOutcome.Filled)?.let { observations[it.fill.observationId] }
             val firstBuyAt = MIDNIGHT.plusSeconds(result.intent.creationSlot.value)
-            RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable,
+            TimedRunScenario(RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable),
                 ScenarioTimelines.of(result.intent, selected, result.position, firstBuyAt, observations))
         }
         val run = RunSummary(report.runId, "dataset-1", report.engineVersion, report.configurationHash, report.resultChecksum,
             MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"))
-        return RunDetail(run, SimulationConfig.mvp(), scenarios)
+        return SourcedRunDetail(run, SimulationConfig.mvp(), scenarios, source)
     }
 
     private companion object {

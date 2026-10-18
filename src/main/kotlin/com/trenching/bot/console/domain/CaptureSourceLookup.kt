@@ -1,6 +1,4 @@
-package com.trenching.bot.console.capture
-
-import com.trenching.bot.console.domain.CaptureSource
+package com.trenching.bot.console.domain
 
 /** The capture that exported a dataset, found from the captures' forward `datasetId` links; null when none did. */
 fun interface CaptureSourceLookup {

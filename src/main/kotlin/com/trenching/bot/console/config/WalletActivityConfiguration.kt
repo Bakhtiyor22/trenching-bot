@@ -18,8 +18,8 @@ import tools.jackson.databind.ObjectMapper
 
 /**
  * Wallet activity reads `SOLANA_RPC_URL` with the wallet capture's pacing and timeouts. The transaction cache and the
- * capture annotations exist only where the capture console does (`local & !prod`); elsewhere the lookup reads uncached
- * and no action is marked captured.
+ * capture annotations are the capture console's ([CaptureConfiguration], `local & !prod`); elsewhere the lookup reads
+ * uncached and no action is marked captured.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnConsoleEnabled
@@ -28,21 +28,13 @@ class WalletActivityConfiguration {
     fun walletActivityLookup(
         rpc: SolanaRpcProperties,
         wallet: WalletHistoryCaptureProperties,
-        capture: ObjectProvider<CaptureProperties>,
+        transactionCache: ObjectProvider<SharedTransactionCache>,
         mapper: ObjectMapper,
         clock: Clock,
         recorder: ApiUsageRecorder,
-    ): WalletActivityLookup {
-        val transactionCache = capture.ifAvailable?.let { SharedTransactionCache(it.validatedRoot().resolve(TRANSACTION_CACHE_DIRECTORY), mapper) }
-        return WalletActivityLookups.create(wallet.withEndpoint(rpc.rpcUrl), mapper, clock, transactionCache, recorder)
-    }
+    ): WalletActivityLookup = WalletActivityLookups.create(wallet.withEndpoint(rpc.rpcUrl), mapper, clock, transactionCache.ifAvailable, recorder)
 
     @Bean
     fun walletActivityConsoleService(lookup: WalletActivityLookup, store: ObjectProvider<CaptureFileStore>, clock: Clock): WalletActivityConsoleService =
         WalletActivityConsoleService(lookup, WalletActivityCache(clock), store.ifAvailable?.let(::CaptureTokenIndex) ?: CapturedTokens.NONE)
-
-    private companion object {
-        /** The directory `CaptureConfiguration` gives the captures' shared transaction cache, so both read the same entries. */
-        const val TRANSACTION_CACHE_DIRECTORY = "transaction-cache"
-    }
 }

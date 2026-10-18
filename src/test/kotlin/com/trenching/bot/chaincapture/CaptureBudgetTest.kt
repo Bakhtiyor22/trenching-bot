@@ -63,4 +63,17 @@ class CaptureBudgetTest {
         runConcurrently(6) { repeat(500) { budget.counters.cacheHit(); budget.counters.rateLimited(); budget.counters.retry() } }
         assertEquals(listOf(3000, 3000, 3000), listOf(budget.counters.cacheHits, budget.counters.rateLimitedResponses, budget.counters.retries))
     }
+
+    @Test
+    fun `the latest Retry-After a rate limited reply carried is kept, and a reply without one does not clear it`() {
+        val counters = CaptureBudget(maxRequests = 1, maxBytes = 1).counters
+        assertEquals(null, counters.lastRetryAfter)
+
+        counters.rateLimited(Duration.ofSeconds(2))
+        counters.rateLimited(Duration.ofSeconds(5))
+        counters.rateLimited()
+
+        assertEquals(Duration.ofSeconds(5), counters.lastRetryAfter)
+        assertEquals(3, counters.rateLimitedResponses)
+    }
 }

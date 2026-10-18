@@ -14,8 +14,10 @@ data class RunDetail(val run: RunSummary, val config: SimulationConfig, val scen
 /** A run's detail with all its stored observations, from one read of them. */
 data class RunObservations(val detail: RunDetail, val observations: List<MarketObservation>)
 
-/** A run's detail with the dataset, capture and case it was run on. */
-data class SourcedRunDetail(val detail: RunDetail, val source: DatasetSource)
+/** A run's detail as the run page shows it: each scenario with its timeline, and the dataset, capture and case it was run on. */
+data class SourcedRunDetail(val run: RunSummary, val config: SimulationConfig, val scenarios: List<TimedRunScenario>, val source: DatasetSource)
+
+data class TimedRunScenario(val scenario: RunScenario, val timeline: ScenarioTimeline)
 
 /** One entry offset of one source buy; [selectedObservation] is the observation its fill used. */
 data class RunScenario(
@@ -24,7 +26,6 @@ data class RunScenario(
     val selectedObservation: MarketObservation?,
     val position: Position?,
     val exitUnavailable: RejectionReason?,
-    val timeline: ScenarioTimeline,
 )
 
 /** The block times of a scenario's stages; each is null when its stage did not happen or its block time is not stored. */

@@ -1,6 +1,6 @@
 package com.trenching.bot.console.application
 
-import com.trenching.bot.console.capture.CaptureSourceLookup
+import com.trenching.bot.console.domain.CaptureSourceLookup
 import com.trenching.bot.console.domain.DatasetSource
 import com.trenching.bot.replay.ReplayDatasetCatalog
 import com.trenching.bot.replay.domain.DatasetSummary

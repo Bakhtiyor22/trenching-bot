@@ -14,6 +14,11 @@ trenching:
   solana:
     # Secret (may embed an API key): environment only; blank means not configured.
     rpc-url: ${SOLANA_RPC_URL:}
+  console:
+    # Public on-chain wallets the new-capture form offers first; a label also names that wallet's generated captures.
+    suggested-wallets:
+      - label: Decu
+        address: 4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9
 
 # Provider pacing is shared by every capture against the same RPC endpoint in this process. 4 requests in flight with
 # a start every 125 ms (8 per second) stays below the 10 requests per second free tier; 1 and 500ms reproduce the old pacing.

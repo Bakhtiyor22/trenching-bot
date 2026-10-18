@@ -62,6 +62,30 @@ class HttpSolanaReadRpcTest {
     }
 
     @Test
+    fun `a single attempt transport surfaces a 429 with its Retry After at once, without a retry or a pause`() {
+        var calls = 0
+        val timing = FakeTiming()
+        fakeServer { exchange ->
+            calls++
+            exchange.responseHeaders.set("Retry-After", "2")
+            exchange.sendResponseHeaders(429, 2)
+            exchange.responseBody.use { it.write("{}".toByteArray()) }
+        }.use { server ->
+            val budget = CaptureBudget(3, 1024)
+            val rpc = HttpSolanaReadRpc(WalletHistoryCaptureProperties(endpoint = "http://127.0.0.1:${server.server.address.port}/"), mapper, clock,
+                timing, legacyPacing(timing), maxAttempts = 1)
+
+            val failure = assertFailsWith<CaptureProviderException> { rpc.call("getGenesisHash", emptyList(), budget) }
+
+            assertEquals("RATE_LIMITED", failure.category)
+            assertEquals(Duration.ofSeconds(2), failure.retryAfter)
+            assertEquals(listOf(1, 1, 0), listOf(calls, budget.requestsUsed, budget.counters.retries))
+            assertEquals(Duration.ofSeconds(2), budget.counters.lastRetryAfter)
+            assertTrue(timing.pauses.isEmpty(), timing.pauses.toString())
+        }
+    }
+
+    @Test
     fun `does not retry authentication failures or retain unsafe provider response text`() {
         var calls = 0
         fakeServer { exchange ->

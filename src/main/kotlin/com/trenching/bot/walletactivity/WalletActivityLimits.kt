@@ -14,6 +14,9 @@ object WalletActivityLimits {
 
     val OPERATION_TIMEOUT: Duration = Duration.ofSeconds(30)
 
+    /** Requests sent for one provider read: never retried, so a page stays within `limit` + 2 requests. */
+    const val PROVIDER_ATTEMPTS = 1
+
     const val SOURCE = "pumpfun-user-volume-accumulator"
     const val VENUE = "PUMPFUN_CURVE"
     const val TOKEN_DECIMALS = PumpFunLayout.TOKEN_DECIMALS

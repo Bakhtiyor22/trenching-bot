@@ -44,6 +44,12 @@ class LocalAccessFilterTest {
     }
 
     @Test
+    fun `wallet activity is refused through the tunnel and served to a local browser`() {
+        assertEquals(403, status("/api/wallets/4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9/activity", host = "console.jprq.app"))
+        assertEquals(200, status("/api/wallets/4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9/activity", origin = "http://localhost:5173"))
+    }
+
+    @Test
     fun `dataset deletion is refused through the tunnel, a remote peer or a foreign origin`() {
         assertEquals(403, status("/api/datasets/abc", host = "console.jprq.app", method = "DELETE"))
         assertEquals(403, status("/api/datasets/abc", peer = "10.0.0.7", method = "DELETE"))

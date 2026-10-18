@@ -29,7 +29,10 @@ import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 import tools.jackson.databind.DeserializationFeature
 
-/** Every HTTP request it sends, each retry included, is recorded once in [recorder] under the budget's usage context. */
+/**
+ * Every HTTP request it sends, each retry included, is recorded once in [recorder] under the budget's usage context. A
+ * rate limited, unavailable or transport failure is sent again until [maxAttempts] requests were made for one call.
+ */
 class HttpSolanaReadRpc(
     private val settings: SolanaRpcSettings,
     private val mapper: ObjectMapper,
@@ -37,7 +40,12 @@ class HttpSolanaReadRpc(
     private val timing: CaptureTiming = SystemCaptureTiming,
     private val limiter: ProviderRequestLimiter = ProviderRequestLimiter.of(settings, timing),
     private val recorder: ApiUsageRecorder = ApiUsageRecorder.NONE,
+    private val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
 ) : SolanaReadRpc {
+    init {
+        require(maxAttempts in 1..DEFAULT_MAX_ATTEMPTS) { "maxAttempts must be between 1 and $DEFAULT_MAX_ATTEMPTS, was $maxAttempts" }
+    }
+
     private val log = LoggerFactory.getLogger(HttpSolanaReadRpc::class.java)
     private val endpoint = endpoint(settings.endpoint)
     private val credentialFragments = endpoint?.let(::credentialFragments).orEmpty()
@@ -52,14 +60,14 @@ class HttpSolanaReadRpc(
         budget.startDeadline(timing.nanoTime(), budget.operationTimeout ?: settings.operationTimeout)
         var last = CaptureHttpReply.Failed("UNAVAILABLE", true)
         var attempts = 0
-        for (attempt in 1..MAX_ATTEMPTS) {
+        for (attempt in 1..maxAttempts) {
             attempts = attempt
             when (val reply = limiter.withStart(budget) { send(uri, method, params, budget) }) {
                 is CaptureHttpReply.Success -> return reply.result
                 is CaptureHttpReply.Failed -> {
                     last = reply
-                    if (reply.rateLimited) budget.counters.rateLimited()
-                    if (!reply.retryable || attempt == MAX_ATTEMPTS) break
+                    if (reply.rateLimited) budget.counters.rateLimited(reply.retryAfter)
+                    if (!reply.retryable || attempt == maxAttempts) break
                     budget.counters.retry()
                     val backoff = Duration.ofMillis((BASE_BACKOFF_MILLIS shl (attempt - 1)) + timing.jitterMillis(attempt))
                     val delay = maxOf(backoff, reply.retryAfter ?: Duration.ZERO)
@@ -199,10 +207,10 @@ class HttpSolanaReadRpc(
         return uri
     }
 
-    private companion object {
-        const val MAX_ATTEMPTS = 3
-        val MAX_RETRY_AFTER: Duration = Duration.ofMinutes(30)
-        const val BASE_BACKOFF_MILLIS = 500L
-        const val MIN_CREDENTIAL_FRAGMENT_LENGTH = 8
+    companion object {
+        const val DEFAULT_MAX_ATTEMPTS = 3
+        private val MAX_RETRY_AFTER: Duration = Duration.ofMinutes(30)
+        private const val BASE_BACKOFF_MILLIS = 500L
+        private const val MIN_CREDENTIAL_FRAGMENT_LENGTH = 8
     }
 }

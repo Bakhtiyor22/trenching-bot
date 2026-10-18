@@ -30,7 +30,7 @@ Console only; there is no CLI option for this scope, although CLI inspection, ma
 
 ### Pick a token from wallet activity
 
-The new-capture page lists the wallet's recent Pump.fun curve buys and sells (`GET /api/wallets/{address}/activity`). It loads them only when you open the token step with a valid wallet, press Refresh, or press Load older; it never polls. Picking a buy sets the scope to **Wallet + token** and fills the mint. Sells cannot be picked.
+The new-capture page lists the wallet's recent Pump.fun curve buys and sells (`GET /api/wallets/{address}/activity`). It loads them only when you open the token step with a valid wallet, press Refresh, or press Load older; it never polls. Like the capture routes it answers only a local browser, never the public preview tunnel (403 `LOCAL_ACCESS_REQUIRED`), because it spends provider requests. Picking a buy sets the scope to **Wallet + token** and fills the mint. Sells cannot be picked.
 
 **Source.** The list reads the wallet's Pump.fun user volume accumulator listing, as the [`pumpfun-user-buys` scope](#scope-the-wallets-own-pumpfun-buys) does, because the wallet's own listing is mostly other bots' transactions. Each successful listed transaction is read once, and every Pump.fun `TradeEvent` whose user is the wallet becomes one action, newest first. A transaction with two such events gives two actions. Failed listing entries are counted in `scanned` and never fetched. A successful transaction with no readable wallet trade (a PumpSwap route, an unknown layout, a non-SOL quote) is counted in `unreadable` and is never guessed.
 
@@ -39,7 +39,7 @@ The new-capture page lists the wallet's recent Pump.fun curve buys and sells (`G
 **Readings, not proof.**
 - `earlierActionInPage` means the same mint has an older action on the same page. It is never first-buy proof; that is what the wallet + token capture checks.
 - `overSignalThreshold` means the curve payment is over 1.9 SOL, strictly, fees excluded (`signalBasis` `CURVE_PAYMENT_EXCLUDING_FEES`). It is shown for picking only and never decides a run.
-- `capturedIn` names the captures on disk that already hold the mint for this wallet, by display name. It is empty where the capture console is absent (outside the local profile).
+- `capturedIn` names the captures on disk that already hold the mint for this wallet, by display name. It is empty where the capture console is absent (outside the local profile), and while any capture's session file cannot be read (logged as a warning).
 
 **Request cost.** One call sends:
 
@@ -50,9 +50,9 @@ The new-capture page lists the wallet's recent Pump.fun curve buys and sells (`G
 | Mainnet check | 1 `getGenesisHash` the first time in each backend process, repeated on later calls until one succeeds |
 | Total | At most `limit` + 2: 22 at the default `limit` of 20, 52 at the maximum of 50 |
 
-Retries count toward that bound. If a retry would pass it, the page ends as `PROVIDER_RATE_LIMITED` (when a 429 was seen) or `PROVIDER_UNAVAILABLE` instead of spending more. A page also stops after 30 seconds. `requestsUsed` in the response is the number actually sent, and the API usage page counts these requests under the task `WALLET_ACTIVITY`. Requests share the pacing and limiter of the captures on the same endpoint (`walletactivity.capture.*`, see [provider pacing](#provider-pacing-and-the-transaction-cache)).
+Wallet activity never retries a request, so that bound always holds: a 429 ends the page at once as `PROVIDER_RATE_LIMITED` with the provider's `Retry-After`, and any other provider failure ends it as `PROVIDER_UNAVAILABLE`. A page also stops after 30 seconds. `requestsUsed` in the response is the number actually sent (0 for a page served from the cache), and the API usage page counts these requests under the task `WALLET_ACTIVITY`. Requests share the pacing and limiter of the captures on the same endpoint (`walletactivity.capture.*`, see [provider pacing](#provider-pacing-and-the-transaction-cache)).
 
-**Cache.** A page is kept in memory for 60 seconds per wallet, `limit` and `before`, and served from there with `cachedAt` set and no request. `refresh=true` (the Refresh button) skips the cache and reads again. A restart empties it. Load older passes the page's `nextBefore` as `before`; `nextBefore` is null when the listing ended.
+**Cache.** A page is kept in memory for 60 seconds per wallet, `limit` and `before`, and served from there with `cachedAt` set, no request and `requestsUsed` 0. `refresh=true` (the Refresh button) skips the cache and reads again. A restart empties it. Load older passes the page's `nextBefore` as `before`; `nextBefore` is null when the listing ended.
 
 **Errors.** 400 `INVALID_ADDRESS` for a wallet that is not a base58 address; 400 `INVALID_REQUEST` with `fields` for a `limit` outside 1–50 or a `before` that is not a transaction signature; 409 `RPC_NOT_CONFIGURED` when the backend has no `SOLANA_RPC_URL`; 409 `NOT_MAINNET`; 429 `PROVIDER_RATE_LIMITED`, with `retryAfterSeconds` when the provider sent `Retry-After`; 502 `PROVIDER_UNAVAILABLE` for a timeout or provider failure. An empty listing, or a `before` the provider does not know, gives 200 with no actions.
 

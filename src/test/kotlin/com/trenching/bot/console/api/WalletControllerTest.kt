@@ -119,7 +119,9 @@ class WalletControllerTest {
         val refreshed = body(mvc, "/api/wallets/${DECU.value}/activity?refresh=true", 200)
 
         assertEquals("2026-10-17T10:00:00Z", cached["cachedAt"].asString())
+        assertEquals(0, cached["requestsUsed"].asInt())
         assertTrue(refreshed["cachedAt"].isNull)
+        assertTrue(refreshed["requestsUsed"].asInt() > 0)
         assertEquals(2, provider.count("getSignaturesForAddress"))
     }
 

@@ -48,6 +48,18 @@ class CaptureTokenIndexTest {
         assertEquals(emptyMap(), CaptureTokenIndex(store).capturesOf(WalletAddress.of(DECU)))
     }
 
+    @Test
+    fun `an unreadable session file marks no mint captured instead of failing`() {
+        store.save(record("old", "runitback", "2026-10-10T09:00:00Z", CaptureWalletSettings(DECU, "wallet-token", mint = MINT_A)), create = true)
+        assertEquals(setOf(MINT_A), CaptureTokenIndex(store).capturesOf(WalletAddress.of(DECU)).keys)
+
+        UnreadableSessionFiles.variants(store).entries.forEachIndexed { index, (variant, breakSession) ->
+            breakSession("broken-$index")
+            assertEquals(emptyMap(), CaptureTokenIndex(store).capturesOf(WalletAddress.of(DECU)), variant)
+            store.remove("broken-$index", "test")
+        }
+    }
+
     private fun record(id: String, name: String, createdAt: String, wallet: CaptureWalletSettings?, windows: List<String> = emptyList()) = CaptureSessionRecord(
         id = id, requestId = id, fingerprint = id, name = name, createdAt = Instant.parse(createdAt), wallet = wallet,
         walletAttemptId = "w-$id", marketAttemptId = null, ratesAttemptId = null,

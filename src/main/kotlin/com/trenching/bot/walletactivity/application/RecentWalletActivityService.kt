@@ -31,7 +31,8 @@ import org.slf4j.LoggerFactory
 /**
  * Reads one page of the wallet's Pump.fun user volume accumulator listing and the wallet's trades in it. A page costs the
  * listing request, at most `limit` transaction reads (cache hits are free) and, until one succeeds, the mainnet check;
- * its [CaptureBudget] allows exactly that many requests, so a retry that would exceed it ends the page as unavailable.
+ * its [CaptureBudget] allows exactly that many requests, so a request beyond them ends the page as unavailable, or as rate
+ * limited with the latest `Retry-After` when the provider rate limited it.
  */
 internal class RecentWalletActivityService(
     private val rpc: SolanaReadRpc,
@@ -43,16 +44,16 @@ internal class RecentWalletActivityService(
     @Volatile private var mainnetVerified = false
 
     override fun recent(request: WalletActivityRequest, usage: ApiUsageContext): WalletActivityResult {
-        val listingAddress = WalletHistoryListing.pumpAccumulator(request.wallet)
         val checkGenesis = !mainnetVerified
         val budget = budget(request.limit, checkGenesis, usage)
         val result = try {
+            val listingAddress = WalletHistoryListing.pumpAccumulator(request.wallet)
             if (checkGenesis) requireMainnet(budget)
             WalletActivityResult.Found(page(request, listingAddress, budget))
         } catch (exception: CaptureProviderException) {
             unavailable(providerReason(exception.category), exception.retryAfter.takeIf { exception.category == CaptureCategory.RATE_LIMITED })
         } catch (_: CaptureBudgetException) {
-            unavailable(if (budget.counters.rateLimitedResponses > 0) WalletActivityUnavailable.PROVIDER_RATE_LIMITED else WalletActivityUnavailable.PROVIDER_UNAVAILABLE, null)
+            budgetExhausted(budget)
         } catch (exception: CaptureValidationException) {
             unavailable(if (exception.category == MAINNET_REQUIRED) WalletActivityUnavailable.NOT_MAINNET else WalletActivityUnavailable.PROVIDER_UNAVAILABLE, null)
         }
@@ -107,6 +108,13 @@ internal class RecentWalletActivityService(
         CaptureCategory.RATE_LIMITED -> WalletActivityUnavailable.PROVIDER_RATE_LIMITED
         else -> WalletActivityUnavailable.PROVIDER_UNAVAILABLE
     }
+
+    private fun budgetExhausted(budget: CaptureBudget): WalletActivityResult.Unavailable =
+        if (budget.counters.rateLimitedResponses > 0) {
+            unavailable(WalletActivityUnavailable.PROVIDER_RATE_LIMITED, budget.counters.lastRetryAfter)
+        } else {
+            unavailable(WalletActivityUnavailable.PROVIDER_UNAVAILABLE, null)
+        }
 
     private fun unavailable(reason: WalletActivityUnavailable, retryAfter: Duration?) = WalletActivityResult.Unavailable(reason, retryAfter)
 

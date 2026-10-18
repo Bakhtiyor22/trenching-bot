@@ -12,7 +12,6 @@ import com.trenching.bot.console.ChartFixtures.observation
 import com.trenching.bot.console.ChartFixtures.tradeObservation
 import com.trenching.bot.console.application.ChartConsoleService
 import com.trenching.bot.console.application.ConsoleService
-import com.trenching.bot.console.application.ScenarioTimelines
 import com.trenching.bot.console.domain.ChartExtent
 import com.trenching.bot.console.domain.ChartQuery
 import com.trenching.bot.console.domain.ChartView
@@ -382,8 +381,7 @@ class ChartConsoleServiceTest {
         val byId = observations.associateBy { it.id }
         val scenarios = report.scenarios.map { result ->
             val selected = (result.outcome as? FillOutcome.Filled)?.let { byId[it.fill.observationId] }
-            RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable,
-                ScenarioTimelines.of(result.intent, selected, result.position, null, byId))
+            RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable)
         }
         val run = RunSummary(report.runId, datasetId, report.engineVersion, report.configurationHash, report.resultChecksum,
             MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"))

@@ -1,6 +1,8 @@
 package com.trenching.bot.console.capture
 
 import com.trenching.bot.console.domain.CaptureSource
+import com.trenching.bot.console.domain.CaptureSourceLookup
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 import kotlin.test.assertEquals
@@ -78,6 +80,28 @@ class CaptureSourceLookupTest {
         case("s-old", "case-a", datasetId = "dataset-1")
 
         assertEquals(CaptureSource("s-old", "earlier", "case-a"), lookup.find("dataset-1"))
+    }
+
+    @Test
+    fun `an unreadable session file leaves the dataset without a capture instead of failing`() {
+        session("s1", "Decu · Pump.fun buys · 10 Oct 10:00", "2026-10-10T10:00:00Z", datasetId = "dataset-1")
+        assertEquals("s1", lookup.find("dataset-1")?.captureId)
+
+        UnreadableSessionFiles.variants(store).entries.forEachIndexed { index, (variant, breakSession) ->
+            breakSession("broken-$index")
+            assertNull(lookup.find("dataset-1"), variant)
+            store.remove("broken-$index", "test")
+        }
+    }
+
+    @Test
+    fun `an unreadable case file leaves the dataset without a capture instead of failing`() {
+        session("s1", "Decu · 7mup…pump · 16 Oct 20:13", "2026-10-16T20:13:00Z")
+        case("s1", "case-a", datasetId = "dataset-a")
+        assertEquals("case-a", lookup.find("dataset-a")?.caseId)
+        Files.writeString(store.paths.resolve("console/s1/case-b.json"), "{")
+
+        assertNull(lookup.find("dataset-a"))
     }
 
     @Test

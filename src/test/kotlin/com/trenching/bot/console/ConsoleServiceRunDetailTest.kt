@@ -4,6 +4,7 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.PageResult
 import com.trenching.bot.console.application.ConsoleService
 import com.trenching.bot.console.application.DatasetSourceService
+import com.trenching.bot.console.application.RunUsdtViewService
 import com.trenching.bot.console.capture.CaptureCaseRecord
 import com.trenching.bot.console.capture.CaptureFileSourceLookup
 import com.trenching.bot.console.capture.CaptureFileStore
@@ -14,6 +15,9 @@ import com.trenching.bot.console.domain.DatasetSource
 import com.trenching.bot.console.domain.StoredReportFacts
 import com.trenching.bot.console.report.RunReportReader
 import com.trenching.bot.marketdata.MarketObservationStore
+import com.trenching.bot.marketdata.RateLookup
+import com.trenching.bot.marketdata.RateUnavailableReason
+import com.trenching.bot.marketdata.SolUsdtRateSource
 import com.trenching.bot.papertrading.PaperOrderStore
 import com.trenching.bot.portfolio.PositionStore
 import com.trenching.bot.portfolio.domain.StoredPosition
@@ -32,6 +36,7 @@ import com.trenching.bot.walletactivity.WalletEventStore
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
 import java.io.InputStream
 import java.math.BigDecimal
+import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 import kotlin.test.assertEquals
@@ -100,12 +105,33 @@ class ConsoleServiceRunDetailTest {
 
     @Test
     fun `each scenario's first buy is the block time of the tracked wallet's buy it started from`() {
-        val scenarios = service.detailWithSource(run.id).detail.scenarios
+        val scenarios = service.detailWithSource(run.id).scenarios
 
-        val firstBuys = scenarios.associate { it.intent.pair to it.timeline.firstBuyAt }
+        val firstBuys = scenarios.associate { it.scenario.intent.pair to it.timeline.firstBuyAt }
         assertEquals(Instant.parse("2026-10-01T00:16:40Z"), firstBuys[DipSample.pair(DipSample.TAKE_PROFIT)])
         assertEquals(Instant.parse("2026-10-01T00:50:00Z"), firstBuys[DipSample.pair(DipSample.NO_DIP)])
         assertNull(firstBuys.getValue(DipSample.pair(DipSample.STOP_LOSS)))
+    }
+
+    @Test
+    fun `the chart and USDT reads of a run never load its accepted trades`() {
+        service.detailWithObservations(run.id)
+        RunUsdtViewService(service, NoRates).view(run.id)
+
+        Mockito.verify(events, Mockito.never()).acceptedTrades(run.id)
+    }
+
+    @Test
+    fun `an unreadable capture session leaves the run's capture unnamed`() {
+        Files.createDirectories(root.resolve("console/half-written"))
+
+        assertEquals(DatasetSource(DATASET_ID, DATASET_NAME, null), service.detailWithSource(run.id).source)
+    }
+
+    private object NoRates : SolUsdtRateSource {
+        override fun minuteRates(minutes: Set<Instant>): Map<Instant, RateLookup> =
+            minutes.associateWith { RateLookup.Unavailable(RateUnavailableReason.NOT_CONFIGURED) }
+        override fun current(): RateLookup = error("unused")
     }
 
     private inner class DatasetCatalog : ReplayDatasetCatalog {

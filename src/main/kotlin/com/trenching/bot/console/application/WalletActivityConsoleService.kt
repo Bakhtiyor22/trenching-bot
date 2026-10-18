@@ -17,6 +17,7 @@ import com.trenching.bot.walletactivity.WalletActivityResult
 /**
  * Serves a wallet's recent activity for picking a token: from [cache] when the same page was read in the last minute,
  * unless [activity]'s `refresh` asks for a new read, then annotated with the captures that hold each mint as they are now.
+ * A page served from the cache sent no request, so it reports `requestsUsed` 0.
  */
 class WalletActivityConsoleService(
     private val lookup: WalletActivityLookup,
@@ -27,9 +28,11 @@ class WalletActivityConsoleService(
     fun activity(address: String, limit: Int?, before: String?, refresh: Boolean): WalletActivityView {
         val request = request(address, limit ?: WalletActivityLimits.DEFAULT_LIMIT, before?.takeUnless { it.isBlank() })
         val cached = if (refresh) null else cache.fresh(request)
-        val page = cached?.page ?: read(request)
+        val page = cached?.let(::fromCache) ?: read(request)
         return WalletActivityAnnotations.annotate(page, captures.capturesOf(request.wallet), cached?.readAt)
     }
+
+    private fun fromCache(cached: CachedWalletActivity): WalletActivityPage = cached.page.copy(requestsUsed = 0)
 
     private fun read(request: WalletActivityRequest): WalletActivityPage = when (val result = lookup.recent(request, USAGE)) {
         is WalletActivityResult.Found -> result.page.also { cache.store(request, it) }

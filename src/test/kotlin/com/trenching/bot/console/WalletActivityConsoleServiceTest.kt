@@ -62,6 +62,16 @@ class WalletActivityConsoleServiceTest {
     }
 
     @Test
+    fun `a page served from the cache reports no request used, and a refresh reports the requests it sent`() {
+        val service = service()
+        val first = service.activity(WALLET, 20, null, refresh = false)
+        val cached = service.activity(WALLET, 20, null, refresh = false)
+        val refreshed = service.activity(WALLET, 20, null, refresh = true)
+
+        assertEquals(listOf(2, 0, 2), listOf(first, cached, refreshed).map { it.page.requestsUsed })
+    }
+
+    @Test
     fun `an entry expires after sixty seconds and the cache key is wallet, limit and before`() {
         val service = service()
         service.activity(WALLET, 20, null, refresh = false)

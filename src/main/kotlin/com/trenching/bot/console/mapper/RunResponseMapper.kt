@@ -17,7 +17,9 @@ import com.trenching.bot.console.domain.RunEvent
 import com.trenching.bot.console.domain.RunOrder
 import com.trenching.bot.console.domain.RunPosition
 import com.trenching.bot.console.domain.RunScenario
+import com.trenching.bot.console.domain.ScenarioTimeline
 import com.trenching.bot.console.domain.SourcedRunDetail
+import com.trenching.bot.console.domain.TimedRunScenario
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.papertrading.domain.OrderStatus
 import com.trenching.bot.papertrading.domain.PaperFill
@@ -45,11 +47,12 @@ abstract class RunResponseMapper {
 
     abstract fun toPage(page: PageResult<RunSummary>): RunPageResponse
 
-    @Mapping(target = ".", source = "detail")
     abstract fun toResponse(sourced: SourcedRunDetail): RunDetailResponse
 
-    fun toScenario(scenario: RunScenario): ScenarioResponse =
-        scenario(scenario, (scenario.outcome as? FillOutcome.Filled)?.fill, scenario.outcome as? FillOutcome.Rejected)
+    fun toScenario(timed: TimedRunScenario): ScenarioResponse {
+        val outcome = timed.scenario.outcome
+        return scenario(timed.scenario, timed.timeline, (outcome as? FillOutcome.Filled)?.fill, outcome as? FillOutcome.Rejected)
+    }
 
     @Mappings(value = [
         Mapping(target = "intentId", source = "scenario.intent.id"),
@@ -62,7 +65,7 @@ abstract class RunResponseMapper {
         Mapping(target = "referencePrice", source = "scenario.intent.referencePrice"),
         Mapping(target = "dipPrice", source = "scenario.intent.dipPrice"),
         Mapping(target = "horizonEndSlot", source = "scenario.intent.horizonEndSlot"),
-        Mapping(target = "timeline", source = "scenario.timeline"),
+        Mapping(target = "timeline", source = "timeline"),
         Mapping(target = "watch", source = "scenario.intent.watch"),
         Mapping(target = "trigger", source = "scenario.intent.trigger"),
         Mapping(target = "status", expression = "java(status(scenario.getOutcome()))"),
@@ -72,7 +75,7 @@ abstract class RunResponseMapper {
         Mapping(target = "position", source = "scenario.position"),
         Mapping(target = "exitUnavailableReason", source = "scenario.exitUnavailable"),
     ])
-    abstract fun scenario(scenario: RunScenario, fill: PaperFill?, rejected: FillOutcome.Rejected?): ScenarioResponse
+    abstract fun scenario(scenario: RunScenario, timeline: ScenarioTimeline, fill: PaperFill?, rejected: FillOutcome.Rejected?): ScenarioResponse
 
     abstract fun toScenarioPosition(position: Position): ScenarioPositionResponse
 

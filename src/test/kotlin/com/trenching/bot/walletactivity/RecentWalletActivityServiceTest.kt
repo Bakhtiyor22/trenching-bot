@@ -6,6 +6,7 @@ import com.trenching.bot.chaincapture.CaptureBudgetException
 import com.trenching.bot.chaincapture.CaptureCategory
 import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.chaincapture.ChainCaptureFormat
+import com.trenching.bot.chaincapture.SolanaReadRpc
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
@@ -233,6 +234,19 @@ class RecentWalletActivityServiceTest {
 
         assertEquals(WalletActivityResult.Unavailable(WalletActivityUnavailable.PROVIDER_RATE_LIMITED, Duration.ofSeconds(3)),
             service(rpc).recent(request(20), usage))
+    }
+
+    @Test
+    fun `a budget that runs out after a rate limited reply keeps that reply's Retry-After`() {
+        val decu = decuRpc()
+        val rpc = SolanaReadRpc { method, params, budget ->
+            if (method != ChainCaptureFormat.GET_TRANSACTION) return@SolanaReadRpc decu.call(method, params, budget)
+            budget.counters.rateLimited(Duration.ofSeconds(4))
+            throw CaptureBudgetException("REQUESTS")
+        }
+
+        assertEquals(WalletActivityResult.Unavailable(WalletActivityUnavailable.PROVIDER_RATE_LIMITED, Duration.ofSeconds(4)),
+            RecentWalletActivityService(rpc).recent(request(20), usage))
     }
 
     @Test
