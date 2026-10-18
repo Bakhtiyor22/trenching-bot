@@ -7,6 +7,7 @@ import com.trenching.bot.console.domain.RunOrder
 import com.trenching.bot.console.domain.RunPosition
 import com.trenching.bot.console.domain.RunObservations
 import com.trenching.bot.console.domain.RunScenario
+import com.trenching.bot.console.domain.SourcedRunDetail
 import com.trenching.bot.console.report.RunReportReader
 import com.trenching.bot.marketdata.MarketObservationStore
 import com.trenching.bot.marketdata.domain.MarketObservation
@@ -36,6 +37,7 @@ class ConsoleService(
     private val intents: TradeIntentStore,
     private val orders: PaperOrderStore,
     private val positions: PositionStore,
+    private val datasetSources: DatasetSourceService,
 ) {
     fun page(page: Int, size: Int, datasetId: String?): PageResult<RunSummary> {
         ConsolePaging.require(page, size)
@@ -43,6 +45,11 @@ class ConsoleService(
     }
 
     fun detail(runId: String): RunDetail = detailWithObservations(runId).detail
+
+    fun detailWithSource(runId: String): SourcedRunDetail {
+        val detail = detail(runId)
+        return SourcedRunDetail(detail, datasetSources.of(detail.run.datasetId))
+    }
 
     fun detailWithObservations(runId: String): RunObservations {
         val run = requireRun(runId)
@@ -88,11 +95,13 @@ class ConsoleService(
         val outcomes = orders.outcomes(runId).associateBy { it.orderId }
         val positionsByIntent = positions.storedPositions(runId).associateBy { it.position.intentId }
         val observationsById = stored.associateBy { it.id }
+        val buyTimes = events.acceptedTrades(runId).associate { it.id to it.blockTime }
         val scenarios = intents.intents(runId).map { intent ->
             val outcome = checkNotNull(outcomes[intent.id]) { "Missing paper order runId=$runId intentId=${intent.id}" }
             val selected = (outcome as? FillOutcome.Filled)?.let { observationsById[it.fill.observationId] }
             val storedPosition = positionsByIntent[intent.id]
-            RunScenario(intent, outcome, selected, storedPosition?.position, storedPosition?.exitUnavailable)
+            val timeline = ScenarioTimelines.of(intent, selected, storedPosition?.position, buyTimes[intent.sourceEventId], observationsById)
+            RunScenario(intent, outcome, selected, storedPosition?.position, storedPosition?.exitUnavailable, timeline)
         }
         return RunDetail(run, facts.config, scenarios)
     }

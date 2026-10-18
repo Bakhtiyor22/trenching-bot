@@ -12,6 +12,8 @@ import com.trenching.bot.console.ChartFixtures.observation
 import com.trenching.bot.console.ChartFixtures.tradeObservation
 import com.trenching.bot.console.application.ChartConsoleService
 import com.trenching.bot.console.application.ConsoleService
+import com.trenching.bot.console.application.ScenarioTimelines
+import com.trenching.bot.console.domain.ChartExtent
 import com.trenching.bot.console.domain.ChartQuery
 import com.trenching.bot.console.domain.ChartView
 import com.trenching.bot.console.domain.InvalidConsoleRequestException
@@ -224,6 +226,45 @@ class ChartConsoleServiceTest {
     }
 
     @Test
+    fun `the extent is the pair's whole range whatever window is asked for`() {
+        val start = at("2026-10-01T00:00:00Z")
+        val pairObservations = (0 until 10).map { observation("o$it", start.plusSeconds(it * 10L), "1", slot = 500L + it) }
+        val otherPair = listOf(observation("x0", start.minusSeconds(60), "1", slot = 1L, pair = OTHER_QUOTE_PAIR),
+            observation("x1", start.plusSeconds(600), "1", slot = 900L, pair = OTHER_QUOTE_PAIR))
+        val dataset = syntheticDataset(pairObservations + otherPair, emptyList())
+        catalog.add(dataset)
+
+        val windowed = service.datasetChart(id(dataset), query(PAIR, from = at("2026-10-01T00:00:20Z"), to = at("2026-10-01T00:00:40Z"),
+            maxBuckets = 1))
+        val whole = service.datasetChart(id(dataset), query(PAIR))
+
+        assertEquals(ChartExtent(start, at("2026-10-01T00:01:30Z"), 500, 509), windowed.extent)
+        assertEquals(windowed.extent, whole.extent)
+    }
+
+    @Test
+    fun `a run chart's extent is its pair's whole range, not the window`() {
+        catalog.add(sample)
+        val spread = sample.observations.map { it.copy(observedTime = it.observedTime.plusSeconds(it.slot.value)) }
+        val pairObservations = spread.filter { it.pair == takeProfit }
+        val entryTime = spread.first { it.id == "fixture:TP:1003:0" }.observedTime
+
+        val chart = runChart(detail(spread), spread, pair = takeProfit, to = entryTime)
+
+        assertEquals(ChartExtent(pairObservations.minOf { it.observedTime }, pairObservations.maxOf { it.observedTime },
+            pairObservations.minOf { it.slot.value }, pairObservations.maxOf { it.slot.value }), chart.extent)
+        assertTrue(assertNotNull(chart.extent).lastTime > entryTime)
+    }
+
+    @Test
+    fun `a pair without observations has no extent`() {
+        catalog.add(sample)
+
+        assertNull(datasetChart(sample, pair = PAIR).extent)
+        assertNull(runChart(detail(emptyList()), emptyList()).extent)
+    }
+
+    @Test
     fun `a run chart carries its stored fill and close as paper fills and keeps them out of the markers`() {
         catalog.add(sample)
         val detail = detail(sample.observations)
@@ -341,7 +382,8 @@ class ChartConsoleServiceTest {
         val byId = observations.associateBy { it.id }
         val scenarios = report.scenarios.map { result ->
             val selected = (result.outcome as? FillOutcome.Filled)?.let { byId[it.fill.observationId] }
-            RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable)
+            RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable,
+                ScenarioTimelines.of(result.intent, selected, result.position, null, byId))
         }
         val run = RunSummary(report.runId, datasetId, report.engineVersion, report.configurationHash, report.resultChecksum,
             MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"))

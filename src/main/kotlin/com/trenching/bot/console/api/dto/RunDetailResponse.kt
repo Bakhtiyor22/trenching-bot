@@ -1,9 +1,12 @@
 package com.trenching.bot.console.api.dto
 
+import java.time.Instant
+
 data class RunDetailResponse(
     val run: RunSummaryResponse,
     val config: ConfigResponse,
     val scenarios: List<ScenarioResponse>,
+    val source: DatasetSourceResponse,
 )
 
 /**
@@ -22,6 +25,7 @@ data class ScenarioResponse(
     val referencePrice: String,
     val dipPrice: String,
     val horizonEndSlot: Long,
+    val timeline: ScenarioTimelineResponse,
     val watch: String,
     val trigger: DipTriggerResponse?,
     val status: String,
@@ -30,6 +34,15 @@ data class ScenarioResponse(
     val selectedObservation: ObservationResponse?,
     val position: ScenarioPositionResponse?,
     val exitUnavailableReason: String?,
+)
+
+/** Observation block times of the scenario's stages, each null when its stage did not happen. */
+data class ScenarioTimelineResponse(
+    val firstBuyAt: Instant?,
+    val dipAt: Instant?,
+    val entryAt: Instant?,
+    val exitTriggerAt: Instant?,
+    val exitAt: Instant?,
 )
 
 data class DipTriggerResponse(

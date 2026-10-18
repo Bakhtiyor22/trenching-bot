@@ -5,6 +5,7 @@ import com.trenching.bot.console.ChartFixtures.at
 import com.trenching.bot.console.application.ChartConsoleService
 import com.trenching.bot.console.config.ConditionalOnConsoleEnabled
 import com.trenching.bot.console.domain.CandleView
+import com.trenching.bot.console.domain.ChartExtent
 import com.trenching.bot.console.domain.ChartQuery
 import com.trenching.bot.console.domain.ChartRange
 import com.trenching.bot.console.domain.ChartView
@@ -53,6 +54,12 @@ class ChartControllerTest {
 
         assertEquals(60, body["bucketSeconds"].asInt())
         assertEquals("2026-10-01T00:00:00Z", body["range"]["from"].asString())
+        val extent = body["extent"]
+        assertEquals(listOf("firstTime", "lastTime", "firstSlot", "lastSlot"), extent.propertyNames().toList())
+        assertEquals("2026-09-30T23:00:00Z", extent["firstTime"].asString())
+        assertEquals("2026-10-01T02:00:00Z", extent["lastTime"].asString())
+        assertEquals(100, extent["firstSlot"].asLong())
+        assertEquals(9_000, extent["lastSlot"].asLong())
         assertEquals(TRACKED, body["trackedWallet"].asString())
         val basis = body["valuationBasis"]
         assertEquals(listOf("label", "supply", "supplySource", "quoteCurrency", "rateSource", "rateGranularity", "available", "unavailableReason"),
@@ -127,6 +134,7 @@ class ChartControllerTest {
     private fun view() = ChartView(
         bucketSeconds = 60,
         range = ChartRange(at("2026-10-01T00:00:00Z"), at("2026-10-01T01:00:00Z")),
+        extent = ChartExtent(at("2026-09-30T23:00:00Z"), at("2026-10-01T02:00:00Z"), 100, 9_000),
         trackedWallet = TRACKED,
         valuationBasis = ValuationBasisView("total-supply valuation (FDV), USDT", "1000000000", "PUMPFUN_FIXED_SUPPLY", "USDT", null, "MINUTE", false,
             ValuationBasisReason.RATES_UNAVAILABLE),

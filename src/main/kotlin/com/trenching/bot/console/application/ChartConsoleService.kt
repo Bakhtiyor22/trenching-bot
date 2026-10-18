@@ -1,11 +1,13 @@
 package com.trenching.bot.console.application
 
 import com.trenching.bot.common.MarketPair
+import com.trenching.bot.console.domain.ChartExtent
 import com.trenching.bot.console.domain.ChartQuery
 import com.trenching.bot.console.domain.ChartRange
 import com.trenching.bot.console.domain.ChartSource
 import com.trenching.bot.console.domain.ChartView
 import com.trenching.bot.console.domain.InvalidConsoleRequestException
+import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.OrderedReferenceRates
 import com.trenching.bot.replay.ReplayDatasetCatalog
 import org.springframework.stereotype.Service
@@ -43,7 +45,8 @@ class ChartConsoleService(
     private fun assemble(parameters: ChartParameters, pair: MarketPair?, source: ChartSource): ChartView {
         val dataset = source.dataset
         val rates = dataset?.referenceRates?.takeIf { it.isNotEmpty() }?.let(::OrderedReferenceRates)
-        val points = source.observations.filter { it.pair == pair && parameters.contains(it.observedTime) }
+        val pairObservations = source.observations.filter { it.pair == pair }
+        val points = pairObservations.filter { parameters.contains(it.observedTime) }
             .sortedWith(ChartPosition.ORDER)
             .map { ChartPoint(it, ChartValuation.of(it, rates)) }
         val range = ChartRange(parameters.from ?: points.firstOrNull()?.observation?.observedTime,
@@ -60,6 +63,7 @@ class ChartConsoleService(
         return ChartView(
             bucketSeconds = bucketSeconds,
             range = range,
+            extent = extent(pairObservations),
             trackedWallet = trackedWallet,
             valuationBasis = ChartValuation.basis(source.quote, dataset?.let { ChartValuation.rateSource(it.referenceRates) },
                 rates != null, points.map { it.valuation }),
@@ -67,5 +71,11 @@ class ChartConsoleService(
             markers = markers,
             paperFills = paperFills,
         )
+    }
+
+    private fun extent(observations: List<MarketObservation>): ChartExtent? {
+        if (observations.isEmpty()) return null
+        return ChartExtent(observations.minOf { it.observedTime }, observations.maxOf { it.observedTime },
+            observations.minOf { it.slot.value }, observations.maxOf { it.slot.value })
     }
 }

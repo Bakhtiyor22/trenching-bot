@@ -13,11 +13,11 @@ import com.trenching.bot.console.api.dto.RunSummaryResponse
 import com.trenching.bot.console.api.dto.ScenarioPositionResponse
 import com.trenching.bot.console.api.dto.ScenarioResponse
 import com.trenching.bot.console.domain.IngestionStatus
-import com.trenching.bot.console.domain.RunDetail
 import com.trenching.bot.console.domain.RunEvent
 import com.trenching.bot.console.domain.RunOrder
 import com.trenching.bot.console.domain.RunPosition
 import com.trenching.bot.console.domain.RunScenario
+import com.trenching.bot.console.domain.SourcedRunDetail
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.papertrading.domain.OrderStatus
 import com.trenching.bot.papertrading.domain.PaperFill
@@ -36,7 +36,7 @@ import org.mapstruct.ReportingPolicy
 /** Flattens the sealed outcomes: each variant is passed as its own nullable source so MapStruct null-guards it. */
 @Mapper(componentModel = MappingConstants.ComponentModel.SPRING,
     uses = [ConsoleValueMapper::class, PairResponseMapper::class, ObservationResponseMapper::class, ConfigResponseMapper::class,
-        PercentMapper::class],
+        PercentMapper::class, DatasetSourceResponseMapper::class],
     unmappedTargetPolicy = ReportingPolicy.ERROR)
 abstract class RunResponseMapper {
     abstract fun toResponse(run: RunSummary): RunSummaryResponse
@@ -45,7 +45,8 @@ abstract class RunResponseMapper {
 
     abstract fun toPage(page: PageResult<RunSummary>): RunPageResponse
 
-    abstract fun toResponse(detail: RunDetail): RunDetailResponse
+    @Mapping(target = ".", source = "detail")
+    abstract fun toResponse(sourced: SourcedRunDetail): RunDetailResponse
 
     fun toScenario(scenario: RunScenario): ScenarioResponse =
         scenario(scenario, (scenario.outcome as? FillOutcome.Filled)?.fill, scenario.outcome as? FillOutcome.Rejected)
@@ -61,6 +62,7 @@ abstract class RunResponseMapper {
         Mapping(target = "referencePrice", source = "scenario.intent.referencePrice"),
         Mapping(target = "dipPrice", source = "scenario.intent.dipPrice"),
         Mapping(target = "horizonEndSlot", source = "scenario.intent.horizonEndSlot"),
+        Mapping(target = "timeline", source = "scenario.timeline"),
         Mapping(target = "watch", source = "scenario.intent.watch"),
         Mapping(target = "trigger", source = "scenario.intent.trigger"),
         Mapping(target = "status", expression = "java(status(scenario.getOutcome()))"),

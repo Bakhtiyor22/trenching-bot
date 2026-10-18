@@ -53,7 +53,7 @@ class RunController(
     ): RunPageResponse = runResponseMapper.toPage(consoleService.page(page, size, datasetId))
 
     @GetMapping("/{id}")
-    fun detail(@PathVariable id: String): RunDetailResponse = runResponseMapper.toResponse(consoleService.detail(id))
+    fun detail(@PathVariable id: String): RunDetailResponse = runResponseMapper.toResponse(consoleService.detailWithSource(id))
 
     @GetMapping("/{id}/events")
     fun events(@PathVariable id: String): List<RunEventResponse> = runResponseMapper.toEvents(consoleService.events(id))

@@ -14,9 +14,17 @@ object ChainCaptureReads {
         return genesis.asString()
     }
 
-    /** One newest-first page of up to [ChainCaptureFormat.SIGNATURE_PAGE_SIZE] signatures older than [before] and newer than [until]. */
-    fun signaturePage(rpc: SolanaReadRpc, address: String, before: String?, until: String?, budget: CaptureBudget): JsonNode {
-        val options = mutableMapOf<String, Any>("commitment" to ChainCaptureFormat.COMMITMENT, "limit" to ChainCaptureFormat.SIGNATURE_PAGE_SIZE)
+    /** One newest-first page of up to [limit] signatures older than [before] and newer than [until]. */
+    fun signaturePage(
+        rpc: SolanaReadRpc,
+        address: String,
+        before: String?,
+        until: String?,
+        budget: CaptureBudget,
+        limit: Int = ChainCaptureFormat.SIGNATURE_PAGE_SIZE,
+    ): JsonNode {
+        require(limit in 1..ChainCaptureFormat.SIGNATURE_PAGE_SIZE) { "Signature page limit out of range limit=$limit" }
+        val options = mutableMapOf<String, Any>("commitment" to ChainCaptureFormat.COMMITMENT, "limit" to limit)
         before?.let { options["before"] = it }
         until?.let { options["until"] = it }
         return rpc.call(ChainCaptureFormat.GET_SIGNATURES, listOf(address, options), budget)

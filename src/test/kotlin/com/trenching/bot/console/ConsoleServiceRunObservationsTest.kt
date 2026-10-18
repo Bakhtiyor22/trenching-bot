@@ -4,6 +4,7 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.console.ChartFixtures.at
 import com.trenching.bot.console.ChartFixtures.observation
 import com.trenching.bot.console.application.ConsoleService
+import com.trenching.bot.console.application.DatasetSourceService
 import com.trenching.bot.console.domain.StoredReportFacts
 import com.trenching.bot.console.report.RunReportReader
 import com.trenching.bot.marketdata.MarketObservationStore
@@ -26,7 +27,8 @@ class ConsoleServiceRunObservationsTest {
     private val reports: RunReportReader = Mockito.mock(RunReportReader::class.java)
     private val observations: MarketObservationStore = Mockito.mock(MarketObservationStore::class.java)
     private val service = ConsoleService(runs, reports, Mockito.mock(WalletEventStore::class.java), observations,
-        Mockito.mock(TradeIntentStore::class.java), Mockito.mock(PaperOrderStore::class.java), Mockito.mock(PositionStore::class.java))
+        Mockito.mock(TradeIntentStore::class.java), Mockito.mock(PaperOrderStore::class.java), Mockito.mock(PositionStore::class.java),
+        Mockito.mock(DatasetSourceService::class.java))
     private val run = RunSummary("run-1", "dataset-1", "engine", "config", "result", MintAddress.WRAPPED_SOL, 0, 0, 0, 0, 0, BigDecimal.ZERO,
         at("2026-10-08T00:00:00Z"))
     private val stored = listOf(observation("a", at("2026-10-01T00:00:10Z"), "1"))

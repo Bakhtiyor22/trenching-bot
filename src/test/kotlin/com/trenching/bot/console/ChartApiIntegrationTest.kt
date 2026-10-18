@@ -46,6 +46,21 @@ class ChartApiIntegrationTest {
     }
 
     @Test
+    fun `a windowed run chart reports its pair's full extent`() {
+        val runId = startRun(variant(json, "chart-extent"), "chart-extent.json")
+
+        val chart = http.get("/api/runs/$runId/chart?pair=$pair&from=2026-10-01T00:00:30Z&to=2026-10-01T00:00:40Z")
+
+        assertEquals(200, chart.status, chart.raw)
+        assertEquals(0, chart.body.path("candles").size())
+        val extent = chart.body.path("extent")
+        assertEquals("2026-10-01T00:00:00Z", extent.path("firstTime").asString())
+        assertEquals("2026-10-01T00:00:00Z", extent.path("lastTime").asString())
+        assertEquals(1000, extent.path("firstSlot").asLong())
+        assertEquals(1006, extent.path("lastSlot").asLong())
+    }
+
+    @Test
     fun `a run needs a pair when its dataset has several and a dataset chart has no paper fills`() {
         val content = variant(json, "chart-pairs")
         val datasetId = upload(content).path("dataset").path("id").asString()

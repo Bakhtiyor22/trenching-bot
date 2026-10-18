@@ -331,6 +331,24 @@ class ConsoleApiIntegrationTest {
         assertEquals("REJECTED", noDip.path("status").asString())
         assertEquals("NO_DIP", noDip.path("rejectionReason").asString())
         assertTrue(noDip.path("trigger").isNull)
+        val timeline = takeProfit.path("timeline")
+        assertEquals(listOf("firstBuyAt", "dipAt", "entryAt", "exitTriggerAt", "exitAt"), timeline.propertyNames().toList())
+        assertTrue(timeline.propertyNames().all { timeline.path(it).asString() == "2026-10-01T00:00:00Z" }, timeline.toString())
+        assertEquals("2026-10-01T00:00:00Z", noDip.path("timeline").path("firstBuyAt").asString())
+        assertTrue(listOf("dipAt", "entryAt", "exitTriggerAt", "exitAt").all { noDip.path("timeline").path(it).isNull })
+    }
+
+    @Test
+    fun `a run and its dataset name their source, with no capture outside the capture console's profile`() {
+        val runId = startRun(variant(json, "source"), "source.json")
+
+        val source = http.get("/api/runs/$runId").body.path("source")
+
+        val datasetId = source.path("datasetId").asString()
+        assertEquals("source.json", source.path("datasetName").asString())
+        assertTrue(listOf("captureId", "captureDisplayName", "caseId").all { source.path(it).isNull }, source.toString())
+        assertEquals(source, http.get("/api/datasets/$datasetId").body.path("source"))
+        assertTrue(http.get("/api/datasets").body.path("items").items().none { it.has("source") })
     }
 
     @Test

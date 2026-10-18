@@ -7,11 +7,13 @@ import java.time.Instant
 
 /**
  * One bounded chart of a pair: price and mcap candles, observed trade markers and, for a run, its paper fills. [range] is the
- * window the buckets were sized for: the requested bounds, else the first and last observation (null for no data).
+ * window the buckets were sized for: the requested bounds, else the first and last observation (null for no data). [extent] spans
+ * all the pair's observations whatever the window, and is null when it has none.
  */
 data class ChartView(
     val bucketSeconds: Int,
     val range: ChartRange,
+    val extent: ChartExtent?,
     val trackedWallet: String?,
     val valuationBasis: ValuationBasisView,
     val candles: List<CandleView>,
@@ -20,6 +22,9 @@ data class ChartView(
 )
 
 data class ChartRange(val from: Instant?, val to: Instant?)
+
+/** The earliest and latest block time and slot among a pair's observations, each taken on its own. */
+data class ChartExtent(val firstTime: Instant, val lastTime: Instant, val firstSlot: Long, val lastSlot: Long)
 
 /** How the mcap was derived, so a reader can tell what the number means and why it is missing. */
 data class ValuationBasisView(
