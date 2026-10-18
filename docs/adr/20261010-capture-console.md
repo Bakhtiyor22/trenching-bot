@@ -2,6 +2,8 @@
 
 Accepted 2026-10-10 with the user-approved [capture console plan](../plans/archive/20261010-capture-console.md), revision 2.
 
+2026-10-16: the [addendum](#addendum-2026-10-16-names-summary-and-list-order) adds unique capture names, the derived capture summary and the list order.
+
 ## Context
 
 The bounded wallet, market and reference-rate capture commands already collect verified evidence for schema-v3 replay datasets. The console can import datasets and launch simulations, but acquisition requires terminal commands. Market acquisition can outlast an HTTP request and needs explicit resumption after budget, deadline or provider interruptions.
@@ -39,3 +41,17 @@ No replay schema, simulation rule, execution cost, production schema or provider
 ## Revisit when
 
 Multiple users or processes need concurrent scheduling, operations need coordinated cancellation, durable server-side retention becomes necessary, or authenticated remote capture access is requested.
+
+## Addendum 2026-10-16: names, summary and list order
+
+Accepted with the [console capture, run and results plan](../plans/archive/20261016-console-capture-run-ux.md) (Key Decisions 6 and 7, Domain Rules 8–14). The decision above stands; this adds to it.
+
+**Unique names.** A capture name is compared by its key: the name trimmed, runs of whitespace collapsed to one space, then lower-cased (`Locale.ROOT`). No two sessions created or renamed from now on share a key. A blank name on create is generated as `{label} · {subject} · {d MMM HH:mm}` in the request's `timeZone` (UTC by default), where the label is the suggested wallet's label or the short wallet, and the subject is the short mint, `Pump.fun buys` or `Wallet references` (`Attached` and the wallet directory for an attachment). A generated name that is taken gets the first free ` (2)`, ` (3)`, …. A typed name that is taken, on create or rename, returns 409 `NAME_TAKEN` with that numbered form as `suggestion`. Names stay 1–120 characters; a long generated name is cut in its subject, never in its time or number. The key is saved as an optional `nameKey` in `session.json`; files without it compute it from the name.
+
+**Legacy duplicates are numbered on read.** Sessions named before this change can share a key. Their `displayName` is the stored name for the first by `(createdAt, id)` and ` (2)`, ` (3)`, … for the rest. Their files are never rewritten. A new name must also avoid those numbered display names.
+
+**Uniqueness lives in the file-store lock, not a database constraint.** This is a deliberate exception to the rule that business uniqueness is enforced by a unique constraint. Captures are local files used by one backend process, and there is no capture table to hold a constraint. Create, rename and the name check all read the sessions and save under the same lock on the file store that already serialises session writes, so two requests cannot both take a name. A second backend process writing the same capture root would not be covered; that is the multi-process case already listed under Revisit when.
+
+**The summary is derived, not stored.** `CaptureStatusRules` turns a session's stage states, current operation and case readiness into one `summary`: status, reason code, current step (1–4 of wallet, markets, rates, dataset), step states, progress, the one next action and case counts. It is computed on every read and never saved, so it cannot drift from the operation records, which stay authoritative. Progress is shown only when the total is known; during discovery it is absent rather than guessed, and its percent is floored, so 100 appears only when complete.
+
+**Sort order.** The list is newest first by default: `createdAt` descending, ties by id ascending. `createdAt,asc` and `name,asc` (by display name key) are also offered, and `attention` orders by status (`NEEDS_ATTENTION`, `STOPPED_LIMIT`, `STOPPED_DEADLINE`, `WAITING_RETRY`, `PAUSED`, `RUNNING`, `READY_TO_REPLAY`, `NOT_STARTED`, `DONE`, `CANCELLED`), then newest first. Every order breaks ties by id. The previous order, by session id, was effectively random. `statusCounts` counts every session; `total` counts the sessions the status filter keeps.

@@ -1,6 +1,6 @@
 # Codex handoff: capture, run and results experience
 
-You work only under `frontend/`. The backend contract below is planned in [20261016-console-capture-run-ux.md](20261016-console-capture-run-ux.md) (Status: Proposed). Do not start a task before the backend unit it depends on is delivered, or build it against MSW mocks in `frontend/src/mocks/` first and switch when the endpoint lands. Keep Mantine 9, ECharts 6, React Query and the existing dark terminal theme; add no dependency. Amounts, prices and percents are decimal strings: convert to numbers only for plotting (`toChartNumber`), and show the exact strings in tooltips.
+You work only under `frontend/`. The backend contract below is planned in [20261016-console-capture-run-ux.md](20261016-console-capture-run-ux.md) (approved 2026-10-16). Every backend unit it lists is delivered, and the contract below was checked against the shipped DTOs and controllers on 2026-10-17 (see the note at the end). Build each task against MSW mocks in `frontend/src/mocks/` first, then check it against the real backend. Keep Mantine 9, ECharts 6, React Query and the existing dark terminal theme; add no dependency. Amounts, prices and percents are decimal strings: convert to numbers only for plotting (`toChartNumber`), and show the exact strings in tooltips.
 
 **Design (agreed):** Claude Design canvas https://claude.ai/artifact/UKXHQHKc89nvEM5K5XUAM4, 7 pages. The copy on the artboards is the intended copy, and sample numbers are illustrative.
 
@@ -16,21 +16,22 @@ You work only under `frontend/`. The backend contract below is planned in [20261
 
 ## HTTP contract
 
-All endpoints are additive; existing fields keep their meaning. Errors use the existing console error body (`code`, `message`, `fields`).
+All endpoints are additive; existing fields keep their meaning. Errors use the existing console error body (`code`, `message`, `fields`). Two errors add one top-level field: a 429 `PROVIDER_RATE_LIMITED` adds `retryAfterSeconds` (a whole number, rounded up) only when the provider sent `Retry-After`, and is absent otherwise; a capture 409 `NAME_TAKEN` adds `suggestion`. Any other error has neither key.
 
-**Wallet activity.** `GET /api/wallets/{address}/activity?limit=20&before=<signature>&refresh=false`. `limit` is 1–50.
+**Wallet activity.** `GET /api/wallets/{address}/activity?limit=20&before=<signature>&refresh=false`. `limit` is 1–50, default 20. `before` is a transaction signature, normally the previous page's `nextBefore`; a blank `before` reads the newest page.
 
-- `200`: `{ wallet, source: "pumpfun-user-volume-accumulator", actions: [Action], unreadable, scanned, nextBefore: string|null, requestsUsed, cachedAt: instant|null }`
-- `Action`: `{ signature, instructionIndex, innerIndex: int|null, slot, blockTime: instant|null, side: "BUY"|"SELL", mint, solLamports: string, tokenRaw: string, tokenDecimals: 6, venue: "PUMPFUN_CURVE", earlierActionInPage: bool, overSignalThreshold: bool, signalBasis: "CURVE_PAYMENT_EXCLUDING_FEES", capturedIn: [{ captureId, displayName }] }`
-- Errors: `400 INVALID_ADDRESS`, `409 RPC_NOT_CONFIGURED`, `409 NOT_MAINNET`, `429 PROVIDER_RATE_LIMITED` (+ `retryAfterSeconds`), `502 PROVIDER_UNAVAILABLE`.
-- It costs live provider requests: call it only on an explicit user action (open the token step with a wallet filled in, Refresh, Load older). It is never polled. Responses are cached server-side for 60 s; `refresh=true` bypasses the cache.
+- `200`: `{ wallet, source: "pumpfun-user-volume-accumulator", actions: [Action], unreadable, scanned, nextBefore: string|null, requestsUsed, cachedAt: instant|null }`. `nextBefore` is null once the listing ended; `cachedAt` is set only when the page came from the 60 s cache.
+- `Action`: `{ signature, instructionIndex, innerIndex: int|null, slot, blockTime: instant|null, side: "BUY"|"SELL", mint, solLamports: string, tokenRaw: string, tokenDecimals: 6, venue: "PUMPFUN_CURVE", earlierActionInPage: bool, overSignalThreshold: bool, signalBasis: "CURVE_PAYMENT_EXCLUDING_FEES", capturedIn: [{ captureId, displayName }] }`. `capturedIn` is always an array; it is empty when the backend runs without the capture console (outside the local profile).
+- Errors: `400 INVALID_ADDRESS` (`fields.address`); `400 INVALID_REQUEST` with `fields.limit` or `fields.before` for a `limit` outside 1–50 or not a number, or a `before` that is not a signature; `409 RPC_NOT_CONFIGURED`; `409 NOT_MAINNET`; `429 PROVIDER_RATE_LIMITED` with top-level `retryAfterSeconds` when known (show a countdown only then); `502 PROVIDER_UNAVAILABLE`. The provider errors have empty `fields`.
+- It costs live provider requests, at most `limit` + 2 per call (22 at 20, 52 at 50): call it only on an explicit user action (open the token step with a wallet filled in, Refresh, Load older). It is never polled. Responses are cached server-side for 60 s per wallet, `limit` and `before`; `refresh=true` bypasses the cache.
 
-**Capture config.** `GET /api/captures/config` adds `suggestedWallets: [{ label, address, reasonCode: "AGREED_STRATEGY_WALLET" }]` and `recentWallets: [{ address, label: string|null, lastUsedAt }]`.
+**Capture config.** `GET /api/captures/config` adds `suggestedWallets: [{ label, address, reasonCode: "AGREED_STRATEGY_WALLET" }]` and `recentWallets: [{ address, label: string|null, lastUsedAt }]` (up to 5, newest first; `label` is the suggested wallet's label when the address is one). `suggestedWallets` comes from `trenching.console.suggested-wallets` and is empty unless the backend configures it, so handle an empty list: no prefill and no suggestion card.
 
 **Capture list.** `GET /api/captures?page=0&size=20&sort=createdAt,desc&status=<Status>`
 
 - `sort` ∈ `createdAt,desc` (default) | `createdAt,asc` | `name,asc` | `attention`.
-- The response adds `statusCounts: { [Status]: number }` over all captures.
+- The response adds `statusCounts: { [Status]: number }` over all captures, with every status present (zero included). `total` counts the captures the `status` filter keeps.
+- An unknown `sort` or `status` returns `400 INVALID_REQUEST` with `fields.sort` or `fields.status`.
 - Every session (list and `GET /api/captures/{id}`) adds `displayName` and `summary`.
 
 **Capture summary.** `summary`: `{ status, reasonCode: string|null, currentStep: { index: 1..4, stage }, steps: [{ stage, state }], progress: { processed, selected, percent: string }|null, nextAction: { kind, stage: string|null, attemptId: string|null, caseId: string|null, maxRequests: number|null }, cases: { total, ready, blocked, downloading }, lastProgressAt: instant|null }`
@@ -49,8 +50,9 @@ All endpoints are additive; existing fields keep their meaning. Errors use the e
 
 **Recommendations.**
 
-- `GET /api/captures/recommendations?wallet=&scope=&mint=` and `GET /api/runs/recommendations?datasetId=` return `[{ id, appliesTo: "CAPTURE"|"RUN", setting: { field, value }|null, facts: { [name]: string|number }, caveatCode: string|null }]`.
+- `GET /api/captures/recommendations?wallet=&scope=&mint=` and `GET /api/runs/recommendations?datasetId=` return `[{ id, appliesTo: "CAPTURE"|"RUN", setting: { field, value: string }|null, facts: { [name]: string|number }, caveatCode: string|null }]`. Blank capture parameters count as not chosen. Always send `datasetId`: blank gives `400 INVALID_REQUEST` (`fields.datasetId`), unknown `404 DATASET_NOT_FOUND`.
 - Ids: capture `SCOPE_WALLET_TOKEN`, `CUTOFF_DECIDED` (caveat `CUTOFF_USES_LEGACY_DEFAULTS`), `ENABLE_RECOVERY`, `DECU_PUMPFUN_SCOPE`; run `USE_AGREED_STRATEGY`, `ADD_LEGACY_COMPARISON`, `SINGLE_TOKEN_DATASET`.
+- Capture recommendations, in this order: `SCOPE_WALLET_TOKEN` (always; setting `{field:"scope", value:"wallet-token"}`, facts `{limit, scanPages, requestBudget}` plus `mint` when given); `CUTOFF_DECIDED` (only when rates are configured; setting `{field:"cutoffMode", value:"DECIDED"}`, facts `{dipPercent, takeProfitPercent, stopLossPercent}` of the legacy defaults the cutoff uses); `ENABLE_RECOVERY` (always; setting `{field:"recovery", value:"ENABLED"}`, facts `{requests, bytes, attempts}` for the chosen scope); `DECU_PUMPFUN_SCOPE` (only for a suggested wallet with scope `wallet-references`; setting `{field:"scope", value:"pumpfun-user-buys"}`, facts `{label}`).
 - The frontend owns the title and "why" copy per id (use the artboard copy).
 
 **Run preset.** `GET /api/runs/preset` returns `{ id: "decu-dip-v2-on-dip-entry-v1", source: { document: "docs/strategy/decu-dip-v2-spec.md", strategy: "decu-dip", version: 2, updated: "2026-10-11" }, engine: "dip-entry v1", config: Config, fields: [{ field, status, specRef: string|null, noteCode: string|null }], unsupportedRules: [{ specRef, code }] }`.
@@ -72,13 +74,13 @@ Run recommendation facts: `USE_AGREED_STRATEGY` has setting `{field:"presetId", 
 **Run detail.** `GET /api/runs/{id}` adds:
 
 - `config` percents.
-- `source: { datasetId, datasetName, captureId: string|null, captureDisplayName: string|null, caseId: string|null }`.
-- Per scenario, `timeline: { firstBuyAt, dipAt, entryAt, exitTriggerAt, exitAt }` (instants or null) and `horizonEndSlot`.
+- `source: { datasetId, datasetName: string|null, captureId: string|null, captureDisplayName: string|null, caseId: string|null }`, always present. `datasetName` is null once the dataset was deleted from the catalog (its runs stay). The capture fields are null for an uploaded dataset, a deleted capture, or a backend without the capture console; `caseId` is set when the dataset came from a case export rather than the whole-capture export.
+- Per scenario, `timeline: { firstBuyAt, dipAt, entryAt, exitTriggerAt, exitAt }`, observation block times, each an instant or null when that stage did not happen. The timeline holds only these five instants; `horizonEndSlot` stays where it already was, a field of the scenario itself.
 - On fills and closes, `feePercent` and `priceImpactPercent` (signed strings).
 
-**Dataset detail.** `GET /api/datasets/{id}` adds `source`, as on run detail.
+**Dataset detail.** `GET /api/datasets/{id}` adds `source`, as on run detail. It is on the detail only: the dataset list and registration responses leave the key out.
 
-**Chart.** `GET /api/runs/{id}/chart` and `/api/datasets/{id}/chart` add `extent: { firstTime, lastTime, firstSlot, lastSlot }|null`, the pair's full data range, independent of `from`/`to`. The rest is unchanged ([previous brief](20261015-chart-frontend-codex-brief.md)).
+**Chart.** `GET /api/runs/{id}/chart` and `/api/datasets/{id}/chart` add `extent: { firstTime, lastTime, firstSlot, lastSlot }|null`, the pair's full data range, independent of `from`/`to`; null when the pair has no observations. The rest is unchanged ([previous brief](20261015-chart-frontend-codex-brief.md)).
 
 **API usage.** `GET /api/usage?period=LAST_HOUR|LAST_24_HOURS|LAST_7_DAYS|ALL&captureId=` returns `{ from, to, bucketSeconds: 300, recordingStartedAt: instant|null, totals: Totals, byCall: [{ provider, operation, purpose, totals: Totals, sharePercent, lastCallAt }], byTask: [{ task, totals: Totals }], series: [{ bucketStart, provider, requests }], pacing: [{ provider, minRequestIntervalMillis, maxConcurrentRequests }] }`.
 
@@ -86,6 +88,8 @@ Run recommendation facts: `USE_AGREED_STRATEGY` has setting `{field:"presetId", 
 - `provider` ∈ `SOLANA_RPC`, `BINANCE`, `TELEGRAM`.
 - `purpose` ∈ `READ_TRANSACTION`, `LIST_SIGNATURES`, `MAINNET_CHECK`, `MINT_PROGRAM_CHECK`, `CONNECTION_CHECK`, `MINUTE_RATES`, `LIVE_RATE`, `UNKNOWN`.
 - `task` ∈ `WALLET_STEP`, `MARKET_STEP`, `RATES_STEP`, `CASE_RATES`, `WALLET_ACTIVITY`, `CONNECTION_CHECK`, `LIVE_PRICE`, `UNATTRIBUTED`.
+- `period` defaults to `LAST_HOUR`. `from` is aligned to 5 minutes; `to` is the request time, not aligned. `recordingStartedAt` is the oldest bucket recorded for any capture, or null when nothing was recorded; `ALL` starts there. `sharePercent` is a string with one decimal (`"0"` when there were no requests). `pacing` lists `SOLANA_RPC` only.
+- An unknown `period` returns `400 INVALID_REQUEST` with `fields.period`; a `captureId` that is not a capture id returns it with `fields.captureId`. A blank `captureId` means everything.
 - Poll every 30 s while visible (`refetchIntervalInBackground: false`).
 
 ## Tasks in dependency order
@@ -123,7 +127,7 @@ Each task lists its backend dependency (plan unit). Tasks 1–3 need nothing new
    - Created column: relative + exact.
    - Move the create form to `/captures/new`.
 6. **New capture** (backend units 4, 5, 7).
-   - Route `/captures/new`. Prefill the wallet from `suggestedWallets[0]` with the suggestion card shown as "Applied" (Undo clears it).
+   - Route `/captures/new`. Prefill the wallet from `suggestedWallets[0]` with the suggestion card shown as "Applied" (Undo clears it); with an empty list, start with an empty wallet and no card.
    - Recent wallets as links.
    - The token step calls wallet activity when the wallet is valid and the user opens the step or presses Refresh. Show the filters (Buys only default on, Hide already captured, Over 1.9 SOL using `overSignalThreshold` with its basis in a tooltip), radio selection (sells disabled with reason), notes from `earlierActionInPage`/`capturedIn` (never call it "first buy"), and "Load 20 older" via `nextBefore`.
    - Show the request cost from `requestsUsed` and the time loaded.
@@ -154,7 +158,7 @@ Each task lists its backend dependency (plan unit). Tasks 1–3 need nothing new
 
 - `/captures` loads newest first by default; changing sort or filter updates the URL and the list; status chip counts equal `statusCounts`; every row shows status, step "n of 4", a progress bar only when `progress` is non-null, and exactly one next-step control.
 - Two captures with the same legacy name show distinct `displayName`s; creating with an empty name shows the generated name after creation; a taken typed name shows the suggestion and can be applied in one click.
-- `/captures/new` opens with Decu's address filled and the suggestion marked Applied; no wallet activity request is sent until the token step is opened or Refresh is pressed; picking a buy fills `mint` and the scope; a sell row cannot be selected; every network failure shows its artboard 7 state and keeps rows already loaded.
+- `/captures/new` opens with Decu's address filled and the suggestion marked Applied when the backend lists Decu in `suggestedWallets`, and with an empty wallet otherwise; no wallet activity request is sent until the token step is opened or Refresh is pressed; picking a buy fills `mint` and the scope; a sell row cannot be selected; every network failure shows its artboard 7 state and keeps rows already loaded.
 - Every run setting that was bps reads as percent everywhere (form, run detail, compare, cards, tooltips), with the server's strings; `20.255` cannot be submitted; a run started from the untouched preset has the same `configurationHash` as one started with the equivalent bps.
 - The new-run page states the strategy source, marks changed fields, shows the observation window as "Missing in agreed strategy", and lists the 8 unsupported rules behind the warning.
 - `/runs/:id/chart` shows the chart at ≥ 480 px tall; buttons, wheel, drag, slider and keys all zoom and pan; Reset returns to This trade; the From/To inputs and the URL stay in sync; reloading restores the view; breadcrumb links go to the capture, dataset and run.
@@ -181,3 +185,13 @@ From `frontend/`: `npm test`, `npm run lint` (`--max-warnings 0`), `npm run buil
 4. No agreed observation window for dip-entry v1: show it flagged `MISSING`; never present a value as agreed.
 5. Gradle CLI captures are not counted in API usage: say so in "Limits and units".
 6. When the `decu-dip` v2 engine ships, the preset will point to it and the unsupported-rules warning disappears; keep that banner driven by `unsupportedRules.length`.
+
+## Contract confirmed against the backend on 2026-10-17
+
+Checked against the shipped `console/api/dto/*`, `WalletController`, `RunController`, `RunSetupController`, `DatasetController`, `ChartController`, `UsageController`, `CaptureController`, `ConfigController` and their error handlers. Field names and shapes above match. Corrections made in this pass:
+
+- Errors: 429 `PROVIDER_RATE_LIMITED` carries a top-level `retryAfterSeconds` only when the provider sent `Retry-After`; capture `NAME_TAKEN` carries `suggestion`.
+- Wallet activity: an invalid `limit` or `before` returns 400 `INVALID_REQUEST` with `fields`; `limit` defaults to 20; the request cost is at most `limit` + 2.
+- Run and dataset `source.datasetName` can be null. Dataset `source` is on the detail only.
+- The scenario `timeline` holds only the five instants; `horizonEndSlot` stays on the scenario.
+- `suggestedWallets` can be empty; `total` follows the status filter while `statusCounts` covers every capture; chart `extent` can be null; the usage report's `from`/`to`, `recordingStartedAt`, `pacing` and parameter errors are spelled out; each recommendation's setting, facts and conditions are listed.

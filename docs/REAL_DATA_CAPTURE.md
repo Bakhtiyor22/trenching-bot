@@ -26,7 +26,35 @@ Managed sessions are stored under build/captures/console by default. The validat
 
 Console only; there is no CLI option for this scope, although CLI inspection, market capture and export read its directories. Use it when you already know a wallet and one token and want to know whether the dip-entry strategy would have qualified on the wallet's first buy of that token. See the [decision](adr/20261010-wallet-token-capture.md) and the [plan](plans/archive/20261010-wallet-token-capture.md).
 
-**Inputs.** Create a session with the scope **Wallet + token**, the wallet and the token's mint (a base58 address). The form defaults are 1,000 records and 20 listing pages for the token account, with 1,000 requests and 100 MiB per wallet operation. A capture of 1,000 records needs more than one operation's requests: resume it until it finishes. The other scopes take no mint.
+**Inputs.** Create a session with the scope **Wallet + token**, the wallet and the token's mint (a base58 address). The form defaults are 1,000 records and 20 listing pages for the token account, with 1,000 requests and 100 MiB per wallet operation. A capture of 1,000 records needs more than one operation's requests: resume it until it finishes. The other scopes take no mint. To find the mint, pick it from the wallet's recent activity (below) or paste it.
+
+### Pick a token from wallet activity
+
+The new-capture page lists the wallet's recent Pump.fun curve buys and sells (`GET /api/wallets/{address}/activity`). It loads them only when you open the token step with a valid wallet, press Refresh, or press Load older; it never polls. Picking a buy sets the scope to **Wallet + token** and fills the mint. Sells cannot be picked.
+
+**Source.** The list reads the wallet's Pump.fun user volume accumulator listing, as the [`pumpfun-user-buys` scope](#scope-the-wallets-own-pumpfun-buys) does, because the wallet's own listing is mostly other bots' transactions. Each successful listed transaction is read once, and every Pump.fun `TradeEvent` whose user is the wallet becomes one action, newest first. A transaction with two such events gives two actions. Failed listing entries are counted in `scanned` and never fetched. A successful transaction with no readable wallet trade (a PumpSwap route, an unknown layout, a non-SOL quote) is counted in `unreadable` and is never guessed.
+
+**Sells may be incomplete.** Decu's accumulator listing has contained a `sell_v3`, but no rule guarantees that every sell route passes the accumulator. The list is shipped with sells and labelled "Pump.fun buys and sells (sells may be incomplete)" (plan Open Question 1, resolved this way). A sanitized sample of a Decu sell would confirm it.
+
+**Readings, not proof.**
+- `earlierActionInPage` means the same mint has an older action on the same page. It is never first-buy proof; that is what the wallet + token capture checks.
+- `overSignalThreshold` means the curve payment is over 1.9 SOL, strictly, fees excluded (`signalBasis` `CURVE_PAYMENT_EXCLUDING_FEES`). It is shown for picking only and never decides a run.
+- `capturedIn` names the captures on disk that already hold the mint for this wallet, by display name. It is empty where the capture console is absent (outside the local profile).
+
+**Request cost.** One call sends:
+
+| Part | Requests |
+|---|---|
+| Listing | 1 `getSignaturesForAddress` page of up to max(3 × `limit`, 100) entries |
+| Transactions | At most `limit` `getTransaction` reads, one per successful entry up to the `limit`-th; shared transaction cache hits are free |
+| Mainnet check | 1 `getGenesisHash` the first time in each backend process, repeated on later calls until one succeeds |
+| Total | At most `limit` + 2: 22 at the default `limit` of 20, 52 at the maximum of 50 |
+
+Retries count toward that bound. If a retry would pass it, the page ends as `PROVIDER_RATE_LIMITED` (when a 429 was seen) or `PROVIDER_UNAVAILABLE` instead of spending more. A page also stops after 30 seconds. `requestsUsed` in the response is the number actually sent, and the API usage page counts these requests under the task `WALLET_ACTIVITY`. Requests share the pacing and limiter of the captures on the same endpoint (`walletactivity.capture.*`, see [provider pacing](#provider-pacing-and-the-transaction-cache)).
+
+**Cache.** A page is kept in memory for 60 seconds per wallet, `limit` and `before`, and served from there with `cachedAt` set and no request. `refresh=true` (the Refresh button) skips the cache and reads again. A restart empties it. Load older passes the page's `nextBefore` as `before`; `nextBefore` is null when the listing ended.
+
+**Errors.** 400 `INVALID_ADDRESS` for a wallet that is not a base58 address; 400 `INVALID_REQUEST` with `fields` for a `limit` outside 1–50 or a `before` that is not a transaction signature; 409 `RPC_NOT_CONFIGURED` when the backend has no `SOLANA_RPC_URL`; 409 `NOT_MAINNET`; 429 `PROVIDER_RATE_LIMITED`, with `retryAfterSeconds` when the provider sent `Retry-After`; 502 `PROVIDER_UNAVAILABLE` for a timeout or provider failure. An empty listing, or a `before` the provider does not know, gives 200 with no actions.
 
 ### Which first buy the strategy needs
 
