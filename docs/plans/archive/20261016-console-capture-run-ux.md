@@ -176,7 +176,7 @@ The frontend holds the copy for each id.
 3. A transaction with no decodable wallet `TradeEvent` (PumpSwap, unknown layout, `NON_SOL_QUOTE`) increments `unreadable` and yields no action. It is never guessed.
 4. `solLamports` and `tokenRaw` are `BigInteger` from the event; SOL display is lamports/10⁹ at scale 9, exact. `overSignalThreshold` = `solLamports > 1_900_000_000`, strictly; exactly 1.9 SOL is false. It is a curve-payment reading, labelled as such, and never decides a run (spec-plan Assumption 1 is open).
 5. `earlierActionInPage` is true when the same mint has an older action in the same page. It is never presented as first-buy proof; proof stays with the wallet + token capture (`ActualFirstBuyRule`).
-6. The request cost is bounded: 1 listing page of at most `max(limit × 3, 100)` entries + at most `limit` `getTransaction` calls (cache hits are free) + 1 genesis check per process lifetime, at most 152 requests. `requestsUsed` reports the actual number. The budget is enforced by a `CaptureBudget` with `maxRequests` = that bound.
+6. The request cost is bounded: 1 listing page of at most `max(limit × 3, 100)` entries + at most `limit` `getTransaction` calls (cache hits are free) + 1 genesis check per process lifetime, at most 52 requests (`limit + 2`). `requestsUsed` reports the actual number. The budget is enforced by a `CaptureBudget` with `maxRequests` = that bound.
 7. Negative cases: an invalid base58 address returns 400 `INVALID_ADDRESS`. A blank `SOLANA_RPC_URL` returns 409 `RPC_NOT_CONFIGURED` (variable name only). A 429 returns 429 `PROVIDER_RATE_LIMITED` with `retryAfterSeconds` from `Retry-After` when present. A timeout or 5xx returns 502 `PROVIDER_UNAVAILABLE`. A non-mainnet genesis returns 409 `NOT_MAINNET`. An empty listing returns 200 with `actions = []`, `nextBefore = null`. `before` unknown to the provider returns 200 with an empty page.
 
 ### Names, ordering, summary
@@ -342,3 +342,19 @@ $env:JAVA_HOME = 'C:/Users/user/.jdks/ms-21.0.10'
 5. **Count Gradle CLI captures in API usage?** CLI tasks don't start the database. *Recommendation:* not now; the dashboard states that CLI captures are not counted.
 6. **Usage retention.** Rows are small (5-minute buckets, only when calls happen). *Recommendation:* keep everything for now and revisit if the table passes 1 million rows.
 7. **Should the `decu-dip` v2 replay plan (Draft) be approved next?** The preset can only approximate the agreed strategy until it ships. *Recommendation:* yes; the run page then switches the preset to that engine and drops the unsupported-rule notice.
+
+## Delivered
+
+2026-10-18, on `develop`. Units 1, 2, 3, 5, 6 and 7 shipped in `815fec7`. Unit 4 (wallet activity) and unit 8 (source links and chart data) shipped in `acd0132`, with review fixes in `6b2deca`. Unit 9 (docs) shipped in `40f3094`. The frontend, built by Codex from the handoff, is in `866ae60`.
+
+Where delivery differs from the plan, and why:
+
+- **Wallet activity cost.** Rule 6's "152" was an arithmetic slip; the formula gives `limit + 2`, at most 52. The lookup reads with a single transport attempt (no retries), so that bound always holds and a 429 ends the page with its `Retry-After`. The genesis check repeats until it first succeeds, not strictly once per process.
+- **Wallet activity is local-only.** `LocalAccessFilter` refuses `/api/wallets/**` through the preview tunnel, like `/api/captures/**`, because each call spends paid provider requests and returns capture names.
+- **Cached pages report `requestsUsed` 0**, because a cache hit sends no request.
+- **`timeline` holds only the five instants.** `horizonEndSlot` stays on the scenario, where it already was.
+- **`extent` comes from the observations the chart service already loads**, not from a separate aggregate query. Timelines, and the one accepted-trades read they need, are built only on the run-detail path.
+- **Optional capture enrichment.** An unreadable capture session or case file leaves `source` capture fields null and `capturedIn` empty, with a WARN, instead of failing the request.
+- **Not run.** Docker was unavailable, so the Testcontainers suites (`ConsoleApiIntegrationTest`, `ChartApiIntegrationTest`, and the API usage persistence tests) were compiled but not run. The unit suite passed: 1,222 tests.
+
+Docs updated: README (console API table, API usage, configuration, production SQL), `docs/schema/V20261016120000__api_usage_buckets.sql`, ADR `20261016-agreed-strategy-run-preset.md`, the addendum to ADR `20261010-capture-console.md`, `docs/REAL_DATA_CAPTURE.md`, and the Codex handoff (contract confirmed).
