@@ -1,0 +1,6 @@
+@media (min-width: 75em) {
+  .run-plain-words {
+    position: sticky;
+    top: 1rem;
+  }
+}

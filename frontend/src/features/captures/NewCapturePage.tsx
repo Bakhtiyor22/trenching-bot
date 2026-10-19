@@ -4,6 +4,7 @@ import {
   Alert,
   Anchor,
   Badge,
+  Breadcrumbs,
   Button,
   Checkbox,
   Group,
@@ -17,11 +18,18 @@ import {
   Tabs,
   Text,
   TextInput,
+  Tooltip,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { keepPreviousData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { ApiError } from '../../api/client';
 import {
   capturesApi,
@@ -30,26 +38,39 @@ import {
   WALLET_TOKEN_SCOPE,
 } from '../../api/captures';
 import { setupApi, type Recommendation } from '../../api/setup';
-import { ShortId, Timestamp } from '../../components/DisplayValues';
+import { RelativeTime, ShortId } from '../../components/DisplayValues';
 import { PageHeader, Section } from '../../components/Panels';
-import { CodeText, Term } from '../../components/PlainLanguage';
+import { Term } from '../../components/PlainLanguage';
 import { Recommendations } from '../../components/Recommendations';
-import { ErrorState, LoadingState } from '../../components/StateViews';
+import {
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  ProviderErrorState,
+} from '../../components/StateViews';
 import { isSolanaAddress } from '../../lib/base58';
 import { codeLabel } from '../../lib/codes';
 import { paths } from '../../paths';
+import { activityNote, solFromLamports } from './activityDisplay';
 import { CommandError } from './CaptureShared';
 import { useCaptureCommand, useCaptureConfig } from './captureQueries';
 
+function focusMint() {
+  document.getElementById('capture-mint')?.focus();
+}
+
 function WalletActivityPicker({
   wallet,
+  label,
   mint,
   onSelect,
 }: {
   wallet: string;
+  label: string;
   mint: string;
   onSelect: (mint: string) => void;
 }) {
+  const queryClient = useQueryClient();
   const refresh = useRef(false);
   const [buys, setBuys] = useState(true);
   const [hideCaptured, setHideCaptured] = useState(false);
@@ -65,6 +86,22 @@ function WalletActivityPicker({
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
+  const retryAt =
+    activity.isError &&
+    activity.error instanceof ApiError &&
+    activity.error.code === 'PROVIDER_RATE_LIMITED'
+      ? activity.errorUpdatedAt + Math.max(0, activity.error.retryAfterSeconds ?? 0) * 1000
+      : 0;
+  const [retryReadyAt, setRetryReadyAt] = useState(0);
+  useEffect(() => {
+    if (!retryAt) return;
+    const timer = window.setTimeout(
+      () => setRetryReadyAt(retryAt),
+      Math.max(0, retryAt - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [retryAt]);
+  const retryBlocked = retryReadyAt < retryAt;
   const rows = [
     ...new Map(
       (activity.data?.pages.flatMap((page) => page.actions) ?? []).map((action) => [
@@ -79,197 +116,270 @@ function WalletActivityPicker({
       (!hideCaptured || !action.capturedIn.length) &&
       (!overThreshold || action.overSignalThreshold),
   );
-  const retryAt =
-    activity.error instanceof ApiError && activity.error.retryAfterSeconds
-      ? activity.errorUpdatedAt + activity.error.retryAfterSeconds * 1000
-      : null;
-  const [now, setNow] = useState(Date.now);
-  // The countdown is only mounted after a rate-limit error, avoiding polling the provider.
+  const newest = activity.data?.pages[0];
+  function refreshActivity() {
+    if (Date.now() < retryAt) return;
+    refresh.current = true;
+    void activity.refetch().finally(() => {
+      refresh.current = false;
+    });
+  }
+  function loadOlder() {
+    if (Date.now() < retryAt) return;
+    void activity.fetchNextPage();
+  }
   return (
     <Stack gap="sm">
       <Group justify="space-between">
-        <Text size="sm">Pump.fun buys and sells (sells may be incomplete)</Text>
+        <Stack gap={3}>
+          <Text size="sm">Pump.fun buys and sells (sells may be incomplete)</Text>
+          {activity.data && (
+            <Text size="xs" c="dimmed">
+              Loaded <RelativeTime iso={new Date(activity.dataUpdatedAt).toISOString()} /> ·{' '}
+              {activity.data.pages.reduce((sum, page) => sum + page.requestsUsed, 0)} requests
+              {newest?.cachedAt ? ' (from cache)' : ''}
+            </Text>
+          )}
+        </Stack>
         <Button
           variant="default"
           size="xs"
           loading={activity.isFetching && !activity.isFetchingNextPage}
-          disabled={retryAt !== null && now < retryAt}
-          onClick={() => {
-            refresh.current = true;
-            void activity.refetch().finally(() => {
-              refresh.current = false;
-            });
-          }}
+          disabled={retryBlocked}
+          onClick={refreshActivity}
         >
           Refresh activity
         </Button>
       </Group>
-      {retryAt && <RetryCountdown until={retryAt} onTick={setNow} />}
-      <Group gap="md">
-        <Checkbox
-          label="Buys only"
-          checked={buys}
-          onChange={(event) => setBuys(event.currentTarget.checked)}
-        />
-        <Checkbox
-          label="Hide already captured"
-          checked={hideCaptured}
-          onChange={(event) => setHideCaptured(event.currentTarget.checked)}
-        />
-        <Checkbox
-          label="Over 1.9 SOL"
-          description="Curve payment, excluding fees"
-          checked={overThreshold}
-          onChange={(event) => setOverThreshold(event.currentTarget.checked)}
-        />
+      <Group gap="xs">
+        <Button
+          size="xs"
+          variant={buys ? 'filled' : 'default'}
+          aria-pressed={buys}
+          onClick={() => setBuys(!buys)}
+        >
+          Buys only
+        </Button>
+        <Button
+          size="xs"
+          variant={hideCaptured ? 'filled' : 'default'}
+          aria-pressed={hideCaptured}
+          onClick={() => setHideCaptured(!hideCaptured)}
+        >
+          Hide already captured
+        </Button>
+        <Tooltip label="Curve payment, excluding fees">
+          <Button
+            size="xs"
+            variant={overThreshold ? 'filled' : 'default'}
+            aria-pressed={overThreshold}
+            onClick={() => setOverThreshold(!overThreshold)}
+          >
+            Over 1.9 SOL
+          </Button>
+        </Tooltip>
       </Group>
-      {activity.isPending && <LoadingState label="Loading recent wallet activity…" />}
-      {activity.isError && (
-        <Alert color="yellow" title="Wallet activity unavailable">
-          {codeLabel(
-            activity.error instanceof ApiError ? activity.error.code : 'PROVIDER_UNAVAILABLE',
-          )}
-          <CodeText
-            code={activity.error instanceof ApiError ? activity.error.code : 'PROVIDER_UNAVAILABLE'}
-          />
-        </Alert>
+      {activity.isPending && activity.isFetching && (
+        <Stack gap="xs">
+          <LoadingState label={`Loading ${label}'s latest actions…`} />
+          <Text size="xs" c="dimmed">
+            at most 22 requests
+          </Text>
+          <Button
+            variant="default"
+            onClick={() =>
+              void queryClient.cancelQueries({ queryKey: ['wallet-activity', wallet] })
+            }
+          >
+            Cancel loading
+          </Button>
+        </Stack>
       )}
-      {activity.data && (
-        <Text size="xs" c="dimmed">
-          {activity.data.pages.reduce((sum, page) => sum + page.requestsUsed, 0)} requests · loaded{' '}
-          <Timestamp iso={new Date(activity.dataUpdatedAt).toISOString()} /> ·{' '}
-          {activity.data.pages.reduce((sum, page) => sum + page.unreadable, 0)} unreadable
-          transactions
+      {activity.isPending && !activity.isFetching && (
+        <Text size="sm">
+          Activity loading cancelled. Paste a token mint or refresh to try again.
         </Text>
       )}
-      {!activity.isPending && visible.length === 0 && (
+      {!activity.isPending && !activity.isError && !rows.length && (
+        <EmptyState
+          title="No Pump.fun buys or sells found"
+          description={
+            activity.hasNextPage
+              ? 'Older actions may still be available.'
+              : 'Choose a token by pasting its mint below.'
+          }
+          action={
+            activity.hasNextPage ? (
+              <Button variant="default" onClick={loadOlder}>
+                Look further back
+              </Button>
+            ) : (
+              <Button variant="default" onClick={focusMint}>
+                Paste a token mint
+              </Button>
+            )
+          }
+        />
+      )}
+      {!!rows.length && !visible.length && (
         <Text size="sm">
-          No trades match these filters. Paste a token mint below or load older activity.
+          No actions match these filters. Change the filters or paste a token mint.
         </Text>
       )}
       {!!visible.length && (
         <ScrollArea>
-          <Table miw={650}>
+          <Table miw={760}>
             <Table.Thead>
               <Table.Tr>
-                {['Choose', 'Token', 'Trade', 'When', 'Notes'].map((label) => (
-                  <Table.Th key={label}>{label}</Table.Th>
+                <Table.Th>
+                  <VisuallyHidden>Select</VisuallyHidden>
+                </Table.Th>
+                {['When', 'Action', 'Token', 'SOL', 'Notes'].map((heading) => (
+                  <Table.Th key={heading} ta={heading === 'SOL' ? 'right' : undefined}>
+                    {heading}
+                  </Table.Th>
                 ))}
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {visible.map((action) => (
-                <Table.Tr
-                  key={`${action.signature}:${action.instructionIndex}:${action.innerIndex}`}
-                >
-                  <Table.Td>
-                    <Radio
-                      name="activity-token"
-                      aria-label={`Select ${action.mint} at slot ${action.slot}`}
-                      checked={
-                        mint === action.mint &&
-                        selectedAction ===
-                          `${action.signature}:${action.instructionIndex}:${action.innerIndex}`
-                      }
-                      disabled={action.side === 'SELL'}
-                      onChange={() => {
-                        setSelectedAction(
-                          `${action.signature}:${action.instructionIndex}:${action.innerIndex}`,
-                        );
-                        onSelect(action.mint);
-                      }}
-                      title={
-                        action.side === 'SELL'
-                          ? 'Choose a buy to select a reference token.'
-                          : 'Select this token'
-                      }
-                    />
-                  </Table.Td>
-                  <Table.Td>
-                    <Anchor
-                      href={`https://pump.fun/coin/${encodeURIComponent(action.mint)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <ShortId value={action.mint} />
-                    </Anchor>
-                  </Table.Td>
-                  <Table.Td>
-                    <Badge variant="light" color={action.side === 'BUY' ? 'teal' : 'red'}>
-                      {action.side}
-                    </Badge>
-                  </Table.Td>
-                  <Table.Td>
-                    <Timestamp iso={action.blockTime} />
-                    <Text size="xs">Slot {action.slot}</Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Text size="xs">
-                      {action.earlierActionInPage
-                        ? 'An older action is in this page. '
-                        : 'No first-buy claim. '}
-                      {action.side === 'SELL' && 'Sells cannot be selected. '}
-                    </Text>
-                    {action.capturedIn.map((capture) => (
-                      <Anchor
-                        key={capture.captureId}
-                        component={Link}
-                        to={paths.capture(capture.captureId)}
-                        size="xs"
-                      >
-                        Already captured: {capture.displayName}
-                      </Anchor>
-                    ))}
-                  </Table.Td>
-                </Table.Tr>
-              ))}
+              {visible.map((action) => {
+                const key = `${action.signature}:${action.instructionIndex}:${action.innerIndex}`;
+                const selected = mint === action.mint && selectedAction === key;
+                const sol = solFromLamports(action.solLamports);
+                const note = activityNote(action);
+                return (
+                  <Table.Tr key={key} bg={selected ? 'var(--mantine-color-blue-light)' : undefined}>
+                    <Table.Td>
+                      <Radio
+                        name="activity-token"
+                        aria-label={`Select ${action.mint} at slot ${action.slot}`}
+                        checked={selected}
+                        disabled={action.side === 'SELL'}
+                        onChange={() => {
+                          setSelectedAction(key);
+                          onSelect(action.mint);
+                        }}
+                        title={
+                          action.side === 'SELL'
+                            ? 'Sells cannot start a capture'
+                            : 'Select this token'
+                        }
+                      />
+                    </Table.Td>
+                    <Table.Td>
+                      <RelativeTime iso={action.blockTime} />
+                      <Text size="xs" c="dimmed">
+                        {action.blockTime
+                          ? new Date(action.blockTime).toLocaleTimeString('en-GB')
+                          : 'Time unavailable'}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Badge variant="light" color={action.side === 'BUY' ? 'teal' : 'red'}>
+                        {action.side === 'BUY' ? 'Buy' : 'Sell'}
+                      </Badge>
+                    </Table.Td>
+                    <Table.Td>
+                      <Stack gap={2}>
+                        <ShortId value={action.mint} />
+                        <Anchor
+                          href={`https://pump.fun/coin/${encodeURIComponent(action.mint)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          size="xs"
+                        >
+                          pump.fun ↗
+                        </Anchor>
+                        <Text size="xs" c="dimmed">
+                          Name not loaded
+                        </Text>
+                      </Stack>
+                    </Table.Td>
+                    <Table.Td ta="right" ff="monospace" title={sol.full}>
+                      {sol.display}
+                    </Table.Td>
+                    <Table.Td>
+                      <Text size="xs">
+                        {note === 'captured'
+                          ? action.capturedIn.map((capture, index) => (
+                              <span key={capture.captureId}>
+                                {index > 0 && ' · '}Captured in “
+                                <Anchor
+                                  component={Link}
+                                  to={paths.capture(capture.captureId)}
+                                  size="xs"
+                                >
+                                  {capture.displayName}
+                                </Anchor>
+                                ”
+                              </span>
+                            ))
+                          : note}
+                      </Text>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
             </Table.Tbody>
           </Table>
         </ScrollArea>
       )}
-      {activity.hasNextPage && (
-        <Button
-          variant="default"
-          onClick={() => void activity.fetchNextPage()}
-          loading={activity.isFetchingNextPage}
-          disabled={activity.isFetching || (retryAt !== null && now < retryAt)}
-        >
-          Load 20 older
-        </Button>
+      {activity.isError && (
+        <ProviderErrorState
+          key={activity.errorUpdatedAt}
+          error={activity.error}
+          retryAt={retryAt}
+          onRetry={activity.isFetchNextPageError ? loadOlder : refreshActivity}
+          alternatives={
+            <Button variant="subtle" onClick={focusMint}>
+              Paste a token mint instead
+            </Button>
+          }
+        />
       )}
+      {activity.data && (
+        <Group justify="space-between">
+          <Text size="xs" c="dimmed">
+            {rows.length} most recent actions
+          </Text>
+          {activity.hasNextPage && (
+            <Stack gap={2}>
+              <Button
+                variant="default"
+                onClick={loadOlder}
+                loading={activity.isFetchingNextPage}
+                disabled={activity.isFetching || retryBlocked}
+              >
+                Load 20 older
+              </Button>
+              <Text size="xs" c="dimmed">
+                up to 22 more requests
+              </Text>
+            </Stack>
+          )}
+        </Group>
+      )}
+      <Anchor component="button" type="button" size="xs" onClick={focusMint}>
+        Token not listed? Paste a token mint
+      </Anchor>
     </Stack>
-  );
-}
-
-function RetryCountdown({ until, onTick }: { until: number; onTick: (now: number) => void }) {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      const next = Date.now();
-      setNow(next);
-      onTick(next);
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [onTick]);
-  return (
-    <Text size="sm" role="status">
-      {now < until
-        ? `Retry available in ${Math.ceil((until - now) / 1000)} seconds.`
-        : 'You can refresh again.'}
-    </Text>
   );
 }
 
 function NewCaptureForm({ config }: { config: CaptureConfig }) {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const suggested = config.suggestedWallets?.[0];
-  const [mode, setMode] = useState<string | null>('new');
+  const initialDefaults = suggested ? config.walletTokenDefaults : config.walletDefaults;
+  const [mode, setMode] = useState<string | null>(
+    params.get('mode') === 'attach' ? 'attach' : 'new',
+  );
   const [wallet, setWallet] = useState(suggested?.address ?? '');
   const [name, setName] = useState('');
-  const [scope, setScope] = useState(config.walletDefaults.scope);
+  const [scope, setScope] = useState(initialDefaults.scope);
   const [mint, setMint] = useState('');
-  const [limit, setLimit] = useState(config.walletDefaults.limit);
-  const [scanPages, setScanPages] = useState(config.walletDefaults.scanPages);
+  const [limit, setLimit] = useState(initialDefaults.limit);
+  const [scanPages, setScanPages] = useState(initialDefaults.scanPages);
   const [cutoffMode, setCutoffMode] = useState<'FULL' | 'DECIDED'>('FULL');
   const [recovery, setRecovery] = useState(false);
   const [walletPath, setWalletPath] = useState('');
@@ -307,7 +417,22 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
       ),
     staleTime: 60_000,
   });
-  const undo = useRef(new Map<string, () => void>());
+  const undo = useRef(
+    new Map<string, () => void>(
+      suggested
+        ? [
+            [
+              'SCOPE_WALLET_TOKEN',
+              () => {
+                setScope(config.walletDefaults.scope);
+                setLimit(config.walletDefaults.limit);
+                setScanPages(config.walletDefaults.scanPages);
+              },
+            ],
+          ]
+        : [],
+    ),
+  );
   function apply(item: Recommendation) {
     if (item.setting?.field === 'scope') {
       const previous = { scope, limit, scanPages };
@@ -386,13 +511,14 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
           }),
     });
   }
-  const label =
-    config.suggestedWallets?.find((item) => item.address === wallet)?.label ??
-    `${wallet.slice(0, 4)}…${wallet.slice(-4)}`;
+  const walletLabel = [...(config.suggestedWallets ?? []), ...(config.recentWallets ?? [])].find(
+    (item) => item.address === wallet.trim(),
+  )?.label;
+  const label = walletLabel ?? `${wallet.slice(0, 4)}…${wallet.slice(-4)}`;
   const preview = generatedName(
     mode === 'attach' ? 'Attached' : label,
     mode === 'attach'
-      ? (walletPath.split(/[\\/]/).at(-1) ?? 'evidence')
+      ? walletPath.trim().split(/[\\/]/).filter(Boolean).at(-1) || 'wallet folder'
       : tokenScope
         ? mint
         : scope === 'wallet-references'
@@ -420,18 +546,27 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
               <Section title="1 · Whose trades?">
                 <Stack>
                   {suggested && (
-                    <Group justify="space-between">
-                      <Text size="sm">{suggested.label} · suggested by the agreed strategy</Text>
-                      <Button
-                        variant="light"
-                        disabled={locked}
-                        onClick={() =>
-                          setWallet(wallet === suggested.address ? '' : suggested.address)
-                        }
-                      >
-                        {wallet === suggested.address ? 'Applied · Undo' : `Use ${suggested.label}`}
-                      </Button>
-                    </Group>
+                    <Alert color="violet" variant="light" title={`Suggested: ${suggested.label}`}>
+                      <Stack gap="sm">
+                        <Text size="sm">
+                          The agreed strategy follows {suggested.label}'s buys. Start here, or paste
+                          another wallet below.
+                        </Text>
+                        <Group>
+                          {wallet === suggested.address && <Badge variant="light">Applied</Badge>}
+                          <Button
+                            variant="default"
+                            disabled={locked}
+                            onClick={() => {
+                              setWallet(wallet === suggested.address ? '' : suggested.address);
+                              setTokenOpen(null);
+                            }}
+                          >
+                            {wallet === suggested.address ? 'Undo' : `Use ${suggested.label}`}
+                          </Button>
+                        </Group>
+                      </Stack>
+                    </Alert>
                   )}
                   <TextInput
                     id="capture-wallet"
@@ -444,25 +579,40 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
                     disabled={locked}
                     autoComplete="off"
                     spellCheck={false}
+                    leftSection={
+                      walletLabel ? (
+                        <Badge size="xs" variant="light">
+                          {walletLabel}
+                        </Badge>
+                      ) : undefined
+                    }
+                    leftSectionWidth={
+                      walletLabel ? Math.max(65, walletLabel.length * 8 + 20) : undefined
+                    }
                     required
                   />
-                  {!!config.recentWallets?.length && (
+                  {config.recentWallets?.some((recent) => recent.address !== wallet.trim()) && (
                     <Group gap="xs">
-                      <Text size="xs">Recent wallets:</Text>
-                      {config.recentWallets.map((recent) => (
-                        <Button
-                          key={recent.address}
-                          size="xs"
-                          variant="subtle"
-                          onClick={() => {
-                            setWallet(recent.address);
-                            setTokenOpen(null);
-                          }}
-                        >
-                          {recent.label ??
-                            `${recent.address.slice(0, 4)}…${recent.address.slice(-4)}`}
-                        </Button>
-                      ))}
+                      <Text size="xs">Other wallets you used:</Text>
+                      {config.recentWallets
+                        .filter((recent) => recent.address !== wallet.trim())
+                        .map((recent, index) => (
+                          <Anchor
+                            key={recent.address}
+                            component="button"
+                            type="button"
+                            size="xs"
+                            disabled={locked}
+                            onClick={() => {
+                              setWallet(recent.address);
+                              setTokenOpen(null);
+                            }}
+                          >
+                            {index > 0 && '· '}
+                            {recent.label ??
+                              `${recent.address.slice(0, 4)}…${recent.address.slice(-4)}`}
+                          </Anchor>
+                        ))}
                     </Group>
                   )}
                 </Stack>
@@ -479,6 +629,7 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
                           <WalletActivityPicker
                             key={wallet}
                             wallet={wallet.trim()}
+                            label={label}
                             mint={mint}
                             onSelect={(value) => {
                               setMint(value);
@@ -554,11 +705,11 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
               </Stack>
             </Section>
           )}
-          <Section title="3 · Name">
+          <Section title={mode === 'attach' ? 'Name' : '3 · Name'}>
             <Stack>
               <TextInput
                 label="Session name"
-                description="Leave blank to generate a readable name."
+                description="Made from wallet, token and time. Edit it if you like; names must be unique."
                 placeholder={preview}
                 value={name}
                 maxLength={120}
@@ -566,16 +717,21 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
                 disabled={locked}
                 error={
                   nameCheck.data && !nameCheck.data.available && debouncedName === name
-                    ? 'This name is taken.'
+                    ? 'Another capture already has this name.'
                     : undefined
                 }
               />
               <Text size="xs" c="dimmed">
                 {name.trim() || preview}
               </Text>
+              {nameCheck.data?.available && debouncedName === name && name.trim() && (
+                <Text size="sm" c="teal">
+                  ✓ Name is free
+                </Text>
+              )}
               {suggestion && (
-                <Button variant="light" onClick={() => setName(suggestion)}>
-                  Use suggestion: {suggestion}
+                <Button variant="light" onClick={() => setName(suggestion)} title={suggestion}>
+                  Use suggestion
                 </Button>
               )}
               {nameCheck.isError && (
@@ -642,43 +798,76 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
             uncertain={!!create.pendingCommand && !create.isPending}
             retry={create.retry}
           />
-          <Group>
-            <Button
-              type="submit"
-              onClick={() => setStartAfterCreate(false)}
-              loading={create.isPending}
-              disabled={!!create.pendingCommand}
-            >
-              {mode === 'attach' ? 'Attach and inspect' : 'Create capture'}
-            </Button>
-            {mode === 'new' && (
-              <Button
-                type="submit"
-                variant="light"
-                onClick={() => setStartAfterCreate(true)}
-                disabled={locked || !config.rpcConfigured}
-              >
-                Create and start wallet step
-              </Button>
-            )}
-          </Group>
-          <Text size="xs" c="dimmed">
-            {tokenScope
-              ? config.walletTokenBudgetDefaults.requestBudget
-              : config.budgetDefaults.requestBudget}{' '}
-            requests per wallet invocation. <Term>Recovery</Term> uses at most three such
-            allowances.
-          </Text>
+          <Section title="What happens next">
+            <Stack>
+              <Text size="sm">
+                {mode === 'new'
+                  ? `Wallet step: at most ${tokenScope ? config.walletTokenBudgetDefaults.requestBudget : config.budgetDefaults.requestBudget} requests. The market step's cost depends on how busy the token was; you'll see it before you start.`
+                  : 'The saved capture folder is checked offline. No provider requests are sent.'}
+              </Text>
+              <Group>
+                <Button component={Link} to={paths.captures} variant="subtle">
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  variant="default"
+                  onClick={() => setStartAfterCreate(false)}
+                  loading={create.isPending}
+                  disabled={!!create.pendingCommand}
+                >
+                  {mode === 'attach' ? 'Attach and inspect' : 'Create only'}
+                </Button>
+                {mode === 'new' && (
+                  <Button
+                    type="submit"
+                    variant="filled"
+                    onClick={() => setStartAfterCreate(true)}
+                    disabled={locked || !config.rpcConfigured}
+                  >
+                    Create and start wallet step
+                  </Button>
+                )}
+              </Group>
+              {mode === 'new' && !config.rpcConfigured && (
+                <Text size="xs" c="yellow">
+                  Solana RPC is not set up. Configure SOLANA_RPC_URL for the backend before starting
+                  the wallet step.
+                </Text>
+              )}
+            </Stack>
+          </Section>
         </Stack>
       </form>
       <Stack>
-        <Recommendations
-          items={recommendations.data ?? []}
-          onApply={apply}
-          onUndo={(item) => undo.current.get(item.id)?.()}
-          onAdjust={(item) => document.getElementById(`capture-${item.setting?.field}`)?.focus()}
-        />
-        {recommendations.isError && (
+        {mode !== 'attach' && (
+          <Recommendations
+            items={(recommendations.data ?? []).map((item) => ({
+              ...item,
+              facts: {
+                ...item.facts,
+                budget: tokenScope
+                  ? config.walletTokenBudgetDefaults.requestBudget
+                  : config.budgetDefaults.requestBudget,
+              },
+            }))}
+            appliedIds={[
+              ...(scope === WALLET_TOKEN_SCOPE ? ['SCOPE_WALLET_TOKEN'] : []),
+              ...(cutoffMode === 'DECIDED' ? ['CUTOFF_DECIDED'] : []),
+              ...(recovery ? ['ENABLE_RECOVERY'] : []),
+            ]}
+            onApply={apply}
+            onUndo={(item) => {
+              const restore = undo.current.get(item.id);
+              if (restore) restore();
+              else if (item.setting?.field === 'scope') changeScope(config.walletDefaults.scope);
+              else if (item.setting?.field === 'cutoffMode') setCutoffMode('FULL');
+              else if (item.setting?.field === 'recovery') setRecovery(false);
+            }}
+            onAdjust={(item) => document.getElementById(`capture-${item.setting?.field}`)?.focus()}
+          />
+        )}
+        {mode !== 'attach' && recommendations.isError && (
           <ErrorState
             error={recommendations.error}
             title="Suggestions unavailable"
@@ -699,6 +888,12 @@ export function NewCapturePage() {
   const config = useCaptureConfig();
   return (
     <Stack gap="lg">
+      <Breadcrumbs>
+        <Anchor component={Link} to={paths.captures}>
+          Captures
+        </Anchor>
+        <Text size="sm">New capture</Text>
+      </Breadcrumbs>
       <PageHeader
         title="New capture"
         description="Choose a wallet and token, then collect the evidence for a replay."

@@ -86,6 +86,16 @@ describe('time-axis candle chart', () => {
     expect(empty.yAxis).toMatchObject({ min: 0, max: 1 });
   });
 
+  it('steps across buckets without trades and marks only points cut off by missing rates', () => {
+    const candle = chart.candles[0];
+    if (!candle) throw new Error('Fixture needs one candle');
+    const spaced = { ...chart, candles: Array.from({ length: 3 }, (_, index) => ({ ...candle, bucketStart: new Date(Date.parse(time) + index * 120_000).toISOString() })) };
+    expect((chartCandleOption(spaced, 'mcap').series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'line', step: 'end', showSymbol: false });
+    const unrated = { ...spaced, candles: spaced.candles.map((item, index) => (index === 1 ? item : { ...item, mcap: null })) };
+    const withRate = { ...unrated, candles: [...unrated.candles, { ...candle, bucketStart: '2026-10-15T00:08:00Z' }, { ...candle, bucketStart: '2026-10-15T00:09:00Z' }] };
+    expect((chartCandleOption(withRate, 'mcap').series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'line', showSymbol: true, connectNulls: false });
+  });
+
   it('falls back to price when no valuation is available', () => {
     const option = chartCandleOption({ ...chart, valuationBasis: { ...chart.valuationBasis, available: false } }, 'mcap');
     expect(option.yAxis).toMatchObject({ name: 'Price (SOL)' });

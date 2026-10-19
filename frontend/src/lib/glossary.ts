@@ -1,10 +1,14 @@
 export const glossary = {
-  'Market window': 'The recorded trades watched after the wallet’s reference buy.',
-  Slot: 'A position in Solana’s sequence of blocks; the simulator orders trades by slot.',
-  Request: 'One call sent to a provider; retries each use another request.',
-  Gap: 'A selected transaction whose required details could not be recorded.',
-  Cutoff: 'The rule deciding when a market window has enough recorded history.',
-  Validated: 'The recorded evidence and reference rates passed the replay checks.',
+  'Market window':
+    'The period of trades saved after a wallet buy, so the simulator can follow what happened next.',
+  Slot: "Solana's clock tick, about 0.4 seconds. Used to order trades exactly.",
+  Request:
+    'One HTTP call to an API. A retry counts as another request; a cached transaction uses none.',
+  Gap: 'A transaction we selected but could not download or decode. Gaps can stop a token from being replayable.',
+  Cutoff:
+    'When to stop saving trades in a market window: after the full window, or once the old default rules decide the result.',
+  Validated:
+    'The saved trades and rates passed the offline checks needed to build a replayable dataset.',
   'Case/Token': 'One token and its reference buy inside a capture.',
   Dataset: 'A saved set of recorded trades and rates that can be replayed.',
   Run: 'One simulation of a dataset with a particular configuration.',

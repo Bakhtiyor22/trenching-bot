@@ -4,23 +4,64 @@
     {
       "name": "frontend",
       "runtimeExecutable": "npm.cmd",
-      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
-      "env": { "BROWSER": "none" },
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev"
+      ],
+      "env": {
+        "BROWSER": "none"
+      },
       "port": 5173,
       "url": "http://localhost:5173"
     },
     {
       "name": "frontend-mocks",
       "runtimeExecutable": "npm.cmd",
-      "runtimeArgs": ["--prefix", "frontend", "run", "dev", "--", "--port", "5174", "--strictPort"],
-      "env": { "BROWSER": "none", "VITE_USE_MOCKS": "true" },
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5174",
+        "--strictPort"
+      ],
+      "env": {
+        "BROWSER": "none",
+        "VITE_USE_MOCKS": "true"
+      },
       "port": 5174,
       "url": "http://localhost:5174"
     },
     {
+      "name": "backend",
+      "runtimeExecutable": "cmd.exe",
+      "runtimeArgs": [
+        "/c",
+        "D:/Projects/trenching_bot/gradlew.bat",
+        "-p",
+        "D:/Projects/trenching_bot",
+        "bootRun",
+        "--console=plain"
+      ],
+      "env": {
+        "JAVA_HOME": "C:/Users/user/.jdks/ms-21.0.10"
+      },
+      "port": 8081,
+      "url": "http://localhost:8081"
+    },
+    {
       "name": "console-public",
       "runtimeExecutable": "npm.cmd",
-      "runtimeArgs": ["--prefix", "frontend", "run", "serve:public"],
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "serve:public"
+      ],
       "port": 4173,
       "url": "http://localhost:4173"
     }

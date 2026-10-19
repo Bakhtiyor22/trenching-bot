@@ -4,11 +4,40 @@ import {
   capturesApi,
   type CaptureConfig,
   type CaptureSession,
+  type CaptureSummary,
   type NextActionKind,
 } from '../../api/captures';
 import { actionLabels } from '../../lib/codes';
 import { paths } from '../../paths';
 import { captureKeys, useCaptureCommand } from './captureQueries';
+
+export function nextActionHint(summary: CaptureSummary, minRequestIntervalMillis?: number): string {
+  const { kind, maxRequests } = summary.nextAction;
+  if (kind === 'WAIT' || summary.status === 'RUNNING')
+    return 'Pause or cancel from the capture page';
+  if (maxRequests !== null) {
+    const base = `At most ${maxRequests.toLocaleString('en-US')} requests`;
+    return minRequestIntervalMillis && minRequestIntervalMillis > 0
+      ? `${base} · about ${Math.ceil((maxRequests * minRequestIntervalMillis) / 1000)} s at ${1000 / minRequestIntervalMillis} requests/s`
+      : base;
+  }
+  switch (kind) {
+    case 'REGISTER_DATASET':
+      return 'Offline; no provider requests';
+    case 'START_RUN':
+      return 'Uses the agreed strategy by default';
+    case 'RETRY_WALLET':
+      return 'Safe to retry; nothing is lost';
+    case 'VIEW_RESULTS':
+      return "Opens this dataset's runs";
+    case 'INSPECT':
+      return 'Checks saved files; no provider requests';
+    case 'NONE':
+      return 'No further action needed';
+    default:
+      return 'The request allowance is shown before this step starts';
+  }
+}
 
 export const actionSteps: Record<NextActionKind, 'WALLET' | 'MARKET' | 'RATES' | 'INSPECT' | null> =
   {

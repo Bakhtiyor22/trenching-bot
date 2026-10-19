@@ -622,6 +622,26 @@ export const v3Chart: ChartResponse = {
   markers: { available: false, unavailableReason: 'NOT_RECORDED_BEFORE_SCHEMA_V4', mode: 'ITEMS', total: 0, items: [], nextCursor: null, clusters: [] },
 };
 
+/** A six-minute run window for checking range controls and every scenario instant. */
+export const expandedRunChart: ChartResponse = (() => {
+  const seconds = [0, 120, 180, 240, 300, 360];
+  const timeAt = (index: number) =>
+    new Date(Date.parse(MINUTE) + (seconds[index] ?? 0) * 1000).toISOString();
+  return {
+    ...v4Chart,
+    range: { from: timeAt(0), to: timeAt(5) },
+    candles: v4Chart.candles.map((candle, index) => ({ ...candle, bucketStart: timeAt(index) })),
+    markers: {
+      ...v4Chart.markers,
+      items: v4Chart.markers.items.map((item, index) => ({ ...item, time: timeAt(index) })),
+    },
+    paperFills: v4Chart.paperFills.map((fill) => ({
+      ...fill,
+      time: fill.phase === 'ENTRY' ? timeAt(2) : timeAt(5),
+    })),
+  };
+})();
+
 export const v4Observations: Observation[] = v4Chart.markers.items.map((item) => ({
   id: item.observationId, pair: PAIR, slot: item.slot, priceSlot: item.slot, observedTime: item.time,
   price: item.price, liquidityQuote: null, source: item.source, sourceEventId: item.signature ?? `v4-event-${item.slot}`,

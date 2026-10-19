@@ -1,13 +1,11 @@
 import type { CaptureOperation } from '../../api/captures';
-import { reasonText } from './captureReasons';
+import { knownReasonText } from './captureReasons';
 
 /** Why an operation is not (or not yet) a success, in the words the console shows above the technical code. */
 export interface OperationNoticeContent {
   title: string;
-  /** The specific explanation: the backend's message, else the code's guidance, else a sentence for the state. */
+  /** The specific explanation: the code's plain text, else the backend's message, else a sentence for the state. */
   detail: string;
-  /** The code's guidance, set only when it adds something to a backend message. */
-  guidance: string | null;
   code: string | null;
   color: 'red' | 'amber' | 'gray';
 }
@@ -45,27 +43,15 @@ export function operationNotice(
   const title = TITLES[operation.state];
   if (!title) return null;
   const code = operation.code ?? stageReason ?? null;
-  const known = code ? reasonText(code) : null;
-  // reasonText falls back to the lower-cased code, which says nothing a message or a state sentence would not.
-  const guidance = code && known !== code.replaceAll('_', ' ').toLowerCase() ? known : null;
+  // A known code reads better than the backend's message, which can be technical (`category=MANIFEST_VERSION`).
   const message = operation.message?.trim() || null;
   return {
     title,
-    detail: message ?? guidance ?? FALLBACKS[operation.state] ?? title,
-    guidance: message && guidance ? unsaid(guidance, message) : null,
+    detail: knownReasonText(code) ?? message ?? FALLBACKS[operation.state] ?? title,
     code,
     color:
       operation.state === 'FAILED' ? 'red' : operation.state === 'CANCELLED' ? 'gray' : 'amber',
   };
-}
-
-/** The sentences of [guidance] that [message] does not already say, or null when it says them all. */
-function unsaid(guidance: string, message: string): string | null {
-  const said = message.toLowerCase();
-  const rest = guidance
-    .split(/(?<=[.!?])\s+/)
-    .filter((sentence) => !said.includes(sentence.replace(/[.!?]$/, '').toLowerCase()));
-  return rest.length ? rest.join(' ') : null;
 }
 
 /** A wait in words: seconds under two minutes, else rounded-up minutes, and hours past an hour. */

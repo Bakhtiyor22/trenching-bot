@@ -30,6 +30,21 @@ export function formatLocalTime(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : localDateTime.format(date);
 }
 
+export function formatRelative(iso: string, now: Date | number): string {
+  const time = Date.parse(iso);
+  if (Number.isNaN(time)) return iso;
+  const seconds = Math.max(0, Math.floor((Number(now) - time) / 1000));
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
+  if (seconds < 7 * 86400) return `${Math.floor(seconds / 86400)} days ago`;
+  return new Date(time).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
 /** Slots are exact integers; group digits for readability. */
 export function formatSlot(slot: number | null | undefined): string {
   if (slot == null) return '—';

@@ -181,7 +181,7 @@ describe('Token verdict', () => {
 
   it('stays hidden for sessions of the other scopes', async () => {
     renderPage(<CaptureDetailPage />, { path: '/captures/:id', url: `/captures/${captureSession.id}` });
-    expect(await screen.findByRole('button', { name: 'Inspect evidence' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Re-check saved files' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Token verdict' })).not.toBeInTheDocument();
   });
 });

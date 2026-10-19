@@ -12,6 +12,7 @@ import {
 import { server } from '../../mocks/server';
 import { renderPage } from '../../test/render';
 import { NewRunPage } from './NewRunPage';
+import { runPreset } from '../../mocks/setupHandlers';
 
 function renderNewRun(url = `/runs/new?datasetId=${SAMPLE_DATASET_ID}`) {
   return renderPage(<NewRunPage />, {
@@ -26,6 +27,71 @@ function errorIdsOf(input: HTMLElement): string[] {
 }
 
 describe('NewRunPage', () => {
+  it('formats changed agreed values and resets just one field', async () => {
+    const { user } = renderNewRun();
+    const stop = await screen.findByLabelText(/Stop loss/);
+    await user.clear(stop);
+    await user.type(stop, '41');
+    const size = screen.getByLabelText(/Position size/);
+    await user.clear(size);
+    await user.type(size, '0.2');
+    const cap = screen.getByLabelText(/Minimum market cap/);
+    await user.clear(cap);
+    await user.type(cap, '12000');
+    expect(screen.getByText('Changed by you · agreed 40%')).toBeInTheDocument();
+    expect(screen.getByText('Changed by you · agreed 0.1 SOL')).toBeInTheDocument();
+    expect(screen.getByText('Changed by you · agreed $10,000')).toBeInTheDocument();
+    expect(screen.getByText('Changed · 3 settings')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Reset to 40%' }));
+    expect(stop).toHaveValue('40');
+    expect(size).toHaveValue('0.2');
+    expect(cap).toHaveValue('12000');
+    expect(screen.getByText('Changed · 2 settings')).toBeInTheDocument();
+  });
+
+  it('retries loading the agreed strategy before displaying the form', async () => {
+    let requests = 0;
+    server.use(
+      http.get('/api/runs/preset', () => {
+        requests++;
+        return requests === 1
+          ? HttpResponse.json(
+              { code: 'UNAVAILABLE', message: 'Unavailable', fields: {} },
+              { status: 503 },
+            )
+          : HttpResponse.json(runPreset);
+      }),
+    );
+    const { user } = renderNewRun();
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+    expect(await screen.findByLabelText(/Position size/)).toHaveValue('0.1');
+    expect(requests).toBe(2);
+  });
+
+  it('starts the comparison flow once and never offers an undo for the action', async () => {
+    const bodies: RunStartRequest[] = [];
+    server.use(
+      http.post('/api/runs', async ({ request }) => {
+        bodies.push((await request.json()) as RunStartRequest);
+        return HttpResponse.json({
+          run: { ...sampleRun, id: `comparison-${bodies.length}` },
+          created: true,
+        });
+      }),
+    );
+    const { user } = renderPage(<NewRunPage />, {
+      path: '/runs/new',
+      url: `/runs/new?datasetId=${SAMPLE_DATASET_ID}`,
+      extraRoutes: [{ path: '/compare', element: <div>Comparison results</div> }],
+    });
+    const action = await screen.findByRole('button', { name: 'Add comparison run' });
+    await user.dblClick(action);
+    expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+    await screen.findByText('Comparison results');
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]?.presetId).toBe(runPreset.id);
+    expect(bodies[1]).toEqual({ datasetId: SAMPLE_DATASET_ID });
+  });
   it('uses a linked dataset even when it is outside the first catalog page', async () => {
     server.use(
       http.get('/api/datasets', () =>
@@ -41,7 +107,7 @@ describe('NewRunPage', () => {
     );
     const { user } = renderNewRun(`/runs/new?datasetId=${EDGE_DATASET_ID}`);
     expect(await screen.findByRole('combobox', { name: /Dataset/ })).toHaveValue(
-      'edge-cases · b3f1…8f90',
+      `edge-cases — 1 token, 1 trades`,
     );
     await user.click(screen.getByRole('button', { name: /Start run/ }));
     await screen.findByText('Run detail page');
@@ -56,16 +122,18 @@ describe('NewRunPage', () => {
 
   it('prefills the agreed preset and labels its gaps', async () => {
     renderNewRun();
-    expect(await screen.findByLabelText(/Notional/)).toHaveValue('0.1');
-    expect(screen.getByLabelText(/Latency \(slots\)/)).toHaveValue('1');
-    expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).toHaveValue('0.001000000000');
+    expect(await screen.findByLabelText(/Position size/)).toHaveValue('0.1');
+    expect(screen.getByLabelText(/Fill delay/)).toHaveValue('1');
+    expect(screen.getByLabelText(/Cost per transaction/)).toHaveValue('0.001');
     expect(screen.queryByLabelText(/Fee \(bps\)/)).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/Slippage/)).not.toBeInTheDocument();
-    expect(screen.getByLabelText(/Dip below first buy/)).toHaveValue('20');
+    expect(screen.getByLabelText(/Dip below Decu's first buy/)).toHaveValue('20');
     expect(screen.getByLabelText(/Take profit/)).toHaveValue('55');
     expect(screen.getByLabelText(/Stop loss/)).toHaveValue('40');
-    expect(screen.getByLabelText(/Minimum market cap/)).toHaveValue('10000.000000000000');
-    expect(screen.getByLabelText(/Horizon/)).toHaveValue('4500');
+    expect(screen.getByLabelText(/Minimum market cap/)).toHaveValue('10000');
+    expect(screen.getByLabelText(/Observation window/)).toHaveValue('4500');
+    expect(screen.getByText(/This simulator .* applies .* agreed rules exactly/)).toBeVisible();
+    expect(screen.getByText(/rules need the new decu-dip v2 engine/)).toBeVisible();
   });
 
   it('shows a server fields.latencySlots error next to the latency input', async () => {
@@ -82,15 +150,15 @@ describe('NewRunPage', () => {
       ),
     );
     const { user } = renderNewRun();
-    await screen.findByLabelText(/Latency \(slots\)/);
+    await screen.findByLabelText(/Fill delay/);
     await user.click(screen.getByRole('button', { name: /Start run/ }));
 
     const message = await screen.findByText('must be an integer between 1 and 150');
-    const latencyInput = screen.getByLabelText(/Latency \(slots\)/);
+    const latencyInput = screen.getByLabelText(/Fill delay/);
     expect(latencyInput).toHaveAttribute('aria-invalid', 'true');
     expect(errorIdsOf(latencyInput)).toContain(message.id);
     // Other inputs are not marked.
-    expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).not.toHaveAttribute(
+    expect(screen.getByLabelText(/Cost per transaction/)).not.toHaveAttribute(
       'aria-invalid',
       'true',
     );
@@ -99,6 +167,39 @@ describe('NewRunPage', () => {
         .getAllByRole('alert')
         .some((alert) => alert.textContent?.includes('Simulation configuration is invalid')),
     ).toBe(true);
+  });
+
+  it('explains a dataset cut short by the old cutoff and offers the old defaults instead', async () => {
+    const bodies: RunStartRequest[] = [];
+    server.use(
+      http.post('/api/runs', async ({ request }) => {
+        const body = (await request.json()) as RunStartRequest;
+        bodies.push(body);
+        return body.config
+          ? HttpResponse.json(
+              {
+                code: 'MARKET_COVERAGE_ENDED',
+                message:
+                  'Market coverage ends before the outcome is decided mint=x decidedAt=2 throughSlot=1',
+                fields: {},
+              },
+              { status: 409 },
+            )
+          : HttpResponse.json({ run: sampleRun, created: true }, { status: 201 });
+      }),
+    );
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Fill delay/);
+    await user.click(screen.getByRole('button', { name: /Start run/ }));
+
+    expect(
+      await screen.findByText('This dataset ends before these settings can finish'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/decidedAt=/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Run the old defaults instead' }));
+
+    expect(await screen.findByText('Run detail page')).toBeInTheDocument();
+    expect(bodies.at(-1)).toEqual({ datasetId: SAMPLE_DATASET_ID });
   });
 
   it('sends notional and transaction cost as strings and integers as numbers, without fee or slippage, then opens the run', async () => {
@@ -110,10 +211,10 @@ describe('NewRunPage', () => {
       }),
     );
     const { user, router } = renderNewRun();
-    const notional = await screen.findByLabelText(/Notional/);
+    const notional = await screen.findByLabelText(/Position size/);
     await user.clear(notional);
     await user.type(notional, '1.000000001');
-    const cost = screen.getByLabelText(/Transaction cost \(SOL\)/);
+    const cost = screen.getByLabelText(/Cost per transaction/);
     await user.clear(cost);
     await user.type(cost, '0');
     await user.click(screen.getByRole('button', { name: /Start run/ }));
@@ -137,13 +238,13 @@ describe('NewRunPage', () => {
       }),
     );
     const { user } = renderNewRun();
-    const latency = await screen.findByLabelText(/Latency \(slots\)/);
+    const latency = await screen.findByLabelText(/Fill delay/);
     await user.clear(latency);
     await user.type(latency, '151');
-    const notional = screen.getByLabelText(/Notional/);
+    const notional = screen.getByLabelText(/Position size/);
     await user.clear(notional);
     await user.type(notional, '0.0000000005');
-    const cost = screen.getByLabelText(/Transaction cost \(SOL\)/);
+    const cost = screen.getByLabelText(/Cost per transaction/);
     await user.clear(cost);
     await user.type(cost, '0.2');
     await user.click(screen.getByRole('button', { name: /Start run/ }));
@@ -156,15 +257,15 @@ describe('NewRunPage', () => {
 
   it('resets to the defaults', async () => {
     const { user } = renderNewRun();
-    const latency = await screen.findByLabelText(/Latency \(slots\)/);
+    const latency = await screen.findByLabelText(/Fill delay/);
     await user.clear(latency);
     await user.type(latency, '7');
-    const cost = screen.getByLabelText(/Transaction cost \(SOL\)/);
+    const cost = screen.getByLabelText(/Cost per transaction/);
     await user.clear(cost);
     await user.type(cost, '0.005');
     await user.click(screen.getByRole('button', { name: /Reset to agreed/ }));
-    expect(screen.getByLabelText(/Latency \(slots\)/)).toHaveValue('1');
-    expect(screen.getByLabelText(/Transaction cost \(SOL\)/)).toHaveValue('0.001000000000');
+    expect(screen.getByLabelText(/Fill delay/)).toHaveValue('1');
+    expect(screen.getByLabelText(/Cost per transaction/)).toHaveValue('0.001');
   });
 
   it('rejects a three-decimal percent before making a run request', async () => {
@@ -176,7 +277,7 @@ describe('NewRunPage', () => {
       }),
     );
     const { user } = renderNewRun();
-    const dip = await screen.findByLabelText(/Dip below first buy/);
+    const dip = await screen.findByLabelText(/Dip below Decu's first buy/);
     await user.clear(dip);
     await user.type(dip, '20.255');
     await user.click(screen.getByRole('button', { name: 'Start run' }));
@@ -193,9 +294,12 @@ describe('NewRunPage', () => {
         ),
       ),
     );
-    renderNewRun();
-    expect(await screen.findByText('Agreed preset unavailable')).toBeInTheDocument();
-    expect(screen.getByLabelText(/Dip below first buy/)).toHaveValue('15');
+    const { user } = renderNewRun();
+    expect(await screen.findByText('Agreed strategy could not be loaded')).toBeInTheDocument();
+    expect(screen.queryByRole('form')).not.toBeInTheDocument();
+    expect(screen.getByText('Technical code: STRATEGY_PRESET_UNAVAILABLE')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Continue with defaults' }));
+    expect(screen.getByLabelText(/Dip below Decu's first buy/)).toHaveValue('15');
     expect(screen.getAllByText('Engine default · not the agreed strategy').length).toBeGreaterThan(
       0,
     );
@@ -210,7 +314,7 @@ describe('NewRunPage', () => {
       }),
     );
     const { user } = renderNewRun();
-    await screen.findByLabelText(/Dip below first buy/);
+    await screen.findByLabelText(/Dip below Decu's first buy/);
     await user.click(screen.getByRole('button', { name: 'Start run' }));
     await screen.findByText('Run detail page');
     expect(body).toMatchObject({

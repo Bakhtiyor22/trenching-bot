@@ -2,6 +2,7 @@ import { Anchor, Breadcrumbs, Text } from '@mantine/core';
 import { Link } from 'react-router';
 import type { DatasetSource } from '../api/types';
 import { paths } from '../paths';
+import { shortId } from '../lib/format';
 
 export function SourceLinks({
   source,
@@ -15,18 +16,14 @@ export function SourceLinks({
   if (!source) return null;
   return (
     <Breadcrumbs style={{ flexWrap: 'wrap' }}>
-      {source.captureId ? (
+      {source.captureId && (
         <Anchor component={Link} to={paths.capture(source.captureId)}>
           Capture: {source.captureDisplayName ?? source.captureId}
         </Anchor>
-      ) : (
-        <Text size="sm" c="dimmed">
-          Capture link unavailable
-        </Text>
       )}
       {source.datasetName ? (
         <Anchor component={Link} to={paths.dataset(source.datasetId)}>
-          {source.datasetName}
+          Dataset: {source.datasetName}
         </Anchor>
       ) : (
         <Text size="sm" c="dimmed">
@@ -35,7 +32,7 @@ export function SourceLinks({
       )}
       {runId && (
         <Anchor component={Link} to={paths.run(runId)}>
-          Run
+          Run {shortId(runId)}
         </Anchor>
       )}
       {chart && <Text size="sm">Chart</Text>}

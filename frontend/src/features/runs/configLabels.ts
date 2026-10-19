@@ -1,7 +1,44 @@
-import type { RunDetail } from '../../api/types';
-import { formatDecimal } from '../../lib/decimal';
+import type { Config, RunDetail } from '../../api/types';
+import {
+  compareDecimals,
+  formatDecimal,
+  isDecimalString,
+  trimFractionZeros,
+} from '../../lib/decimal';
 import { formatSlot, mintLabel } from '../../lib/format';
-import { levelPercent } from '../../lib/percent';
+import { formatPercent, levelPercent } from '../../lib/percent';
+import { FIELD_LABELS, formValuesFrom, type RunFormValues } from './runForm';
+
+export type SettingField = Exclude<keyof RunFormValues, 'datasetId'>;
+export const SETTING_LABELS: Record<SettingField, string> = {
+  ...FIELD_LABELS,
+  notional: 'Position size',
+  minMarketCapUsd: 'Minimum market cap',
+  transactionCostSol: 'Cost per transaction',
+  quoteMint: 'Quote currency',
+};
+
+export function formatSettingValue(field: SettingField, value: string | number): string {
+  const text = trimFractionZeros(String(value));
+  if (field.endsWith('Percent')) return formatPercent(text);
+  if (field === 'notional' || field === 'transactionCostSol') return `${formatDecimal(text)} SOL`;
+  if (field === 'minMarketCapUsd') return `$${formatDecimal(text)}`;
+  if (field === 'quoteMint') return mintLabel(text);
+  return `${formatDecimal(text)} slots`;
+}
+
+export function settingEquals(current: string | number, agreed: string | number): boolean {
+  return isDecimalString(String(current)) && isDecimalString(String(agreed))
+    ? compareDecimals(String(current), String(agreed)) === 0
+    : current === agreed;
+}
+
+export function changedSettings(values: RunFormValues, config: Config): SettingField[] {
+  const agreed = formValuesFrom(config, values.datasetId);
+  return (Object.keys(SETTING_LABELS) as SettingField[]).filter(
+    (field) => !settingEquals(values[field], agreed[field]),
+  );
+}
 
 /** A server percent string, with an exact fallback for older recordings. */
 export function bpsLabel(bps: number, percent?: string): string {

@@ -7,7 +7,14 @@ describe('operationNotice', () => {
     expect(operationNotice({ state: 'SUCCEEDED', code: null, message: null })).toBeNull();
   });
 
-  it('shows the backend message with the code guidance underneath when it adds something', () => {
+  it('explains a known code in plain words instead of the backend message', () => {
+    expect(
+      operationNotice({
+        state: 'FAILED',
+        code: 'MANIFEST_VERSION',
+        message: 'Capture validation failed category=MANIFEST_VERSION',
+      })?.detail,
+    ).not.toContain('category=');
     expect(
       operationNotice({
         state: 'INCOMPLETE',
@@ -16,31 +23,18 @@ describe('operationNotice', () => {
       }),
     ).toEqual({
       title: 'This run stopped before finishing',
-      detail: 'Retry after 12:20 (estimated).',
-      guidance:
+      detail:
         'A market window has not ended on chain yet. The capture retries on its own after the estimated end, or resume it then.',
       code: 'HORIZON_NOT_ELAPSED',
       color: 'amber',
     });
   });
 
-  it('keeps only the guidance sentences the message does not already say', () => {
-    const notice = operationNotice({
-      state: 'WAITING_RETRY',
-      code: 'HORIZON_NOT_ELAPSED',
-      message:
-        'A market window has not ended on chain yet, so it was not listed. Retry after 12:20 (estimated).',
-    });
-    expect(notice?.guidance).toBe(
-      'The capture retries on its own after the estimated end, or resume it then.',
-    );
+  it('shows the backend message for a code this version has no words for', () => {
     expect(
-      operationNotice({
-        state: 'FAILED',
-        code: 'EXPORT_REQUIRED',
-        message: 'Export the dataset before qualifying.',
-      })?.guidance,
-    ).toBeNull();
+      operationNotice({ state: 'FAILED', code: 'SOMETHING_NEW', message: 'Provider said no.' })
+        ?.detail,
+    ).toBe('Provider said no.');
   });
 
   it('falls back to the stage reason, then to a sentence for the state, so a failure always says why', () => {
@@ -51,7 +45,6 @@ describe('operationNotice', () => {
       ),
     ).toMatchObject({
       detail: 'Market coverage is incomplete. Increase scan pages if needed and explicitly resume.',
-      guidance: null,
       code: 'MARKET_CAPTURE_INCOMPLETE',
     });
     expect(

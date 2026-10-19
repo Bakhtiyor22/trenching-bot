@@ -17,11 +17,13 @@ import { BASE_MINT, WALLET } from '../../mocks/fixtures';
 import { NewCapturePage } from './NewCapturePage';
 import { CaptureDetailPage } from './CaptureDetailPage';
 
-function detail() {
-  return renderPage(<CaptureDetailPage />, {
+async function detail() {
+  const result = renderPage(<CaptureDetailPage />, {
     path: '/captures/:id',
     url: '/captures/capture-demo',
   });
+  await result.user.click(await screen.findByText('Advanced: limits, attempts and history'));
+  return result;
 }
 
 afterEach(() => Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1024 }));
@@ -30,6 +32,9 @@ describe('Capture console', () => {
   it('creates a bounded wallet sample with explicit discovery scope', async () => {
     let body: Record<string, unknown> | undefined;
     server.use(
+      http.get('/api/captures/config', () =>
+        HttpResponse.json({ ...captureConfig, suggestedWallets: [] }),
+      ),
       http.post('/api/captures', async ({ request }) => {
         body = (await request.json()) as Record<string, unknown>;
         return HttpResponse.json(captureSession);
@@ -42,8 +47,8 @@ describe('Capture console', () => {
     });
     await user.type(await screen.findByLabelText(/Session name/), 'First sample');
     await user.clear(screen.getByLabelText(/Wallet address/));
-    await user.type(screen.getByLabelText(/Wallet address/), WALLET);
-    await user.click(screen.getByRole('button', { name: 'Create capture' }));
+    await user.paste(WALLET);
+    await user.click(screen.getByRole('button', { name: 'Create only' }));
     expect(await screen.findByText('Created session')).toBeInTheDocument();
     expect(body).toMatchObject({
       name: 'First sample',
@@ -77,7 +82,7 @@ describe('Capture console', () => {
     ).toBeInTheDocument();
     const mint = screen.getByLabelText(/Token mint address/);
     await user.type(mint, 'not-a-mint');
-    await user.click(screen.getByRole('button', { name: 'Create capture' }));
+    await user.click(screen.getByRole('button', { name: 'Create only' }));
     await waitFor(() =>
       expect(
         screen
@@ -86,8 +91,8 @@ describe('Capture console', () => {
       ).toBe(true),
     );
     await user.clear(mint);
-    await user.type(mint, BASE_MINT);
-    await user.click(screen.getByRole('button', { name: 'Create capture' }));
+    await user.paste(BASE_MINT);
+    await user.click(screen.getByRole('button', { name: 'Create only' }));
     expect(await screen.findByText('Created session')).toBeInTheDocument();
     expect(body).toMatchObject({
       name: 'Token case',
@@ -150,7 +155,7 @@ describe('Capture console', () => {
         }),
       ),
     );
-    detail();
+    await detail();
     const walletPanel = await screen.findByRole('tabpanel', { name: 'Wallet' });
     expect(
       within(walletPanel).getByText(
@@ -196,7 +201,7 @@ describe('Capture console', () => {
         );
       }),
     );
-    const { user } = detail();
+    const { user } = await detail();
     await user.click(await screen.findByRole('button', { name: 'Resume wallet capture' }));
     await waitFor(() =>
       expect(body).toMatchObject({
@@ -238,7 +243,7 @@ describe('Capture console', () => {
         );
       }),
     );
-    const { user } = detail();
+    const { user } = await detail();
     await user.click(await screen.findByRole('button', { name: 'Advanced operation settings' }));
     await user.click(
       await screen.findByRole('checkbox', { name: 'Enable automatic recovery for this stage' }),
@@ -279,7 +284,7 @@ describe('Capture console', () => {
         HttpResponse.json({ ...captureSession, operation: waiting }),
       ),
     );
-    const { user } = detail();
+    const { user } = await detail();
     expect(await screen.findByText('Recovery limits')).toBeInTheDocument();
     expect(screen.getByText('140 / 1,200')).toBeInTheDocument();
     expect(screen.getByText('1 / 3')).toBeInTheDocument();
@@ -444,7 +449,7 @@ describe('Capture console', () => {
         );
       }),
     );
-    const { user } = detail();
+    const { user } = await detail();
     const card = await screen.findByRole('article', { name: 'Capture case case-mobile' });
     expect(within(card).getByText('Validation needed')).toBeInTheDocument();
     expect(within(card).queryByText('Case is blocked')).not.toBeInTheDocument();
@@ -503,7 +508,7 @@ describe('Capture console', () => {
         );
       }),
     );
-    const { user } = detail();
+    const { user } = await detail();
     await user.click(await screen.findByRole('button', { name: 'Export validated case' }));
     await user.click(await screen.findByRole('button', { name: 'Reconcile and retry request' }));
     await waitFor(() => expect(requests).toHaveLength(2));
@@ -558,7 +563,7 @@ describe('Capture console', () => {
         return HttpResponse.json({ items: polls === 1 ? [runningCase] : [completedCase] });
       }),
     );
-    detail();
+    await detail();
     expect(await screen.findByText('Case capture running')).toBeInTheDocument();
     expect(
       await screen.findByText('Validated and ready', {}, { timeout: 5000 }),
@@ -620,7 +625,7 @@ describe('Capture console', () => {
         });
       }),
     );
-    const { queryClient } = detail();
+    const { queryClient } = await detail();
     const action = await screen.findByRole('button', { name: 'Export validated case' });
     expect(action).toBeDisabled();
     await waitFor(() => expect(action).toBeEnabled(), { timeout: 5000 });
@@ -664,7 +669,7 @@ describe('Capture console', () => {
         }),
       ),
     );
-    const { user } = detail();
+    const { user } = await detail();
     await user.click(await screen.findByRole('tab', { name: /Rates/ }));
     expect(screen.getByRole('button', { name: 'Start rates capture' })).toBeDisabled();
     await user.click(screen.getByRole('tab', { name: /Markets/ }));
@@ -686,14 +691,14 @@ describe('Capture console', () => {
         });
       }),
     );
-    const { user } = detail();
-    await user.click(await screen.findByRole('button', { name: 'Inspect evidence' }));
+    const { user } = await detail();
+    await user.click(await screen.findByRole('button', { name: 'Re-check saved files' }));
     await user.click(await screen.findByRole('button', { name: 'Reconcile and retry request' }));
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1]).toEqual(requests[0]);
   });
   it('renders exact calibration values and independent dataset handoff', async () => {
-    const { user } = detail();
+    const { user } = await detail();
     await user.click(await screen.findByRole('tab', { name: /Calibration/ }));
     expect(await screen.findByText('-1234.5')).toBeInTheDocument();
     expect(screen.getByText('5000.5')).toBeInTheDocument();
@@ -773,12 +778,12 @@ describe('Capture console', () => {
         });
       }),
     );
-    detail();
-    expect(await screen.findByText('Budget for this run')).toBeInTheDocument();
-    expect(screen.getByText('Total used for this capture')).toBeInTheDocument();
+    await detail();
+    expect(await screen.findByText('Requests, this run')).toBeInTheDocument();
+    expect(screen.getByText('Requests, whole capture')).toBeInTheDocument();
     expect(screen.getByText('3 / 3')).toBeInTheDocument();
     expect(screen.getByText('5')).toBeInTheDocument();
-    expect(await screen.findByText('SUCCEEDED', {}, { timeout: 5000 })).toBeInTheDocument();
+    await waitFor(() => expect(polls).toBeGreaterThanOrEqual(2), { timeout: 5000 });
     const settled = polls;
     await new Promise((resolve) => setTimeout(resolve, 2500));
     expect(polls).toBe(settled);
@@ -804,7 +809,7 @@ describe('Capture console', () => {
         }),
       ),
     );
-    detail();
+    await detail();
     expect(await screen.findByText(/Solana RPC acquisition is not configured/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Resume wallet capture' })).toBeDisabled();
   });
@@ -840,7 +845,7 @@ describe('Capture console', () => {
         );
       }),
     );
-    const { user } = detail();
+    const { user } = await detail();
     await user.click(await screen.findByRole('button', { name: 'Advanced operation settings' }));
     const deadline = await screen.findByLabelText(/Operation deadline/);
     await user.clear(deadline);
@@ -870,10 +875,12 @@ describe('Capture console', () => {
         }),
       ),
     );
-    detail();
+    await detail();
     expect(await screen.findByText('This run stopped before finishing')).toBeInTheDocument();
-    expect(screen.getByText(/resume to continue with a fresh allowance/)).toBeInTheDocument();
-    expect(screen.getByText('Technical code: DEADLINE')).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/Reached the time allowed for this run. Evidence so far is kept./).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText('Technical code: DEADLINE').length).toBeGreaterThan(0);
   });
   it('explains a market window held until its end and when it retries', async () => {
     server.use(
@@ -903,9 +910,10 @@ describe('Capture console', () => {
         }),
       ),
     );
-    detail();
-    expect(await screen.findByLabelText('Operation waiting_retry: Waiting to retry')).toBeInTheDocument();
-    expect(screen.getByText(/has not ended on chain yet, so it was not listed/)).toBeInTheDocument();
+    await detail();
+    expect(
+      await screen.findByLabelText('Operation waiting_retry: Waiting to retry'),
+    ).toBeInTheDocument();
     expect(screen.getByText(/retries on its own after the estimated end/)).toBeInTheDocument();
     expect(screen.getByText('Technical code: HORIZON_NOT_ELAPSED')).toBeInTheDocument();
     expect(screen.getByText(/Next retry in 20 min/)).toBeInTheDocument();
@@ -917,19 +925,35 @@ describe('Capture console', () => {
           ...captureSession,
           inspection: captureSession.inspection && {
             ...captureSession.inspection,
-            market: { state: 'INCOMPLETE', reason: 'MARKET_HORIZON_NOT_ELAPSED', canStart: false, canResume: true, requiresNewAttempt: false },
+            market: {
+              state: 'INCOMPLETE',
+              reason: 'MARKET_HORIZON_NOT_ELAPSED',
+              canStart: false,
+              canResume: true,
+              requiresNewAttempt: false,
+            },
           },
-          operation: { ...captureOperation, step: 'MARKET', state: 'INCOMPLETE', code: null, message: null },
+          operation: {
+            ...captureOperation,
+            step: 'MARKET',
+            state: 'INCOMPLETE',
+            code: null,
+            message: null,
+          },
         }),
       ),
     );
-    detail();
+    await detail();
     expect(await screen.findByText('This run stopped before finishing')).toBeInTheDocument();
-    expect(screen.getAllByText(/has not been listed. Resume after the window end/).length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Technical code: MARKET_HORIZON_NOT_ELAPSED').length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/has not been listed. Resume after the window end/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText('Technical code: MARKET_HORIZON_NOT_ELAPSED').length,
+    ).toBeGreaterThan(0);
   });
   it('labels each calibrated buy with its instruction', async () => {
-    const { user } = detail();
+    const { user } = await detail();
     await user.click(await screen.findByRole('tab', { name: /Calibration/ }));
     expect(await screen.findByText('buy exact SOL in (v3)')).toBeInTheDocument();
     expect(screen.getByText('BUY_EXACT_QUOTE_IN_V3 1')).toBeInTheDocument();
@@ -959,7 +983,7 @@ describe('Capture console', () => {
         }),
       ),
     );
-    detail();
+    await detail();
     expect(await screen.findByRole('button', { name: 'Delete capture' })).toBeDisabled();
   });
   it('points to a smaller sample when the attempt is already over cap at the maximum capacity', async () => {
@@ -975,7 +999,7 @@ describe('Capture console', () => {
       inspection: { ...readyInspection, market: overCap, canExport: false, canCalibrate: false },
     };
     server.use(http.get('/api/captures/capture-demo', () => HttpResponse.json(atMaximum)));
-    const { user } = detail();
+    const { user } = await detail();
     await user.click(await screen.findByRole('tab', { name: /Markets/ }));
     expect(
       screen.getByText(/more market transactions than the maximum capacity allows/),
@@ -1005,7 +1029,7 @@ describe('Capture console', () => {
         }),
       ),
     );
-    const { user } = detail();
+    const { user } = await detail();
     await user.click(await screen.findByRole('tab', { name: /Markets/ }));
     expect(
       screen.getByText(/Create a new market attempt with a larger capacity/),
