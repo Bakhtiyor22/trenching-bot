@@ -122,6 +122,19 @@ class ChartMarkersTest {
     }
 
     @Test
+    fun `the wallet's unobserved trades join the items in chart order and the total`() {
+        val selected = select(limit = 7)
+        val firstBuy = selected.items.first().copy(observationId = "first-buy", time = start, slot = start.epochSecond)
+
+        val markers = ChartMarkers.including(selected, listOf(firstBuy))
+
+        assertEquals(listOf("first-buy", "t1", "t2", "t3"), markers.items.map { it.observationId })
+        assertEquals(selected.total + 1, markers.total)
+        assertEquals(markers.total, markers.items.size + markers.clusters.sumOf { it.count })
+        assertEquals(selected.copy(items = markers.items, total = markers.total), markers)
+    }
+
+    @Test
     fun `unrecorded markers say why`() {
         val markers = ChartMarkers.notRecorded()
 

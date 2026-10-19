@@ -92,6 +92,8 @@ describe('RunDetailPage', () => {
     await waitFor(() =>
       expect(requests.at(-1)?.searchParams.getAll('wallet')).toEqual([WALLET, WATCHED_WALLET]),
     );
+    // One-second buckets for any range up to the backend's cap of 2000 buckets.
+    expect(requests.at(-1)?.searchParams.get('maxBuckets')).toBe('2000');
   });
 
   it('explains v3 trader data and shows chart failures without hiding the run', async () => {

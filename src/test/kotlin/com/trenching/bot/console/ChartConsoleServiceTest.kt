@@ -1,6 +1,16 @@
 package com.trenching.bot.console
 
 import com.trenching.bot.common.DecimalPolicy
+import com.trenching.bot.common.Commitment
+import com.trenching.bot.common.Slot
+import com.trenching.bot.common.TransactionSignature
+import com.trenching.bot.protocol.pumpfun.PumpFunLayout
+import com.trenching.bot.walletactivity.application.WalletNormalizer
+import com.trenching.bot.walletactivity.domain.NormalizationOutcome
+import com.trenching.bot.walletactivity.domain.WalletEventIdentity
+import com.trenching.bot.walletactivity.domain.WalletTradeObserved
+import com.trenching.bot.walletactivity.domain.WalletTransaction
+import java.math.BigInteger
 import com.trenching.bot.common.MarketPair
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.PageResult
@@ -53,6 +63,10 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 
 class ChartConsoleServiceTest {
+    private companion object {
+        const val FIRST_BUY_SIGNATURE = "3uzy2eQpHGrLWNsrWgveyj69y9ueGgWzgSkyyLzmXK7NTdXK9N6vK9Ko3bTuzyc91v9PHJFYTnZPLLgB5rNzxa9F"
+    }
+
     private val sample = DipSample.load()
     private val report = ReplayRunner().run(sample, SimulationConfig.mvp())
     private val catalog = FakeCatalog()
@@ -337,6 +351,41 @@ class ChartConsoleServiceTest {
     }
 
     @Test
+    fun `a run chart marks the first buy its market window starts after, though no observation holds it`() {
+        val v4 = v4WithTracked()
+        catalog.add(v4)
+        val detail = detail(v4.observations, datasetId = id(v4))
+        val observed = v4.observations.filter { it.pair == takeProfit }
+        val firstBuy = walletBuy(v4.trackedWallet, observed.minOf { it.observedTime }.minusSeconds(1))
+        Mockito.`when`(console.walletTrades(detail.run.id)).thenReturn(listOf(firstBuy))
+
+        val chart = runChart(detail, v4.observations, pair = takeProfit)
+
+        val marker = chart.markers.items.first()
+        assertEquals(firstBuy.id, marker.observationId)
+        assertTrue(marker.tracked)
+        assertEquals(firstBuy.blockTime, chart.range.from)
+        assertEquals(observed.size + 1, chart.markers.total)
+        assertEquals(listOf(firstBuy.id), runChart(detail, v4.observations, pair = takeProfit, to = firstBuy.blockTime).markers.items
+            .map { it.observationId })
+    }
+
+    @Test
+    fun `a dataset chart marks the tracked wallet's buys the observations do not hold`() {
+        val v4 = v4WithTracked()
+        val firstBuyAt = v4.observations.filter { it.pair == takeProfit }.minOf { it.observedTime }.minusSeconds(1)
+        val buy = walletTransaction(v4.trackedWallet, firstBuyAt)
+        val dataset = v4.copy(transactions = listOf(buy, buy.copy(wallet = WalletAddress.of(DipSampleV4.trade(1).trader))))
+        catalog.add(dataset)
+
+        val tracked = datasetChart(dataset, pair = takeProfit).markers.items.filter { it.tracked }
+
+        assertEquals(WalletEventIdentity.of(buy.signature, buy.instructionIndex), tracked.first().observationId)
+        assertEquals(firstBuyAt, tracked.first().time)
+        assertEquals(1, tracked.count { it.signature == buy.signature.value })
+    }
+
+    @Test
     fun `an unknown run is not found`() {
         Mockito.`when`(console.detailWithObservations("missing")).thenThrow(com.trenching.bot.replay.domain.SimulationRunNotFoundException("missing"))
 
@@ -347,6 +396,14 @@ class ChartConsoleServiceTest {
         it.copy(trackedWallet = WalletAddress.of(DipSampleV4.trade(0).trader),
             referenceRates = it.referenceRates.map { rate -> rate.copy(source = "v4-test") })
     }
+
+    private fun walletTransaction(wallet: WalletAddress, blockTime: Instant) = WalletTransaction(
+        wallet, TransactionSignature.of(FIRST_BUY_SIGNATURE), 2, Slot.of(1), blockTime, takeProfit, BigInteger.valueOf(40_000_022_776_188),
+        BigInteger.valueOf(-2_933_333_333), PumpFunLayout.TOKEN_DECIMALS, PumpFunLayout.SOL_AMOUNT_DECIMALS, true, true, true,
+        PumpFunLayout.BUY_SOURCE, Commitment.CONFIRMED)
+
+    private fun walletBuy(wallet: WalletAddress, blockTime: Instant): WalletTradeObserved =
+        (WalletNormalizer().normalize(walletTransaction(wallet, blockTime), wallet, MintAddress.WRAPPED_SOL) as NormalizationOutcome.Accepted).trade
 
     private fun mcapOf(observation: MarketObservation): BigDecimal {
         val rate = sample.referenceRates.single { it.minute == ReferenceRate.minuteOf(observation.observedTime) }.rate

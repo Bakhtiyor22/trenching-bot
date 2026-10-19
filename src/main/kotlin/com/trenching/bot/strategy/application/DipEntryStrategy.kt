@@ -42,8 +42,7 @@ class DipEntryStrategy {
         source: MarketDataSource,
         rates: ReferenceRates,
     ): TradeIntent {
-        val referencePrice = BigDecimal(buy.quoteAmount.raw, buy.quoteAmount.decimals)
-            .divide(BigDecimal(buy.baseAmount.raw, buy.baseAmount.decimals), DecimalPolicy.PRICE_SCALE, DecimalPolicy.ROUNDING)
+        val referencePrice = DecimalPolicy.swapPrice(buy.quoteAmount, buy.baseAmount)
         val dipPrice = DecimalPolicy.price(referencePrice.multiply(BigDecimal.ONE.subtract(DecimalPolicy.fraction(config.dipBps))))
         val horizonEnd = buy.slot.plus(config.horizonSlots)
         val (watch, trigger) = if (supported(buy)) watch(buy, dipPrice, horizonEnd, config, source, rates)

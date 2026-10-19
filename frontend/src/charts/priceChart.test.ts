@@ -2,7 +2,7 @@ import type { LineSeriesOption } from 'echarts';
 import { describe, expect, it } from 'vitest';
 import { sampleObservations } from '../mocks/fixtures';
 import type { ChartResponse } from '../api/types';
-import { chartCandleOption, chartMarketPoints, chartMarkerSeries, mcapAxisLabel, observationSeries, observationTooltip, priceAxisLabel } from './priceChart';
+import { chartCandleOption, chartMarketPoints, chartMarkerSeries, marketPointAt, mcapAxisLabel, observationSeries, observationTooltip, priceAxisLabel, secondTicks } from './priceChart';
 
 const time = '2026-10-15T00:00:00Z';
 const ohlc = { open: '1.00000000000001', close: '2', low: '1', high: '3' };
@@ -23,7 +23,7 @@ const chart: ChartResponse = {
 describe('time-axis candle chart', () => {
   it('defaults to a quiet market line and removes the zoom slider and tooltip', () => {
     const option = chartCandleOption(chart, 'price');
-    expect((option.series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'line', connectNulls: false, lineStyle: { width: 2, color: '#3DDC97' } });
+    expect((option.series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'line', connectNulls: false, step: 'end', lineStyle: { width: 2, color: '#3DDC97' } });
     expect(option.tooltip).toMatchObject({ show: false });
     expect(option.grid).toMatchObject({ right: 68 });
     expect(option.yAxis).toMatchObject({ position: 'right', splitNumber: 3, splitLine: { lineStyle: { type: 'dashed' } } });
@@ -34,24 +34,38 @@ describe('time-axis candle chart', () => {
     expect([10000, 1200000, 3400000000, 1.25].map(mcapAxisLabel)).toEqual(['$10k', '$1.2m', '$3.4b', '$1.3']);
   });
 
-  it('retains exact closes and separates absent buckets and null rates', () => {
+  it('retains exact closes, holds the price across buckets without trades and breaks only at null rates', () => {
     expect(chartMarketPoints(chart, 'mcap').map((p) => [p.time, p.value, p.exact])).toEqual([
       [Date.parse(time), 2, '2'],
       [Date.parse('2026-10-15T00:01:00Z'), null, null],
-      [Date.parse('2026-10-15T00:02:00Z'), null, null],
       [Date.parse('2026-10-15T00:04:00Z'), 2, '2'],
     ]);
     const points = chartMarketPoints({ ...chart, candles: [...chart.candles].reverse() }, 'mcap');
     expect(points).toEqual(chartMarketPoints(chart, 'mcap'));
   });
 
-  it('labels only the two UTC endpoints and uses a dashed crosshair', () => {
-    const option = chartCandleOption(chart, 'price');
-    const axis = option.xAxis as { min: number; max: number; axisLabel: { formatter: (v: number) => string } };
-    expect(axis.axisLabel.formatter(axis.min)).toBe('00:00:00 UTC');
-    expect(axis.axisLabel.formatter(axis.min + 1000)).toBe('');
-    expect(axis.axisLabel.formatter(axis.max)).toBe('00:05:00 UTC');
+  it('reads the value in force at a time from the last point at or before it', () => {
+    const points = chartMarketPoints(chart, 'price');
+    expect(marketPointAt(points, Date.parse('2026-10-15T00:03:59Z'))?.time).toBe(Date.parse('2026-10-15T00:01:00Z'));
+    expect(marketPointAt(points, Date.parse('2026-10-15T00:04:00Z'))?.time).toBe(Date.parse('2026-10-15T00:04:00Z'));
+    expect(marketPointAt(points, Date.parse(time) - 1)?.time).toBe(Date.parse(time));
+    expect(marketPointAt([], 0)).toBeNull();
+  });
+
+  it('labels the time axis in seconds from the first buy and uses a dashed crosshair', () => {
+    const firstBuy = Date.parse('2026-10-15T00:01:07Z');
+    const option = chartCandleOption(chart, 'price', 'line', firstBuy);
+    const axis = option.xAxis as { min: number; max: number; axisLabel: { customValues: number[]; formatter: (v: number) => string } };
+    expect(axis.axisLabel.customValues.map(axis.axisLabel.formatter)).toEqual(['-60s', '0s', '+60s', '+120s', '+180s']);
     expect(option.xAxis).toMatchObject({ axisPointer: { lineStyle: { type: 'dashed' } } });
+    const fromStart = chartCandleOption(chart, 'price').xAxis as typeof axis;
+    expect(fromStart.axisLabel.customValues.map(fromStart.axisLabel.formatter)).toEqual(['0s', '+60s', '+120s', '+180s', '+240s', '+300s']);
+  });
+
+  it('spaces second ticks at the smallest round step that keeps six labels or fewer', () => {
+    const origin = Date.parse(time);
+    expect(secondTicks(origin, origin + 5_000, origin).map((t) => (t - origin) / 1000)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(secondTicks(origin - 200_000, origin + 380_000, origin).map((t) => (t - origin) / 1000)).toEqual([-120, 0, 120, 240, 360]);
   });
 
   it('uses red for a falling market and supports optional OHLC candles', () => {

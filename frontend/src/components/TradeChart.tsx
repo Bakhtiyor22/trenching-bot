@@ -29,15 +29,17 @@ import {
   type MarkerAnchor,
 } from '../charts/marketMarkers';
 import {
+  cycleStart,
   marketChange,
   marketRange,
   marketTime,
   marketValue,
+  secondsFrom,
   timeInRange,
   type MarketRangePreset,
   type MarketTimeRange,
 } from '../charts/marketSummary';
-import { chartCandleOption, chartMarketPoints } from '../charts/priceChart';
+import { chartCandleOption, chartMarketPoints, marketPointAt } from '../charts/priceChart';
 import { readWatchlist, WATCHLIST_KEY, WATCHLIST_LIMIT } from '../charts/tradeWallets';
 import { chartTimelineOption } from '../features/runs/timelineChart';
 import { isSolanaAddress } from '../lib/base58';
@@ -65,6 +67,8 @@ interface TradeChartProps {
   height?: number | string;
   expanded?: boolean;
 }
+/** The backend's bucket cap: ranges up to about half an hour get one-second buckets. */
+const MAX_BUCKETS = 2_000;
 const RANGE_OPTIONS: { value: MarketRangePreset; label: string }[] = [
   { value: 'cycle', label: 'Cycle' },
   { value: '5m', label: '5m' },
@@ -204,7 +208,7 @@ function TradeChartView({
   const [width, setWidth] = useState(640);
   const wallets = [...new Set([...(trackedWallet ? [trackedWallet] : []), ...watchlist])];
   const walletFilter = allTraders || wallets.length === 0 ? {} : { wallet: wallets };
-  const full = useChartData(kind, id, { pair, ...walletFilter });
+  const full = useChartData(kind, id, { pair, ...walletFilter, maxBuckets: MAX_BUCKETS });
   const fullData = full.data;
   const allActions: MarketAction[] = [
     ...(fullData?.markers.items.filter((item) => item.isTrackedWallet) ?? []),
@@ -221,7 +225,7 @@ function TradeChartView({
   const ranged = useChartData(
     kind,
     id,
-    { pair, ...walletFilter, ...range },
+    { pair, ...walletFilter, maxBuckets: MAX_BUCKETS, ...range },
     fullData !== undefined,
   );
   const response = ranged.data ?? fullData;
@@ -229,14 +233,13 @@ function TradeChartView({
   const view = data?.valuationBasis.available ? (controlledView ?? metric) : 'price';
   const points = data ? chartMarketPoints(data, view) : [];
   const validPoints = points.filter((point) => point.exact !== null);
-  const hovered =
-    hoverTime === null || !points.length
-      ? null
-      : points.reduce(
-          (best, point) =>
-            Math.abs(point.time - hoverTime) < Math.abs(best.time - hoverTime) ? point : best,
-          points[0]!,
-        );
+  // The line steps, so the value under the cursor is the last trade's at or before it.
+  const held = hoverTime === null ? null : marketPointAt(points, hoverTime);
+  const hovered = held && hoverTime !== null ? { ...held, time: hoverTime } : null;
+  const origin = fullData ? cycleStart(fullData, cycle?.sourceSlot) : null;
+  const zero = origin ?? (data?.range.from ? Date.parse(data.range.from) : null);
+  const hoverLabel = (time: number) =>
+    `${zero === null ? '' : `${secondsFrom(time, zero)} · `}${marketTime(time)}`;
   const displayed = hovered ?? validPoints.at(-1);
   const change =
     validPoints[0]?.exact && displayed?.exact
@@ -272,8 +275,9 @@ function TradeChartView({
           view,
           levelsLayer ? scenarios.filter((s) => `${s.pair.base}/${s.pair.quote}` === pair) : [],
           style,
+          origin,
         )
-      : chartCandleOption(visible, view, style)
+      : chartCandleOption(visible, view, style, origin)
     : {};
   if (expanded && Array.isArray(option.dataZoom))
     option.dataZoom = option.dataZoom.map((zoom) => ({
@@ -604,7 +608,7 @@ function TradeChartView({
         )}
         <Text size="xs" c="dimmed">
           {hovered
-            ? `at ${marketTime(hovered.time)}`
+            ? `at ${hoverLabel(hovered.time)}`
             : activePreset === 'cycle'
               ? 'over this cycle'
               : activePreset && activePreset !== 'all'
@@ -693,9 +697,9 @@ function TradeChartView({
             />
             <span
               className={classes.timePill}
-              style={{ left: Math.max(55, Math.min(width - 110, hoverPixel[0] ?? 0)) }}
+              style={{ left: Math.max(80, Math.min(width - 80, hoverPixel[0] ?? 0)) }}
             >
-              {marketTime(hovered.time)}
+              {hoverLabel(hovered.time)}
             </span>
           </>
         )}

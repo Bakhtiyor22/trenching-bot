@@ -26,4 +26,8 @@ object DecimalPolicy {
     fun price(value: BigDecimal): BigDecimal = value.setScale(PRICE_SCALE, ROUNDING)
     fun fraction(basisPoints: Int): BigDecimal =
         BigDecimal(basisPoints).divide(BASIS_POINTS, SCALE, ROUNDING)
+
+    /** The price a swap was made at: [quote] per whole unit of [base], at the price scale. */
+    fun swapPrice(quote: TokenAmount, base: TokenAmount): BigDecimal =
+        BigDecimal(quote.raw, quote.decimals).divide(BigDecimal(base.raw, base.decimals), PRICE_SCALE, ROUNDING)
 }

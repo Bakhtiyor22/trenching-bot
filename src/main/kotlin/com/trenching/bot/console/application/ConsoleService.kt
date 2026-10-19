@@ -23,6 +23,7 @@ import com.trenching.bot.strategy.TradeIntentStore
 import com.trenching.bot.walletactivity.WalletEventStore
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
 import com.trenching.bot.walletactivity.domain.WalletEventIdentity
+import com.trenching.bot.walletactivity.domain.WalletTradeObserved
 import org.springframework.stereotype.Service
 
 /**
@@ -75,6 +76,12 @@ class ConsoleService(
             val outcome = accepted[eventId] ?: ignored[eventId]
             RunEvent(eventId, transaction, checkNotNull(outcome) { "Missing ingestion outcome runId=$runId eventId=$eventId" })
         }
+    }
+
+    /** The tracked wallet's trades the run accepted, in stored order. */
+    fun walletTrades(runId: String): List<WalletTradeObserved> {
+        requireRun(runId)
+        return events.acceptedTrades(runId)
     }
 
     fun observations(runId: String): List<MarketObservation> {

@@ -338,8 +338,9 @@ export function chartTimelineOption(
   view: ChartView,
   scenarios: Scenario[],
   style: MarketChartStyle = 'line',
+  origin?: number | null,
 ): EChartsOption {
-  const option = chartCandleOption(response, view, style);
+  const option = chartCandleOption(response, view, style, origin);
   if (view === 'mcap' && response.valuationBasis.available) return option;
   const axis = (Array.isArray(option.xAxis) ? option.xAxis[0] : option.xAxis) as {
     min: number;

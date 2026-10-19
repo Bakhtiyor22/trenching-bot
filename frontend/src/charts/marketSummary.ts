@@ -34,11 +34,21 @@ export function marketChange(first: string, last: string) {
   return { up: difference >= 0n, absolute, percent: hundredths === null ? null : `${hundredths / 100n}.${String(hundredths % 100n).padStart(2, '0')}` };
 }
 
+function trackedActions(data: ChartResponse) {
+  return data.markers.items.filter((item) => item.isTrackedWallet).sort((a, b) => Date.parse(a.time) - Date.parse(b.time) || a.slot - b.slot);
+}
+
+/** When the cycle starts: the first buy at [sourceSlot], else the tracked wallet's first buy, else null. */
+export function cycleStart(data: ChartResponse, sourceSlot?: number): number | null {
+  const actions = trackedActions(data);
+  const first = actions.find((item) => item.side === 'BUY' && item.slot === sourceSlot) ?? actions.find((item) => item.side === 'BUY');
+  return first ? Date.parse(first.time) : null;
+}
+
 export function marketRange(data: ChartResponse, preset: MarketRangePreset, sourceSlot?: number): MarketTimeRange | null {
   if (preset === 'all') return null;
-  const actions = data.markers.items.filter((item) => item.isTrackedWallet).sort((a, b) => Date.parse(a.time) - Date.parse(b.time) || a.slot - b.slot);
-  const first = actions.find((item) => item.side === 'BUY' && item.slot === sourceSlot) ?? actions.find((item) => item.side === 'BUY');
-  const start = Date.parse(first?.time ?? data.range.from);
+  const actions = trackedActions(data);
+  const start = cycleStart(data, sourceSlot) ?? Date.parse(data.range.from);
   if (preset === 'cycle') {
     const end = Math.max(start, Date.parse(actions.at(-1)?.time ?? data.range.to));
     return { from: new Date(start - 3 * MINUTE).toISOString(), to: new Date(end + 3 * MINUTE).toISOString() };
@@ -53,4 +63,10 @@ export function timeInRange(time: string, range: MarketTimeRange | null): boolea
 
 export function marketTime(time: string | number): string {
   return `${new Date(time).toISOString().slice(11, 19)} UTC`;
+}
+
+/** Whole seconds from [origin] to [time], signed, e.g. `-30s`, `0s`, `+42s`. */
+export function secondsFrom(time: number, origin: number): string {
+  const seconds = Math.round((time - origin) / 1000);
+  return seconds > 0 ? `+${seconds}s` : `${seconds}s`;
 }

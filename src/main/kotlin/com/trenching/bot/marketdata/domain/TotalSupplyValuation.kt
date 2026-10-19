@@ -21,8 +21,11 @@ object TotalSupplyValuation {
             else -> null
         }
         return if (unavailable != null) ValuationOutcome.Unavailable(unavailable)
-            else ValuationOutcome.Valued(DecimalPolicy.scale(observation.price.multiply(solUsdtRate).multiply(SUPPLY)))
+            else ValuationOutcome.Valued(usdt(observation.price, solUsdtRate))
     }
+
+    /** The valuation of a Pump.fun token at [price] SOL per token, for a caller that has already checked it is one. */
+    fun usdt(price: BigDecimal, solUsdtRate: BigDecimal): BigDecimal = DecimalPolicy.scale(price.multiply(solUsdtRate).multiply(SUPPLY))
 
     /** Whether the price is the trade's amounts at the protocol's token decimals; trivially true without a trade. */
     private fun followsFromTrade(observation: MarketObservation): Boolean {

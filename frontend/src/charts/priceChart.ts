@@ -3,6 +3,7 @@ import type { ChartResponse, Observation } from '../api/types';
 import { compactDecimal, formatDecimal, toChartNumber } from '../lib/decimal';
 import { formatSlot, humanizeCode } from '../lib/format';
 import { terminal } from '../theme';
+import { secondsFrom } from './marketSummary';
 
 export const QUALITY_STYLE: Record<string, { color: string; symbol: string }> = {
   LAST_TRADE: { color: terminal.accent, symbol: 'circle' },
@@ -157,18 +158,37 @@ export function mcapAxisLabel(value: number): string {
   return `$${(value / divisor).toLocaleString('en-US', { maximumFractionDigits: 1, useGrouping: false })}${suffix}`;
 }
 
-/** Close values retain their exact strings; a null separates every absent bucket span. */
+/**
+ * One point per bucket with trades, at its close, keeping the exact string. A bucket without trades adds no point: the last trade's
+ * price holds until the next trade, so the line steps across it. Only a close without a value (a minute with no rate) breaks it.
+ */
 export function chartMarketPoints(response: ChartResponse, view: ChartView): MarketPoint[] {
-  const points: MarketPoint[] = [];
-  const bucket = response.bucketSeconds * 1000;
-  for (const candle of [...response.candles].sort((a, b) => Date.parse(a.bucketStart) - Date.parse(b.bucketStart))) {
-    const time = Date.parse(candle.bucketStart);
-    const previous = points.at(-1);
-    if (previous && time - previous.time > bucket) points.push({ time: previous.time + bucket, value: null, exact: null });
-    const exact = candle[view]?.close ?? null;
-    points.push({ time, value: toChartNumber(exact), exact });
-  }
-  return points;
+  return [...response.candles]
+    .sort((a, b) => Date.parse(a.bucketStart) - Date.parse(b.bucketStart))
+    .map((candle) => {
+      const exact = candle[view]?.close ?? null;
+      return { time: Date.parse(candle.bucketStart), value: toChartNumber(exact), exact };
+    });
+}
+
+/** The point in force at [time]: the last one at or before it, else the first. */
+export function marketPointAt(points: MarketPoint[], time: number): MarketPoint | null {
+  let held = points[0] ?? null;
+  for (const point of points) if (point.time <= time) held = point;
+  return held;
+}
+
+/** Tick spacings in seconds; the axis takes the smallest that keeps it to [MAX_TIME_TICKS] labels. */
+const SECOND_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1_800, 3_600, 7_200, 14_400, 43_200, 86_400];
+const MAX_TIME_TICKS = 6;
+
+/** Ticks between [min] and [max] at whole multiples of a round number of seconds from [origin], so one of them is `0s`. */
+export function secondTicks(min: number, max: number, origin: number): number[] {
+  const span = (max - min) / 1000;
+  const step = (SECOND_STEPS.find((seconds) => span / seconds <= MAX_TIME_TICKS) ?? SECOND_STEPS.at(-1)!) * 1000;
+  const ticks: number[] = [];
+  for (let k = Math.ceil((min - origin) / step); origin + k * step <= max; k++) ticks.push(origin + k * step);
+  return ticks;
 }
 
 /** Interactive Decu and paper markers are real buttons in the HTML overlay. */
@@ -204,11 +224,8 @@ export function marketAxisDomain(values: number[]): { min: number; max: number }
   return { min: min - padding, max: max + padding };
 }
 
-function utcAxisTime(value: number): string {
-  return new Date(value).toISOString().slice(11, 19) + ' UTC';
-}
-
-export function chartCandleOption(response: ChartResponse, requestedView: ChartView, style: MarketChartStyle = 'line'): EChartsOption {
+/** [origin] is the time the axis counts seconds from, the cycle's first buy; the range start when omitted. */
+export function chartCandleOption(response: ChartResponse, requestedView: ChartView, style: MarketChartStyle = 'line', origin?: number | null): EChartsOption {
   const view = requestedView === 'mcap' && !response.valuationBasis.available ? 'price' : requestedView;
   const points = chartMarketPoints(response, view);
   const valid = points.filter((point): point is MarketPoint & { value: number } => point.value != null);
@@ -217,10 +234,11 @@ export function chartCandleOption(response: ChartResponse, requestedView: ChartV
   const rail = response.markers.clusters.length > 0;
   const min = Math.min(Date.parse(response.range.from), ...points.map((point) => point.time));
   const max = Math.max(Date.parse(response.range.to), min + response.bucketSeconds * 1000);
+  const zero = origin ?? min;
   const xAxis = {
     type: 'time' as const, min, max,
     axisLine: { show: false }, axisTick: { show: false }, splitLine: { show: false },
-    axisLabel: { color: terminal.dimmed, showMinLabel: true, showMaxLabel: true, formatter: (value: number) => value === min || value === max ? utcAxisTime(value) : '' },
+    axisLabel: { color: terminal.dimmed, customValues: secondTicks(min, max, zero), formatter: (value: number) => secondsFrom(value, zero) },
     axisPointer: { show: true, snap: false, lineStyle: { type: 'dashed' as const, color: terminal.dimmed }, label: { show: false } },
   };
   const yValues = [
@@ -267,7 +285,7 @@ export function chartCandleOption(response: ChartResponse, requestedView: ChartV
   } else {
     market = {
       type: 'line', name: 'Market', data: points.map((point) => ({ value: [point.time, point.value], exact: point.exact })),
-      connectNulls: false, showSymbol: false, symbol: 'circle', symbolSize: 6,
+      connectNulls: false, step: 'end', showSymbol: false, symbol: 'circle', symbolSize: 6,
       lineStyle: { width: 2, color }, itemStyle: { color }, emphasis: { disabled: true },
     };
   }

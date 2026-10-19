@@ -12,6 +12,9 @@ import com.trenching.bot.marketdata.domain.TradeSide
 
 /** Chooses which observed trades the response lists and which it only counts. */
 object ChartMarkers {
+    /** Chart order of items: block time, then slot, then id. */
+    val ITEM_ORDER: Comparator<ObservedMarkerView> = compareBy({ it.time }, { it.slot }, { it.observationId })
+
     fun notRecorded(): MarkersView = MarkersView(false, MarkersUnavailableReason.NOT_RECORDED_BEFORE_SCHEMA_V4, MarkerMode.ITEMS, 0,
         emptyList(), null, emptyList())
 
@@ -37,6 +40,12 @@ object ChartMarkers {
             nextCursor = if (remaining.size > page.size) page.lastOrNull()?.let { ChartPosition.of(it.point.observation).encode() } else null,
             clusters = if (clustered && after == null) clusters(others, bucketSeconds) else emptyList(),
         )
+    }
+
+    /** [markers] with [unobserved] tracked trades added to the items, in chart order, and to the total; for a first page only. */
+    fun including(markers: MarkersView, unobserved: List<ObservedMarkerView>): MarkersView {
+        if (unobserved.isEmpty()) return markers
+        return markers.copy(total = markers.total + unobserved.size, items = (markers.items + unobserved).sortedWith(ITEM_ORDER))
     }
 
     private fun clusters(trades: List<Traded>, bucketSeconds: Int): List<MarkerClusterView> =

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { marketChange, marketRange, marketValue } from './marketSummary';
+import { cycleStart, marketChange, marketRange, marketValue, secondsFrom } from './marketSummary';
 import type { ChartResponse } from '../api/types';
 
 describe('market summary', () => {
@@ -26,5 +26,13 @@ describe('market summary', () => {
     expect(marketRange(data, 'cycle')).toEqual({ from: '2026-10-15T15:20:00.000Z', to: '2026-10-15T15:33:00.000Z' });
     expect(marketRange(data, '5m')).toEqual({ from: '2026-10-15T15:22:00.000Z', to: '2026-10-15T15:27:00.000Z' });
     expect(marketRange(data, 'all')).toBeNull();
+    expect(cycleStart(data)).toBe(Date.parse('2026-10-15T15:23:00Z'));
+    expect(cycleStart({ ...data, markers: { ...data.markers, items: [] } })).toBeNull();
+  });
+  it('writes offsets from the cycle start in whole signed seconds', () => {
+    const origin = Date.parse('2026-10-15T15:23:00Z');
+    expect(secondsFrom(origin, origin)).toBe('0s');
+    expect(secondsFrom(origin + 42_400, origin)).toBe('+42s');
+    expect(secondsFrom(origin - 90_000, origin)).toBe('-90s');
   });
 });
