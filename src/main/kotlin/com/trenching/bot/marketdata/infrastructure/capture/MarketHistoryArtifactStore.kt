@@ -136,8 +136,7 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         if (!sequentialDiscovery(manifest.windows)) fail("WINDOW_STATE")
         validateCutoffs(manifest)
         validateRecords(manifest)
-        val acquired = manifest.windows.none { it.coverage == MarketWindowCoverage.PENDING } &&
-            manifest.records.none { it.outcome in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
+        val acquired = MarketCaptureFormat.isAcquired(manifest.windows, manifest.records)
         if (manifest.acquisitionComplete != acquired ||
             manifest.complete != (acquired && manifest.windows.all { it.coverage == MarketWindowCoverage.COMPLETE })) fail("COMPLETE_STATUS")
     }
@@ -157,16 +156,19 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
             MarketWindowCoverage.COMPLETE -> window.pagesScanned >= 1 && selection.size == window.selected
             MarketWindowCoverage.COVERAGE_INCOMPLETE -> window.pagesScanned == scanPageLimit && selection.size == window.selected
             MarketWindowCoverage.OVER_CAP -> window.pagesScanned >= 1 && selection.isEmpty() && window.selected > 0
+            MarketWindowCoverage.HORIZON_NOT_ELAPSED -> window.pagesScanned == 0 && selection.isEmpty()
         }
         return counts && listed && coverage
     }
 
     /**
      * Windows start one at a time in order, so the windows not yet started form a suffix. An extended scan can reopen a
-     * started window before later finished ones, so a pending window with pages may precede them.
+     * started window before later finished ones, so a pending window with pages may precede them; a window held before its
+     * end was visited without a page and may precede them too.
      */
     private fun sequentialDiscovery(windows: List<MarketWindowRecord>): Boolean =
-        windows.dropWhile { it.pagesScanned > 0 }.all { it.coverage == MarketWindowCoverage.PENDING && it.pagesScanned == 0 }
+        windows.dropWhile { it.pagesScanned > 0 || it.coverage == MarketWindowCoverage.HORIZON_NOT_ELAPSED }
+            .all { it.coverage == MarketWindowCoverage.PENDING && it.pagesScanned == 0 }
 
     /**
      * A cutoff sits on a complete window between the slot before its start and its end, with every selected record through

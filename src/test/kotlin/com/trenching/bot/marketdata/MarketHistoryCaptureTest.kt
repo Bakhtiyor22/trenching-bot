@@ -37,6 +37,8 @@ class MarketHistoryCaptureTest {
     private val listedAddresses = mutableListOf<String>()
     private val slotOf = mutableMapOf<String, Long>()
     private val fetched = mutableListOf<String>()
+    private val tipRequests = mutableListOf<List<Any>>()
+    private var tip = 1_000_000L
 
     @Test
     fun `selects successful in-window signatures skipping failed and newer entries and stops below the window`() {
@@ -58,6 +60,67 @@ class MarketHistoryCaptureTest {
         assertEquals(List(3) { MarketTransactionOutcome.CAPTURED }, result.manifest.records.map { it.outcome })
         assertTrue(result.manifest.complete)
         assertTrue(result.manifest.acquisitionComplete)
+        assertEquals(result.manifest, recorded().inspect(directory).manifest)
+    }
+
+    @Test
+    fun `holds a window whose end the confirmed tip has not reached without listing it and asks to retry after the rest of its horizon`() {
+        tip = 1002
+        val result = capture(request(listOf(window(MINT, 1001, 1012, SOURCE)))) { _, _ -> error("A window before its end is never listed") }
+
+        val window = result.manifest.windows.single()
+        assertEquals(MarketWindowCoverage.HORIZON_NOT_ELAPSED, window.coverage)
+        assertEquals(0, window.pagesScanned)
+        assertEquals(emptyList(), window.selection)
+        assertEquals(listOf(listOf<Any>(mapOf("commitment" to "confirmed"))), tipRequests)
+        assertEquals(emptyList(), listings)
+        assertEquals(emptyList(), fetched)
+        assertEquals("HORIZON_NOT_ELAPSED", result.stopReason)
+        assertEquals(Duration.ofMillis(10 * 400), result.stopRetryAfter)
+        assertFalse(result.manifest.acquisitionComplete)
+        assertFalse(result.manifest.complete)
+        assertEquals(result.manifest, recorded().inspect(directory).manifest)
+        val case = recorded().inspectCases(directory).cases.single()
+        assertEquals(MarketCaseStage.DISCOVERY_PENDING, case.stage)
+        assertEquals(MarketCaptureReasons.MARKET_HORIZON_NOT_ELAPSED, case.blocker)
+        // Reference rates follow the decoded observations, so a held window keeps them from being captured too.
+        assertFalse(recorded().decodeCase(directory, case.caseId).ready)
+        assertCategory("CAPTURE_INCOMPLETE") { recorded().decode(directory) }
+    }
+
+    @Test
+    fun `finishes a held window on resume once the confirmed tip has reached its end`() {
+        val windows = listOf(window(MINT, 1001, 1012, SOURCE))
+        tip = 1011
+        assertEquals(MarketWindowCoverage.HORIZON_NOT_ELAPSED, capture(request(windows)) { _, _ -> error("Not listed yet") }.manifest.windows.single().coverage)
+
+        tip = 1012
+        val resumed = capture(request(windows)) { _, _ -> listOf(entry(1, 1012), entry(2, 1003), entry(3, 1000)) }
+
+        assertEquals(MarketWindowCoverage.COMPLETE, resumed.manifest.windows.single().coverage)
+        assertEquals(listOf(2, 1).map(::signature), fetched)
+        assertNull(resumed.stopReason)
+        assertTrue(resumed.manifest.complete)
+        assertEquals(resumed.manifest, recorded().inspect(directory).manifest)
+    }
+
+    @Test
+    fun `completes the windows the tip has passed and holds the rest in one invocation reading the tip once`() {
+        val held = window(OTHER_MINT, 1001, 1020, SOURCE)
+        val elapsed = window(MINT, 1001, 1012, SOURCE)
+        tip = 1015
+        val result = capture(request(listOf(held, elapsed))) { address, _ ->
+            assertEquals(MINT, address)
+            listOf(entry(1, 1004))
+        }
+
+        assertEquals(listOf(OTHER_MINT, MINT), result.manifest.windows.map { it.baseMint })
+        assertEquals(listOf(MarketWindowCoverage.HORIZON_NOT_ELAPSED, MarketWindowCoverage.COMPLETE), result.manifest.windows.map { it.coverage })
+        assertEquals(1, tipRequests.size)
+        assertEquals(listOf(signature(1)), fetched)
+        assertEquals("HORIZON_NOT_ELAPSED", result.stopReason)
+        assertEquals(Duration.ofMillis(5 * 400), result.stopRetryAfter)
+        assertFalse(result.manifest.acquisitionComplete)
         assertEquals(result.manifest, recorded().inspect(directory).manifest)
     }
 
@@ -384,12 +447,12 @@ class MarketHistoryCaptureTest {
             }
         }
         val windows = listOf(window(MINT, 1001, 1012, SOURCE))
-        val limited = service.capture(request(windows, requestBudget = 3)).manifest
-        assertEquals(3, limited.requestsUsed)
+        val limited = service.capture(request(windows, requestBudget = 4)).manifest
+        assertEquals(4, limited.requestsUsed)
         assertEquals(listOf(MarketTransactionOutcome.PENDING, MarketTransactionOutcome.CAPTURED), limited.records.map { it.outcome })
         assertFalse(limited.acquisitionComplete)
-        val resumed = service.capture(request(windows, requestBudget = 3)).manifest
-        assertEquals(5, resumed.requestsUsed)
+        val resumed = service.capture(request(windows, requestBudget = 4)).manifest
+        assertEquals(6, resumed.requestsUsed)
         assertTrue(resumed.complete)
     }
 
@@ -559,7 +622,7 @@ class MarketHistoryCaptureTest {
                 else -> error("Unexpected method")
             }
         }
-        val service = MarketHistoryCaptureService(rpc, MarketHistoryArtifactStore(mapper), CLOCK) { checkpoint ->
+        val service = MarketHistoryCaptureService(withTip(rpc), MarketHistoryArtifactStore(mapper), CLOCK) { checkpoint ->
             assertEquals(checkpoint.cumulativeRequests, recorded().inspect(directory).manifest.requestsUsed)
             checkpoints += checkpoint
         }
@@ -568,8 +631,8 @@ class MarketHistoryCaptureTest {
         assertEquals(3, checkpoints.last().operationRequests)
         assertEquals(3, checkpoints.last().cumulativeRequests)
         service.capture(request)
-        assertEquals(2, checkpoints.last().operationRequests)
-        assertEquals(5, checkpoints.last().cumulativeRequests)
+        assertEquals(3, checkpoints.last().operationRequests)
+        assertEquals(6, checkpoints.last().cumulativeRequests)
         assertEquals("MARKET_COMPLETE", checkpoints.last().phase)
     }
 
@@ -580,7 +643,7 @@ class MarketHistoryCaptureTest {
             assertEquals("getGenesisHash", method)
             genesis()
         }
-        val service = MarketHistoryCaptureService(rpc, MarketHistoryArtifactStore(mapper), CLOCK) { error("progress unavailable") }
+        val service = MarketHistoryCaptureService(withTip(rpc), MarketHistoryArtifactStore(mapper), CLOCK) { error("progress unavailable") }
         assertFailsWith<IllegalStateException> { service.capture(request(listOf(window(MINT, 1001, 1012, SOURCE)))) }
         assertEquals(1, recorded().inspect(directory).manifest.requestsUsed)
     }
@@ -604,7 +667,15 @@ class MarketHistoryCaptureTest {
             }
         }.capture(request)
 
-    private fun service(rpc: SolanaReadRpc): MarketHistoryCapture = MarketHistoryCaptureService(rpc, MarketHistoryArtifactStore(mapper), CLOCK)
+    private fun service(rpc: SolanaReadRpc): MarketHistoryCapture = MarketHistoryCaptureService(withTip(rpc), MarketHistoryArtifactStore(mapper), CLOCK)
+
+    /** Answers the confirmed tip read with [tip], charged like any request, and passes every other call to [rpc]. */
+    private fun withTip(rpc: SolanaReadRpc) = SolanaReadRpc { method, params, budget ->
+        if (method != "getSlot") return@SolanaReadRpc rpc.call(method, params, budget)
+        budget.request()
+        tipRequests += params
+        mapper.readTree(tip.toString())
+    }
 
     private fun recorded(): RecordedMarketHistory = configuration.recordedMarketHistory(mapper)
 

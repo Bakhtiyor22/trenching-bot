@@ -7,6 +7,7 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.console.api.dto.*
 import com.trenching.bot.console.mapper.CaptureResponseMapper
+import com.trenching.bot.marketdata.MarketCaptureReasons
 import com.trenching.bot.marketdata.MarketCutoffMode
 import com.trenching.bot.replay.*
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
@@ -18,6 +19,7 @@ import com.trenching.bot.walletactivity.WalletHistoryManifest
 import java.nio.file.Files
 import java.time.Clock
 import java.time.Duration
+import java.time.temporal.ChronoUnit
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 import tools.jackson.databind.ObjectMapper
@@ -176,6 +178,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         operation.control != null -> false
         operation.state !in setOf(CaptureNames.FAILED, CaptureNames.INCOMPLETE) -> false
         operation.code in RETRYABLE_PROVIDER_CATEGORIES -> true
+        operation.code == MarketCaptureReasons.HORIZON_NOT_ELAPSED -> true
         operation.code?.removePrefix("BUDGET_EXHAUSTED_") in RETRYABLE_BUDGET_CATEGORIES -> true
         else -> false
     }
@@ -326,7 +329,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                 is CaptureStepResult.Calibrated -> generated(session,"calibration.json")
                 else -> null
             }
-            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason ?: cappedHistory,message=stopReason?.let(::stopMessage) ?: cappedHistory?.let { CAPPED_HISTORY_MESSAGE },inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null,qualification=qualification,recovery=releaseReservation(operation.recovery))
+            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason ?: cappedHistory,message=stopReason?.let { stopMessage(it, retryAfter) } ?: cappedHistory?.let { CAPPED_HISTORY_MESSAGE },inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null,qualification=qualification,recovery=releaseReservation(operation.recovery))
         } catch(exception: Exception) {
             if (exception is CaptureOperationStop) {
                 operation = store.operation(id, operation.id)
@@ -463,9 +466,13 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     }
     private fun hashFile(relative: String): String = hash(Files.readAllBytes(store.paths.resolve(relative)))
     private fun hash(bytes: ByteArray): String = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-    private fun stopMessage(reason: String): String =
-        if (reason == DEADLINE) "The operation deadline ended this run. Saved evidence is kept; resume to continue with a fresh allowance."
-        else "This run stopped early: $reason. Saved evidence is kept; inspect it, then resume to continue."
+    private fun stopMessage(reason: String, retryAfter: Duration?): String = when (reason) {
+        DEADLINE -> "The operation deadline ended this run. Saved evidence is kept; resume to continue with a fresh allowance."
+        MarketCaptureReasons.HORIZON_NOT_ELAPSED -> "A market window has not ended on chain yet, so it was not listed. " +
+            "Retry after ${clock.instant().plus(retryAfter ?: Duration.ZERO).truncatedTo(ChronoUnit.SECONDS)} (estimated); " +
+            "resuming then finishes it."
+        else -> "This run stopped early: $reason. Saved evidence is kept; inspect it, then resume to continue."
+    }
     /** A wallet + token capture that finished its requests but stopped listing before the end of its history; resuming cannot complete it. */
     private fun cappedHistoryCode(manifest: WalletHistoryManifest): String? =
         TokenAccountGap.HISTORY_NOT_EXHAUSTED.name.takeIf { WalletHistoryCompletion.historyNotExhausted(manifest) }

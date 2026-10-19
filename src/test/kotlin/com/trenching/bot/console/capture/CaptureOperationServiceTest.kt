@@ -13,10 +13,12 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.console.api.dto.CaptureAttemptRequest
 import com.trenching.bot.console.api.dto.CaptureCreateRequest
 import com.trenching.bot.console.api.dto.CaptureWalletSettings
+import com.trenching.bot.marketdata.MarketCaptureReasons
 import com.trenching.bot.marketdata.MarketCaptureWindow
 import com.trenching.bot.marketdata.MarketCutoffMode
 import com.trenching.bot.marketdata.MarketHistoryCaptureResult
 import com.trenching.bot.marketdata.MarketWindowCutoff
+import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
@@ -127,6 +129,30 @@ class CaptureOperationServiceTest {
 
         assertEquals(CaptureNames.FAILED, fixture.operations.find("session-1", accepted.id).state)
         assertTrue(scheduler.pending.isEmpty())
+    }
+
+    @Test
+    fun `a market capture held before its window end waits for the estimated end and then resumes on its own`() {
+        val scheduler = ManualCaptureRetryScheduler()
+        val fixture = CaptureConsoleFixture(root, retryScheduler = scheduler).apply { createToken() }
+        fixture.workflow.inspection = marketStartable
+        val window = MarketCaptureWindow.of(MintAddress.of(CaptureTokenFixtures.MINT), Slot.of(101), Slot.of(4600), TransactionSignature.of("1".repeat(64)))
+        val manifest = ReplayMarketFixtures.manifest(listOf(window))
+        val held = manifest.copy(windows = manifest.windows.map { it.copy(coverage = MarketWindowCoverage.HORIZON_NOT_ELAPSED) },
+            records = emptyList(), acquisitionComplete = false, complete = false)
+        fixture.workflow.marketResult = MarketHistoryCaptureResult(root, held, MarketCaptureReasons.HORIZON_NOT_ELAPSED, Duration.ofMinutes(20))
+
+        val accepted = fixture.operations.start("session-1", CaptureOperationRequest(
+            "market-held", CaptureNames.MARKET, fixture.store.session("session-1").marketAttemptId,
+            recovery = CaptureRecoveryConfig(totalRequestBudget = 6_000, totalByteBudget = 600_000_000, maxAttempts = 2),
+        ))
+        fixture.executor.runAll()
+
+        val waiting = fixture.operations.find("session-1", accepted.id)
+        assertEquals(CaptureNames.WAITING_RETRY, waiting.state)
+        assertEquals(MarketCaptureReasons.HORIZON_NOT_ELAPSED, waiting.code)
+        assertTrue(waiting.message.orEmpty().contains("Retry after"), waiting.message)
+        assertTrue(scheduler.pending.single().delay >= Duration.ofMinutes(20))
     }
 
     @Test

@@ -63,6 +63,7 @@ class ParallelMarketCaptureExportTest {
             budget.request()
             when (method) {
                 "getGenesisHash" -> mapper.readTree("\"$GENESIS\"")
+                "getSlot" -> mapper.readTree(Long.MAX_VALUE.toString())
                 "getSignaturesForAddress" -> mapper.readTree((unrelated.mapIndexed { index, signature -> entry(signature, SLOT + 4000 - index) } +
                     entry(TRADE, SLOT + 1)).joinToString(",", "[", "]"))
                 "getTransaction" -> {

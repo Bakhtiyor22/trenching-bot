@@ -97,19 +97,21 @@ internal class RecordedMarketHistoryService(
         val captured = observed.count { records[it.signature]?.outcome == MarketTransactionOutcome.CAPTURED }
         val unresolved = when (window.coverage) {
             MarketWindowCoverage.COMPLETE -> observed.size - captured
-            MarketWindowCoverage.PENDING, MarketWindowCoverage.COVERAGE_INCOMPLETE, MarketWindowCoverage.OVER_CAP -> selected - captured
+            MarketWindowCoverage.PENDING, MarketWindowCoverage.HORIZON_NOT_ELAPSED, MarketWindowCoverage.COVERAGE_INCOMPLETE,
+            MarketWindowCoverage.OVER_CAP -> selected - captured
         }
         val unresolvedOutcomes = observed.mapNotNull { records[it.signature]?.outcome }
             .filter { it in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
         val stage = when {
-            window.coverage == MarketWindowCoverage.PENDING -> MarketCaseStage.DISCOVERY_PENDING
+            window.coverage in MarketCaptureFormat.OPEN_COVERAGES -> MarketCaseStage.DISCOVERY_PENDING
             window.coverage != MarketWindowCoverage.COMPLETE -> MarketCaseStage.DISCOVERY_INCOMPLETE
             unresolvedOutcomes.isNotEmpty() -> MarketCaseStage.DETAILS_PENDING
             unresolved > 0 -> MarketCaseStage.DETAILS_INCOMPLETE
             else -> MarketCaseStage.READY_TO_VALIDATE
         }
         val blocker = when (stage) {
-            MarketCaseStage.DISCOVERY_PENDING -> "MARKET_DISCOVERY_PENDING"
+            MarketCaseStage.DISCOVERY_PENDING ->
+                if (window.coverage == MarketWindowCoverage.HORIZON_NOT_ELAPSED) MarketCaptureReasons.MARKET_HORIZON_NOT_ELAPSED else "MARKET_DISCOVERY_PENDING"
             MarketCaseStage.DISCOVERY_INCOMPLETE -> "MARKET_DISCOVERY_INCOMPLETE"
             MarketCaseStage.DETAILS_PENDING -> "MARKET_DETAILS_PENDING"
             MarketCaseStage.DETAILS_INCOMPLETE -> "MARKET_DETAIL_GAPS"

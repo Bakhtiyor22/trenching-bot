@@ -30,6 +30,13 @@ object ChainCaptureReads {
         return rpc.call(ChainCaptureFormat.GET_SIGNATURES, listOf(address, options), budget)
     }
 
+    /** The newest slot the endpoint has at the capture commitment; every signature through it is listed from then on. */
+    fun confirmedTip(rpc: SolanaReadRpc, budget: CaptureBudget): Long {
+        val slot = rpc.call(ChainCaptureFormat.GET_SLOT, listOf(mapOf("commitment" to ChainCaptureFormat.COMMITMENT)), budget)
+        if (!slot.isIntegralNumber || !slot.canConvertToLong() || slot.asLong() < 0) throw CaptureValidationException("SLOT_RESPONSE")
+        return slot.asLong()
+    }
+
     fun transaction(rpc: SolanaReadRpc, signature: String, budget: CaptureBudget): JsonNode =
         rpc.call(ChainCaptureFormat.GET_TRANSACTION, listOf(signature, mapOf(
             "encoding" to "jsonParsed",

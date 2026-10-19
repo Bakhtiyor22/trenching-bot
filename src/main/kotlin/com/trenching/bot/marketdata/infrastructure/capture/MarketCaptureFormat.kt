@@ -2,7 +2,10 @@ package com.trenching.bot.marketdata.infrastructure.capture
 
 import com.trenching.bot.marketdata.MarketHistoryCaptureLimits
 import com.trenching.bot.marketdata.MarketTransactionOutcome
+import com.trenching.bot.marketdata.MarketTransactionRecord
+import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.marketdata.MarketWindowRecord
+import java.time.Duration
 
 internal object MarketCaptureFormat {
     /** Version 2: windows follow a horizon after each mint's first buy, not entry offsets and a holding period. */
@@ -24,6 +27,16 @@ internal object MarketCaptureFormat {
     const val MAX_REQUESTS = MarketHistoryCaptureLimits.MAX_REQUESTS
     const val MAX_CAPTURE_BYTES = MarketHistoryCaptureLimits.MAX_BYTES
     val UNRESOLVED_OUTCOMES = setOf(MarketTransactionOutcome.PENDING, MarketTransactionOutcome.PROVIDER_UNAVAILABLE, MarketTransactionOutcome.INVALID_TRANSACTION)
+
+    /** Coverages whose discovery still needs provider requests: a capture holding one has not finished its acquisition. */
+    val OPEN_COVERAGES = setOf(MarketWindowCoverage.PENDING, MarketWindowCoverage.HORIZON_NOT_ELAPSED)
+
+    /** Mainnet's target slot time, used only to estimate when a held window's end will be reached. */
+    val ESTIMATED_SLOT_DURATION: Duration = Duration.ofMillis(400)
+
+    /** Whether no window or record of a manifest still needs a provider request. */
+    fun isAcquired(windows: List<MarketWindowRecord>, records: List<MarketTransactionRecord>): Boolean =
+        windows.none { it.coverage in OPEN_COVERAGES } && records.none { it.outcome in UNRESOLVED_OUTCOMES }
 
     /** A manifest without a cutoff keeps version 2, so a full capture, and a fully extended one, stays readable as before. */
     fun versionFor(windows: List<MarketWindowRecord>): Int = if (windows.any { it.cutoff != null }) CUTOFF_VERSION else VERSION

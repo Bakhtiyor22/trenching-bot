@@ -25,6 +25,7 @@ import com.trenching.bot.marketdata.infrastructure.capture.MarketTransactionEvid
 import com.trenching.bot.marketdata.infrastructure.capture.MarketWindowRecords
 import com.trenching.bot.marketdata.infrastructure.extraction.PumpFunTradeObservationExtractor
 import java.time.Clock
+import java.time.Duration
 import org.slf4j.LoggerFactory
 
 internal class MarketHistoryCaptureService(
@@ -63,22 +64,35 @@ internal class MarketHistoryCaptureService(
         return finish(request, manifest, budget, stop)
     }
 
+    /**
+     * Lists and fetches each window in order. The confirmed tip is read once, before the first window that has not started
+     * its listing; a window it has not passed is held, and the invocation then stops with the longest estimated wait.
+     */
     private fun discover(request: MarketHistoryCaptureRequest, saved: MarketHistoryManifest, budget: CaptureBudget, stop: CaptureStop): MarketHistoryManifest {
         var manifest = saved
+        var tip: Long? = null
+        var heldFor: Duration? = null
         for (index in manifest.windows.indices) {
             var window = manifest.windows[index]
-            while (window.coverage == MarketWindowCoverage.PENDING) {
-                val page = try {
-                    ChainCaptureReads.signaturePage(rpc, window.baseMint, window.scanCursor?.signature, window.untilSignature, budget)
-                } catch (exception: CaptureProviderException) {
-                    log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
-                    stop.record(exception.category, exception.retryAfter)
-                    return manifest
-                } catch (exception: CaptureBudgetException) {
-                    log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
-                    stop.record(exception.category)
-                    return manifest
+            if (MarketWindowScan.needsTip(window)) {
+                val confirmedTip = tip ?: discoveryRead(window, stop) { ChainCaptureReads.confirmedTip(rpc, budget) }?.also { tip = it }
+                    ?: return manifest
+                window = MarketWindowScan.atTip(window, confirmedTip)
+                if (window.coverage == MarketWindowCoverage.HORIZON_NOT_ELAPSED) {
+                    val wait = MarketWindowScan.untilEnd(window, confirmedTip)
+                    heldFor = maxOf(heldFor ?: wait, wait)
+                    log.info("market_capture window held mint={} fromSlot={} toSlot={} tipSlot={} estimatedWaitMs={}",
+                        window.baseMint, window.fromSlot, window.toSlot, confirmedTip, wait.toMillis())
                 }
+                if (window != manifest.windows[index]) {
+                    manifest = withWindow(manifest, index, window)
+                    checkpoint(request, summarized(manifest, budget), budget)
+                }
+            }
+            while (window.coverage == MarketWindowCoverage.PENDING) {
+                val page = discoveryRead(window, stop) {
+                    ChainCaptureReads.signaturePage(rpc, window.baseMint, window.scanCursor?.signature, window.untilSignature, budget)
+                } ?: return manifest
                 val admitted = manifest.records.mapTo(HashSet()) { it.signature }
                 val scanned = MarketWindowScan.apply(window, SignatureListing.parse(page), admitted, request.maxTransactions - manifest.records.size)
                 // Marked in the same save, so an interruption never leaves a pending window at its page bound.
@@ -88,6 +102,7 @@ internal class MarketHistoryCaptureService(
                 manifest = withWindow(manifest, index, window)
                 checkpoint(request, summarized(manifest, budget), budget)
             }
+            if (window.coverage == MarketWindowCoverage.HORIZON_NOT_ELAPSED) continue
             log.info("market_capture window mint={} fromSlot={} toSlot={} coverage={} scanned={} skippedFailed={} skippedNewer={} selected={}",
                 window.baseMint, window.fromSlot, window.toSlot, window.coverage, window.scanned, window.skippedFailed, window.skippedNewer, window.selected)
             if (window.coverage == MarketWindowCoverage.COMPLETE) {
@@ -96,7 +111,21 @@ internal class MarketHistoryCaptureService(
                 if (stop.reason != null) return manifest
             }
         }
+        heldFor?.let { stop.record(MarketCaptureReasons.HORIZON_NOT_ELAPSED, it) }
         return manifest
+    }
+
+    /** Runs one discovery request; a provider or budget stop is recorded and yields null, so the caller keeps what it saved. */
+    private fun <T : Any> discoveryRead(window: MarketWindowRecord, stop: CaptureStop, read: () -> T): T? = try {
+        read()
+    } catch (exception: CaptureProviderException) {
+        log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
+        stop.record(exception.category, exception.retryAfter)
+        null
+    } catch (exception: CaptureBudgetException) {
+        log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
+        stop.record(exception.category)
+        null
     }
 
     private fun extend(manifest: MarketHistoryManifest, scanPages: Int): MarketHistoryManifest {
@@ -223,8 +252,7 @@ internal class MarketHistoryCaptureService(
 
     /** Sets the cumulative usage, the completion flags and the schema version the manifest's content needs. */
     private fun summarized(manifest: MarketHistoryManifest, budget: CaptureBudget): MarketHistoryManifest {
-        val acquired = manifest.windows.none { it.coverage == MarketWindowCoverage.PENDING } &&
-            manifest.records.none { it.outcome in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
+        val acquired = MarketCaptureFormat.isAcquired(manifest.windows, manifest.records)
         return manifest.copy(schemaVersion = MarketCaptureFormat.versionFor(manifest.windows),
             requestsUsed = budget.cumulativeRequests(), bytesUsed = budget.cumulativeBytes(), acquisitionComplete = acquired,
             complete = acquired && manifest.windows.all { it.coverage == MarketWindowCoverage.COMPLETE })
@@ -233,7 +261,7 @@ internal class MarketHistoryCaptureService(
     private fun checkpoint(request: MarketHistoryCaptureRequest, manifest: MarketHistoryManifest, budget: CaptureBudget) {
         store.save(request.directory, manifest)
         observer.checkpoint(com.trenching.bot.chaincapture.CaptureCheckpoint(
-            phase = if (manifest.acquisitionComplete) "MARKET_COMPLETE" else if (manifest.windows.any { it.coverage == MarketWindowCoverage.PENDING }) "MARKET_DISCOVERY" else "MARKET_DETAILS",
+            phase = if (manifest.acquisitionComplete) "MARKET_COMPLETE" else if (manifest.windows.any { it.coverage in MarketCaptureFormat.OPEN_COVERAGES }) "MARKET_DISCOVERY" else "MARKET_DETAILS",
             at = clock.instant(), operationRequests = budget.requestsUsed, operationBytes = budget.bytesUsed,
             cumulativeRequests = budget.cumulativeRequests(), cumulativeBytes = budget.cumulativeBytes(),
             processed = manifest.records.count { it.outcome !in MarketCaptureFormat.UNRESOLVED_OUTCOMES }, selected = manifest.records.size))

@@ -189,7 +189,7 @@ class MarketHistoryCutoffCaptureTest {
     fun `a resumed decided capture rebuilds the prefix from stored artifacts and ends as the uninterrupted capture`() {
         val reference = capture(Chain(MINT to (1001..1250)), target = directory.resolve("reference"), cutoff = DecideAtSlot(1150)).manifest
         val interrupted = Chain(MINT to (1001..1250))
-        val stopped = capture(interrupted, cutoff = DecideAtSlot(1150), requestBudget = 52)
+        val stopped = capture(interrupted, cutoff = DecideAtSlot(1150), requestBudget = 53)
         assertEquals("REQUESTS", stopped.stopReason)
         assertEquals(50, interrupted.fetched.size)
 
@@ -261,6 +261,7 @@ class MarketHistoryCutoffCaptureTest {
             synchronized(this) { methods += method }
             when (method) {
                 "getGenesisHash" -> mapper.readTree("\"$GENESIS\"")
+                "getSlot" -> mapper.readTree(Long.MAX_VALUE.toString())
                 "getSignaturesForAddress" -> mapper.readTree(slots.getValue(params[0] as String).sortedDescending()
                     .joinToString(",", "[", "]") { """{"signature":"${signature(it)}","slot":$it,"err":null,"memo":null,"blockTime":1791049629}""" })
                 "getTransaction" -> {

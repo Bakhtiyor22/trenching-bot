@@ -3,6 +3,7 @@ package com.trenching.bot.marketdata
 /**
  * [acquisitionComplete] means no window or transaction still needs a provider request. [complete] additionally
  * requires every window to be [MarketWindowCoverage.COMPLETE]; a window at the page bound or over the cap stays a gap.
+ * A window whose horizon has not elapsed still needs requests, so it keeps both flags false.
  */
 data class MarketHistoryManifest(
     val schemaVersion: Int,
@@ -57,6 +58,12 @@ enum class MarketWindowCoverage {
     COMPLETE,
     COVERAGE_INCOMPLETE,
     OVER_CAP,
+
+    /**
+     * The confirmed tip had not reached the window's end, so its listing could not be final yet: nothing of it is listed or
+     * fetched, and a later resume lists it once the tip has passed its end. Like [PENDING], it still needs provider requests.
+     */
+    HORIZON_NOT_ELAPSED,
 }
 
 data class MarketTransactionRecord(

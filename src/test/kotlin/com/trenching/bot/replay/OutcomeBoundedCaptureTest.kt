@@ -178,6 +178,7 @@ class OutcomeBoundedCaptureTest {
             usages += budget.usage
             when (method) {
                 "getGenesisHash" -> mapper.readTree("\"$GENESIS\"")
+                "getSlot" -> mapper.readTree(Long.MAX_VALUE.toString())
                 "getSignaturesForAddress" -> mapper.readTree(slots.sortedDescending()
                     .joinToString(",", "[", "]") { """{"signature":"${signature(it)}","slot":$it,"err":null,"memo":null,"blockTime":1791049629}""" })
                 "getTransaction" -> {

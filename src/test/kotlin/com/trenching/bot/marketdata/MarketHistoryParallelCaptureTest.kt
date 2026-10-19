@@ -103,12 +103,12 @@ class MarketHistoryParallelCaptureTest {
     @Test
     fun `a request budget stop under concurrency records every completed artifact and counts the requests actually sent`() {
         val chain = Chain(50)
-        val result = capture(chain, directory, concurrency = 4, requestBudget = 12)
+        val result = capture(chain, directory, concurrency = 4, requestBudget = 13)
 
         assertEquals("REQUESTS", result.stopReason)
         assertEquals(10, chain.started.size)
         assertEquals(chain.started.toSet(), result.manifest.records.filter { it.artifact != null }.map { it.signature }.toSet())
-        assertEquals(12, result.manifest.requestsUsed)
+        assertEquals(13, result.manifest.requestsUsed)
         assertEquals(result.manifest, recorded().inspect(directory).manifest)
         assertEquals(10, Files.list(directory.resolve("transactions")).use { it.count() }.toInt())
     }
@@ -209,6 +209,7 @@ class MarketHistoryParallelCaptureTest {
             budget.request()
             when (method) {
                 "getGenesisHash" -> mapper.readTree("\"$GENESIS\"")
+                "getSlot" -> mapper.readTree(Long.MAX_VALUE.toString())
                 "getSignaturesForAddress" -> mapper.readTree(listing(params[0] as String).joinToString(",", "[", "]") { entry(it) })
                 "getTransaction" -> transaction(params[0] as String)
                 else -> error("Unexpected method $method")

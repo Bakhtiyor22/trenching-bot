@@ -7,6 +7,8 @@ import com.trenching.bot.chaincapture.SignatureListingEntry
 import com.trenching.bot.marketdata.MarketListedSignature
 import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.marketdata.MarketWindowRecord
+import com.trenching.bot.marketdata.infrastructure.capture.MarketCaptureFormat
+import java.time.Duration
 
 /** Applies newest-first listing pages of a window's base mint to its discovery state. */
 internal object MarketWindowScan {
@@ -57,6 +59,25 @@ internal object MarketWindowScan {
             pagesScanned = window.pagesScanned + 1, scanned = scanned, skippedFailed = skippedFailed, skippedNewer = skippedNewer,
             selected = selection.size, selection = selection.toList(), scanCursor = lastScanned)
     }
+
+    /** Whether the window's listing has not started yet, so it must first know that the confirmed tip has passed its end. */
+    fun needsTip(window: MarketWindowRecord): Boolean =
+        window.pagesScanned == 0 && window.coverage in MarketCaptureFormat.OPEN_COVERAGES
+
+    /**
+     * Opens an unstarted window only once [tip], the confirmed tip read before its first page, has reached its end: a
+     * newest-first listing from an earlier tip ends at the window's start exactly like a finished one, yet misses the rest of
+     * it. Until then the window is [MarketWindowCoverage.HORIZON_NOT_ELAPSED] and nothing of it is listed.
+     */
+    fun atTip(window: MarketWindowRecord, tip: Long): MarketWindowRecord = when {
+        !needsTip(window) -> window
+        tip >= window.toSlot -> window.copy(coverage = MarketWindowCoverage.PENDING)
+        else -> window.copy(coverage = MarketWindowCoverage.HORIZON_NOT_ELAPSED)
+    }
+
+    /** An estimate of how long the confirmed tip needs to reach the window's end. */
+    fun untilEnd(window: MarketWindowRecord, tip: Long): Duration =
+        MarketCaptureFormat.ESTIMATED_SLOT_DURATION.multipliedBy((window.toSlot - tip).coerceAtLeast(0))
 
     /** Keeps the window's cursor, counts and in-window selection, so a resume with more pages can extend it losslessly. */
     fun boundReached(window: MarketWindowRecord): MarketWindowRecord =
