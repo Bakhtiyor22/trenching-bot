@@ -45,7 +45,8 @@ import { CalibrationResults } from './CalibrationResults';
 import { CaptureCases } from './CaptureCases';
 import { TokenVerdict } from './TokenVerdict';
 import { CaptureOverview } from './CaptureOverview';
-import { BudgetFields, CaptureStatus, CommandError } from './CaptureShared';
+import { BudgetFields, CaptureStatus, CommandError, OperationNotice } from './CaptureShared';
+import { formatWait } from './operationNotice';
 import { reasonText } from './captureReasons';
 import {
   captureKeys,
@@ -62,12 +63,18 @@ const stageKeys = { WALLET: 'wallet', MARKET: 'market', RATES: 'rates' } as cons
 type Acquisition = keyof typeof stageNames;
 const count = (value: number | null | undefined) =>
   value == null ? '—' : value.toLocaleString('en-US');
+/** The latest inspection's reason for the acquisition stage an operation ran, or null for the other steps. */
+const operationStageReason = (operation: CaptureOperation, inspect: CaptureSession['inspection']) =>
+  operation.step in stageKeys ? (inspect?.[stageKeys[operation.step as Acquisition]].reason ?? null) : null;
 function OperationProgress({
   operation,
+  stageReason,
   onControl,
   controlPending,
 }: {
   operation: CaptureOperation;
+  /** The operation's stage reason from the latest inspection, shown when the operation itself has no code. */
+  stageReason: string | null;
   onControl: (action: 'pause' | 'resume' | 'cancel' | 'retry') => void;
   controlPending: boolean;
 }) {
@@ -221,7 +228,7 @@ function OperationProgress({
             </Section>
             {retrySeconds !== null && operation.state === 'WAITING_RETRY' && (
               <Text size="sm" role="status">
-                Next retry in {retrySeconds}s
+                Next retry in {formatWait(retrySeconds)}
               </Text>
             )}
           </>
@@ -231,20 +238,7 @@ function OperationProgress({
             operations; checkpoints do not prove replay readiness.
           </Text>
         )}
-        {operation.message && (
-          <Alert
-            color={operation.state === 'FAILED' ? 'red' : 'amber'}
-            title={operation.code ? `Stopped: ${operation.code.replaceAll('_', ' ')}` : undefined}
-          >
-            {operation.message}
-          </Alert>
-        )}
-        {operation.state === 'INTERRUPTED' && (
-          <Alert color="amber">
-            The backend restarted during this operation. Inspect the retained evidence, then
-            explicitly resume the selected stage.
-          </Alert>
-        )}
+        <OperationNotice operation={operation} stageReason={stageReason} />
       </Stack>
     </Section>
   );
@@ -545,6 +539,7 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
       {session.operation && (
         <OperationProgress
           operation={session.operation}
+          stageReason={operationStageReason(session.operation, inspect)}
           onControl={(action) => {
             if (session.operation) controls.submit({ operationId: session.operation.id, action });
           }}

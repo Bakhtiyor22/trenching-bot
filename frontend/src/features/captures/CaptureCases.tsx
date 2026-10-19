@@ -9,7 +9,7 @@ import { ErrorState } from '../../components/StateViews';
 import { paths } from '../../paths';
 import { codeLabel } from '../../lib/codes';
 import { CodeText } from '../../components/PlainLanguage';
-import { CaptureStatus, CommandError } from './CaptureShared';
+import { CaptureStatus, CommandError, OperationNotice } from './CaptureShared';
 import {
   captureKeys,
   CAPTURE_POLL_MS,
@@ -155,11 +155,7 @@ function CaseCard({ sessionId, item }: { sessionId: string; item: CaptureCase })
             onRetry={() => void operation.refetch()}
           />
         )}
-        {operation.data?.message && (
-          <Alert color={operation.data.state === 'FAILED' ? 'red' : 'amber'}>
-            {operation.data.message}
-          </Alert>
-        )}
+        {operation.data && <OperationNotice operation={operation.data} />}
         <Group gap="xs" wrap="wrap">
           {item.canCaptureRates && (
             <Button

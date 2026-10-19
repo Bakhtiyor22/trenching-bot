@@ -871,8 +871,62 @@ describe('Capture console', () => {
       ),
     );
     detail();
-    expect(await screen.findByText('Stopped: DEADLINE')).toBeInTheDocument();
+    expect(await screen.findByText('This run stopped before finishing')).toBeInTheDocument();
     expect(screen.getByText(/resume to continue with a fresh allowance/)).toBeInTheDocument();
+    expect(screen.getByText('Technical code: DEADLINE')).toBeInTheDocument();
+  });
+  it('explains a market window held until its end and when it retries', async () => {
+    server.use(
+      http.get('/api/captures/capture-demo', () =>
+        HttpResponse.json({
+          ...captureSession,
+          operation: {
+            ...captureOperation,
+            step: 'MARKET',
+            state: 'WAITING_RETRY',
+            code: 'HORIZON_NOT_ELAPSED',
+            message:
+              'A market window has not ended on chain yet, so it was not listed. Retry after 2099-01-01T00:20:00Z (estimated); resuming then finishes it.',
+            recovery: {
+              enabled: true,
+              totalRequestBudget: 6000,
+              totalByteBudget: 600000000,
+              maxAttempts: 3,
+              attemptsUsed: 1,
+              requestsUsed: 2,
+              bytesUsed: 100,
+              reservedRequests: 0,
+              reservedBytes: 0,
+              nextRetryAt: new Date(Date.now() + 20 * 60 * 1000).toISOString(),
+            },
+          },
+        }),
+      ),
+    );
+    detail();
+    expect(await screen.findByLabelText('Operation waiting_retry: Waiting to retry')).toBeInTheDocument();
+    expect(screen.getByText(/has not ended on chain yet, so it was not listed/)).toBeInTheDocument();
+    expect(screen.getByText(/retries on its own after the estimated end/)).toBeInTheDocument();
+    expect(screen.getByText('Technical code: HORIZON_NOT_ELAPSED')).toBeInTheDocument();
+    expect(screen.getByText(/Next retry in 20 min/)).toBeInTheDocument();
+  });
+  it('explains an operation that stopped without a code from its stage reason', async () => {
+    server.use(
+      http.get('/api/captures/capture-demo', () =>
+        HttpResponse.json({
+          ...captureSession,
+          inspection: captureSession.inspection && {
+            ...captureSession.inspection,
+            market: { state: 'INCOMPLETE', reason: 'MARKET_HORIZON_NOT_ELAPSED', canStart: false, canResume: true, requiresNewAttempt: false },
+          },
+          operation: { ...captureOperation, step: 'MARKET', state: 'INCOMPLETE', code: null, message: null },
+        }),
+      ),
+    );
+    detail();
+    expect(await screen.findByText('This run stopped before finishing')).toBeInTheDocument();
+    expect(screen.getAllByText(/has not been listed. Resume after the window end/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Technical code: MARKET_HORIZON_NOT_ELAPSED').length).toBeGreaterThan(0);
   });
   it('labels each calibrated buy with its instruction', async () => {
     const { user } = detail();

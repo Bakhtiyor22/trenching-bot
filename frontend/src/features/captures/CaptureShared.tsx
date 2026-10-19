@@ -1,8 +1,10 @@
 import { Alert, Badge, Button, NumberInput, SimpleGrid, Stack, Text } from '@mantine/core';
 import { ApiError } from '../../api/client';
-import type { CaptureBudget, CaptureConfig } from '../../api/captures';
+import type { CaptureBudget, CaptureConfig, CaptureOperation } from '../../api/captures';
+import { CodeText } from '../../components/PlainLanguage';
 import { ErrorState } from '../../components/StateViews';
 import { reasonText } from './captureReasons';
+import { operationNotice } from './operationNotice';
 
 const QUALIFICATION_ERRORS = new Set(['EXPORT_CHANGED', 'EXPORT_REQUIRED', 'UNSUPPORTED_SCOPE']);
 
@@ -17,4 +19,18 @@ export function CommandError({ error, uncertain, retry }: { error: unknown; unce
 export function BudgetFields({ value, onChange, config, market, disabled }: { value: CaptureBudget; onChange: (value: CaptureBudget) => void; config: CaptureConfig; market: boolean; disabled: boolean }) {
   const prefix = market ? 'market' : 'wallet';
   return <SimpleGrid cols={{ base: 1, sm: 2 }}><NumberInput label="Request allowance" value={value.requestBudget} min={1} max={config.bounds[`${prefix}RequestsMax` as const]} allowDecimal={false} allowNegative={false} disabled={disabled} onChange={v => onChange({...value, requestBudget: Number(v)})} /><NumberInput label="Byte allowance" description="Bytes, per explicit operation" value={value.byteBudget} min={1} max={config.bounds[`${prefix}BytesMax` as const]} allowDecimal={false} allowNegative={false} disabled={disabled} onChange={v => onChange({...value, byteBudget: Number(v)})} /><NumberInput label="Operation deadline (minutes)" description="This run stops at the deadline; resume to continue" value={value.operationTimeoutMinutes} min={1} max={config.bounds.operationTimeoutMinutesMax} allowDecimal={false} allowNegative={false} disabled={disabled} onChange={v => onChange({...value, operationTimeoutMinutes: Number(v)})} /></SimpleGrid>;
+}
+/** Why an operation stopped, failed or waits, shown whenever it is not running or succeeded; nothing otherwise. */
+export function OperationNotice({ operation, stageReason }: { operation: Pick<CaptureOperation, 'state' | 'code' | 'message'>; stageReason?: string | null }) {
+  const notice = operationNotice(operation, stageReason);
+  if (!notice) return null;
+  return (
+    <Alert color={notice.color} title={notice.title} aria-label={`Operation ${operation.state.toLowerCase()}: ${notice.title}`}>
+      <Stack gap={4}>
+        <Text size="sm">{notice.detail}</Text>
+        {notice.guidance && <Text size="sm" c="dimmed">{notice.guidance}</Text>}
+        <CodeText code={notice.code} />
+      </Stack>
+    </Alert>
+  );
 }

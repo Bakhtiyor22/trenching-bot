@@ -1,6 +1,9 @@
 # Codex brief: market windows whose horizon has not elapsed yet
 
-Status: Ready for Codex. Frontend wording only; no request or response shape changes.
+Status: Implemented directly at the user's request (not by Codex). Besides the wording, every operation that is not
+running or succeeded now shows one notice with its reason: `frontend/src/features/captures/operationNotice.ts` and
+`OperationNotice` in `CaptureShared.tsx`, used by the latest-operation panel and the case cards. No request or response
+shape changes.
 
 ## Backend change this follows
 

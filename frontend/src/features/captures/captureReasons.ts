@@ -8,6 +8,8 @@ const REASONS: Record<string, string> = {
   NO_SOURCE_BUYS: 'The wallet capture is complete but holds no supported buy. The rejection and instruction counts below show what it contained, such as sells or buys quoted in a token other than SOL. Start a new session with a different sample.',
   MARKET_CAPTURE_NOT_READY: 'Complete and verify all market windows before capturing rates.',
   MARKET_CAPTURE_INCOMPLETE: 'Market coverage is incomplete. Increase scan pages if needed and explicitly resume.',
+  MARKET_HORIZON_NOT_ELAPSED: 'A market window has not ended on chain yet, so it has not been listed. Resume after the window end; the capture then finishes it.',
+  HORIZON_NOT_ELAPSED: 'A market window has not ended on chain yet. The capture retries on its own after the estimated end, or resume it then.',
   MARKET_CAPTURE_MISMATCH: 'The market capture does not match the wallet’s planned windows. Create a new market attempt.',
   MARKET_CAPTURE_EXCLUSIONS: 'Some in-window trades could not be decoded, so this market attempt cannot be exported.',
   OVER_CAP: 'Market capacity was exceeded. Create a new market attempt with a larger capacity; resuming cannot fix this attempt.',
