@@ -518,7 +518,7 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
   const preview = generatedName(
     mode === 'attach' ? 'Attached' : label,
     mode === 'attach'
-      ? (walletPath.split(/[\\/]/).at(-1) ?? 'evidence')
+      ? walletPath.trim().split(/[\\/]/).filter(Boolean).at(-1) || 'wallet folder'
       : tokenScope
         ? mint
         : scope === 'wallet-references'
@@ -705,7 +705,7 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
               </Stack>
             </Section>
           )}
-          <Section title="3 · Name">
+          <Section title={mode === 'attach' ? 'Name' : '3 · Name'}>
             <Stack>
               <TextInput
                 label="Session name"
@@ -840,32 +840,34 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
         </Stack>
       </form>
       <Stack>
-        <Recommendations
-          items={(recommendations.data ?? []).map((item) => ({
-            ...item,
-            facts: {
-              ...item.facts,
-              budget: tokenScope
-                ? config.walletTokenBudgetDefaults.requestBudget
-                : config.budgetDefaults.requestBudget,
-            },
-          }))}
-          appliedIds={[
-            ...(scope === WALLET_TOKEN_SCOPE ? ['SCOPE_WALLET_TOKEN'] : []),
-            ...(cutoffMode === 'DECIDED' ? ['CUTOFF_DECIDED'] : []),
-            ...(recovery ? ['ENABLE_RECOVERY'] : []),
-          ]}
-          onApply={apply}
-          onUndo={(item) => {
-            const restore = undo.current.get(item.id);
-            if (restore) restore();
-            else if (item.setting?.field === 'scope') changeScope(config.walletDefaults.scope);
-            else if (item.setting?.field === 'cutoffMode') setCutoffMode('FULL');
-            else if (item.setting?.field === 'recovery') setRecovery(false);
-          }}
-          onAdjust={(item) => document.getElementById(`capture-${item.setting?.field}`)?.focus()}
-        />
-        {recommendations.isError && (
+        {mode !== 'attach' && (
+          <Recommendations
+            items={(recommendations.data ?? []).map((item) => ({
+              ...item,
+              facts: {
+                ...item.facts,
+                budget: tokenScope
+                  ? config.walletTokenBudgetDefaults.requestBudget
+                  : config.budgetDefaults.requestBudget,
+              },
+            }))}
+            appliedIds={[
+              ...(scope === WALLET_TOKEN_SCOPE ? ['SCOPE_WALLET_TOKEN'] : []),
+              ...(cutoffMode === 'DECIDED' ? ['CUTOFF_DECIDED'] : []),
+              ...(recovery ? ['ENABLE_RECOVERY'] : []),
+            ]}
+            onApply={apply}
+            onUndo={(item) => {
+              const restore = undo.current.get(item.id);
+              if (restore) restore();
+              else if (item.setting?.field === 'scope') changeScope(config.walletDefaults.scope);
+              else if (item.setting?.field === 'cutoffMode') setCutoffMode('FULL');
+              else if (item.setting?.field === 'recovery') setRecovery(false);
+            }}
+            onAdjust={(item) => document.getElementById(`capture-${item.setting?.field}`)?.focus()}
+          />
+        )}
+        {mode !== 'attach' && recommendations.isError && (
           <ErrorState
             error={recommendations.error}
             title="Suggestions unavailable"

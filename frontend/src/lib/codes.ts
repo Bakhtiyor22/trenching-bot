@@ -122,6 +122,9 @@ export const recommendationCopy: Record<string, { title: string; why: string }> 
     why: "A single trade says little about the strategy. Results are judged on all signals together, including skips. Capture more of Decu's buys first.",
   },
 };
+/** Run start refusal: the dataset's market recording ends before the outcome of these settings is decided. */
+export const MARKET_COVERAGE_ENDED = 'MARKET_COVERAGE_ENDED';
+
 const explanations: Record<string, string> = {
   STRATEGY_PRESET_UNAVAILABLE:
     'The agreed strategy could not be loaded. Retry, or choose to continue with this simulator’s defaults. Those defaults are not the agreed strategy.',
@@ -134,6 +137,8 @@ const explanations: Record<string, string> = {
   NAME_TAKEN: 'This capture name is already in use. Choose the suggested name or enter another.',
   INVALID_PERCENT: 'Use a percent between 0.01 and 99.99, with at most two decimal places.',
   CONFLICTING_FIELDS: 'The percent and basis point values disagree.',
+  [MARKET_COVERAGE_ENDED]:
+    'The dataset’s market recording ends before the outcome of these settings is decided.',
   FIRST_EVER_BUY: 'First-ever buy proof',
   SIGNAL_OVER_1_9_SOL: 'Signal larger than 1.9 SOL',
   MCAP_AT_REFERENCE_BUY: 'Market cap at the reference buy',

@@ -169,6 +169,39 @@ describe('NewRunPage', () => {
     ).toBe(true);
   });
 
+  it('explains a dataset cut short by the old cutoff and offers the old defaults instead', async () => {
+    const bodies: RunStartRequest[] = [];
+    server.use(
+      http.post('/api/runs', async ({ request }) => {
+        const body = (await request.json()) as RunStartRequest;
+        bodies.push(body);
+        return body.config
+          ? HttpResponse.json(
+              {
+                code: 'MARKET_COVERAGE_ENDED',
+                message:
+                  'Market coverage ends before the outcome is decided mint=x decidedAt=2 throughSlot=1',
+                fields: {},
+              },
+              { status: 409 },
+            )
+          : HttpResponse.json({ run: sampleRun, created: true }, { status: 201 });
+      }),
+    );
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Fill delay/);
+    await user.click(screen.getByRole('button', { name: /Start run/ }));
+
+    expect(
+      await screen.findByText('This dataset ends before these settings can finish'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/decidedAt=/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Run the old defaults instead' }));
+
+    expect(await screen.findByText('Run detail page')).toBeInTheDocument();
+    expect(bodies.at(-1)).toEqual({ datasetId: SAMPLE_DATASET_ID });
+  });
+
   it('sends notional and transaction cost as strings and integers as numbers, without fee or slippage, then opens the run', async () => {
     let body: RunStartRequest | undefined;
     server.use(

@@ -87,6 +87,60 @@ describe('capture detail design', () => {
     expect(within(terms).getAllByRole('definition')).toHaveLength(6);
   });
 
+  it('shows an offline check without download counters and explains its stop in plain words', async () => {
+    server.use(
+      http.get('/api/captures/capture-demo', () =>
+        HttpResponse.json({
+          ...session,
+          summary: {
+            ...summary,
+            status: 'NEEDS_ATTENTION',
+            reasonCode: 'MANIFEST_VERSION',
+            progress: null,
+          },
+          operation: {
+            ...captureOperation,
+            step: 'INSPECT',
+            state: 'FAILED',
+            code: 'MANIFEST_VERSION',
+            message: 'Capture validation failed category=MANIFEST_VERSION',
+            progress: null,
+          },
+        }),
+      ),
+    );
+    renderDetail();
+    expect(
+      await screen.findByRole('heading', { name: 'Latest saved-file check' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Requests, this run')).not.toBeInTheDocument();
+    expect(screen.queryByText(/— of — transactions/)).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText(/older version in a format this version cannot read/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/category=MANIFEST_VERSION/)).not.toBeInTheDocument();
+  });
+
+  it('explains why tokens cannot be listed yet instead of showing a retryable error', async () => {
+    server.use(
+      http.get('/api/captures/capture-demo/cases', () =>
+        HttpResponse.json(
+          {
+            code: 'MANIFEST_VERSION',
+            message: 'Capture cases cannot be inspected until their wallet plan is valid',
+            fields: {},
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderDetail();
+    expect(
+      await screen.findByText(/Tokens appear once the wallet evidence can be read/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Could not load market cases')).not.toBeInTheDocument();
+  });
+
   it('keeps all six tabs and their controls inside closed Advanced', async () => {
     const { user } = renderDetail();
     const label = await screen.findByText('Advanced: limits, attempts and history');

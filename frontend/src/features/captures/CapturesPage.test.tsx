@@ -876,8 +876,11 @@ describe('Capture console', () => {
       ),
     );
     await detail();
-    expect(await screen.findByText('Stopped: DEADLINE')).toBeInTheDocument();
-    expect(screen.getByText(/resume to continue with a fresh allowance/)).toBeInTheDocument();
+    expect(await screen.findByText('Stopped early')).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/Reached the time allowed for this run. Evidence so far is kept./).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText('Technical code: DEADLINE').length).toBeGreaterThan(0);
   });
   it('labels each calibrated buy with its instruction', async () => {
     const { user } = await detail();

@@ -12,7 +12,7 @@ import {
   aggregateUsage,
   allCaptureChoices,
   groupUsageCalls,
-  megabytes,
+  dataSize,
   sortUsageTasks,
 } from './usageData';
 
@@ -86,7 +86,7 @@ function UsageContent({
           {report.totals.requests.toLocaleString()}
         </Kpi>
         <Kpi label="Data received" hint={`response bodies, ${periodText}`}>
-          {megabytes(report.totals.responseBytes)}
+          {dataSize(report.totals.responseBytes)}
         </Kpi>
         <Kpi label="Rate-limited replies" hint="HTTP 429 answers, retried automatically">
           {report.totals.rateLimitedResponses.toLocaleString()}
@@ -203,7 +203,7 @@ function UsageContent({
                       </Table.Td>
                       <Table.Td>{call.totals.failedRequests.toLocaleString()}</Table.Td>
                       <Table.Td>{call.totals.rateLimitedResponses.toLocaleString()}</Table.Td>
-                      <Table.Td>{megabytes(call.totals.responseBytes)}</Table.Td>
+                      <Table.Td>{dataSize(call.totals.responseBytes)}</Table.Td>
                       <Table.Td>
                         <Text
                           size="xs"
@@ -263,7 +263,7 @@ function UsageContent({
           </Text>
           <Text size="sm">
             1 request = one HTTP call sent. Retries count separately. Cache hits send no request. 1
-            MB = 1,000,000 bytes.
+            KB = 1,000 bytes and 1 MB = 1,000,000 bytes.
           </Text>
           {!report.byCall.some((call) => call.provider === 'TELEGRAM') && (
             <Text size="sm">Telegram: not used yet.</Text>

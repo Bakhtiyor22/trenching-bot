@@ -37,6 +37,7 @@ import { queryKeys } from '../../api/queries';
 import { ConfirmDelete } from '../../components/ConfirmDelete';
 import { RelativeTime, Timestamp } from '../../components/DisplayValues';
 import { KeyValueTable, PagingFooter, Section } from '../../components/Panels';
+import { CodeText } from '../../components/PlainLanguage';
 import { ErrorState, LoadingState } from '../../components/StateViews';
 import { ApiError } from '../../api/client';
 import { mintLabel, shortId, formatDuration } from '../../lib/format';
@@ -47,7 +48,7 @@ import { CaptureCases } from './CaptureCases';
 import { TokenVerdict } from './TokenVerdict';
 import { CaptureOverview, CaptureStepper } from './CaptureOverview';
 import { BudgetFields, CommandError } from './CaptureShared';
-import { reasonText } from './captureReasons';
+import { knownReasonText, reasonText } from './captureReasons';
 import {
   captureKeys,
   isCaptureOperationActive,
@@ -63,6 +64,16 @@ const stageKeys = { WALLET: 'wallet', MARKET: 'market', RATES: 'rates' } as cons
 type Acquisition = keyof typeof stageNames;
 const count = (value: number | null | undefined) =>
   value == null ? '—' : value.toLocaleString('en-US');
+/** Steps that only read saved files: their card shows no download counters. */
+const OFFLINE_STEP_NAMES: Partial<Record<CaptureStep, string>> = {
+  INSPECT: 'saved-file check',
+  EXPORT: 'dataset export',
+  CALIBRATE: 'calibration',
+  QUALIFY: 'qualification',
+};
+function operationStateLabel(state: string): string {
+  return state.replaceAll('_', ' ').toLowerCase();
+}
 function OperationProgress({
   operation,
   sessionId,
@@ -90,6 +101,8 @@ function OperationProgress({
   );
   const progress = operation.progress;
   const recovery = operation.recovery;
+  const offlineName = OFFLINE_STEP_NAMES[operation.step];
+  const offline = offlineName !== undefined;
   const retrySeconds = recovery?.nextRetryAt
     ? Math.max(0, Math.ceil((Date.parse(recovery.nextRetryAt) - now) / 1000))
     : null;
@@ -150,7 +163,11 @@ function OperationProgress({
   );
   return (
     <Section
-      title={`${operation.step === 'MARKET' ? 'Markets' : operation.step === 'EXPORT' || operation.step === 'INSPECT' ? 'Dataset' : operation.step.charAt(0) + operation.step.slice(1).toLowerCase()} progress`}
+      title={
+        offlineName
+          ? `Latest ${offlineName}`
+          : `${operation.step === 'MARKET' ? 'Markets' : operation.step.charAt(0) + operation.step.slice(1).toLowerCase()} progress`
+      }
       actions={controls}
     >
       <Stack gap="md">
@@ -164,98 +181,112 @@ function OperationProgress({
           })}
           )
         </Text>
-        <Progress
-          value={
-            progress?.selected
-              ? Math.min(100, (100 * (progress.processed ?? 0)) / progress.selected)
-              : 0
-          }
-          aria-label="Stage progress"
-        />
-        <Text size="sm">
-          {count(progress?.processed)} of {count(progress?.selected)} transactions
-        </Text>
-        <dl
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'minmax(0, 1fr) auto',
-            gap: '8px 16px',
-            margin: 0,
-          }}
-        >
-          <Text component="dt" size="sm" c="dimmed">
-            Requests, this run
+        {offline ? (
+          <Text size="sm">
+            {offlineName?.replace(/^./, (c) => c.toUpperCase())} ·{' '}
+            {operationStateLabel(operation.state)} · ran {formatDuration(elapsed * 1000)}. Offline;
+            no provider requests.
           </Text>
-          <Text component="dd" size="sm" m={0}>
-            {count(progress?.operationRequests)} / {count(operation.budget.requestBudget)}
-          </Text>
-          <Text component="dt" size="sm" c="dimmed">
-            Requests, whole capture
-          </Text>
-          <Text component="dd" size="sm" m={0}>
-            {count(progress?.cumulativeRequests)}
-          </Text>
-          <Text component="dt" size="sm" c="dimmed">
-            Downloaded
-          </Text>
-          <Text component="dd" size="sm" m={0}>
-            {progress?.cumulativeBytes == null
-              ? '—'
-              : `${(progress.cumulativeBytes / 1048576).toFixed(2)} MB`}
-          </Text>
-          <Text component="dt" size="sm" c="dimmed">
-            Run time
-          </Text>
-          <Text component="dd" size="sm" m={0}>
-            {formatDuration(elapsed * 1000)}
-          </Text>
-        </dl>
-        <Anchor
-          component={Link}
-          to={`${paths.usage}?captureId=${encodeURIComponent(sessionId)}`}
-          size="sm"
-        >
-          See this capture's API usage
-        </Anchor>
-        {recovery?.enabled ? (
+        ) : (
           <>
-            <Section title="Recovery limits" padding="sm">
-              <KeyValueTable
-                rows={[
-                  [
-                    'Requests used / total',
-                    `${count(recovery.requestsUsed)} / ${count(recovery.totalRequestBudget)}`,
-                  ],
-                  [
-                    'Bytes used / total',
-                    `${count(recovery.bytesUsed)} / ${count(recovery.totalByteBudget)}`,
-                  ],
-                  ['Attempts', `${count(recovery.attemptsUsed)} / ${count(recovery.maxAttempts)}`],
-                  [
-                    'Current reservation',
-                    `${count(recovery.reservedRequests)} requests · ${count(recovery.reservedBytes)} bytes`,
-                  ],
-                ]}
-              />
-            </Section>
-            {retrySeconds !== null && operation.state === 'WAITING_RETRY' && (
-              <Text size="sm" role="status">
-                Next retry in {retrySeconds}s
+            <Progress
+              value={
+                progress?.selected
+                  ? Math.min(100, (100 * (progress.processed ?? 0)) / progress.selected)
+                  : 0
+              }
+              aria-label="Stage progress"
+            />
+            <Text size="sm">
+              {count(progress?.processed)} of {count(progress?.selected)} transactions
+            </Text>
+            <dl
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) auto',
+                gap: '8px 16px',
+                margin: 0,
+              }}
+            >
+              <Text component="dt" size="sm" c="dimmed">
+                Requests, this run
+              </Text>
+              <Text component="dd" size="sm" m={0}>
+                {count(progress?.operationRequests)} / {count(operation.budget.requestBudget)}
+              </Text>
+              <Text component="dt" size="sm" c="dimmed">
+                Requests, whole capture
+              </Text>
+              <Text component="dd" size="sm" m={0}>
+                {count(progress?.cumulativeRequests)}
+              </Text>
+              <Text component="dt" size="sm" c="dimmed">
+                Downloaded
+              </Text>
+              <Text component="dd" size="sm" m={0}>
+                {progress?.cumulativeBytes == null
+                  ? '—'
+                  : `${(progress.cumulativeBytes / 1048576).toFixed(2)} MB`}
+              </Text>
+              <Text component="dt" size="sm" c="dimmed">
+                Run time
+              </Text>
+              <Text component="dd" size="sm" m={0}>
+                {formatDuration(elapsed * 1000)}
+              </Text>
+            </dl>
+            <Anchor
+              component={Link}
+              to={`${paths.usage}?captureId=${encodeURIComponent(sessionId)}`}
+              size="sm"
+            >
+              See this capture's API usage
+            </Anchor>
+            {recovery?.enabled ? (
+              <>
+                <Section title="Recovery limits" padding="sm">
+                  <KeyValueTable
+                    rows={[
+                      [
+                        'Requests used / total',
+                        `${count(recovery.requestsUsed)} / ${count(recovery.totalRequestBudget)}`,
+                      ],
+                      [
+                        'Bytes used / total',
+                        `${count(recovery.bytesUsed)} / ${count(recovery.totalByteBudget)}`,
+                      ],
+                      [
+                        'Attempts',
+                        `${count(recovery.attemptsUsed)} / ${count(recovery.maxAttempts)}`,
+                      ],
+                      [
+                        'Current reservation',
+                        `${count(recovery.reservedRequests)} requests · ${count(recovery.reservedBytes)} bytes`,
+                      ],
+                    ]}
+                  />
+                </Section>
+                {retrySeconds !== null && operation.state === 'WAITING_RETRY' && (
+                  <Text size="sm" role="status">
+                    Next retry in {retrySeconds}s
+                  </Text>
+                )}
+              </>
+            ) : (
+              <Text size="xs" c="dimmed">
+                Every explicit resume receives a fresh allowance. Total usage includes previous
+                operations; checkpoints do not prove replay readiness.
               </Text>
             )}
           </>
-        ) : (
-          <Text size="xs" c="dimmed">
-            Every explicit resume receives a fresh allowance. Total usage includes previous
-            operations; checkpoints do not prove replay readiness.
-          </Text>
         )}
         {operation.message && (
           <Alert
             color={operation.state === 'FAILED' ? 'red' : 'amber'}
-            title={operation.code ? `Stopped: ${operation.code.replaceAll('_', ' ')}` : undefined}
+            title={operation.state === 'FAILED' ? 'Stopped with an error' : 'Stopped early'}
           >
-            {operation.message}
+            {knownReasonText(operation.code) ?? operation.message}
+            <CodeText code={operation.code} />
           </Alert>
         )}
         {operation.state === 'INTERRUPTED' && (

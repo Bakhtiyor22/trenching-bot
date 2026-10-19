@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateUsage, groupUsageCalls, megabytes, sortUsageTasks } from './usageData';
+import { aggregateUsage, groupUsageCalls, dataSize, sortUsageTasks } from './usageData';
 
 describe('usage units', () => {
   it('groups five minute points by hour and provider without merging providers', () => {
@@ -11,7 +11,11 @@ describe('usage units', () => {
     expect(aggregateUsage(points, 3600)).toHaveLength(2);
     expect(aggregateUsage(points, 3600).find((p) => p.provider === 'SOLANA_RPC')?.requests).toBe(5);
     expect(aggregateUsage(points, 300)).toHaveLength(3);
-    expect(megabytes(1_250_000)).toBe('1.25 MB');
+    expect(dataSize(1_250_000)).toBe('1.25 MB');
+    expect(dataSize(602)).toBe('602 B');
+    expect(dataSize(4_200)).toBe('4.2 KB');
+    expect(dataSize(41_800_000)).toBe('41.8 MB');
+    expect(dataSize(0)).toBe('0 B');
   });
   it('groups provider rows and sorts tasks by requests descending', () => {
     const totals = {

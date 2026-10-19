@@ -281,6 +281,10 @@ describe('capture design states', () => {
       'true',
     );
     expect(screen.getByLabelText(/^Wallet capture directory/)).toBeInTheDocument();
+    // Attaching sets no scope, cutoff or recovery, so those suggestions are not offered.
+    expect(screen.queryByRole('heading', { name: 'Suggestions' })).not.toBeInTheDocument();
+    // The generated-name preview never shows an empty part before a folder is typed.
+    expect(screen.getAllByText(/^Attached · wallet folder · /).length).toBeGreaterThan(0);
   });
   it('keeps the original scope defaults when there is no suggested wallet', async () => {
     server.use(

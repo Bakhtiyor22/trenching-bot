@@ -24,11 +24,12 @@ import { useConfigDefaults, useDataset, useDatasets, useStartRun } from '../../a
 import type { ConfigDefaults, Dataset } from '../../api/types';
 import { setupApi, type Recommendation, type RunPreset } from '../../api/setup';
 import { Recommendations } from '../../components/Recommendations';
-import { codeLabel, presetStatusLabels } from '../../lib/codes';
+import { codeLabel, MARKET_COVERAGE_ENDED, presetStatusLabels } from '../../lib/codes';
 import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
 import { formatPercent } from '../../lib/percent';
 import { IconAlert, IconPlay } from '../../components/Icons';
 import { PageHeader, Section } from '../../components/Panels';
+import { CodeText } from '../../components/PlainLanguage';
 import { ErrorState, LoadingState } from '../../components/StateViews';
 import { mintLabel, shortId, slotRange } from '../../lib/format';
 import { paths } from '../../paths';
@@ -136,13 +137,25 @@ function RunConfigForm({
       form.setValues(formValuesFrom(preset.config, form.values.datasetId));
     }
     if (item.id === 'ADD_LEGACY_COMPARISON') {
-      const current = await startRun.mutateAsync({
-        ...toRunStartRequest(form.values),
-        ...(preset ? { presetId: preset.id } : {}),
-      });
-      const comparison = await legacy.mutateAsync({ datasetId: form.values.datasetId ?? '' });
-      await navigate(paths.compareRuns([current.run.id, comparison.run.id]));
+      // A refusal stays in startRun/legacy error state and is shown beside Start run.
+      const current = await startRun
+        .mutateAsync({
+          ...toRunStartRequest(form.values),
+          ...(preset ? { presetId: preset.id } : {}),
+        })
+        .catch(() => null);
+      if (!current) return;
+      const comparison = await legacy
+        .mutateAsync({ datasetId: form.values.datasetId ?? '' })
+        .catch(() => null);
+      if (comparison) await navigate(paths.compareRuns([current.run.id, comparison.run.id]));
     }
+  }
+  function startLegacyRun() {
+    legacy.mutate(
+      { datasetId: form.values.datasetId ?? '' },
+      { onSuccess: ({ run }) => void navigate(paths.run(run.id)) },
+    );
   }
   const submit = form.onSubmit((values) => {
     startRun.mutate(
@@ -409,6 +422,20 @@ function RunConfigForm({
                   >
                     Start run
                   </Button>
+                  {serverError && (
+                    <RunStartError
+                      error={serverError}
+                      fieldErrorsShown={fieldErrorsShown}
+                      onRunLegacy={startLegacyRun}
+                      legacyPending={legacy.isPending}
+                    />
+                  )}
+                  {legacy.error && (
+                    <ErrorState
+                      error={legacy.error}
+                      title="The old-defaults run could not be started"
+                    />
+                  )}
                 </Stack>
               </Section>
             </Box>
@@ -424,23 +451,50 @@ function RunConfigForm({
             if (undoValues.current) form.setValues(undoValues.current);
           }}
         />
-        {legacy.error && (
-          <ErrorState error={legacy.error} title="Legacy comparison could not be started" />
-        )}
-        {serverError && (
-          <Alert
-            color="red"
-            variant="light"
-            icon={<IconAlert />}
-            title="The run was not started"
-            role="alert"
-          >
-            {errorMessage(serverError)}
-            {fieldErrorsShown && ' See the highlighted fields.'}
-          </Alert>
-        )}
       </Stack>
     </form>
+  );
+}
+
+/** Why the run was refused, beside Start run. A dataset cut short by the old cutoff gets a way forward. */
+function RunStartError({
+  error,
+  fieldErrorsShown,
+  onRunLegacy,
+  legacyPending,
+}: {
+  error: Error;
+  fieldErrorsShown: boolean;
+  onRunLegacy: () => void;
+  legacyPending: boolean;
+}) {
+  const coverageEnded = error instanceof ApiError && error.code === MARKET_COVERAGE_ENDED;
+  return (
+    <Alert
+      color="red"
+      variant="light"
+      icon={<IconAlert />}
+      title={
+        coverageEnded
+          ? 'This dataset ends before these settings can finish'
+          : 'The run was not started'
+      }
+      role="alert"
+    >
+      <Stack gap="xs">
+        <Text size="sm">
+          {coverageEnded
+            ? 'Its capture stopped recording the token once the outcome under the old default rules was decided, so a run with these settings would be cut short. Run the old defaults on it, or capture the token again with the market cutoff set to the whole window.'
+            : `${errorMessage(error)}${fieldErrorsShown ? ' See the highlighted fields.' : ''}`}
+        </Text>
+        {coverageEnded && (
+          <Button size="xs" variant="light" onClick={onRunLegacy} loading={legacyPending}>
+            Run the old defaults instead
+          </Button>
+        )}
+        {error instanceof ApiError && <CodeText code={error.code} />}
+      </Stack>
+    </Alert>
   );
 }
 

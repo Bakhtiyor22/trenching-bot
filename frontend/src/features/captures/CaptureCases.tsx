@@ -15,6 +15,8 @@ import { paths } from '../../paths';
 import { codeLabel } from '../../lib/codes';
 import { mintLabel, shortId } from '../../lib/format';
 import { CodeText } from '../../components/PlainLanguage';
+import { ApiError } from '../../api/client';
+import { knownReasonText } from './captureReasons';
 import { CaptureStatus, CommandError } from './CaptureShared';
 import {
   captureKeys,
@@ -358,6 +360,15 @@ export function CaptureCases({
         <Text size="sm" c="dimmed">
           Loading market cases…
         </Text>
+      ) : query.isError && query.error instanceof ApiError && query.error.status === 409 ? (
+        // 409: the capture's state does not allow listing tokens yet; not a failure to retry.
+        <Stack gap={4} align="flex-start">
+          <Text size="sm" c="dimmed">
+            Tokens appear once the wallet evidence can be read.{' '}
+            {knownReasonText(query.error.code) ?? query.error.message}
+          </Text>
+          <CodeText code={query.error.code} />
+        </Stack>
       ) : query.isError ? (
         <ErrorState
           error={query.error}

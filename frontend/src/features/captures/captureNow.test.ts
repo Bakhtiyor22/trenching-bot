@@ -21,6 +21,20 @@ const summary: CaptureSummary = {
 };
 
 describe('capture now copy', () => {
+  it('explains a known attention reason instead of the generic stage text', () => {
+    const copy = nowCopy(
+      {
+        ...summary,
+        status: 'NEEDS_ATTENTION',
+        reasonCode: 'MANIFEST_VERSION',
+        nextAction: { ...summary.nextAction, kind: 'INSPECT', maxRequests: null },
+      },
+      null,
+    );
+    expect(copy.headline).toBe('Markets need a check');
+    expect(copy.body).toMatch(/older version in a format this version cannot read/);
+  });
+
   it('explains a market request stop using this run allowance and saved progress', () => {
     expect(nowCopy(summary, captureOperation)).toEqual({
       headline: "Markets stopped after using this run's 400 requests",

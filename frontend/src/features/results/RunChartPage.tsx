@@ -16,9 +16,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { api, pairKey } from '../../api/endpoints';
-import { useRun } from '../../api/queries';
+import { useConfigDefaults, useRun } from '../../api/queries';
 import { setupApi } from '../../api/setup';
 import type { ChartResponse, Scenario } from '../../api/types';
+import { marketValue, shortPrice } from '../../charts/marketSummary';
 import { exactUnits } from '../../charts/tradeWallets';
 import { Section } from '../../components/Panels';
 import { SourceLinks } from '../../components/SourceLinks';
@@ -26,7 +27,7 @@ import { ErrorState, LoadingState } from '../../components/StateViews';
 import { TradeChart } from '../../components/TradeChart';
 import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
 import { mintLabel } from '../../lib/format';
-import { levelPercent } from '../../lib/percent';
+import { formatPercent, levelPercent } from '../../lib/percent';
 import { paths } from '../../paths';
 import { changedSettings, SETTING_LABELS } from '../runs/configLabels';
 import { formValuesFrom } from '../runs/runForm';
@@ -121,12 +122,12 @@ function scenarioEvents(
   const details = {
     firstBuyAt: [
       buy ? `${exact(exactUnits(buy.solLamports, 9))} SOL` : null,
-      buy?.mcap ? `market cap $${exact(buy.mcap)}` : null,
-      `dip level ${exact(scenario.dipPrice)} SOL`,
+      buy?.mcap ? `market cap ${marketValue(buy.mcap, 'mcap')}` : null,
+      `dip level ${shortPrice(scenario.dipPrice)}`,
     ]
       .filter(Boolean)
       .join(' · '),
-    dipAt: `Price reached ${exact(scenario.dipPrice)} SOL${scenario.trigger ? ` · market cap $${exact(scenario.trigger.marketCapUsd)}` : ''}`,
+    dipAt: `Price reached ${shortPrice(scenario.dipPrice)}${scenario.trigger ? ` · market cap ${marketValue(scenario.trigger.marketCapUsd, 'mcap')}` : ''}`,
     entryAt: `${exact(scenario.notional)} SOL${scenario.fill ? ` · fees ${levelPercent(scenario.fill.feePercent, scenario.fill.feeBps)} · impact ${levelPercent(scenario.fill.priceImpactPercent, scenario.fill.priceImpactBps)}` : ''}`,
     exitTriggerAt:
       scenario.position?.exitTrigger?.reason === 'TAKE_PROFIT'
@@ -136,6 +137,11 @@ function scenarioEvents(
       outcome.pnl !== null
         ? `Net result ${exact(outcome.pnl)} SOL`
         : 'No realized result recorded.',
+  };
+  // The short labels above cut tiny prices; the exact values stay one hover away.
+  const exactDetails: Partial<Record<keyof typeof details, string>> = {
+    firstBuyAt: `Exact dip level ${exact(scenario.dipPrice)} SOL`,
+    dipAt: `Exact price ${exact(scenario.dipPrice)} SOL${scenario.trigger ? ` · market cap $${exact(scenario.trigger.marketCapUsd)}` : ''}`,
   };
   const labels = {
     firstBuyAt: 'Decu bought',
@@ -149,7 +155,13 @@ function scenarioEvents(
   };
   return (Object.entries(scenario.timeline) as Array<[keyof typeof labels, string | null]>)
     .filter((entry): entry is [keyof typeof labels, string] => entry[1] !== null)
-    .map(([name, at]) => ({ name, at, label: labels[name], detail: details[name] }));
+    .map(([name, at]) => ({
+      name,
+      at,
+      label: labels[name],
+      detail: details[name],
+      exactDetail: exactDetails[name],
+    }));
 }
 
 export function RunChartPage() {
@@ -162,6 +174,7 @@ export function RunChartPage() {
     retry: false,
     staleTime: Infinity,
   });
+  const legacyDefaults = useConfigDefaults();
   const pairs = [
     ...new Map(
       (run.data?.scenarios ?? []).map((scenario) => [pairKey(scenario.pair), scenario.pair]),
@@ -275,11 +288,17 @@ export function RunChartPage() {
   const changes = preset.data
     ? changedSettings(formValuesFrom(run.data.config, null), preset.data.config)
     : [];
-  const settings = preset.data
-    ? changes.length === 0
-      ? 'Agreed strategy'
-      : `Agreed strategy, ${changes.length} changes (${changes.map((field) => SETTING_LABELS[field]).join(', ')})`
-    : 'Custom settings';
+  const runValues = formValuesFrom(run.data.config, null);
+  const oldDefaults =
+    legacyDefaults.data !== undefined &&
+    changedSettings(runValues, legacyDefaults.data.defaults).length === 0;
+  const settings = oldDefaults
+    ? `Old defaults (${formatPercent(runValues.dipPercent)} dip, +${formatPercent(runValues.takeProfitPercent)} / −${formatPercent(runValues.stopLossPercent)})`
+    : preset.data
+      ? changes.length === 0
+        ? 'Agreed strategy'
+        : `Agreed strategy, ${changes.length} changes (${changes.map((field) => SETTING_LABELS[field]).join(', ')})`
+      : 'Custom settings';
   const outcome = scenario ? scenarioOutcome(scenario) : null;
   const tokenIndex = pairs.findIndex((item) => pairKey(item) === key);
   const events = scenarioEvents(scenario, latestChart, full.data);
@@ -545,7 +564,7 @@ export function RunChartPage() {
                           {event.label}
                         </Text>
                       </Group>
-                      <Text size="xs" c="dimmed" mt={4}>
+                      <Text size="xs" c="dimmed" mt={4} title={event.exactDetail}>
                         {event.detail}
                       </Text>
                     </UnstyledButton>

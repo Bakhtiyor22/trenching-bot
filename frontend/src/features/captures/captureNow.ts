@@ -1,5 +1,6 @@
 import type { CaptureOperation, CaptureStageName, CaptureSummary } from '../../api/captures';
 import { stageLabels } from '../../lib/codes';
+import { knownReasonText } from './captureReasons';
 
 interface NowCopy {
   headline: string;
@@ -65,8 +66,11 @@ export function nowCopy(summary: CaptureSummary, operation: CaptureOperation | n
         headline: `${stage} ${plural ? 'are' : 'is'} waiting to resume automatically`,
         body: 'The provider asked for a pause or this run reached its allowance. Saved progress is kept. Automatic resume will continue within your total request, data and attempt limits.',
       };
-    case 'NEEDS_ATTENTION':
-      return attentionCopy[summary.currentStep.stage];
+    case 'NEEDS_ATTENTION': {
+      const copy = attentionCopy[summary.currentStep.stage];
+      const reason = knownReasonText(summary.reasonCode);
+      return reason ? { headline: copy.headline, body: reason } : copy;
+    }
     case 'READY_TO_REPLAY':
       return {
         headline: 'Your saved evidence is ready for a dataset',
