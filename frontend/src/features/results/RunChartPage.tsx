@@ -1,20 +1,47 @@
-import { Alert, Button, Group, Select, Stack, Text, TextInput } from '@mantine/core';
+import {
+  ActionIcon,
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Group,
+  SimpleGrid,
+  Stack,
+  Text,
+  TextInput,
+  UnstyledButton,
+} from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
-import { pairKey } from '../../api/endpoints';
-import { useRun, useRunChart } from '../../api/queries';
-import { PageHeader, Section } from '../../components/Panels';
+import { api, pairKey } from '../../api/endpoints';
+import { useRun } from '../../api/queries';
+import { setupApi } from '../../api/setup';
+import type { ChartResponse, Scenario } from '../../api/types';
+import { exactUnits } from '../../charts/tradeWallets';
+import { Section } from '../../components/Panels';
 import { SourceLinks } from '../../components/SourceLinks';
 import { ErrorState, LoadingState } from '../../components/StateViews';
 import { TradeChart } from '../../components/TradeChart';
+import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
 import { mintLabel } from '../../lib/format';
+import { levelPercent } from '../../lib/percent';
 import { paths } from '../../paths';
+import { changedSettings, SETTING_LABELS } from '../runs/configLabels';
+import { formValuesFrom } from '../runs/runForm';
+import { scenarioOutcome } from '../runs/scenarioOutcome';
 import { clampRange, panRange, tradeRange, zoomRange, type TimeRange } from './chartRange';
 
 function localInput(ms: number): string {
   const date = new Date(ms);
   return new Date(ms - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 19);
+}
+function clock(iso: string): string {
+  return new Date(iso).toLocaleTimeString('en-GB', { hour12: false });
+}
+function exact(value: string): string {
+  return formatDecimal(trimFractionZeros(value)).replace(/^-/, '−');
 }
 function RangeInputs({
   range,
@@ -41,15 +68,25 @@ function RangeInputs({
       return;
     }
     setError('');
-    onChange(next);
+    if (next.from !== range.from || next.to !== range.to) onChange(next);
   }
   return (
-    <Group align="flex-start">
+    <Group align="flex-start" gap="xs">
       <TextInput
         type="datetime-local"
         label="From (local time)"
+        step="1"
         value={from}
+        size="xs"
+        w={205}
         onChange={(event) => setFrom(event.currentTarget.value)}
+        onBlur={apply}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            apply();
+          }
+        }}
         error={error || undefined}
       />
       <TextInput
@@ -57,18 +94,74 @@ function RangeInputs({
         label="To (local time)"
         step="1"
         value={to}
+        size="xs"
+        w={205}
         onChange={(event) => setTo(event.currentTarget.value)}
+        onBlur={apply}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            apply();
+          }
+        }}
       />
-      <Button mt={24} variant="default" onClick={apply}>
-        Apply range
-      </Button>
     </Group>
   );
 }
+function scenarioEvents(
+  scenario: Scenario | undefined,
+  chart: ChartResponse | undefined,
+  fullChart: ChartResponse | undefined,
+) {
+  if (!scenario?.timeline) return [];
+  const buy = [...(chart?.markers.items ?? []), ...(fullChart?.markers.items ?? [])].find(
+    (item) => item.isTrackedWallet && item.slot === scenario.sourceSlot && item.side === 'BUY',
+  );
+  const outcome = scenarioOutcome(scenario);
+  const details = {
+    firstBuyAt: [
+      buy ? `${exact(exactUnits(buy.solLamports, 9))} SOL` : null,
+      buy?.mcap ? `market cap $${exact(buy.mcap)}` : null,
+      `dip level ${exact(scenario.dipPrice)} SOL`,
+    ]
+      .filter(Boolean)
+      .join(' · '),
+    dipAt: `Price reached ${exact(scenario.dipPrice)} SOL${scenario.trigger ? ` · market cap $${exact(scenario.trigger.marketCapUsd)}` : ''}`,
+    entryAt: `${exact(scenario.notional)} SOL${scenario.fill ? ` · fees ${levelPercent(scenario.fill.feePercent, scenario.fill.feeBps)} · impact ${levelPercent(scenario.fill.priceImpactPercent, scenario.fill.priceImpactBps)}` : ''}`,
+    exitTriggerAt:
+      scenario.position?.exitTrigger?.reason === 'TAKE_PROFIT'
+        ? 'Price crossed the take-profit level.'
+        : 'Price crossed the stop-loss level.',
+    exitAt:
+      outcome.pnl !== null
+        ? `Net result ${exact(outcome.pnl)} SOL`
+        : 'No realized result recorded.',
+  };
+  const labels = {
+    firstBuyAt: 'Decu bought',
+    dipAt: 'Dip reached',
+    entryAt: 'Paper buy filled',
+    exitTriggerAt:
+      scenario.position?.exitTrigger?.reason === 'TAKE_PROFIT'
+        ? 'Take profit crossed'
+        : 'Stop loss crossed',
+    exitAt: 'Paper sell filled',
+  };
+  return (Object.entries(scenario.timeline) as Array<[keyof typeof labels, string | null]>)
+    .filter((entry): entry is [keyof typeof labels, string] => entry[1] !== null)
+    .map(([name, at]) => ({ name, at, label: labels[name], detail: details[name] }));
+}
+
 export function RunChartPage() {
   const { id = '' } = useParams();
   const [params, setParams] = useSearchParams();
   const run = useRun(id);
+  const preset = useQuery({
+    queryKey: ['run-preset'],
+    queryFn: ({ signal }) => setupApi.preset(signal),
+    retry: false,
+    staleTime: Infinity,
+  });
   const pairs = [
     ...new Map(
       (run.data?.scenarios ?? []).map((scenario) => [pairKey(scenario.pair), scenario.pair]),
@@ -76,7 +169,12 @@ export function RunChartPage() {
   ];
   const pair = pairs.find((item) => pairKey(item) === params.get('pair')) ?? pairs[0];
   const key = pair ? pairKey(pair) : '';
-  const full = useRunChart(id, { pair: key }, !!key);
+  const full = useQuery({
+    queryKey: ['run', id, 'chart-extent', key],
+    queryFn: ({ signal }) => api.runChart(id, { pair: key, maxBuckets: 1, markerLimit: 1 }, signal),
+    enabled: !!key,
+    staleTime: Infinity,
+  });
   const scenario = run.data?.scenarios.find((item) => pairKey(item.pair) === key);
   const extentValue = full.data?.extent;
   const extent: TimeRange | null = full.data
@@ -102,10 +200,8 @@ export function RunChartPage() {
     extent && Number.isFinite(urlFrom) && Number.isFinite(urlTo) && urlFrom < urlTo
       ? clampRange({ from: urlFrom, to: urlTo }, extent)
       : initialRange;
-  const rangeFrom = range?.from;
-  const rangeTo = range?.to;
-  const [debouncedFrom] = useDebouncedValue(rangeFrom, 300);
-  const [debouncedTo] = useDebouncedValue(rangeTo, 300);
+  const [debouncedFrom] = useDebouncedValue(range?.from, 300);
+  const [debouncedTo] = useDebouncedValue(range?.to, 300);
   const debouncedRange =
     debouncedFrom !== undefined && debouncedTo !== undefined
       ? { from: debouncedFrom, to: debouncedTo }
@@ -113,6 +209,12 @@ export function RunChartPage() {
   const view = params.get('view') === 'price' ? 'price' : 'mcap';
   const host = useRef<HTMLDivElement>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [latestSnapshot, setLatestSnapshot] = useState<{ pair: string; data: ChartResponse }>();
+  const latestChart = latestSnapshot?.pair === key ? latestSnapshot.data : undefined;
+  const onChartData = useCallback(
+    (data: ChartResponse, chartPair: string) => setLatestSnapshot({ pair: chartPair, data }),
+    [],
+  );
   useEffect(() => {
     const changed = () => {
       if (!document.fullscreenElement) setFullscreen(false);
@@ -142,6 +244,19 @@ export function RunChartPage() {
           : zoomRange(range, kind === 'in' ? 0.5 : 2, extent),
     );
   }
+  function chooseToken(index: number) {
+    const nextPair = pairs[index];
+    if (!nextPair) return;
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('pair', pairKey(nextPair));
+      next.delete('from');
+      next.delete('to');
+      next.delete('action');
+      next.delete('fill');
+      return next;
+    });
+  }
   async function toggleFullscreen() {
     if (document.fullscreenElement) {
       await document.exitFullscreen();
@@ -157,35 +272,113 @@ export function RunChartPage() {
   }
   if (run.isPending) return <LoadingState label="Loading run chart…" />;
   if (run.isError) return <ErrorState error={run.error} onRetry={() => void run.refetch()} />;
+  const changes = preset.data
+    ? changedSettings(formValuesFrom(run.data.config, null), preset.data.config)
+    : [];
+  const settings = preset.data
+    ? changes.length === 0
+      ? 'Agreed strategy'
+      : `Agreed strategy, ${changes.length} changes (${changes.map((field) => SETTING_LABELS[field]).join(', ')})`
+    : 'Custom settings';
+  const outcome = scenario ? scenarioOutcome(scenario) : null;
+  const tokenIndex = pairs.findIndex((item) => pairKey(item) === key);
+  const events = scenarioEvents(scenario, latestChart, full.data);
+  const presets =
+    extent && initialRange
+      ? [
+          { label: 'This trade', range: initialRange },
+          ...[1, 5, 15].map((minutes) => ({
+            label: `${minutes}m`,
+            range: clampRange({ from: firstBuy, to: firstBuy + minutes * 60_000 }, extent),
+          })),
+          { label: 'Whole window', range: extent },
+        ]
+      : [];
+  const active =
+    range?.from === extent?.from && range?.to === extent?.to
+      ? 'Whole window'
+      : presets.find((item) => item.range.from === range?.from && item.range.to === range?.to)
+          ?.label;
   return (
     <Stack gap="lg">
       <SourceLinks source={run.data.source} runId={id} chart />
-      <PageHeader
-        title="Results chart"
-        description="Explore recorded trades and the simulated entry and exit."
-        actions={
-          <Button component={Link} to={paths.run(id)} variant="default">
-            Back to run
-          </Button>
-        }
-      />
-      <Select
-        label="Token"
-        value={key || null}
-        onChange={(value) =>
-          setParams((current) => {
-            const next = new URLSearchParams(current);
-            if (value) next.set('pair', value);
-            next.delete('from');
-            next.delete('to');
-            return next;
-          })
-        }
-        data={pairs.map((item) => ({
-          value: pairKey(item),
-          label: `${mintLabel(item.base)} / ${mintLabel(item.quote)}`,
-        }))}
-      />
+      <Section title="Results chart">
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
+          <Stack gap={4}>
+            <Text size="xs" c="dimmed">
+              Token
+            </Text>
+            <Text size="sm">{pair ? `${mintLabel(pair.base)} / SOL` : 'No token'}</Text>
+          </Stack>
+          <Stack gap={4}>
+            <Text size="xs" c="dimmed">
+              Result
+            </Text>
+            <Text size="sm">
+              {outcome?.label ?? 'No result'}
+              {outcome?.pnl != null && ` · ${exact(outcome.pnl)} SOL`}
+            </Text>
+          </Stack>
+          <Stack gap={4}>
+            <Text size="xs" c="dimmed">
+              Settings
+            </Text>
+            <Text size="sm">{settings}</Text>
+          </Stack>
+          <Stack gap={4}>
+            <Text size="xs" c="dimmed">
+              Simulator
+            </Text>
+            <Text size="sm">
+              {run.data.config.strategyName} v{run.data.config.strategyVersion} · run{' '}
+              {new Date(run.data.run.createdAt).toLocaleString('en-GB', {
+                day: 'numeric',
+                month: 'short',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false,
+              })}
+            </Text>
+          </Stack>
+        </SimpleGrid>
+        <Group justify="space-between" mt="md" gap="xs">
+          <Group gap="xs" aria-label="Token stepper">
+            <ActionIcon
+              variant="default"
+              aria-label="Previous token"
+              disabled={tokenIndex <= 0}
+              onClick={() => chooseToken(tokenIndex - 1)}
+            >
+              ‹
+            </ActionIcon>
+            <Text size="sm">
+              Token {pairs.length ? tokenIndex + 1 : 0} of {pairs.length}
+            </Text>
+            <ActionIcon
+              variant="default"
+              aria-label="Next token"
+              disabled={tokenIndex >= pairs.length - 1}
+              onClick={() => chooseToken(tokenIndex + 1)}
+            >
+              ›
+            </ActionIcon>
+          </Group>
+          <Group gap="xs">
+            <Button component={Link} to={paths.run(id)} variant="default">
+              ← Back to run
+            </Button>
+            {run.data.source?.captureId && (
+              <Button
+                component={Link}
+                to={paths.capture(run.data.source.captureId)}
+                variant="subtle"
+              >
+                Open capture
+              </Button>
+            )}
+          </Group>
+        </Group>
+      </Section>
       {!key ? (
         <Alert>No tokens in this run.</Alert>
       ) : full.isPending ? (
@@ -232,67 +425,54 @@ export function RunChartPage() {
               tabIndex={0}
               aria-label="Interactive results chart"
             >
-              <Group gap="xs">
-                {['This trade', '1m', '5m', '15m', 'Whole window'].map((label) => (
-                  <Button
-                    key={label}
+              <Group gap="xs" align="flex-end" wrap="wrap">
+                <Group gap={4} aria-label="Chart range presets">
+                  {presets.map((item) => (
+                    <Button
+                      key={item.label}
+                      variant={active === item.label ? 'light' : 'default'}
+                      size="xs"
+                      aria-pressed={active === item.label}
+                      onClick={() => writeRange(item.range)}
+                    >
+                      {item.label}
+                    </Button>
+                  ))}
+                  {!active && <Badge variant="outline">Custom</Badge>}
+                </Group>
+                <RangeInputs
+                  key={`${range.from}/${range.to}`}
+                  range={range}
+                  extent={extent}
+                  onChange={writeRange}
+                />
+                <Group gap={4}>
+                  <ActionIcon variant="default" aria-label="Zoom in" onClick={() => move('in')}>
+                    +
+                  </ActionIcon>
+                  <ActionIcon variant="default" aria-label="Zoom out" onClick={() => move('out')}>
+                    −
+                  </ActionIcon>
+                  <ActionIcon variant="default" aria-label="Pan left" onClick={() => move('left')}>
+                    ←
+                  </ActionIcon>
+                  <ActionIcon
                     variant="default"
-                    size="xs"
-                    onClick={() =>
-                      writeRange(
-                        label === 'This trade'
-                          ? initialRange
-                          : label === 'Whole window'
-                            ? extent
-                            : clampRange(
-                                { from: firstBuy, to: firstBuy + parseInt(label) * 60_000 },
-                                extent,
-                              ),
-                      )
-                    }
+                    aria-label="Pan right"
+                    onClick={() => move('right')}
                   >
-                    {label}
+                    →
+                  </ActionIcon>
+                  <Button variant="light" size="xs" onClick={() => move('reset')}>
+                    Reset view
                   </Button>
-                ))}
-                <Button variant="light" size="xs" onClick={() => move('in')} aria-label="Zoom in">
-                  Zoom +
-                </Button>
-                <Button variant="light" size="xs" onClick={() => move('out')} aria-label="Zoom out">
-                  Zoom −
-                </Button>
-                <Button
-                  variant="light"
-                  size="xs"
-                  onClick={() => move('left')}
-                  aria-label="Pan left"
-                >
-                  ←
-                </Button>
-                <Button
-                  variant="light"
-                  size="xs"
-                  onClick={() => move('right')}
-                  aria-label="Pan right"
-                >
-                  →
-                </Button>
-                <Button variant="light" size="xs" onClick={() => move('reset')}>
-                  Reset view
-                </Button>
-                <Button variant="subtle" size="xs" onClick={() => void toggleFullscreen()}>
-                  {fullscreen ? 'Exit full screen' : 'Full screen'}
-                </Button>
+                </Group>
               </Group>
-              <RangeInputs
-                key={`${range.from}/${range.to}`}
-                range={range}
-                extent={extent}
-                onChange={writeRange}
-              />
               <TradeChart
                 kind="run"
                 id={id}
                 pair={key}
+                trackedWallet={full.data?.trackedWallet ?? null}
                 scenarios={run.data.scenarios}
                 cycle={scenario}
                 range={
@@ -304,6 +484,9 @@ export function RunChartPage() {
                     : undefined
                 }
                 view={view}
+                onData={onChartData}
+                fullscreen={fullscreen}
+                onToggleFullscreen={() => void toggleFullscreen()}
                 onViewChange={(value) =>
                   setParams(
                     (current) => {
@@ -319,6 +502,14 @@ export function RunChartPage() {
                     clampRange({ from: Date.parse(next.from), to: Date.parse(next.to) }, extent),
                   )
                 }
+                emptyActions={
+                  <Group>
+                    <Button variant="default" onClick={() => move('reset')}>
+                      Reset view
+                    </Button>
+                    <Button onClick={() => move('out')}>Zoom out</Button>
+                  </Group>
+                }
                 height="max(480px, 62vh)"
                 expanded
               />
@@ -328,47 +519,58 @@ export function RunChartPage() {
               </Text>
             </Stack>
             <Section title="What happened · click to jump">
-              <Group>
-                {Object.entries(scenario?.timeline ?? {}).map(
-                  ([name, at]) =>
-                    at && (
-                      <Button
-                        key={name}
-                        variant="subtle"
-                        onClick={() =>
-                          writeRange(
-                            clampRange(
-                              { from: Date.parse(at) - 15_000, to: Date.parse(at) + 15_000 },
-                              extent,
-                            ),
-                          )
-                        }
-                      >
-                        {
-                          (
+              <Stack component="ol" gap="xs" m={0} pl="lg">
+                {events.map((event) => (
+                  <Box component="li" key={event.name}>
+                    <UnstyledButton
+                      w="100%"
+                      py="xs"
+                      onClick={() =>
+                        writeRange(
+                          clampRange(
                             {
-                              firstBuyAt: 'Reference buy',
-                              dipAt: 'Dip triggered',
-                              entryAt: 'Paper entry',
-                              exitTriggerAt: 'Exit triggered',
-                              exitAt: 'Paper exit',
-                            } as Record<string, string>
-                          )[name]
-                        }{' '}
-                        · {new Date(at).toLocaleTimeString()}
-                      </Button>
-                    ),
-                )}
-              </Group>
-              {!scenario?.timeline && (
+                              from: Date.parse(event.at) - 15_000,
+                              to: Date.parse(event.at) + 15_000,
+                            },
+                            extent,
+                          ),
+                        )
+                      }
+                    >
+                      <Group gap="sm">
+                        <Text size="xs" ff="monospace">
+                          {clock(event.at)}
+                        </Text>
+                        <Text size="sm" fw={600}>
+                          {event.label}
+                        </Text>
+                      </Group>
+                      <Text size="xs" c="dimmed" mt={4}>
+                        {event.detail}
+                      </Text>
+                    </UnstyledButton>
+                  </Box>
+                ))}
+              </Stack>
+              {!events.length && (
                 <Text size="sm">No event times were recorded for this cycle.</Text>
               )}
             </Section>
             <Section title="How to read this">
-              <Text size="sm">
-                B and S identify the tracked wallet’s recorded trades. Diamonds are simulated fills.
-                Price levels come from this run’s configuration; missing observations stay gaps.
-              </Text>
+              <Stack gap="xs">
+                <Text size="sm">
+                  B: Decu's own buy (observed on chain). Gold diamonds: our simulated paper trades,
+                  never real.
+                </Text>
+                <Text size="sm">
+                  Market cap = price × total supply × SOL/USDT at that minute. USDT stands in for
+                  USD.
+                </Text>
+                <Text size="sm">
+                  Candles group trades into {latestChart?.bucketSeconds ?? full.data?.bucketSeconds}
+                  -second buckets at this zoom; zooming in shows finer buckets.
+                </Text>
+              </Stack>
             </Section>
           </>
         )

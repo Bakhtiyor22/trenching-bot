@@ -3,6 +3,7 @@ import type { Recommendation, RunPreset, UsageReport } from '../api/setup';
 import type { RunDetail } from '../api/types';
 import { bpsToPercent } from '../lib/percent';
 import { configDefaults, BASE_MINT, SAMPLE_DATASET_ID, sampleDataset, WALLET } from './fixtures';
+import { mockState } from './previewState';
 
 export const runPreset: RunPreset = {
   id: 'decu-dip-v2-on-dip-entry-v1',
@@ -63,7 +64,7 @@ export const runPreset: RunPreset = {
 };
 export function withRunSetup(detail: RunDetail): RunDetail {
   const time = (slot: number) =>
-    new Date(Date.parse('2026-10-01T00:00:00Z') + (slot - 1000) * 400).toISOString();
+    new Date(Date.parse('2026-10-01T00:00:00Z') + (slot - 1000) * 60_000).toISOString();
   return {
     ...detail,
     source: {
@@ -97,6 +98,11 @@ export function createSetupHandlers(wait: () => Promise<void>) {
   return [
     http.get('/api/runs/preset', async () => {
       await wait();
+      if (mockState() === 'preset-unavailable')
+        return HttpResponse.json(
+          { code: 'PRESET_UNAVAILABLE', message: 'Preset unavailable', fields: {} },
+          { status: 503 },
+        );
       return HttpResponse.json(runPreset);
     }),
     http.get('/api/runs/recommendations', async () => {
@@ -132,14 +138,14 @@ export function createSetupHandlers(wait: () => Promise<void>) {
           id: 'CUTOFF_DECIDED',
           appliesTo: 'CAPTURE',
           setting: { field: 'cutoffMode', value: 'DECIDED' },
-          facts: {},
+          facts: { dipPercent: '15', takeProfitPercent: '30', stopLossPercent: '15' },
           caveatCode: 'CUTOFF_USES_LEGACY_DEFAULTS',
         },
         {
           id: 'ENABLE_RECOVERY',
           appliesTo: 'CAPTURE',
           setting: { field: 'recovery', value: 'ENABLED' },
-          facts: { requests: 1200, attempts: 3 },
+          facts: { requests: 1200, attempts: 3, budget: 1000 },
           caveatCode: null,
         },
       ]);
@@ -147,50 +153,122 @@ export function createSetupHandlers(wait: () => Promise<void>) {
     http.get('/api/wallets/:address/activity', async ({ params, request }) => {
       await wait();
       const url = new URL(request.url);
+      const state = mockState();
+      if (
+        [
+          'RPC_NOT_CONFIGURED',
+          'PROVIDER_RATE_LIMITED',
+          'PROVIDER_UNAVAILABLE',
+          'NOT_MAINNET',
+          'LOCAL_ACCESS_REQUIRED',
+        ].includes(state ?? '')
+      )
+        return HttpResponse.json(
+          {
+            code: state,
+            message: 'Mock provider state',
+            fields: {},
+            ...(state === 'PROVIDER_RATE_LIMITED' ? { retryAfterSeconds: 5 } : {}),
+          },
+          { status: state === 'PROVIDER_RATE_LIMITED' ? 429 : 503 },
+        );
       return HttpResponse.json({
         wallet: String(params.address),
         source: 'pumpfun-user-volume-accumulator',
-        actions: url.searchParams.has('before')
-          ? []
-          : [
-              {
-                signature: '2'.repeat(64),
-                instructionIndex: 0,
-                innerIndex: null,
-                slot: 1000,
-                blockTime: '2026-10-16T12:00:00Z',
-                side: 'BUY',
-                mint: BASE_MINT,
-                solLamports: '2000000000',
-                tokenRaw: '100000000',
-                tokenDecimals: 6,
-                venue: 'PUMPFUN_CURVE',
-                earlierActionInPage: false,
-                overSignalThreshold: true,
-                signalBasis: 'CURVE_PAYMENT_EXCLUDING_FEES',
-                capturedIn: [],
-              },
-              {
-                signature: '3'.repeat(64),
-                instructionIndex: 1,
-                innerIndex: null,
-                slot: 999,
-                blockTime: '2026-10-16T11:59:00Z',
-                side: 'SELL',
-                mint: BASE_MINT,
-                solLamports: '1000000000',
-                tokenRaw: '100000000',
-                tokenDecimals: 6,
-                venue: 'PUMPFUN_CURVE',
-                earlierActionInPage: false,
-                overSignalThreshold: false,
-                signalBasis: 'CURVE_PAYMENT_EXCLUDING_FEES',
-                capturedIn: [],
-              },
-            ],
+        actions:
+          url.searchParams.has('before') || state === 'activity-empty'
+            ? []
+            : [
+                {
+                  signature: '2'.repeat(64),
+                  instructionIndex: 0,
+                  innerIndex: null,
+                  slot: 1000,
+                  blockTime: '2026-10-16T12:00:00Z',
+                  side: 'BUY',
+                  mint: BASE_MINT,
+                  solLamports: '2400000001',
+                  tokenRaw: '100000000',
+                  tokenDecimals: 6,
+                  venue: 'PUMPFUN_CURVE',
+                  earlierActionInPage: false,
+                  overSignalThreshold: true,
+                  signalBasis: 'CURVE_PAYMENT_EXCLUDING_FEES',
+                  capturedIn: [],
+                },
+                {
+                  signature: '4'.repeat(64),
+                  instructionIndex: 0,
+                  innerIndex: null,
+                  slot: 998,
+                  blockTime: '2026-10-16T11:58:00Z',
+                  side: 'BUY',
+                  mint: '11111111111111111111111111111113',
+                  solLamports: '1900000000',
+                  tokenRaw: '100000000',
+                  tokenDecimals: 6,
+                  venue: 'PUMPFUN_CURVE',
+                  earlierActionInPage: false,
+                  overSignalThreshold: false,
+                  signalBasis: 'CURVE_PAYMENT_EXCLUDING_FEES',
+                  capturedIn: [],
+                },
+                {
+                  signature: '5'.repeat(64),
+                  instructionIndex: 0,
+                  innerIndex: null,
+                  slot: 997,
+                  blockTime: '2026-10-16T11:57:00Z',
+                  side: 'BUY',
+                  mint: '11111111111111111111111111111114',
+                  solLamports: '3000000000',
+                  tokenRaw: '100000000',
+                  tokenDecimals: 6,
+                  venue: 'PUMPFUN_CURVE',
+                  earlierActionInPage: false,
+                  overSignalThreshold: true,
+                  signalBasis: 'CURVE_PAYMENT_EXCLUDING_FEES',
+                  capturedIn: [{ captureId: 'capture-demo', displayName: 'First wallet sample' }],
+                },
+                {
+                  signature: '6'.repeat(64),
+                  instructionIndex: 0,
+                  innerIndex: null,
+                  slot: 996,
+                  blockTime: '2026-10-16T11:56:00Z',
+                  side: 'BUY',
+                  mint: BASE_MINT,
+                  solLamports: '2500000000',
+                  tokenRaw: '100000000',
+                  tokenDecimals: 6,
+                  venue: 'PUMPFUN_CURVE',
+                  earlierActionInPage: true,
+                  overSignalThreshold: true,
+                  signalBasis: 'CURVE_PAYMENT_EXCLUDING_FEES',
+                  capturedIn: [],
+                },
+                {
+                  signature: '3'.repeat(64),
+                  instructionIndex: 1,
+                  innerIndex: null,
+                  slot: 999,
+                  blockTime: '2026-10-16T11:59:00Z',
+                  side: 'SELL',
+                  mint: BASE_MINT,
+                  solLamports: '1000000000',
+                  tokenRaw: '100000000',
+                  tokenDecimals: 6,
+                  venue: 'PUMPFUN_CURVE',
+                  earlierActionInPage: false,
+                  overSignalThreshold: false,
+                  signalBasis: 'CURVE_PAYMENT_EXCLUDING_FEES',
+                  capturedIn: [],
+                },
+              ],
         unreadable: 1,
         scanned: 3,
-        nextBefore: url.searchParams.has('before') ? null : '3'.repeat(64),
+        nextBefore:
+          url.searchParams.has('before') || state === 'activity-empty' ? null : '3'.repeat(64),
         requestsUsed: 3,
         cachedAt: null,
       });
@@ -201,12 +279,13 @@ export function createSetupHandlers(wait: () => Promise<void>) {
       const hours = period === 'LAST_24_HOURS' ? 24 : period === 'LAST_7_DAYS' ? 168 : 1;
       const to = new Date();
       const from = new Date(to.getTime() - hours * 3600_000);
+      const empty = mockState() === 'usage-empty';
       const totals = {
-        requests: 128,
-        failedRequests: 2,
-        rateLimitedResponses: 1,
-        responseBytes: 2_500_000,
-        cacheHits: 23,
+        requests: empty ? 0 : 128,
+        failedRequests: empty ? 0 : 2,
+        rateLimitedResponses: empty ? 0 : 1,
+        responseBytes: empty ? 0 : 2_500_000,
+        cacheHits: empty ? 0 : 23,
       };
       return HttpResponse.json<UsageReport>({
         from: from.toISOString(),
@@ -214,22 +293,52 @@ export function createSetupHandlers(wait: () => Promise<void>) {
         bucketSeconds: 300,
         recordingStartedAt: from.toISOString(),
         totals,
-        byCall: [
-          {
-            provider: 'SOLANA_RPC',
-            operation: 'getTransaction',
-            purpose: 'READ_TRANSACTION',
-            totals,
-            sharePercent: '100',
-            lastCallAt: to.toISOString(),
-          },
-        ],
-        byTask: [{ task: 'MARKET_STEP', totals }],
-        series: Array.from({ length: 12 }, (_, index) => ({
-          bucketStart: new Date(from.getTime() + index * 300_000).toISOString(),
-          provider: 'SOLANA_RPC',
-          requests: index + 1,
-        })),
+        byCall: empty
+          ? []
+          : [
+              {
+                provider: 'SOLANA_RPC',
+                operation: 'getTransaction',
+                purpose: 'READ_TRANSACTION',
+                totals: { ...totals, requests: 112, responseBytes: 2_488_000 },
+                sharePercent: '87.5',
+                lastCallAt: to.toISOString(),
+              },
+              {
+                provider: 'BINANCE',
+                operation: '/api/v3/klines',
+                purpose: 'MINUTE_RATES',
+                totals: {
+                  requests: 16,
+                  failedRequests: 0,
+                  rateLimitedResponses: 0,
+                  responseBytes: 12000,
+                  cacheHits: 0,
+                },
+                sharePercent: '12.5',
+                lastCallAt: to.toISOString(),
+              },
+            ],
+        byTask: empty
+          ? []
+          : [
+              { task: 'RATES_STEP', totals: { ...totals, requests: 16 } },
+              { task: 'MARKET_STEP', totals: { ...totals, requests: 112 } },
+            ],
+        series: empty
+          ? []
+          : Array.from({ length: 12 }, (_, index) => [
+              {
+                bucketStart: new Date(from.getTime() + index * 300_000).toISOString(),
+                provider: 'SOLANA_RPC' as const,
+                requests: index + 1,
+              },
+              {
+                bucketStart: new Date(from.getTime() + index * 300_000).toISOString(),
+                provider: 'BINANCE' as const,
+                requests: (index % 3) + 1,
+              },
+            ]).flat(),
         pacing: [
           { provider: 'SOLANA_RPC', minRequestIntervalMillis: 125, maxConcurrentRequests: 4 },
         ],

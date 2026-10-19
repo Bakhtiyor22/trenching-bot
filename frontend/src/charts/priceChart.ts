@@ -265,9 +265,10 @@ export function chartCandleOption(response: ChartResponse, requestedView: ChartV
       }),
     };
   } else {
+    const hasIsolatedPoints = points.some((point, index) => point.value != null && points[index - 1]?.value == null && points[index + 1]?.value == null);
     market = {
       type: 'line', name: 'Market', data: points.map((point) => ({ value: [point.time, point.value], exact: point.exact })),
-      connectNulls: false, showSymbol: false, symbol: 'circle', symbolSize: 6,
+      connectNulls: false, showSymbol: hasIsolatedPoints, symbol: 'circle', symbolSize: 6,
       lineStyle: { width: 2, color }, itemStyle: { color }, emphasis: { disabled: true },
     };
   }

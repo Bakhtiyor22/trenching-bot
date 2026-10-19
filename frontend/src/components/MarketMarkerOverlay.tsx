@@ -66,7 +66,7 @@ export function MarketMarkerOverlay({ actions, view, chart, selectedKey, onSelec
       const paper = action.kind === 'PAPER';
       const sell = action.side === 'SELL';
       const selected = group.actions.some((item) => actionKey(item) === selectedKey);
-      const color = paper ? terminal.info : terminal.accent;
+      const color = terminal.accent;
       return <button key={key} id={`market-action-${encodeURIComponent(key)}`} type="button" data-market-action data-market-marker data-market-action-keys={JSON.stringify(group.actions.map(actionKey))} aria-label={stacked ? `${group.actions.length} Decu actions at ${markerLabel(action).split(' at ')[1]}` : markerLabel(action)} aria-pressed={selected} onClick={(event) => { event.stopPropagation(); if (stacked) onStack(group.actions, group.center); else onSelect(action, group.center); }} style={{ position: 'absolute', left: group.center.x - 22, top: group.center.y - 22, width: 44, height: 44, padding: 0, border: 0, borderRadius: '50%', background: 'transparent', cursor: 'pointer', pointerEvents: 'auto', color, display: 'grid', placeItems: 'center' }}>
         {!paper && !stacked && <>
           <span aria-hidden="true" style={{ position: 'absolute', left: 21, top: sell ? -4 : 35, width: 2, height: 12, background: color }} />

@@ -72,6 +72,14 @@ describe('time-axis candle chart', () => {
     expect(empty.yAxis).toMatchObject({ min: 0, max: 1 });
   });
 
+  it('shows isolated trades between empty buckets without connecting across gaps', () => {
+    const candle = chart.candles[0];
+    if (!candle) throw new Error('Fixture needs one candle');
+    const isolated = { ...chart, candles: Array.from({ length: 3 }, (_, index) => ({ ...candle, bucketStart: new Date(Date.parse(time) + index * 120_000).toISOString() })) };
+    const option = chartCandleOption(isolated, 'mcap');
+    expect((option.series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'line', showSymbol: true, connectNulls: false });
+  });
+
   it('falls back to price when no valuation is available', () => {
     const option = chartCandleOption({ ...chart, valuationBasis: { ...chart.valuationBasis, available: false } }, 'mcap');
     expect(option.yAxis).toMatchObject({ name: 'Price (SOL)' });

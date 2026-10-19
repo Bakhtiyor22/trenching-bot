@@ -1,9 +1,13 @@
 import {
   Alert,
   Badge,
+  Box,
   Button,
+  Card,
+  Grid,
   Group,
   NumberInput,
+  Popover,
   Select,
   SimpleGrid,
   Stack,
@@ -13,25 +17,30 @@ import {
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
 import { useQuery } from '@tanstack/react-query';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { ApiError, errorMessage } from '../../api/client';
 import { useConfigDefaults, useDataset, useDatasets, useStartRun } from '../../api/queries';
 import type { ConfigDefaults, Dataset } from '../../api/types';
 import { setupApi, type Recommendation, type RunPreset } from '../../api/setup';
 import { Recommendations } from '../../components/Recommendations';
-import { SourceLinks } from '../../components/SourceLinks';
 import { codeLabel, presetStatusLabels } from '../../lib/codes';
-import { compareDecimals, isDecimalString, trimFractionZeros } from '../../lib/decimal';
+import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
 import { formatPercent } from '../../lib/percent';
 import { IconAlert, IconPlay } from '../../components/Icons';
 import { PageHeader, Section } from '../../components/Panels';
 import { ErrorState, LoadingState } from '../../components/StateViews';
-import { mintLabel, shortId } from '../../lib/format';
+import { mintLabel, shortId, slotRange } from '../../lib/format';
 import { paths } from '../../paths';
 import {
+  changedSettings,
+  formatSettingValue,
+  SETTING_LABELS,
+  type SettingField,
+} from './configLabels';
+import './NewRunPage.css';
+import {
   FIELD_HINTS,
-  FIELD_LABELS,
   formValuesFrom,
   INTEGER_FIELDS,
   PERCENT_FIELDS,
@@ -41,13 +50,49 @@ import {
   type RunFormValues,
 } from './runForm';
 
-/** Navigation state passed to run detail so it can say whether the run already existed. */
 export interface RunStartNavigationState {
   created: boolean;
 }
 
 function datasetOptions(datasets: Dataset[]) {
-  return datasets.map((d) => ({ value: d.id, label: `${d.name} · ${shortId(d.id)}` }));
+  return datasets.map((d) => ({
+    value: d.id,
+    label: `${d.name} — ${d.pairs.length} ${d.pairs.length === 1 ? 'token' : 'tokens'}, ${d.transactionCount.toLocaleString()} trades`,
+  }));
+}
+
+const SETTING_FIELDS: SettingField[] = [
+  ...PERCENT_FIELDS,
+  'notional',
+  'minMarketCapUsd',
+  'transactionCostSol',
+  'latencySlots',
+  'horizonSlots',
+  'maxAgeSlots',
+  'quoteMint',
+];
+const UNITS: Partial<Record<SettingField, string>> = {
+  dipPercent: '%',
+  takeProfitPercent: '%',
+  stopLossPercent: '%',
+  notional: 'SOL',
+  minMarketCapUsd: 'USD',
+  transactionCostSol: 'SOL',
+  latencySlots: 'slot',
+  horizonSlots: 'slots',
+  maxAgeSlots: 'slots',
+};
+function specDate(value: string) {
+  return new Date(value).toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+function percentBps(value: string) {
+  if (!/^\d+(\.\d{1,2})?$/.test(value)) return null;
+  const [whole = '0', fraction = ''] = value.split('.');
+  return formatDecimal((BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'))).toString());
 }
 
 function RunConfigForm({
@@ -64,6 +109,7 @@ function RunConfigForm({
   const { defaults, limits } = config;
   const navigate = useNavigate();
   const startRun = useStartRun();
+  const legacy = useStartRun();
   const knownDataset = initialDatasetId && datasets.some((d) => d.id === initialDatasetId);
   const form = useForm<RunFormValues>({
     mode: 'controlled',
@@ -81,62 +127,23 @@ function RunConfigForm({
     enabled: !!form.values.datasetId,
   });
   const undoValues = useRef<RunFormValues | null>(null);
-  const legacy = useStartRun();
-  function applyRecommendation(item: Recommendation) {
+  const agreed = formValuesFrom(defaults, form.values.datasetId);
+  const changed = changedSettings(form.values, defaults);
+  const isAgreed = preset !== undefined && changed.length === 0;
+  async function applyRecommendation(item: Recommendation) {
     if (item.id === 'USE_AGREED_STRATEGY' && preset) {
       undoValues.current = { ...form.values };
       form.setValues(formValuesFrom(preset.config, form.values.datasetId));
     }
     if (item.id === 'ADD_LEGACY_COMPARISON') {
-      startRun.mutate(
-        { ...toRunStartRequest(form.values), ...(preset ? { presetId: preset.id } : {}) },
-        {
-          onSuccess: (current) => {
-            legacy.mutate(
-              { datasetId: form.values.datasetId ?? '' },
-              {
-                onSuccess: (comparison) => {
-                  void navigate(paths.compareRuns([current.run.id, comparison.run.id]));
-                },
-              },
-            );
-          },
-        },
-      );
+      const current = await startRun.mutateAsync({
+        ...toRunStartRequest(form.values),
+        ...(preset ? { presetId: preset.id } : {}),
+      });
+      const comparison = await legacy.mutateAsync({ datasetId: form.values.datasetId ?? '' });
+      await navigate(paths.compareRuns([current.run.id, comparison.run.id]));
     }
   }
-  function fieldLabel(field: keyof RunFormValues, label: string) {
-    const configField = field.replace('Percent', 'Bps');
-    const metadata = preset?.fields.find((item) => item.field === configField);
-    const original = formValuesFrom(defaults, form.values.datasetId)[field];
-    const current = form.values[field];
-    const equal =
-      isDecimalString(String(current)) && isDecimalString(String(original))
-        ? compareDecimals(String(current), String(original)) === 0
-        : current === original;
-    const status = !preset
-      ? 'Engine default · not the agreed strategy'
-      : !equal
-        ? `Changed by you · agreed ${String(original)}`
-        : metadata
-          ? presetStatusLabels[metadata.status]
-          : 'Engine default';
-    return (
-      <Group gap={6}>
-        <Text span inherit>
-          {label}
-        </Text>
-        <Badge
-          size="xs"
-          variant="light"
-          color={!equal || metadata?.status === 'MISSING' ? 'yellow' : 'teal'}
-        >
-          {status}
-        </Badge>
-      </Group>
-    );
-  }
-
   const submit = form.onSubmit((values) => {
     startRun.mutate(
       { ...toRunStartRequest(values), ...(preset ? { presetId: preset.id } : {}) },
@@ -151,47 +158,180 @@ function RunConfigForm({
           void navigate(paths.run(run.id), { state });
         },
         onError: (error) => {
-          if (error instanceof ApiError && Object.keys(error.fields).length > 0) {
+          if (error instanceof ApiError && Object.keys(error.fields).length > 0)
             form.setErrors(error.fields);
-          }
         },
       },
     );
   });
-
   const serverError = startRun.error;
   const fieldErrorsShown =
     serverError instanceof ApiError && Object.keys(serverError.fields).length > 0;
+
+  function settingCard(field: SettingField) {
+    const metadata = preset?.fields.find((item) => item.field === field.replace('Percent', 'Bps'));
+    const edited = changed.includes(field);
+    const missing = metadata?.status === 'MISSING';
+    const status = !preset
+      ? 'Engine default · not the agreed strategy'
+      : edited
+        ? `Changed by you · agreed ${formatSettingValue(field, agreed[field])}`
+        : metadata
+          ? presetStatusLabels[metadata.status]
+          : 'Engine default';
+    const isInteger = (INTEGER_FIELDS as readonly string[]).includes(field);
+    const bps = field.endsWith('Percent') ? percentBps(String(form.values[field])) : null;
+    const unit = UNITS[field];
+    const prefix =
+      field === 'takeProfitPercent'
+        ? '+'
+        : field === 'stopLossPercent'
+          ? '−'
+          : field === 'minMarketCapUsd'
+            ? '$'
+            : undefined;
+    const inputProps = {
+      label: SETTING_LABELS[field],
+      withAsterisk: true,
+      leftSection: prefix,
+      rightSection: unit ? (
+        <Text size="xs" c="dimmed">
+          {unit}
+        </Text>
+      ) : undefined,
+      rightSectionWidth: unit ? 52 : undefined,
+      ...form.getInputProps(field),
+    };
+    return (
+      <Card
+        key={field}
+        padding="md"
+        withBorder
+        style={{
+          background: missing
+            ? 'var(--mantine-color-red-light)'
+            : edited
+              ? 'var(--mantine-color-yellow-light)'
+              : undefined,
+          borderColor: missing
+            ? 'var(--mantine-color-red-8)'
+            : edited
+              ? 'var(--mantine-color-yellow-8)'
+              : undefined,
+        }}
+      >
+        <Stack gap="xs">
+          <Badge
+            size="xs"
+            variant="light"
+            color={missing ? 'red' : edited ? 'yellow' : 'teal'}
+            style={{ maxWidth: '100%', whiteSpace: 'normal', height: 'auto', lineHeight: 1.6 }}
+          >
+            {status}
+          </Badge>
+          {isInteger ? (
+            <NumberInput
+              {...inputProps}
+              allowDecimal={false}
+              allowNegative={false}
+              min={limits[field as (typeof INTEGER_FIELDS)[number]].min}
+              max={limits[field as (typeof INTEGER_FIELDS)[number]].max ?? undefined}
+              clampBehavior="none"
+            />
+          ) : (
+            <TextInput
+              {...inputProps}
+              inputMode={field === 'quoteMint' ? 'text' : 'decimal'}
+              autoComplete="off"
+              spellCheck={false}
+              ff={field === 'quoteMint' ? 'monospace' : undefined}
+            />
+          )}
+          <Text size="xs" c="dimmed">
+            {FIELD_HINTS[field]}
+            {bps !== null && ` ${formatPercent(String(form.values[field]))} = ${bps} bps.`}
+            {isInteger && ` Range ${rangeText(limits[field as (typeof INTEGER_FIELDS)[number]])}.`}
+            {field === 'quoteMint' && ` ${mintLabel(form.values.quoteMint.trim())}.`}
+          </Text>
+          {metadata?.noteCode && (
+            <Text size="xs" c={missing ? 'red' : 'yellow'}>
+              {codeLabel(metadata.noteCode)}
+            </Text>
+          )}
+          {preset && edited && (
+            <Button
+              variant="subtle"
+              color="yellow"
+              size="compact-xs"
+              style={{ alignSelf: 'flex-start' }}
+              onClick={() => form.setFieldValue(field, agreed[field])}
+            >
+              Reset to {formatSettingValue(field, agreed[field])}
+            </Button>
+          )}
+        </Stack>
+      </Card>
+    );
+  }
 
   return (
     <form onSubmit={submit} noValidate aria-label="New run configuration">
       <Stack gap="lg">
         {preset ? (
-          <Alert color="teal" title="Agreed strategy · applied">
-            <Stack gap="xs">
-              <Text size="sm">
-                {preset.source.strategy} v{preset.source.version} · {preset.engine} · spec updated{' '}
-                {preset.source.updated}
-              </Text>
-              <Text size="sm">
-                {preset.fields.filter((field) => field.status === 'AGREED').length} settings map
-                exactly · {preset.unsupportedRules.length} unsupported rules ·{' '}
-                {preset.fields.filter((field) => field.status === 'MISSING').length} missing setting
-              </Text>
-              <details>
-                <summary>Read the spec and engine limitations</summary>
-                <Text size="sm">Source: {preset.source.document}</Text>
-                {preset.unsupportedRules.map((rule) => (
-                  <Text key={rule.code} size="sm">
-                    {rule.specRef}: {codeLabel(rule.code)}
+          <Section
+            title={`Agreed strategy: ${preset.source.strategy} v${preset.source.version}`}
+            actions={
+              <Group gap="xs">
+                <Badge color={isAgreed ? 'teal' : 'yellow'}>
+                  {isAgreed ? 'Applied' : `Changed · ${changed.length} settings`}
+                </Badge>
+                <Button variant="default" size="xs" onClick={() => form.setValues(agreed)}>
+                  Reset to agreed
+                </Button>
+                <Popover position="bottom-end" width={320}>
+                  <Popover.Target>
+                    <Button variant="subtle" size="xs">
+                      Read the spec
+                    </Button>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
+                      {preset.source.document}
+                    </Text>
+                  </Popover.Dropdown>
+                </Popover>
+              </Group>
+            }
+          >
+            <Text size="sm" mb="md">
+              From the strategy spec, last updated {specDate(preset.source.updated)}. You can change
+              any setting below; changed ones are marked.
+            </Text>
+            <Alert color="yellow" title="Simulator limitations">
+              <Stack gap="xs">
+                <Text size="sm">
+                  This simulator ({preset.engine}) applies{' '}
+                  {preset.fields.filter((field) => field.status === 'AGREED').length} of the agreed
+                  rules exactly.
+                </Text>
+                {preset.unsupportedRules.length > 0 && (
+                  <Text size="sm">
+                    {preset.unsupportedRules.length} rules need the new decu-dip v2 engine, which is
+                    planned but not built yet:{' '}
+                    {preset.unsupportedRules.map((rule) => codeLabel(rule.code)).join(', ')}.
                   </Text>
-                ))}
-              </details>
-            </Stack>
-          </Alert>
+                )}
+                <Text size="sm">
+                  {preset.fields.filter((field) => field.status === 'MISSING').length} setting has
+                  no agreed value for this simulator: the observation window. It is flagged below
+                  rather than guessed.
+                </Text>
+              </Stack>
+            </Alert>
+          </Section>
         ) : (
-          <Alert color="yellow" title="Agreed preset unavailable">
-            Using engine defaults. These are not the agreed strategy settings.
+          <Alert color="yellow" title="Engine defaults">
+            These are not the agreed strategy settings.
           </Alert>
         )}
         <Section title="Dataset">
@@ -205,104 +345,81 @@ function RunConfigForm({
             withAsterisk
             {...form.getInputProps('datasetId')}
           />
-          <SourceLinks source={sourceDataset.data?.source} />
+          {sourceDataset.data?.source?.captureId && (
+            <Text size="xs" mt="xs">
+              From capture{' '}
+              <Text
+                span
+                component={Link}
+                to={paths.capture(sourceDataset.data.source.captureId)}
+                c="blue"
+                td="underline"
+              >
+                {sourceDataset.data.source.captureDisplayName ??
+                  shortId(sourceDataset.data.source.captureId)}
+              </Text>
+              .
+            </Text>
+          )}
+          {sourceDataset.data?.firstSlot != null && sourceDataset.data.lastSlot != null && (
+            <Text size="xs" c="dimmed" mt="xs">
+              Slots {slotRange(sourceDataset.data)}
+            </Text>
+          )}
         </Section>
-
-        <Section
-          title="Simulation parameters"
-          hint="Percent values are sent exactly as entered. Identical dataset, parameters and engine always produce the same run."
-          actions={
-            <Button
-              variant="subtle"
-              size="xs"
-              onClick={() => form.setValues(formValuesFrom(defaults, form.values.datasetId))}
-            >
-              {preset ? 'Reset to agreed' : 'Reset to defaults'}
-            </Button>
-          }
-        >
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }}>
-            <TextInput
-              label={fieldLabel('notional', 'Notional')}
-              description={`${FIELD_HINTS.notional} At most ${limits.notionalScale} decimals (whole lamports).`}
-              inputMode="decimal"
-              autoComplete="off"
-              withAsterisk
-              {...form.getInputProps('notional')}
-            />
-            <TextInput
-              label={fieldLabel('minMarketCapUsd', 'Minimum market cap (USD)')}
-              description={`${FIELD_HINTS.minMarketCapUsd} Range ${rangeText(limits.minMarketCapUsd)}.`}
-              inputMode="decimal"
-              autoComplete="off"
-              withAsterisk
-              {...form.getInputProps('minMarketCapUsd')}
-            />
-            <TextInput
-              label={fieldLabel('transactionCostSol', 'Transaction cost (SOL)')}
-              description={`${FIELD_HINTS.transactionCostSol} Range ${limits.transactionCostSol.min} – ${limits.transactionCostSol.max}, at most ${limits.transactionCostScale} decimals.`}
-              inputMode="decimal"
-              autoComplete="off"
-              withAsterisk
-              {...form.getInputProps('transactionCostSol')}
-            />
-            {PERCENT_FIELDS.map((field) => (
-              <TextInput
-                key={field}
-                label={fieldLabel(field, FIELD_LABELS[field])}
-                description={FIELD_HINTS[field]}
-                inputMode="decimal"
-                withAsterisk
-                {...form.getInputProps(field)}
-              />
-            ))}
-            {INTEGER_FIELDS.map((field) => (
-              <NumberInput
-                key={field}
-                label={fieldLabel(field, FIELD_LABELS[field])}
-                description={`${FIELD_HINTS[field]} Range ${rangeText(limits[field])}.`}
-                allowDecimal={false}
-                allowNegative={false}
-                min={limits[field].min}
-                max={limits[field].max ?? undefined}
-                clampBehavior="none"
-                withAsterisk
-                {...form.getInputProps(field)}
-              />
-            ))}
-            <TextInput
-              label={fieldLabel('quoteMint', 'Quote mint')}
-              description={FIELD_HINTS.quoteMint}
-              autoComplete="off"
-              spellCheck={false}
-              ff="monospace"
-              rightSection={
-                <Text size="xs" c="dimmed" pr="xs">
-                  {form.values.quoteMint ? mintLabel(form.values.quoteMint.trim()) : ''}
-                </Text>
+        <Grid align="flex-start">
+          <Grid.Col span={{ base: 12, lg: 8 }}>
+            <Section
+              title="Simulation parameters"
+              hint="Identical dataset, parameters and engine always produce the same run."
+              actions={
+                !preset ? (
+                  <Button variant="subtle" size="xs" onClick={() => form.setValues(agreed)}>
+                    Reset to defaults
+                  </Button>
+                ) : undefined
               }
-              rightSectionWidth={110}
-              withAsterisk
-              {...form.getInputProps('quoteMint')}
-            />
-          </SimpleGrid>
-          <Text size="xs" c="dimmed" mt="md">
-            Strategy {defaults.strategyName} v{defaults.strategyVersion} — strategy and simulation
-            semantics are fixed in code and cannot be edited here.
-          </Text>
-        </Section>
-        <Section title="In plain words">
-          <Text size="sm">
-            Spend {trimFractionZeros(form.values.notional)} SOL on a{' '}
-            {formatPercent(form.values.dipPercent)} dip. Take profit at{' '}
-            {formatPercent(form.values.takeProfitPercent, { signed: true })}, or stop after a{' '}
-            {formatPercent(form.values.stopLossPercent)} fall. Watch for {form.values.horizonSlots}{' '}
-            slots; this observation window is not agreed in the strategy spec.
-          </Text>
-        </Section>
+            >
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>{SETTING_FIELDS.map(settingCard)}</SimpleGrid>
+            </Section>
+          </Grid.Col>
+          <Grid.Col span={{ base: 12, lg: 4 }} className="run-plain-words">
+            <Box>
+              <Section title="In plain words">
+                <Stack gap="md">
+                  <Text size="sm">
+                    After Decu's first buy of a token, wait for the price to drop{' '}
+                    <strong>{formatPercent(form.values.dipPercent)}</strong> below his price. Then
+                    buy <strong>{trimFractionZeros(form.values.notional)} SOL</strong>, and sell at{' '}
+                    <strong>+{formatPercent(form.values.takeProfitPercent)}</strong> or{' '}
+                    <strong>−{formatPercent(form.values.stopLossPercent)}</strong> from our fill.
+                  </Text>
+                  <Text size="sm">
+                    Settings you changed: <strong>{changed.length}</strong>
+                    {changed.length > 0
+                      ? ` (${changed.map((field) => SETTING_LABELS[field]).join(', ')})`
+                      : ''}
+                    .
+                  </Text>
+                  <Button
+                    type="submit"
+                    loading={startRun.isPending || legacy.isPending}
+                    leftSection={<IconPlay size={16} />}
+                    size="md"
+                  >
+                    Start run
+                  </Button>
+                </Stack>
+              </Section>
+            </Box>
+          </Grid.Col>
+        </Grid>
         <Recommendations
-          items={recommendations.data ?? []}
+          items={(recommendations.data ?? []).filter(
+            (item) => item.id !== 'USE_AGREED_STRATEGY' || !isAgreed,
+          )}
           onApply={applyRecommendation}
+          appliedIds={isAgreed ? ['USE_AGREED_STRATEGY'] : []}
           onUndo={() => {
             if (undoValues.current) form.setValues(undoValues.current);
           }}
@@ -310,7 +427,6 @@ function RunConfigForm({
         {legacy.error && (
           <ErrorState error={legacy.error} title="Legacy comparison could not be started" />
         )}
-
         {serverError && (
           <Alert
             color="red"
@@ -323,17 +439,6 @@ function RunConfigForm({
             {fieldErrorsShown && ' See the highlighted fields.'}
           </Alert>
         )}
-
-        <Group justify="flex-end">
-          <Button
-            type="submit"
-            loading={startRun.isPending}
-            leftSection={<IconPlay size={16} />}
-            size="md"
-          >
-            Start run
-          </Button>
-        </Group>
       </Stack>
     </form>
   );
@@ -341,6 +446,7 @@ function RunConfigForm({
 
 export function NewRunPage() {
   const [params] = useSearchParams();
+  const [continueDefaults, setContinueDefaults] = useState(false);
   const defaults = useConfigDefaults();
   const preset = useQuery({
     queryKey: ['run-preset'],
@@ -359,7 +465,6 @@ export function NewRunPage() {
     linkedDataset.data && needsLinkedDataset
       ? [...(datasets.data?.items ?? []), linkedDataset.data]
       : (datasets.data?.items ?? []);
-
   return (
     <>
       <PageHeader
@@ -389,6 +494,26 @@ export function NewRunPage() {
           title="Could not load the selected dataset"
           onRetry={() => void linkedDataset.refetch()}
         />
+      ) : preset.isError && !continueDefaults ? (
+        <Alert color="yellow" title="Agreed strategy could not be loaded">
+          <Stack gap="sm">
+            <Text size="sm">
+              The agreed strategy settings are unavailable. Retry, or continue with this simulator's
+              engine defaults; they are not the agreed strategy.
+            </Text>
+            <Text size="xs">Technical code: STRATEGY_PRESET_UNAVAILABLE</Text>
+            <Group>
+              <Button
+                variant="default"
+                loading={preset.isFetching}
+                onClick={() => void preset.refetch()}
+              >
+                Retry
+              </Button>
+              <Button onClick={() => setContinueDefaults(true)}>Continue with defaults</Button>
+            </Group>
+          </Stack>
+        </Alert>
       ) : availableDatasets.length === 0 ? (
         <Alert color="blue" variant="light" title="No datasets yet">
           Upload a dataset or import the sample on the{' '}
@@ -399,7 +524,7 @@ export function NewRunPage() {
         </Alert>
       ) : (
         <RunConfigForm
-          key={initialDatasetId}
+          key={`${initialDatasetId}/${preset.data?.id ?? 'defaults'}`}
           config={{ ...defaults.data, defaults: preset.data?.config ?? defaults.data.defaults }}
           preset={preset.data}
           datasets={availableDatasets}

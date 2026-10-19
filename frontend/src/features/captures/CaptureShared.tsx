@@ -1,10 +1,15 @@
 import { Alert, Badge, Button, NumberInput, SimpleGrid, Stack, Text } from '@mantine/core';
 import { ApiError } from '../../api/client';
-import type { CaptureBudget, CaptureConfig } from '../../api/captures';
+import type { CaptureBudget, CaptureConfig, CaptureSummaryStatus } from '../../api/captures';
 import { ErrorState } from '../../components/StateViews';
+import { statusColors, statusLabels } from '../../lib/codes';
 import { reasonText } from './captureReasons';
 
 const QUALIFICATION_ERRORS = new Set(['EXPORT_CHANGED', 'EXPORT_REQUIRED', 'UNSUPPORTED_SCOPE']);
+
+export function CaptureStatusChip({ status }: { status: CaptureSummaryStatus }) {
+  return <Badge variant="light" color={statusColors[status]} tt="none">{statusLabels[status]}</Badge>;
+}
 
 export function CaptureStatus({ state, label }: { state: string; label?: string }) {
   return <Badge variant="light" color={state === 'READY' || state === 'SUCCEEDED' ? 'teal' : state === 'FAILED' || state === 'INVALID' ? 'red' : state === 'NOT_STARTED' ? 'gray' : 'amber'}>{label ?? state.replaceAll('_', ' ')}</Badge>;

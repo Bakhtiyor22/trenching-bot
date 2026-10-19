@@ -1,7 +1,8 @@
 import { ActionIcon, Badge, CopyButton, Group, Text, Tooltip, type TextProps } from '@mantine/core';
 import type { Pair } from '../api/types';
+import { useEffect, useState } from 'react';
 import { formatDecimal, pnlColor } from '../lib/decimal';
-import { formatLocalTime, mintLabel, shortId } from '../lib/format';
+import { formatLocalTime, formatRelative, mintLabel, shortId } from '../lib/format';
 import { IconCheck, IconCopy } from './Icons';
 
 /** Copy-to-clipboard button for a full id/address. */
@@ -85,6 +86,25 @@ export function Timestamp({ iso, ...textProps }: { iso: string | null | undefine
         <time dateTime={iso}>{formatLocalTime(iso)}</time>
       </Text>
     </Tooltip>
+  );
+}
+
+export function RelativeTime({ iso }: { iso: string | null | undefined }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (!iso)
+    return (
+      <Text span size="sm" c="dimmed">
+        —
+      </Text>
+    );
+  return (
+    <Text component="time" dateTime={iso} title={formatLocalTime(iso)} size="sm">
+      {formatRelative(iso, now)}
+    </Text>
   );
 }
 

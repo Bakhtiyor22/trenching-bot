@@ -17,7 +17,7 @@ import {
 } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import type { ECharts } from 'echarts';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { api } from '../api/endpoints';
 import { useDatasetChart, useRunChart } from '../api/queries';
@@ -47,7 +47,7 @@ import { Chart } from './Chart';
 import { CopyValue } from './DisplayValues';
 import { MarketActionCard } from './MarketActionCard';
 import { MarketMarkerOverlay } from './MarketMarkerOverlay';
-import { ErrorState, LoadingState } from './StateViews';
+import { EmptyState, ErrorState, LoadingState } from './StateViews';
 import classes from './TradeChart.module.css';
 
 interface TradeChartProps {
@@ -64,6 +64,10 @@ interface TradeChartProps {
   onRangeChange?: (range: MarketTimeRange) => void;
   height?: number | string;
   expanded?: boolean;
+  onData?: (data: ChartResponse, pair: string) => void;
+  emptyActions?: ReactNode;
+  onToggleFullscreen?: () => void;
+  fullscreen?: boolean;
 }
 const RANGE_OPTIONS: { value: MarketRangePreset; label: string }[] = [
   { value: 'cycle', label: 'Cycle' },
@@ -96,7 +100,7 @@ export function TradeChart(props: TradeChartProps) {
     queryFn: ({ signal }) =>
       (props.kind === 'run' ? api.runChart : api.datasetChart)(
         props.id,
-        { pair: props.pair, markerLimit: 1 },
+        { pair: props.pair, maxBuckets: 1, markerLimit: 1 },
         signal,
       ),
     enabled: props.trackedWallet === undefined,
@@ -176,6 +180,10 @@ function TradeChartView({
   onRangeChange,
   height = 420,
   expanded = false,
+  onData,
+  emptyActions,
+  onToggleFullscreen,
+  fullscreen = false,
 }: TradeChartProps & { trackedWallet: string | null }) {
   const [params, setParams] = useSearchParams();
   const [watchlist, setWatchlist] = useState(readWatchlist);
@@ -225,6 +233,9 @@ function TradeChartView({
     fullData !== undefined,
   );
   const response = ranged.data ?? fullData;
+  useEffect(() => {
+    if (response) onData?.(response, pair);
+  }, [response, onData, pair]);
   const data = response ? filterRange(response, range) : null;
   const view = data?.valuationBasis.available ? (controlledView ?? metric) : 'price';
   const points = data ? chartMarketPoints(data, view) : [];
@@ -456,6 +467,19 @@ function TradeChartView({
       </ChartState>
     );
   if (!data || !visible) return null;
+  if (emptyActions && data.candles.length === 0 && !ranged.isFetching) {
+    const from = new Date(data.range.from).toLocaleString(undefined, { hour12: false });
+    const to = new Date(data.range.to).toLocaleString(undefined, { hour12: false });
+    return (
+      <Card component="section" padding="lg" aria-label="Market and trades">
+        <EmptyState
+          title={`No trades between ${from} and ${to}`}
+          description="Nobody traded this token in the selected range."
+          action={emptyActions}
+        />
+      </Card>
+    );
+  }
   const basis = data.valuationBasis;
   const missing = data.candles.reduce((sum, candle) => sum + candle.mcapMissingPoints, 0);
   const unsupported = data.candles.reduce((sum, candle) => sum + candle.mcapUnsupportedPoints, 0);
@@ -624,7 +648,7 @@ function TradeChartView({
           onRetry={() => void ranged.refetch()}
         />
       )}
-      <Box ref={chartHost} className={classes.plot} aria-busy={ranged.isFetching}>
+      <Box ref={chartHost} className={classes.plot} style={{ height }} aria-busy={ranged.isFetching}>
         <Chart
           height={height}
           ariaLabel="Market cap and trades over time"
@@ -808,6 +832,17 @@ function TradeChartView({
           </Group>
         )}
         <Group gap="xs">
+          {onToggleFullscreen && (
+            <ActionIcon
+              aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
+              title={fullscreen ? 'Exit full screen' : 'Full screen'}
+              variant="default"
+              radius="xl"
+              onClick={onToggleFullscreen}
+            >
+              ⛶
+            </ActionIcon>
+          )}
           <ActionIcon
             aria-label={style === 'line' ? 'Show candles' : 'Show line'}
             title={style === 'line' ? 'Show candles' : 'Show line'}
@@ -923,7 +958,7 @@ function TradeChartView({
           </Text>
           {paperLayer && kind === 'run' && (
             <Text size="xs">
-              <span style={{ color: terminal.info }}>◇</span> Bot paper fill
+              <span style={{ color: terminal.accent }}>◇</span> Bot paper fill
             </Text>
           )}
         </Group>

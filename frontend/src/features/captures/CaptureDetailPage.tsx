@@ -1,17 +1,22 @@
 import {
   Accordion,
+  ActionIcon,
   Alert,
   Anchor,
   Button,
   Checkbox,
+  Grid,
   Group,
   NumberInput,
+  Progress,
   ScrollArea,
   SimpleGrid,
   Stack,
   Table,
   Tabs,
   Text,
+  TextInput,
+  Title,
 } from '@mantine/core';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
@@ -30,22 +35,18 @@ import {
 } from '../../api/captures';
 import { queryKeys } from '../../api/queries';
 import { ConfirmDelete } from '../../components/ConfirmDelete';
-import { Timestamp } from '../../components/DisplayValues';
-import {
-  KeyValueTable,
-  Kpi,
-  KpiStrip,
-  PageHeader,
-  PagingFooter,
-  Section,
-} from '../../components/Panels';
+import { RelativeTime, Timestamp } from '../../components/DisplayValues';
+import { KeyValueTable, PagingFooter, Section } from '../../components/Panels';
 import { ErrorState, LoadingState } from '../../components/StateViews';
+import { ApiError } from '../../api/client';
+import { mintLabel, shortId, formatDuration } from '../../lib/format';
+import { glossary } from '../../lib/glossary';
 import { paths } from '../../paths';
 import { CalibrationResults } from './CalibrationResults';
 import { CaptureCases } from './CaptureCases';
 import { TokenVerdict } from './TokenVerdict';
-import { CaptureOverview } from './CaptureOverview';
-import { BudgetFields, CaptureStatus, CommandError } from './CaptureShared';
+import { CaptureOverview, CaptureStepper } from './CaptureOverview';
+import { BudgetFields, CommandError } from './CaptureShared';
 import { reasonText } from './captureReasons';
 import {
   captureKeys,
@@ -64,10 +65,12 @@ const count = (value: number | null | undefined) =>
   value == null ? '—' : value.toLocaleString('en-US');
 function OperationProgress({
   operation,
+  sessionId,
   onControl,
   controlPending,
 }: {
   operation: CaptureOperation;
+  sessionId: string;
   onControl: (action: 'pause' | 'resume' | 'cancel' | 'retry') => void;
   controlPending: boolean;
 }) {
@@ -147,57 +150,73 @@ function OperationProgress({
   );
   return (
     <Section
-      title="Latest operation"
-      actions={
-        <Group gap="sm">
-          <CaptureStatus state={operation.state} />
-          {controls}
-        </Group>
-      }
+      title={`${operation.step === 'MARKET' ? 'Markets' : operation.step === 'EXPORT' || operation.step === 'INSPECT' ? 'Dataset' : operation.step.charAt(0) + operation.step.slice(1).toLowerCase()} progress`}
+      actions={controls}
     >
       <Stack gap="md">
-        <Group justify="space-between">
-          <Text size="sm">
-            {operation.step} ·{' '}
-            {progress?.phase ??
-              (isCaptureOperationActive(operation.state)
-                ? 'Awaiting checkpoint'
-                : 'No checkpoint recorded')}
+        <Text size="sm" c="dimmed">
+          Last progress <RelativeTime iso={progress?.at ?? operation.updatedAt} /> (
+          {new Date(progress?.at ?? operation.updatedAt).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: false,
+          })}
+          )
+        </Text>
+        <Progress
+          value={
+            progress?.selected
+              ? Math.min(100, (100 * (progress.processed ?? 0)) / progress.selected)
+              : 0
+          }
+          aria-label="Stage progress"
+        />
+        <Text size="sm">
+          {count(progress?.processed)} of {count(progress?.selected)} transactions
+        </Text>
+        <dl
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1fr) auto',
+            gap: '8px 16px',
+            margin: 0,
+          }}
+        >
+          <Text component="dt" size="sm" c="dimmed">
+            Requests, this run
           </Text>
-          <Text size="xs" c="dimmed">
-            Elapsed {elapsed}s · Last checkpoint{' '}
-            <Timestamp iso={progress?.at ?? operation.updatedAt} />
+          <Text component="dd" size="sm" m={0}>
+            {count(progress?.operationRequests)} / {count(operation.budget.requestBudget)}
           </Text>
-        </Group>
-        <SimpleGrid cols={{ base: 1, sm: 2 }}>
-          <Section title="Budget for this run" padding="sm">
-            <KeyValueTable
-              rows={[
-                [
-                  'Requests',
-                  `${count(progress?.operationRequests)} / ${count(operation.budget.requestBudget)}`,
-                ],
-                [
-                  'Bytes',
-                  `${count(progress?.operationBytes)} / ${count(operation.budget.byteBudget)}`,
-                ],
-                ['Deadline', `${operation.budget.operationTimeoutMinutes} min`],
-              ]}
-            />
-          </Section>
-          <Section title="Total used for this capture" padding="sm">
-            <KeyValueTable
-              rows={[
-                ['Requests', count(progress?.cumulativeRequests)],
-                ['Bytes', count(progress?.cumulativeBytes)],
-                [
-                  'Processed / selected',
-                  `${count(progress?.processed)} / ${count(progress?.selected)}`,
-                ],
-              ]}
-            />
-          </Section>
-        </SimpleGrid>
+          <Text component="dt" size="sm" c="dimmed">
+            Requests, whole capture
+          </Text>
+          <Text component="dd" size="sm" m={0}>
+            {count(progress?.cumulativeRequests)}
+          </Text>
+          <Text component="dt" size="sm" c="dimmed">
+            Downloaded
+          </Text>
+          <Text component="dd" size="sm" m={0}>
+            {progress?.cumulativeBytes == null
+              ? '—'
+              : `${(progress.cumulativeBytes / 1048576).toFixed(2)} MB`}
+          </Text>
+          <Text component="dt" size="sm" c="dimmed">
+            Run time
+          </Text>
+          <Text component="dd" size="sm" m={0}>
+            {formatDuration(elapsed * 1000)}
+          </Text>
+        </dl>
+        <Anchor
+          component={Link}
+          to={`${paths.usage}?captureId=${encodeURIComponent(sessionId)}`}
+          size="sm"
+        >
+          See this capture's API usage
+        </Anchor>
         {recovery?.enabled ? (
           <>
             <Section title="Recovery limits" padding="sm">
@@ -327,6 +346,12 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
   const client = useQueryClient();
   const navigate = useNavigate();
   const deleteCapture = useDeleteCapture();
+  const [editingName, setEditingName] = useState(false);
+  const [name, setName] = useState(session.name);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState<string | null>(null);
+  const walletRecoveryRef = useRef<HTMLInputElement>(null);
+  const marketRecoveryRef = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string | null>('WALLET');
   const walletToken = session.wallet?.scope === WALLET_TOKEN_SCOPE;
   const [walletBudget, setWalletBudget] = useState<CaptureBudget>(
@@ -334,9 +359,14 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
   );
   const [marketBudget, setMarketBudget] = useState<CaptureBudget>(config.budgetDefaults);
   const [walletRecoveryEnabled, setWalletRecoveryEnabled] = useState(
-    Boolean(initialState?.recovery),
+    Boolean(
+      initialState?.recovery ||
+      (session.operation?.step === 'WALLET' && session.operation.recovery?.enabled),
+    ),
   );
-  const [marketRecoveryEnabled, setMarketRecoveryEnabled] = useState(false);
+  const [marketRecoveryEnabled, setMarketRecoveryEnabled] = useState(
+    Boolean(session.operation?.step === 'MARKET' && session.operation.recovery?.enabled),
+  );
   const [walletTotalRequests, setWalletTotalRequests] = useState(
     (walletToken ? config.walletTokenBudgetDefaults : config.budgetDefaults).requestBudget * 3,
   );
@@ -357,6 +387,14 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
   const refreshed = async () => {
     await client.invalidateQueries({ queryKey: captureKeys.all });
   };
+  const rename = useCaptureCommand<{ requestId: string; name: string }, CaptureSession>(
+    `${session.id}:rename`,
+    (body) => capturesApi.rename(session.id, body),
+    async () => {
+      setEditingName(false);
+      await refreshed();
+    },
+  );
   const operations = useCaptureCommand<CaptureOperationRequest, CaptureOperation>(
     `${session.id}:operation`,
     (body) => capturesApi.operate(session.id, body),
@@ -476,63 +514,152 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
       ...(stage === 'MARKET' ? { market: { scanPages: newPages, maxTransactions: capacity } } : {}),
     });
   };
+  const enableRecovery = () => {
+    const wallet = session.summary?.currentStep.stage === 'WALLET';
+    setSelected(wallet ? 'WALLET' : 'MARKET');
+    (wallet ? setWalletRecoveryEnabled : setMarketRecoveryEnabled)(true);
+    setAdvancedOpen(true);
+    setSettingsOpen('budget');
+    window.requestAnimationFrame(() => {
+      const checkbox = wallet ? walletRecoveryRef.current : marketRecoveryRef.current;
+      checkbox?.focus();
+      checkbox?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+    });
+  };
+  const summaryBudget =
+    session.summary?.currentStep.stage === 'WALLET' ? walletBudget : marketBudget;
+  const summaryRecovery =
+    session.summary?.currentStep.stage === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled;
+  const walletLabel =
+    config.suggestedWallets?.find((item) => item.address === session.wallet?.wallet)?.label ??
+    config.recentWallets?.find((item) => item.address === session.wallet?.wallet)?.label ??
+    'Wallet';
   return (
     <Stack gap="lg">
-      <PageHeader
-        title={session.displayName ?? session.name}
-        description={
-          session.wallet
-            ? `${session.wallet.scope} · ${session.wallet.limit} sampled transaction(s)`
-            : 'Attached capture evidence'
-        }
-        actions={
-          <>
-            <Button component={Link} to={paths.captures} variant="default">
-              All captures
-            </Button>
-            <Button onClick={() => start('INSPECT')} disabled={locked} variant="default">
-              Inspect evidence
-            </Button>
-            <ConfirmDelete
-              label="Delete capture"
-              title="Delete this capture?"
-              disabled={isCaptureOperationOpen(session.operation?.state)}
-              onConfirm={async () => {
-                await deleteCapture.mutateAsync(session.id);
-                await navigate(paths.captures);
+      <Group gap="xs" component="nav" aria-label="Breadcrumb">
+        <Anchor component={Link} to={paths.captures} size="sm">
+          Captures
+        </Anchor>
+        <Text size="sm" c="dimmed">
+          ›
+        </Text>
+        <Text size="sm">{session.displayName ?? session.name}</Text>
+      </Group>
+      <Group justify="space-between" align="flex-start">
+        <Stack gap="sm" style={{ minWidth: 0, flex: '1 1 420px' }}>
+          {editingName ? (
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                rename.submit({ name: name.trim() });
               }}
             >
-              Removes “{session.name}” and every file the console created for it: captured wallet,
-              market and rates evidence, exports and calibration reports. Attached capture
-              directories are only referenced and stay untouched, and datasets already imported stay
-              in Datasets.
-            </ConfirmDelete>
-          </>
-        }
-      />
-      <CaptureOverview session={session} config={config} />
-      <StartWalletOnCreate session={session} config={config} />
-      {session.wallet && (
-        <Text ff="monospace" size="sm" style={{ overflowWrap: 'anywhere' }}>
-          {session.wallet.wallet}
-        </Text>
-      )}
-      {session.wallet?.mint && (
-        <Text ff="monospace" size="sm" style={{ overflowWrap: 'anywhere' }}>
-          Token mint {session.wallet.mint}
-        </Text>
-      )}
-      <KpiStrip label="Capture stages">
-        {(Object.keys(stageNames) as Acquisition[]).map((step) => (
-          <Kpi
-            key={step}
-            label={stageNames[step]}
-            hint={inspect?.[stageKeys[step]].reason ?? undefined}
+              <Group align="flex-end">
+                <TextInput
+                  label="Capture name"
+                  value={name}
+                  autoFocus
+                  onChange={(event) => setName(event.currentTarget.value)}
+                  maxLength={120}
+                  required
+                  error={rename.error instanceof ApiError ? rename.error.fields.name : undefined}
+                />
+                <Button type="submit" loading={rename.isPending} disabled={!!rename.pendingCommand}>
+                  Save name
+                </Button>
+                <Button variant="subtle" onClick={() => setEditingName(false)}>
+                  Cancel
+                </Button>
+              </Group>
+              {rename.error instanceof ApiError && rename.error.suggestion && (
+                <Button
+                  variant="subtle"
+                  onClick={() =>
+                    setName(
+                      rename.error instanceof ApiError ? (rename.error.suggestion ?? name) : name,
+                    )
+                  }
+                >
+                  Use suggestion
+                </Button>
+              )}
+              <CommandError
+                error={rename.error}
+                uncertain={!!rename.pendingCommand && !rename.isPending}
+                retry={rename.retry}
+              />
+            </form>
+          ) : (
+            <Group gap="xs" wrap="nowrap">
+              <Title order={2} style={{ overflowWrap: 'anywhere' }}>
+                {session.displayName ?? session.name}
+              </Title>
+              <ActionIcon
+                variant="subtle"
+                aria-label="Rename capture"
+                onClick={() => {
+                  setName(session.name);
+                  setEditingName(true);
+                }}
+                style={{ flexShrink: 0 }}
+              >
+                ✎
+              </ActionIcon>
+            </Group>
+          )}
+          <Group gap="xs" style={{ overflowWrap: 'anywhere' }}>
+            {session.wallet && (
+              <Text size="sm" c="dimmed">
+                {walletLabel} ·{' '}
+                <span title={session.wallet.wallet}>{shortId(session.wallet.wallet)}</span>
+              </Text>
+            )}
+            {session.wallet?.mint && (
+              <Anchor
+                href={`https://pump.fun/coin/${encodeURIComponent(session.wallet.mint)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                size="sm"
+              >
+                Token {mintLabel(session.wallet.mint)} ↗
+              </Anchor>
+            )}
+            <Text size="sm" c="dimmed">
+              {session.wallet?.scope === WALLET_TOKEN_SCOPE
+                ? 'Wallet + token'
+                : session.wallet?.scope === 'pumpfun-user-buys'
+                  ? 'Wallet buys'
+                  : session.wallet
+                    ? 'Wallet references'
+                    : 'Attached capture evidence'}
+            </Text>
+            <Text size="sm" c="dimmed">
+              Created <Timestamp iso={session.createdAt} />
+            </Text>
+          </Group>
+        </Stack>
+        <Group gap="sm">
+          <Button onClick={() => start('INSPECT')} disabled={locked} variant="default">
+            Re-check saved files
+          </Button>
+          <ConfirmDelete
+            label="Delete capture"
+            title="Delete this capture?"
+            disabled={isCaptureOperationOpen(session.operation?.state)}
+            onConfirm={async () => {
+              await deleteCapture.mutateAsync(session.id);
+              await navigate(paths.captures);
+            }}
           >
-            <CaptureStatus state={inspect?.[stageKeys[step]].state ?? 'NOT_STARTED'} />
-          </Kpi>
-        ))}
-      </KpiStrip>
+            Removes “{session.name}” and every file the console created for it: captured wallet,
+            market and rates evidence, exports and calibration reports. Attached capture directories
+            are only referenced and stay untouched, and datasets already imported stay in Datasets.
+          </ConfirmDelete>
+        </Group>
+      </Group>
+      <CaptureOverview session={session} config={config} onEnableRecovery={enableRecovery} />
+      <StartWalletOnCreate session={session} config={config} />
+      <CaptureStepper session={session} />
       {(inspect?.targetToken || session.qualification) && (
         <TokenVerdict
           target={inspect?.targetToken}
@@ -542,16 +669,53 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
           onQualify={() => start('QUALIFY')}
         />
       )}
-      {session.operation && (
-        <OperationProgress
-          operation={session.operation}
-          onControl={(action) => {
-            if (session.operation) controls.submit({ operationId: session.operation.id, action });
-          }}
-          controlPending={controls.isPending || !!controls.pendingCommand}
-        />
-      )}
-      <CaptureCases sessionId={session.id} mainOperationState={session.operation?.state} />
+      <Grid gap="lg">
+        <Grid.Col span={{ base: 12, lg: 8 }}>
+          <Stack gap="lg">
+            {session.operation && (
+              <OperationProgress
+                operation={session.operation}
+                sessionId={session.id}
+                onControl={(action) => {
+                  if (session.operation)
+                    controls.submit({ operationId: session.operation.id, action });
+                }}
+                controlPending={controls.isPending || !!controls.pendingCommand}
+              />
+            )}
+            <CaptureCases
+              sessionId={session.id}
+              mainOperationState={session.operation?.state}
+              session={session}
+              config={config}
+              onResume={() => {
+                setAdvancedOpen(true);
+                setSelected('MARKET');
+              }}
+            />
+          </Stack>
+        </Grid.Col>
+        <Grid.Col span={{ base: 12, lg: 4 }}>
+          <aside aria-label="Terms on this page">
+            <Section title="Terms on this page">
+              <Stack component="dl" gap="md" m={0}>
+                {(['Market window', 'Slot', 'Request', 'Gap', 'Cutoff', 'Validated'] as const).map(
+                  (term) => (
+                    <div key={term}>
+                      <Text component="dt" fw={600} size="sm">
+                        {term}
+                      </Text>
+                      <Text component="dd" size="sm" c="dimmed" m={0}>
+                        {glossary[term]}
+                      </Text>
+                    </div>
+                  ),
+                )}
+              </Stack>
+            </Section>
+          </aside>
+        </Grid.Col>
+      </Grid>
       <CommandError
         error={operations.error}
         uncertain={!!operations.pendingCommand && !operations.isPending}
@@ -572,372 +736,411 @@ function CaptureWorkspace({ session, config }: { session: CaptureSession; config
           {validation}
         </Alert>
       )}
-      <Tabs value={selected} onChange={setSelected} keepMounted={false}>
-        <Tabs.List>
-          {(Object.keys(stageNames) as Acquisition[]).map((step) => (
-            <Tabs.Tab key={step} value={step}>
-              {stageNames[step]}
-            </Tabs.Tab>
-          ))}
-          <Tabs.Tab value="DATASET">Dataset</Tabs.Tab>
-          <Tabs.Tab value="CALIBRATION">Calibration</Tabs.Tab>
-          <Tabs.Tab value="HISTORY">History</Tabs.Tab>
-        </Tabs.List>
-        {(Object.keys(stageNames) as Acquisition[]).map((step) => {
-          const key = stageKeys[step];
-          const stage = inspect?.[key];
-          const stageBudget = step === 'WALLET' ? walletBudget : marketBudget;
-          const configured = step === 'RATES' ? config.ratesConfigured : config.rpcConfigured;
-          const canAcquire = !!stage && (stage.canStart || stage.canResume);
-          // Over cap at the maximum capacity: a new attempt cannot help, only a smaller wallet sample can.
-          const capacity = session.marketAttempt?.market?.maxTransactions;
-          const reason =
-            stage?.reason === 'OVER_CAP' &&
-            capacity != null &&
-            capacity >= config.bounds.marketTransactionsMax
-              ? 'OVER_CAP_AT_MAXIMUM'
-              : stage?.reason;
-          const hasAttempt =
-            step === 'WALLET' ||
-            (step === 'MARKET' ? !!session.marketAttempt : !!session.ratesAttempt);
-          const enabled = !locked && configured && canAcquire && hasAttempt;
-          return (
-            <Tabs.Panel key={step} value={step} pt="md">
-              <Section
-                title={`${stageNames[step]} capture`}
-                hint={
-                  step === 'MARKET'
-                    ? `${config.windowSlots.toLocaleString('en-US')}-slot windows from each mint’s first accepted buy.`
-                    : step === 'RATES'
-                      ? 'Recorded SOL/USDT minutes for the fully verified current market attempt.'
-                      : 'Wallet identity and scan bounds remain fixed after capture starts.'
-                }
-              >
-                <Stack gap="md">
-                  {!configured && (
-                    <Alert color="gray">
-                      {step === 'RATES'
-                        ? 'Reference-rate acquisition is not configured.'
-                        : 'Solana RPC acquisition is not configured.'}{' '}
-                      Configure it in the backend process to enable this stage.
-                    </Alert>
-                  )}
-                  {reasonText(reason) && (
-                    <Alert color={stage?.state === 'INVALID' ? 'red' : 'amber'}>
-                      {reasonText(reason)}
-                    </Alert>
-                  )}
-                  <Summary values={inspect?.[`${key}Summary`]} />
-                  {step === 'MARKET' &&
-                    inspect?.marketWindows &&
-                    inspect.marketWindows.length > 0 && (
-                      <ScrollArea>
-                        <Table miw={750}>
-                          <Table.Thead>
-                            <Table.Tr>
-                              {[
-                                'Mint',
-                                'Slot window',
-                                'Coverage',
-                                'Scanned / selected',
-                                'Detail gaps',
-                                'Observations',
-                              ].map((h) => (
-                                <Table.Th key={h}>{h}</Table.Th>
-                              ))}
-                            </Table.Tr>
-                          </Table.Thead>
-                          <Table.Tbody>
-                            {inspect.marketWindows.map((w) => (
-                              <Table.Tr key={`${w.mint}:${w.fromSlot}`}>
-                                <Table.Td>
-                                  <Anchor
-                                    href={`https://solscan.io/token/${encodeURIComponent(w.mint)}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    {w.mint}
-                                  </Anchor>
-                                </Table.Td>
-                                <Table.Td>
-                                  {w.fromSlot}–{w.toSlot}
-                                </Table.Td>
-                                <Table.Td>{w.coverage}</Table.Td>
-                                <Table.Td>
-                                  {w.scanned} / {w.selected}
-                                </Table.Td>
-                                <Table.Td>{w.detailGaps ?? '—'}</Table.Td>
-                                <Table.Td>{w.observations ?? '—'}</Table.Td>
-                              </Table.Tr>
-                            ))}
-                          </Table.Tbody>
-                        </Table>
-                      </ScrollArea>
+      <details open={advancedOpen} onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}>
+        <summary style={{ cursor: 'pointer', padding: '16px 0' }}>
+          <Text component="span" fw={600}>
+            Advanced: limits, attempts and history
+          </Text>
+          <Text size="xs" c="dimmed" mt={4}>
+            Per run: {count(summaryBudget.requestBudget)} requests ·{' '}
+            {(summaryBudget.byteBudget / 1048576).toLocaleString('en-US')} MB ·{' '}
+            {summaryBudget.operationTimeoutMinutes} min · Automatic resume:{' '}
+            {summaryRecovery ? 'on' : 'off'} · Market cutoff:{' '}
+            {session.marketAttempt?.market?.cutoffMode === 'DECIDED'
+              ? 'decided (old defaults)'
+              : 'full'}
+          </Text>
+        </summary>
+        <Tabs value={selected} onChange={setSelected} keepMounted={false}>
+          <Tabs.List style={{ flexWrap: 'wrap' }}>
+            {(Object.keys(stageNames) as Acquisition[]).map((step) => (
+              <Tabs.Tab key={step} value={step}>
+                {stageNames[step]}
+              </Tabs.Tab>
+            ))}
+            <Tabs.Tab value="DATASET">Dataset</Tabs.Tab>
+            <Tabs.Tab value="CALIBRATION">Calibration</Tabs.Tab>
+            <Tabs.Tab value="HISTORY">History</Tabs.Tab>
+          </Tabs.List>
+          {(Object.keys(stageNames) as Acquisition[]).map((step) => {
+            const key = stageKeys[step];
+            const stage = inspect?.[key];
+            const stageBudget = step === 'WALLET' ? walletBudget : marketBudget;
+            const configured = step === 'RATES' ? config.ratesConfigured : config.rpcConfigured;
+            const canAcquire = !!stage && (stage.canStart || stage.canResume);
+            // Over cap at the maximum capacity: a new attempt cannot help, only a smaller wallet sample can.
+            const capacity = session.marketAttempt?.market?.maxTransactions;
+            const reason =
+              stage?.reason === 'OVER_CAP' &&
+              capacity != null &&
+              capacity >= config.bounds.marketTransactionsMax
+                ? 'OVER_CAP_AT_MAXIMUM'
+                : stage?.reason;
+            const hasAttempt =
+              step === 'WALLET' ||
+              (step === 'MARKET' ? !!session.marketAttempt : !!session.ratesAttempt);
+            const enabled = !locked && configured && canAcquire && hasAttempt;
+            return (
+              <Tabs.Panel key={step} value={step} pt="md">
+                <Section
+                  title={`${stageNames[step]} capture`}
+                  hint={
+                    step === 'MARKET'
+                      ? `${config.windowSlots.toLocaleString('en-US')}-slot windows from each mint’s first accepted buy.`
+                      : step === 'RATES'
+                        ? 'Recorded SOL/USDT minutes for the fully verified current market attempt.'
+                        : 'Wallet identity and scan bounds remain fixed after capture starts.'
+                  }
+                >
+                  <Stack gap="md">
+                    {!configured && (
+                      <Alert color="gray">
+                        {step === 'RATES'
+                          ? 'Reference-rate acquisition is not configured.'
+                          : 'Solana RPC acquisition is not configured.'}{' '}
+                        Configure it in the backend process to enable this stage.
+                      </Alert>
                     )}
-                  {step !== 'RATES' && (
-                    <>
-                      <Accordion variant="separated">
-                        <Accordion.Item value="budget">
-                          <Accordion.Control>Advanced operation settings</Accordion.Control>
-                          <Accordion.Panel>
-                            <Stack gap="md">
-                              <BudgetFields
-                                value={step === 'WALLET' ? walletBudget : marketBudget}
-                                onChange={step === 'WALLET' ? setWalletBudget : setMarketBudget}
-                                config={config}
-                                market={step === 'MARKET'}
-                                disabled={locked}
-                              />
-                              {step === 'MARKET' && (
-                                <NumberInput
-                                  label="Market scan pages per window"
-                                  value={scanPages}
-                                  min={session.marketAttempt?.market?.scanPages ?? 1}
-                                  max={config.bounds.marketPagesMax}
-                                  allowDecimal={false}
+                    {reasonText(reason) && (
+                      <Alert color={stage?.state === 'INVALID' ? 'red' : 'amber'}>
+                        {reasonText(reason)}
+                      </Alert>
+                    )}
+                    <Summary values={inspect?.[`${key}Summary`]} />
+                    {step === 'MARKET' &&
+                      inspect?.marketWindows &&
+                      inspect.marketWindows.length > 0 && (
+                        <ScrollArea>
+                          <Table miw={750}>
+                            <Table.Thead>
+                              <Table.Tr>
+                                {[
+                                  'Mint',
+                                  'Slot window',
+                                  'Coverage',
+                                  'Scanned / selected',
+                                  'Detail gaps',
+                                  'Observations',
+                                ].map((h) => (
+                                  <Table.Th key={h}>{h}</Table.Th>
+                                ))}
+                              </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                              {inspect.marketWindows.map((w) => (
+                                <Table.Tr key={`${w.mint}:${w.fromSlot}`}>
+                                  <Table.Td>
+                                    <Anchor
+                                      href={`https://solscan.io/token/${encodeURIComponent(w.mint)}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    >
+                                      {w.mint}
+                                    </Anchor>
+                                  </Table.Td>
+                                  <Table.Td>
+                                    {w.fromSlot}–{w.toSlot}
+                                  </Table.Td>
+                                  <Table.Td>{w.coverage}</Table.Td>
+                                  <Table.Td>
+                                    {w.scanned} / {w.selected}
+                                  </Table.Td>
+                                  <Table.Td>{w.detailGaps ?? '—'}</Table.Td>
+                                  <Table.Td>{w.observations ?? '—'}</Table.Td>
+                                </Table.Tr>
+                              ))}
+                            </Table.Tbody>
+                          </Table>
+                        </ScrollArea>
+                      )}
+                    {step !== 'RATES' && (
+                      <>
+                        <Accordion
+                          variant="separated"
+                          value={settingsOpen}
+                          onChange={setSettingsOpen}
+                        >
+                          <Accordion.Item value="budget">
+                            <Accordion.Control>Advanced operation settings</Accordion.Control>
+                            <Accordion.Panel>
+                              <Stack gap="md">
+                                <BudgetFields
+                                  value={step === 'WALLET' ? walletBudget : marketBudget}
+                                  onChange={step === 'WALLET' ? setWalletBudget : setMarketBudget}
+                                  config={config}
+                                  market={step === 'MARKET'}
                                   disabled={locked}
-                                  onChange={(v) => setScanPages(Number(v))}
                                 />
-                              )}
-                              <Checkbox
-                                label="Enable automatic recovery for this stage"
-                                checked={
-                                  step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled
-                                }
-                                onChange={(event) =>
-                                  (step === 'WALLET'
-                                    ? setWalletRecoveryEnabled
-                                    : setMarketRecoveryEnabled)(event.currentTarget.checked)
-                                }
+                                {step === 'MARKET' && (
+                                  <NumberInput
+                                    label="Market scan pages per window"
+                                    value={scanPages}
+                                    min={session.marketAttempt?.market?.scanPages ?? 1}
+                                    max={config.bounds.marketPagesMax}
+                                    allowDecimal={false}
+                                    disabled={locked}
+                                    onChange={(v) => setScanPages(Number(v))}
+                                  />
+                                )}
+                                <Checkbox
+                                  ref={step === 'WALLET' ? walletRecoveryRef : marketRecoveryRef}
+                                  label="Enable automatic recovery for this stage"
+                                  checked={
+                                    step === 'WALLET'
+                                      ? walletRecoveryEnabled
+                                      : marketRecoveryEnabled
+                                  }
+                                  onChange={(event) =>
+                                    (step === 'WALLET'
+                                      ? setWalletRecoveryEnabled
+                                      : setMarketRecoveryEnabled)(event.currentTarget.checked)
+                                  }
+                                  disabled={locked}
+                                />
+                                {(step === 'WALLET'
+                                  ? walletRecoveryEnabled
+                                  : marketRecoveryEnabled) && (
+                                  <SimpleGrid cols={{ base: 1, sm: 3 }}>
+                                    <NumberInput
+                                      label="Total request budget"
+                                      value={
+                                        step === 'WALLET'
+                                          ? walletTotalRequests
+                                          : marketTotalRequests
+                                      }
+                                      min={stageBudget.requestBudget}
+                                      max={config.bounds.recoveryRequestsMax}
+                                      allowDecimal={false}
+                                      disabled={locked}
+                                      onChange={(value) =>
+                                        (step === 'WALLET'
+                                          ? setWalletTotalRequests
+                                          : setMarketTotalRequests)(Number(value))
+                                      }
+                                    />
+                                    <NumberInput
+                                      label="Total byte budget"
+                                      value={
+                                        step === 'WALLET' ? walletTotalBytes : marketTotalBytes
+                                      }
+                                      min={stageBudget.byteBudget}
+                                      max={config.bounds.recoveryBytesMax}
+                                      allowDecimal={false}
+                                      disabled={locked}
+                                      onChange={(value) =>
+                                        (step === 'WALLET'
+                                          ? setWalletTotalBytes
+                                          : setMarketTotalBytes)(Number(value))
+                                      }
+                                    />
+                                    <NumberInput
+                                      label="Maximum attempts"
+                                      value={maxAttempts}
+                                      min={1}
+                                      max={config.bounds.recoveryAttemptsMax}
+                                      allowDecimal={false}
+                                      disabled={locked}
+                                      onChange={(value) => setMaxAttempts(Number(value))}
+                                    />
+                                  </SimpleGrid>
+                                )}
+                                <Text size="xs" c="dimmed">
+                                  {(
+                                    step === 'WALLET'
+                                      ? walletRecoveryEnabled
+                                      : marketRecoveryEnabled
+                                  )
+                                    ? 'Automatic recovery can start another invocation after a recoverable stop. It stops at the total request and byte budgets or the attempt limit.'
+                                    : 'Automatic recovery is off for this stage.'}{' '}
+                                  The allowance above remains the limit for each invocation.
+                                </Text>
+                                <Text size="sm" c="dimmed">
+                                  Budget for this run:{' '}
+                                  {count(
+                                    (step === 'WALLET' ? walletBudget : marketBudget).requestBudget,
+                                  )}{' '}
+                                  requests ·{' '}
+                                  {count(
+                                    (step === 'WALLET' ? walletBudget : marketBudget).byteBudget,
+                                  )}{' '}
+                                  bytes ·{' '}
+                                  {
+                                    (step === 'WALLET' ? walletBudget : marketBudget)
+                                      .operationTimeoutMinutes
+                                  }
+                                  -minute deadline.
+                                  {step === 'MARKET'
+                                    ? ` ${scanPages} pages per window · ${count(session.marketAttempt?.market?.maxTransactions)} transaction capacity.`
+                                    : ` ${session.wallet?.scanPages ?? '—'} scan pages.`}{' '}
+                                  {(
+                                    step === 'WALLET'
+                                      ? walletRecoveryEnabled
+                                      : marketRecoveryEnabled
+                                  )
+                                    ? ' Automatic recovery renews the per-invocation allowance within the total recovery limits.'
+                                    : ' The allowance renews only when you explicitly start or resume.'}
+                                </Text>
+                              </Stack>
+                            </Accordion.Panel>
+                          </Accordion.Item>
+                        </Accordion>
+                      </>
+                    )}
+                    <Group>
+                      {(step !== 'WALLET' || !stage?.requiresNewAttempt) && (
+                        <Button disabled={!enabled} onClick={() => start(step)}>
+                          {stage?.canResume ? 'Resume' : 'Start'}{' '}
+                          {step === 'MARKET' ? 'market' : key} capture
+                        </Button>
+                      )}
+                      {!canAcquire && !stage?.reason && (
+                        <Text size="xs" c="dimmed">
+                          {stage?.state === 'READY'
+                            ? 'This stage is verified and complete.'
+                            : 'Inspect and satisfy the preceding stage before acquisition.'}
+                        </Text>
+                      )}
+                    </Group>
+                    {step !== 'WALLET' && (
+                      <Section
+                        title={`New ${step === 'MARKET' ? 'market' : 'rates'} attempt`}
+                        padding="sm"
+                        hint={
+                          step === 'MARKET'
+                            ? 'Keeps wallet evidence and prior attempts; starts an empty rates attempt and resets export, dataset and calibration.'
+                            : 'Keeps market evidence and calibration; resets current export and dataset.'
+                        }
+                      >
+                        <Stack gap="sm">
+                          {step === 'MARKET' && (
+                            <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                              <NumberInput
+                                label="New attempt scan pages"
+                                value={newPages}
+                                min={1}
+                                max={config.bounds.marketPagesMax}
                                 disabled={locked}
+                                allowDecimal={false}
+                                onChange={(v) => setNewPages(Number(v))}
                               />
-                              {(step === 'WALLET'
-                                ? walletRecoveryEnabled
-                                : marketRecoveryEnabled) && (
-                                <SimpleGrid cols={{ base: 1, sm: 3 }}>
-                                  <NumberInput
-                                    label="Total request budget"
-                                    value={
-                                      step === 'WALLET' ? walletTotalRequests : marketTotalRequests
-                                    }
-                                    min={stageBudget.requestBudget}
-                                    max={config.bounds.recoveryRequestsMax}
-                                    allowDecimal={false}
-                                    disabled={locked}
-                                    onChange={(value) =>
-                                      (step === 'WALLET'
-                                        ? setWalletTotalRequests
-                                        : setMarketTotalRequests)(Number(value))
-                                    }
-                                  />
-                                  <NumberInput
-                                    label="Total byte budget"
-                                    value={step === 'WALLET' ? walletTotalBytes : marketTotalBytes}
-                                    min={stageBudget.byteBudget}
-                                    max={config.bounds.recoveryBytesMax}
-                                    allowDecimal={false}
-                                    disabled={locked}
-                                    onChange={(value) =>
-                                      (step === 'WALLET'
-                                        ? setWalletTotalBytes
-                                        : setMarketTotalBytes)(Number(value))
-                                    }
-                                  />
-                                  <NumberInput
-                                    label="Maximum attempts"
-                                    value={maxAttempts}
-                                    min={1}
-                                    max={config.bounds.recoveryAttemptsMax}
-                                    allowDecimal={false}
-                                    disabled={locked}
-                                    onChange={(value) => setMaxAttempts(Number(value))}
-                                  />
-                                </SimpleGrid>
-                              )}
-                              <Text size="xs" c="dimmed">
-                                {(step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled)
-                                  ? 'Automatic recovery can start another invocation after a recoverable stop. It stops at the total request and byte budgets or the attempt limit.'
-                                  : 'Automatic recovery is off for this stage.'}{' '}
-                                The allowance above remains the limit for each invocation.
-                              </Text>
-                              <Text size="sm" c="dimmed">
-                                Budget for this run:{' '}
-                                {count(
-                                  (step === 'WALLET' ? walletBudget : marketBudget).requestBudget,
-                                )}{' '}
-                                requests ·{' '}
-                                {count(
-                                  (step === 'WALLET' ? walletBudget : marketBudget).byteBudget,
-                                )}{' '}
-                                bytes ·{' '}
-                                {
-                                  (step === 'WALLET' ? walletBudget : marketBudget)
-                                    .operationTimeoutMinutes
-                                }
-                                -minute deadline.
-                                {step === 'MARKET'
-                                  ? ` ${scanPages} pages per window · ${count(session.marketAttempt?.market?.maxTransactions)} transaction capacity.`
-                                  : ` ${session.wallet?.scanPages ?? '—'} scan pages.`}{' '}
-                                {(step === 'WALLET' ? walletRecoveryEnabled : marketRecoveryEnabled)
-                                  ? ' Automatic recovery renews the per-invocation allowance within the total recovery limits.'
-                                  : ' The allowance renews only when you explicitly start or resume.'}
-                              </Text>
-                            </Stack>
-                          </Accordion.Panel>
-                        </Accordion.Item>
-                      </Accordion>
+                              <NumberInput
+                                label="New attempt transaction capacity"
+                                value={capacity}
+                                min={1}
+                                max={config.bounds.marketTransactionsMax}
+                                disabled={locked}
+                                allowDecimal={false}
+                                onChange={(v) => setCapacity(Number(v))}
+                              />
+                            </SimpleGrid>
+                          )}
+                          <Text size="xs" c="dimmed">
+                            Capacity is a ceiling, not a target or cost estimate. Creating an
+                            attempt performs no acquisition; the evidence is then inspected offline.
+                          </Text>
+                          <Button
+                            variant="default"
+                            disabled={
+                              locked ||
+                              (step === 'MARKET'
+                                ? inspect?.wallet.state !== 'READY'
+                                : !inspect?.canCalibrate)
+                            }
+                            onClick={() => newAttempt(step)}
+                          >
+                            {step === 'MARKET' ? 'New market attempt' : 'New rates attempt'}
+                          </Button>
+                        </Stack>
+                      </Section>
+                    )}
+                  </Stack>
+                </Section>
+              </Tabs.Panel>
+            );
+          })}
+          <Tabs.Panel value="DATASET" pt="md">
+            <Section
+              title="Replay dataset"
+              hint="Export verifies the current wallet, market windows and every required rate minute; schema v3 output is canonical."
+            >
+              <Stack gap="md">
+                <Group>
+                  <Button onClick={() => start('EXPORT')} disabled={locked || !inspect?.canExport}>
+                    Export dataset
+                  </Button>
+                  {session.datasetReady && (
+                    <>
+                      <Button
+                        component="a"
+                        href={capturesApi.download(session.id, 'dataset')}
+                        variant="default"
+                      >
+                        Download dataset JSON
+                      </Button>
+                      <Button
+                        onClick={() => imported.mutate()}
+                        disabled={locked}
+                        loading={imported.isPending}
+                      >
+                        Import dataset
+                      </Button>
                     </>
                   )}
-                  <Group>
-                    {(step !== 'WALLET' || !stage?.requiresNewAttempt) && (
-                      <Button disabled={!enabled} onClick={() => start(step)}>
-                        {stage?.canResume ? 'Resume' : 'Start'} {step === 'MARKET' ? 'market' : key}{' '}
-                        capture
-                      </Button>
-                    )}
-                    {!canAcquire && !stage?.reason && (
-                      <Text size="xs" c="dimmed">
-                        {stage?.state === 'READY'
-                          ? 'This stage is verified and complete.'
-                          : 'Inspect and satisfy the preceding stage before acquisition.'}
-                      </Text>
-                    )}
-                  </Group>
-                  {step !== 'WALLET' && (
-                    <Section
-                      title={`New ${step === 'MARKET' ? 'market' : 'rates'} attempt`}
-                      padding="sm"
-                      hint={
-                        step === 'MARKET'
-                          ? 'Keeps wallet evidence and prior attempts; starts an empty rates attempt and resets export, dataset and calibration.'
-                          : 'Keeps market evidence and calibration; resets current export and dataset.'
-                      }
-                    >
-                      <Stack gap="sm">
-                        {step === 'MARKET' && (
-                          <SimpleGrid cols={{ base: 1, sm: 2 }}>
-                            <NumberInput
-                              label="New attempt scan pages"
-                              value={newPages}
-                              min={1}
-                              max={config.bounds.marketPagesMax}
-                              disabled={locked}
-                              allowDecimal={false}
-                              onChange={(v) => setNewPages(Number(v))}
-                            />
-                            <NumberInput
-                              label="New attempt transaction capacity"
-                              value={capacity}
-                              min={1}
-                              max={config.bounds.marketTransactionsMax}
-                              disabled={locked}
-                              allowDecimal={false}
-                              onChange={(v) => setCapacity(Number(v))}
-                            />
-                          </SimpleGrid>
-                        )}
-                        <Text size="xs" c="dimmed">
-                          Capacity is a ceiling, not a target or cost estimate. Creating an attempt
-                          performs no acquisition; the evidence is then inspected offline.
-                        </Text>
-                        <Button
-                          variant="default"
-                          disabled={
-                            locked ||
-                            (step === 'MARKET'
-                              ? inspect?.wallet.state !== 'READY'
-                              : !inspect?.canCalibrate)
-                          }
-                          onClick={() => newAttempt(step)}
-                        >
-                          {step === 'MARKET' ? 'New market attempt' : 'New rates attempt'}
-                        </Button>
-                      </Stack>
-                    </Section>
-                  )}
-                </Stack>
-              </Section>
-            </Tabs.Panel>
-          );
-        })}
-        <Tabs.Panel value="DATASET" pt="md">
-          <Section
-            title="Replay dataset"
-            hint="Export verifies the current wallet, market windows and every required rate minute; schema v3 output is canonical."
-          >
-            <Stack gap="md">
-              <Group>
-                <Button onClick={() => start('EXPORT')} disabled={locked || !inspect?.canExport}>
-                  Export dataset
-                </Button>
-                {session.datasetReady && (
-                  <>
-                    <Button
-                      component="a"
-                      href={capturesApi.download(session.id, 'dataset')}
-                      variant="default"
-                    >
-                      Download dataset JSON
-                    </Button>
-                    <Button
-                      onClick={() => imported.mutate()}
-                      disabled={locked}
-                      loading={imported.isPending}
-                    >
-                      Import dataset
-                    </Button>
-                  </>
+                </Group>
+                {!inspect?.canExport && (
+                  <Text size="sm" c="dimmed">
+                    Verified matching wallet, complete market windows and recorded rate minutes are
+                    required.
+                  </Text>
                 )}
-              </Group>
-              {!inspect?.canExport && (
+                {imported.isError && (
+                  <ErrorState error={imported.error} title="Dataset import failed" />
+                )}
+                {session.datasetId && (
+                  <Group>
+                    <Button
+                      component={Link}
+                      variant="default"
+                      to={paths.dataset(session.datasetId)}
+                    >
+                      View dataset
+                    </Button>
+                    <Button component={Link} to={paths.newRunFor(session.datasetId)}>
+                      New run
+                    </Button>
+                  </Group>
+                )}
+              </Stack>
+            </Section>
+          </Tabs.Panel>
+          <Tabs.Panel value="CALIBRATION" pt="md">
+            <Section
+              title="Execution calibration"
+              hint="Uses verified wallet and market evidence. Rates are not required."
+              actions={
+                <Button
+                  onClick={() => start('CALIBRATE')}
+                  disabled={locked || !inspect?.canCalibrate}
+                >
+                  Calibrate execution
+                </Button>
+              }
+            >
+              {session.calibrationReady && session.calibration ? (
+                <CalibrationResults report={session.calibration} id={session.id} />
+              ) : (
                 <Text size="sm" c="dimmed">
-                  Verified matching wallet, complete market windows and recorded rate minutes are
-                  required.
+                  Complete and verify matching wallet and market evidence, then generate a
+                  calibration report.
                 </Text>
               )}
-              {imported.isError && (
-                <ErrorState error={imported.error} title="Dataset import failed" />
-              )}
-              {session.datasetId && (
-                <Group>
-                  <Button component={Link} variant="default" to={paths.dataset(session.datasetId)}>
-                    View dataset
-                  </Button>
-                  <Button component={Link} to={paths.newRunFor(session.datasetId)}>
-                    New run
-                  </Button>
-                </Group>
-              )}
-            </Stack>
-          </Section>
-        </Tabs.Panel>
-        <Tabs.Panel value="CALIBRATION" pt="md">
-          <Section
-            title="Execution calibration"
-            hint="Uses verified wallet and market evidence. Rates are not required."
-            actions={
-              <Button
-                onClick={() => start('CALIBRATE')}
-                disabled={locked || !inspect?.canCalibrate}
-              >
-                Calibrate execution
-              </Button>
-            }
-          >
-            {session.calibrationReady && session.calibration ? (
-              <CalibrationResults report={session.calibration} id={session.id} />
-            ) : (
-              <Text size="sm" c="dimmed">
-                Complete and verify matching wallet and market evidence, then generate a calibration
-                report.
-              </Text>
-            )}
-          </Section>
-        </Tabs.Panel>
-        <Tabs.Panel value="HISTORY" pt="md">
-          <AttemptHistory id={session.id} session={session} />
-        </Tabs.Panel>
-      </Tabs>
+            </Section>
+          </Tabs.Panel>
+          <Tabs.Panel value="HISTORY" pt="md">
+            <AttemptHistory id={session.id} session={session} />
+          </Tabs.Panel>
+        </Tabs>
+      </details>
     </Stack>
   );
 }

@@ -1,4 +1,5 @@
 import { createSetupHandlers, withRunSetup, datasetSource } from './setupHandlers';
+import { mockState } from './previewState';
 import { delay, http, HttpResponse } from 'msw';
 import type {
   AddressCheck,
@@ -20,6 +21,7 @@ import {
   dashboardFixture,
   datasetObservations,
   edgeDataset,
+  expandedRunChart,
   realRunUsdt,
   REAL_RUN_ID,
   recordedRunRecords,
@@ -100,6 +102,13 @@ function legacyChart(
   observations: Observation[],
   records?: NonNullable<ReturnType<typeof runDetailOr404>>,
 ): ChartResponse {
+  if (records?.detail.run.datasetId === SAMPLE_DATASET_ID)
+    observations = observations.map((item) => ({
+      ...item,
+      observedTime: new Date(
+        Date.parse('2026-10-01T00:00:00Z') + (item.slot - 1000) * 60_000,
+      ).toISOString(),
+    }));
   const sorted = [...observations].sort(
     (left, right) =>
       Date.parse(left.observedTime) - Date.parse(right.observedTime) || left.slot - right.slot,
@@ -300,7 +309,7 @@ function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
     },
     bucketSeconds,
     range: { from, to },
-    candles: [...candles.values()],
+    candles: mockState() === 'chart-empty' && maxBuckets !== 1 ? [] : [...candles.values()],
     markers: {
       ...base.markers,
       mode: clustered ? 'CLUSTERED' : 'ITEMS',
@@ -612,7 +621,7 @@ export function createHandlers(options: MockOptions = {}) {
         (item) => !pair || `${item.pair.base}/${item.pair.quote}` === pair,
       );
       return chartResponse(
-        params.id === REAL_RUN_ID ? v4Chart : legacyChart(observations, records),
+        params.id === REAL_RUN_ID ? expandedRunChart : legacyChart(observations, records),
         url,
       );
     }),

@@ -1,5 +1,6 @@
 import { CAPTURE_STATUSES, type CaptureSummary } from '../api/captures';
 import { captureSuggestion } from './setupHandlers';
+import { mockState } from './previewState';
 import { http, HttpResponse } from 'msw';
 import type {
   CaptureAttempt,
@@ -32,14 +33,161 @@ let sessions = new Map<string, CaptureSession>();
 let operations = new Map<string, CaptureOperation>();
 let caseResponses = new Map<string, CaptureCase[]>();
 
+const stoppedCapture: CaptureSession = {
+  ...captureSession,
+  id: 'capture-limited',
+  name: 'Decu market sample',
+  wallet: {
+    ...captureConfig.walletTokenDefaults,
+    wallet: captureSuggestion.address,
+    mint: sampleDataset.pairs[0]?.base ?? '',
+  },
+  datasetReady: false,
+  calibrationReady: false,
+  datasetId: null,
+  operation: {
+    ...captureSession.operation!,
+    id: 'operation-limited',
+    requestId: 'operation-limited',
+    step: 'MARKET',
+    startedAt: '2026-10-19T06:49:00Z',
+    updatedAt: '2026-10-19T06:50:00Z',
+    endedAt: '2026-10-19T06:50:00Z',
+    state: 'STOPPED_BUDGET',
+    budget: { ...captureConfig.budgetDefaults, requestBudget: 400 },
+    code: 'REQUEST_BUDGET_EXHAUSTED',
+    progress: {
+      phase: 'FETCHING',
+      at: '2026-10-19T06:50:00Z',
+      operationRequests: 400,
+      operationBytes: 7340032,
+      cumulativeRequests: 803,
+      cumulativeBytes: 14680064,
+      processed: 1323,
+      selected: 1748,
+    },
+  },
+  summary: {
+    status: 'STOPPED_LIMIT',
+    reasonCode: 'REQUEST_BUDGET_EXHAUSTED',
+    currentStep: { index: 2, stage: 'MARKETS' },
+    steps: [
+      { stage: 'WALLET', state: 'DONE' },
+      { stage: 'MARKETS', state: 'STOPPED' },
+      { stage: 'RATES', state: 'TODO' },
+      { stage: 'DATASET', state: 'TODO' },
+    ],
+    progress: { processed: 1323, selected: 1748, percent: '75.69' },
+    nextAction: {
+      kind: 'RESUME_MARKETS',
+      stage: 'MARKETS',
+      attemptId: 'market-1',
+      caseId: null,
+      maxRequests: 400,
+    },
+    cases: { total: 1, ready: 0, blocked: 1, downloading: 0 },
+    lastProgressAt: '2026-10-19T06:50:00Z',
+  },
+};
+
+function previewSession(session: CaptureSession): CaptureSession {
+  const state = mockState();
+  if (!state || !CAPTURE_STATUSES.includes(state as (typeof CAPTURE_STATUSES)[number]))
+    return session;
+  const summary = stoppedCapture.summary;
+  if (!summary) return session;
+  const status = state as CaptureSummary['status'];
+  return {
+    ...stoppedCapture,
+    id: session.id,
+    name: session.name,
+    operation: stoppedCapture.operation
+      ? {
+          ...stoppedCapture.operation,
+          state: status === 'RUNNING' ? 'RUNNING' : status,
+          recovery:
+            status === 'WAITING_RETRY'
+              ? {
+                  enabled: true,
+                  totalRequestBudget: 1200,
+                  totalByteBudget: 104857600,
+                  maxAttempts: 3,
+                  attemptsUsed: 1,
+                  requestsUsed: 400,
+                  bytesUsed: 100,
+                  reservedRequests: 0,
+                  reservedBytes: 0,
+                  nextRetryAt: new Date(Date.now() + 60_000).toISOString(),
+                }
+              : null,
+        }
+      : null,
+    summary: {
+      ...summary,
+      status,
+      nextAction: {
+        ...summary.nextAction,
+        kind:
+          status === 'RUNNING' || status === 'WAITING_RETRY'
+            ? 'WAIT'
+            : status === 'NOT_STARTED'
+              ? 'START_WALLET'
+              : status === 'READY_TO_REPLAY'
+                ? 'REGISTER_DATASET'
+                : status === 'DONE'
+                  ? 'START_RUN'
+                  : 'RESUME_MARKETS',
+      },
+    },
+  };
+}
+
 export function resetCaptureMocks(): void {
   sessions = new Map(
-    [captureSession, ...Object.values(walletTokenSessions)].map((session) => [session.id, session]),
+    [
+      captureSession,
+      stoppedCapture,
+      { ...captureSession, id: 'capture-legacy', displayName: `${captureSession.name} (2)` },
+      ...Object.values(walletTokenSessions),
+    ].map((session) => [session.id, session]),
   );
   operations = new Map(
-    captureSession.operation ? [[captureSession.operation.id, captureSession.operation]] : [],
+    [captureSession.operation, stoppedCapture.operation]
+      .filter((operation): operation is CaptureOperation => operation !== null)
+      .map((operation) => [operation.id, operation]),
   );
   caseResponses = new Map();
+  caseResponses.set('capture-limited', [
+    {
+      caseId: 'case-limited',
+      wallet: captureSuggestion.address,
+      mint: sampleDataset.pairs[0]?.base ?? '',
+      anchorSignature: '2'.repeat(64),
+      anchorSlot: 1000,
+      instructionIndex: 0,
+      fromSlot: 1000,
+      toSlot: 5500,
+      windowParameters: {},
+      selected: 1748,
+      captured: 1323,
+      gaps: 0,
+      marketStage: 'STOPPED_BUDGET',
+      coverage: 'PARTIAL',
+      progress: stoppedCapture.operation?.progress ?? null,
+      readiness: 'BLOCKED',
+      captureComplete: false,
+      validated: false,
+      ready: false,
+      exportReady: false,
+      canRegisterDataset: false,
+      canCaptureRates: false,
+      canExport: false,
+      blocker: 'REQUEST_BUDGET_EXHAUSTED',
+      operationId: 'operation-limited',
+      operationState: 'STOPPED_BUDGET',
+      datasetId: null,
+    },
+  ]);
 }
 export function setCaptureCases(id: string, items: CaptureCase[]): void {
   caseResponses.set(id, items);
@@ -132,6 +280,7 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       await wait();
       return HttpResponse.json({
         ...captureConfig,
+        rpcConfigured: mockState() !== 'RPC_NOT_CONFIGURED',
         suggestedWallets: [captureSuggestion],
         recentWallets: [],
       });
@@ -141,7 +290,7 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       const url = new URL(request.url);
       const page = Number(url.searchParams.get('page') ?? '0');
       const size = Number(url.searchParams.get('size') ?? '20');
-      const all = [...sessions.values()].map(withSummary);
+      const all = mockState() === 'captures-empty' ? [] : [...sessions.values()].map(withSummary);
       const statusCounts = Object.fromEntries(
         CAPTURE_STATUSES.map((status) => [
           status,
@@ -229,7 +378,7 @@ export function createCaptureHandlers(wait: () => Promise<void>) {
       await wait();
       const session = found(params.id);
       return session
-        ? HttpResponse.json(withSummary(session))
+        ? HttpResponse.json(previewSession(withSummary(session)))
         : error(404, 'CAPTURE_NOT_FOUND', 'Capture record was not found');
     }),
     http.delete('/api/captures/:id', async ({ params }) => {
@@ -395,5 +544,5 @@ function withSummary(session: CaptureSession): CaptureSession {
     cases: { total: 0, ready: 0, blocked: 0, downloading: 0 },
     lastProgressAt: null,
   };
-  return { ...session, displayName: session.name, summary };
+  return { ...session, displayName: session.displayName ?? session.name, summary };
 }

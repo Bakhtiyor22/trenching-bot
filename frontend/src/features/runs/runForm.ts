@@ -27,12 +27,12 @@ export interface RunFormValues {
 }
 
 export const FIELD_LABELS: Record<IntegerField | PercentField, string> = {
-  dipPercent: 'Dip below first buy (%)',
-  takeProfitPercent: 'Take profit (%)',
-  stopLossPercent: 'Stop loss (%)',
-  horizonSlots: 'Horizon (slots)',
-  latencySlots: 'Latency (slots)',
-  maxAgeSlots: 'Max observation age (slots)',
+  dipPercent: "Dip below Decu's first buy",
+  takeProfitPercent: 'Take profit',
+  stopLossPercent: 'Stop loss',
+  horizonSlots: 'Observation window',
+  latencySlots: 'Fill delay',
+  maxAgeSlots: 'Max price age',
 };
 
 export const FIELD_HINTS: Record<
@@ -56,12 +56,14 @@ export function formValuesFrom(config: Config, datasetId: string | null): RunFor
   return {
     datasetId,
     notional: trimFractionZeros(config.notional),
-    minMarketCapUsd: config.minMarketCapUsd,
-    transactionCostSol: config.transactionCostSol,
+    minMarketCapUsd: trimFractionZeros(config.minMarketCapUsd),
+    transactionCostSol: trimFractionZeros(config.transactionCostSol),
     maxAgeSlots: config.maxAgeSlots,
-    dipPercent: config.dipPercent ?? bpsToPercent(config.dipBps),
-    takeProfitPercent: config.takeProfitPercent ?? bpsToPercent(config.takeProfitBps),
-    stopLossPercent: config.stopLossPercent ?? bpsToPercent(config.stopLossBps),
+    dipPercent: trimFractionZeros(config.dipPercent ?? bpsToPercent(config.dipBps)),
+    takeProfitPercent: trimFractionZeros(
+      config.takeProfitPercent ?? bpsToPercent(config.takeProfitBps),
+    ),
+    stopLossPercent: trimFractionZeros(config.stopLossPercent ?? bpsToPercent(config.stopLossBps)),
     horizonSlots: config.horizonSlots,
     latencySlots: config.latencySlots,
     quoteMint: config.quoteMint,
