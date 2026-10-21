@@ -15,7 +15,14 @@ data class RunDetail(val run: RunSummary, val config: SimulationConfig, val scen
 data class RunObservations(val detail: RunDetail, val observations: List<MarketObservation>)
 
 /** A run's detail as the run page shows it: each scenario with its timeline, and the dataset, capture and case it was run on. */
-data class SourcedRunDetail(val run: RunSummary, val config: SimulationConfig, val scenarios: List<TimedRunScenario>, val source: DatasetSource)
+data class SourcedRunDetail(
+    val run: RunSummary,
+    val config: SimulationConfig,
+    val scenarios: List<TimedRunScenario>,
+    val source: DatasetSource,
+    /** The recorded market's pace, see [com.trenching.bot.console.application.SlotPace]; null when it measures too little. */
+    val millisPerSlot: Double? = null,
+)
 
 data class TimedRunScenario(val scenario: RunScenario, val timeline: ScenarioTimeline)
 

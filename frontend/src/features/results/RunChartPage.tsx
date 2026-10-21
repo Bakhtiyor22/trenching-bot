@@ -29,7 +29,7 @@ import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
 import { mintLabel } from '../../lib/format';
 import { formatPercent, levelPercent } from '../../lib/percent';
 import { paths } from '../../paths';
-import { changedSettings, SETTING_LABELS } from '../runs/configLabels';
+import { changedSettings, NOMINAL_SLOT_MS, SETTING_LABELS } from '../runs/configLabels';
 import { formValuesFrom } from '../runs/runForm';
 import { scenarioOutcome } from '../runs/scenarioOutcome';
 import { clampRange, panRange, tradeRange, zoomRange, type TimeRange } from './chartRange';
@@ -202,7 +202,9 @@ export function RunChartPage() {
     (extent && scenario
       ? Math.min(
           extent.to,
-          firstBuy + Math.max(0, scenario.horizonEndSlot - scenario.sourceSlot) * 400,
+          firstBuy +
+            Math.max(0, scenario.horizonEndSlot - scenario.sourceSlot) *
+              (run.data?.millisPerSlot ?? NOMINAL_SLOT_MS),
         )
       : (extent?.to ?? 0));
   const initialRange =

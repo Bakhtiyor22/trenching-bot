@@ -30,6 +30,7 @@ export type UsagePurpose =
   | 'MAINNET_CHECK'
   | 'MINT_PROGRAM_CHECK'
   | 'CONNECTION_CHECK'
+  | 'SLOT_PACE'
   | 'MINUTE_RATES'
   | 'LIVE_RATE'
   | 'UNKNOWN';

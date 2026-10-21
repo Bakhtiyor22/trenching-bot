@@ -198,7 +198,7 @@ export interface Config {
   stopLossPercent?: DecimalString;
   /** Plain decimal US dollars. */
   minMarketCapUsd: DecimalString;
-  /** Slots after the wallet's first buy that are watched; about 0.4 s each. */
+  /** Slots after the wallet's first buy that are watched; nominally 0.4 s each, often faster on mainnet. */
   horizonSlots: number;
   /** Slots between a trigger and the trade that fills it; 1 fills at the next slot. */
   latencySlots: number;
@@ -396,6 +396,8 @@ export interface RunDetail {
   run: RunSummary;
   config: Config;
   scenarios: Scenario[];
+  /** Milliseconds per slot while the run's market was recorded; null when too short to measure. */
+  millisPerSlot?: number | null;
 }
 
 export interface DatasetSource {

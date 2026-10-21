@@ -63,7 +63,7 @@ import { recordedEventSignature, tokenLinks, transactionLinks } from '../../lib/
 import { paths } from '../../paths';
 import type { RunStartNavigationState } from './NewRunPage';
 import { EventsTable, OrdersTable, PositionsTable } from './RunTables';
-import { bpsLabel, horizonMinutes, latencyLabel, transactionCostLabel } from './configLabels';
+import { bpsLabel, horizonLabel, latencyLabel, transactionCostLabel } from './configLabels';
 import { CycleList, CycleStory, OutcomeBar, RunLanes } from './RunInspector';
 import { ScenarioCard } from './ScenarioCard';
 
@@ -106,10 +106,7 @@ function RunHeader({ detail }: { detail: RunDetail }) {
             ['Minimum market cap', `$${formatDecimal(config.minMarketCapUsd)}`],
             ['Take profit', bpsLabel(config.takeProfitBps, config.takeProfitPercent)],
             ['Stop loss', bpsLabel(config.stopLossBps, config.stopLossPercent)],
-            [
-              'Horizon',
-              `${formatSlot(config.horizonSlots)} slots (about ${horizonMinutes(config.horizonSlots)} min)`,
-            ],
+            ['Horizon', horizonLabel(config.horizonSlots, detail.millisPerSlot)],
             ['Latency', latencyLabel(config.latencySlots)],
             ['Transaction cost', transactionCostLabel(config.transactionCostSol)],
             ['Max observation age', `${formatSlot(config.maxAgeSlots)} slots`],

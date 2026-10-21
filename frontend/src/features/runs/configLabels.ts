@@ -45,9 +45,24 @@ export function bpsLabel(bps: number, percent?: string): string {
   return levelPercent(percent, bps);
 }
 
-/** Slots at Solana's nominal 400 ms, rounded to whole minutes. */
-export function horizonMinutes(slots: number): number {
-  return Math.round((slots * 0.4) / 60);
+/** Solana's nominal slot time, used only when a run's recording is too short to measure its own pace. */
+export const NOMINAL_SLOT_MS = 400;
+
+/** A length in time: whole seconds under two minutes, else whole minutes. */
+function aboutTime(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  return seconds < 120 ? `about ${seconds} s` : `about ${Math.round(seconds / 60)} min`;
+}
+
+/**
+ * A horizon in slots and its length in time, at the pace measured while the run's market was recorded or, without one, at
+ * the nominal 400 ms, said so because mainnet slots often run faster.
+ */
+export function horizonLabel(slots: number, millisPerSlot?: number | null): string {
+  const pace = millisPerSlot
+    ? `${aboutTime(slots * millisPerSlot)} at the recorded ${millisPerSlot} ms per slot`
+    : `${aboutTime(slots * NOMINAL_SLOT_MS)} at the nominal 400 ms per slot`;
+  return `${formatSlot(slots)} slots (${pace})`;
 }
 
 /** The fill latency, e.g. "1 slot after each trigger". */

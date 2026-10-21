@@ -40,6 +40,10 @@ class MarketHistoryCaptureTest {
     private val tipRequests = mutableListOf<List<Any>>()
     private var tip = 1_000_000L
 
+    /** One minute of 300 slots: a 200 ms slot pace. */
+    private var paceSamples = """[{"slot":1,"numSlots":300,"numTransactions":1,"samplePeriodSecs":60}]"""
+    private var paceRequests = 0
+
     @Test
     fun `selects successful in-window signatures skipping failed and newer entries and stops below the window`() {
         val page = listOf(entry(1, 1015), entry(2, 1014, failed = true), entry(3, 1012), entry(4, 1010, failed = true),
@@ -76,7 +80,10 @@ class MarketHistoryCaptureTest {
         assertEquals(emptyList(), listings)
         assertEquals(emptyList(), fetched)
         assertEquals("HORIZON_NOT_ELAPSED", result.stopReason)
-        assertEquals(Duration.ofMillis(10 * 400), result.stopRetryAfter)
+        // 10 slots at the measured 200 ms, plus a tenth.
+        assertEquals(Duration.ofMillis(2_200), result.stopRetryAfter)
+        assertEquals(1, paceRequests)
+        assertNull(window.listedAtTip)
         assertFalse(result.manifest.acquisitionComplete)
         assertFalse(result.manifest.complete)
         assertEquals(result.manifest, recorded().inspect(directory).manifest)
@@ -98,6 +105,7 @@ class MarketHistoryCaptureTest {
         val resumed = capture(request(windows)) { _, _ -> listOf(entry(1, 1012), entry(2, 1003), entry(3, 1000)) }
 
         assertEquals(MarketWindowCoverage.COMPLETE, resumed.manifest.windows.single().coverage)
+        assertEquals(1012, resumed.manifest.windows.single().listedAtTip)
         assertEquals(listOf(2, 1).map(::signature), fetched)
         assertNull(resumed.stopReason)
         assertTrue(resumed.manifest.complete)
@@ -119,9 +127,19 @@ class MarketHistoryCaptureTest {
         assertEquals(1, tipRequests.size)
         assertEquals(listOf(signature(1)), fetched)
         assertEquals("HORIZON_NOT_ELAPSED", result.stopReason)
-        assertEquals(Duration.ofMillis(5 * 400), result.stopRetryAfter)
+        assertEquals(Duration.ofMillis(1_100), result.stopRetryAfter)
         assertFalse(result.manifest.acquisitionComplete)
         assertEquals(result.manifest, recorded().inspect(directory).manifest)
+    }
+
+    @Test
+    fun `without a slot sample the wait for a held window uses the nominal 400 ms per slot`() {
+        tip = 1002
+        paceSamples = "[]"
+
+        val result = capture(request(listOf(window(MINT, 1001, 1012, SOURCE)))) { _, _ -> error("A window before its end is never listed") }
+
+        assertEquals(Duration.ofMillis(4_400), result.stopRetryAfter)
     }
 
     @Test
@@ -669,12 +687,24 @@ class MarketHistoryCaptureTest {
 
     private fun service(rpc: SolanaReadRpc): MarketHistoryCapture = MarketHistoryCaptureService(withTip(rpc), MarketHistoryArtifactStore(mapper), CLOCK)
 
-    /** Answers the confirmed tip read with [tip], charged like any request, and passes every other call to [rpc]. */
+    /**
+     * Answers the confirmed tip read with [tip] and the slot pace read with [paceSamples], each charged like any request, and
+     * passes every other call to [rpc].
+     */
     private fun withTip(rpc: SolanaReadRpc) = SolanaReadRpc { method, params, budget ->
-        if (method != "getSlot") return@SolanaReadRpc rpc.call(method, params, budget)
-        budget.request()
-        tipRequests += params
-        mapper.readTree(tip.toString())
+        when (method) {
+            "getSlot" -> {
+                budget.request()
+                tipRequests += params
+                mapper.readTree(tip.toString())
+            }
+            "getRecentPerformanceSamples" -> {
+                budget.request()
+                paceRequests++
+                mapper.readTree(paceSamples)
+            }
+            else -> rpc.call(method, params, budget)
+        }
     }
 
     private fun recorded(): RecordedMarketHistory = configuration.recordedMarketHistory(mapper)

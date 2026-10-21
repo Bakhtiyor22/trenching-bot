@@ -45,6 +45,14 @@ class RunResponseMapperTest {
     }
 
     @Test
+    fun `run detail carries the measured slot pace, or null without one`() {
+        val measured = json.readTree(json.writeValueAsString(mapper.toResponse(detail(DatasetSource("dataset-1", null, null)).copy(millisPerSlot = 217.6))))
+
+        assertEquals(217.6, measured["millisPerSlot"].asDouble())
+        assertTrue(body(DatasetSource("dataset-1", null, null))["millisPerSlot"].isNull)
+    }
+
+    @Test
     fun `a run without a capture has null capture fields`() {
         val source = body(DatasetSource("dataset-1", null, null))["source"]
 

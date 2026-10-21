@@ -1,6 +1,13 @@
 package com.trenching.bot.replay
 
+import com.trenching.bot.common.MintAddress
+import com.trenching.bot.marketdata.MarketCaptureReasons
+import com.trenching.bot.marketdata.MarketCaptureWindowParameters
 import com.trenching.bot.marketdata.MarketHistoryCaptureResult
+import com.trenching.bot.marketdata.MarketHistoryManifest
+import com.trenching.bot.marketdata.MarketListedSignature
+import com.trenching.bot.marketdata.MarketWindowCoverage
+import com.trenching.bot.marketdata.MarketWindowRecord
 import com.trenching.bot.marketdata.MarketHistoryDecodeResult
 import com.trenching.bot.marketdata.RecordedMarketHistory
 import com.trenching.bot.marketdata.RecordedReferenceRates
@@ -91,6 +98,27 @@ class CaptureInspectionServiceTest {
         val inspection = inspect(withTarget(recorded, TargetTokenFixtures.provenEvidence(MINT, SIGNATURE, SLOT + 1)))
         assertEquals(CaptureStageSummary(CaptureStageState.INVALID, "TARGET_WINDOW_MISMATCH"), inspection.wallet)
         assertFalse(inspection.market.canStart)
+    }
+
+    @Test
+    fun `a market window that may have been listed before its end needs a new market attempt`() {
+        RecordedWalletFixtures.save(mapper, directory)
+        val listed = MarketWindowRecord(MINT, MintAddress.WRAPPED_SOL.value, SLOT + 1, SLOT + 4_500, SIGNATURE, MarketWindowCoverage.COMPLETE,
+            pagesScanned = 1, scanned = 1, skippedFailed = 0, skippedNewer = 0, selected = 1,
+            selection = listOf(MarketListedSignature(SIGNATURE, SLOT + 2)), scanCursor = MarketListedSignature(SIGNATURE, SLOT + 2))
+        val manifest = MarketHistoryManifest(2, "genesis", "confirmed", "2026-10-19T16:02:36Z", MarketCaptureWindowParameters(4_500, 2), 50,
+            50_000, listOf(listed), emptyList(), acquisitionComplete = false, complete = false, requestsUsed = 1, bytesUsed = 1)
+        val markets = object : RecordedMarketHistory {
+            override fun inspect(directory: Path): MarketHistoryCaptureResult = MarketHistoryCaptureResult(directory, manifest)
+            override fun decode(directory: Path): MarketHistoryDecodeResult = error("A flagged capture is not decoded")
+        }
+
+        val market = CaptureInspectionService(recorded, markets, unusedRates).inspect(CapturePaths(directory, directory)).market
+
+        assertEquals(CaptureStageState.UNUSABLE, market.state)
+        assertEquals(MarketCaptureReasons.MARKET_LISTED_BEFORE_END, market.reason)
+        assertTrue(market.requiresNewAttempt)
+        assertFalse(market.canResume)
     }
 
     private fun inspect(wallets: RecordedWalletHistory): CaptureInspection =

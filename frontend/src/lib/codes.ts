@@ -71,6 +71,8 @@ export const purposeLabels: Record<UsagePurpose, string> = {
   MAINNET_CHECK: 'Confirm the provider is on Solana mainnet before a capture step.',
   MINT_PROGRAM_CHECK: 'Check which token program owns a token, for decoding.',
   CONNECTION_CHECK: 'Connection checks from the Solana page.',
+  SLOT_PACE:
+    "Measure the chain's recent slot time, to time the retry of a market window that has not ended yet.",
   MINUTE_RATES: 'SOL/USDT price for every minute of a dataset (rates step).',
   LIVE_RATE: 'Live SOL/USDT price in the top bar and the USDT view of runs.',
   UNKNOWN: 'Another call to this provider.',

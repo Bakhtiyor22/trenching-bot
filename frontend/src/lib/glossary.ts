@@ -1,7 +1,7 @@
 export const glossary = {
   'Market window':
     'The period of trades saved after a wallet buy, so the simulator can follow what happened next.',
-  Slot: "Solana's clock tick, about 0.4 seconds. Used to order trades exactly.",
+  Slot: "Solana's clock tick, nominally 0.4 seconds but often faster on mainnet; run pages convert slots to time at the pace recorded in their data. Used to order trades exactly.",
   Request:
     'One HTTP call to an API. A retry counts as another request; a cached transaction uses none.',
   Gap: 'A transaction we selected but could not download or decode. Gaps can stop a token from being replayable.',

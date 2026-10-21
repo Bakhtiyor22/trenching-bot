@@ -54,6 +54,8 @@ internal class CaptureInspectionService(
             when {
                 !walletReady -> CaptureStageSummary(CaptureStageState.INCOMPLETE, "WALLET_CAPTURE_NOT_READY")
                 overCap -> CaptureStageSummary(CaptureStageState.UNUSABLE, "OVER_CAP", requiresNewAttempt = true)
+                captured.manifest.windows.any(MarketWindowChecks::mayBeListedBeforeEnd) ->
+                    CaptureStageSummary(CaptureStageState.UNUSABLE, MarketCaptureReasons.MARKET_LISTED_BEFORE_END, requiresNewAttempt = true)
                 captured.manifest.windows.any { it.coverage == MarketWindowCoverage.HORIZON_NOT_ELAPSED } ->
                     CaptureStageSummary(CaptureStageState.INCOMPLETE, MarketCaptureReasons.MARKET_HORIZON_NOT_ELAPSED, canResume = true)
                 !captured.manifest.acquisitionComplete -> CaptureStageSummary(CaptureStageState.INCOMPLETE, "MARKET_CAPTURE_INCOMPLETE", canResume = true)

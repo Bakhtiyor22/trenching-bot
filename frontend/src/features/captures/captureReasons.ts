@@ -15,6 +15,8 @@ const REASONS: Record<string, string> = {
     'A market window has not ended on chain yet, so it has not been listed. Resume after the window end; the capture then finishes it.',
   HORIZON_NOT_ELAPSED:
     'A market window has not ended on chain yet. The capture retries on its own after the estimated end, or resume it then.',
+  MARKET_LISTED_BEFORE_END:
+    'This market window was listed before it ended on chain, so its later trades are missing and resuming cannot add them. Start a new market attempt. (A token that stopped trading when its window ended can show this too; a new attempt clears it.)',
   MARKET_CAPTURE_MISMATCH:
     'The market capture does not match the wallet’s planned windows. Create a new market attempt.',
   MARKET_CAPTURE_EXCLUSIONS:

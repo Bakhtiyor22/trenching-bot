@@ -7,6 +7,8 @@ data class RunDetailResponse(
     val config: ConfigResponse,
     val scenarios: List<ScenarioResponse>,
     val source: DatasetSourceResponse,
+    /** Milliseconds per slot while the run's market was recorded, to convert its horizon to time; null when too short to measure. */
+    val millisPerSlot: Double?,
 )
 
 /**

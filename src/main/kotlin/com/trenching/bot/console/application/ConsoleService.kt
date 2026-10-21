@@ -58,7 +58,7 @@ class ConsoleService(
                 firstBuyTimes[scenario.intent.sourceEventId], observationsById)
             TimedRunScenario(scenario, timeline)
         }
-        return SourcedRunDetail(detail.run, detail.config, scenarios, datasetSources.of(detail.run.datasetId))
+        return SourcedRunDetail(detail.run, detail.config, scenarios, datasetSources.of(detail.run.datasetId), SlotPace.millisPerSlot(stored))
     }
 
     fun detailWithObservations(runId: String): RunObservations {

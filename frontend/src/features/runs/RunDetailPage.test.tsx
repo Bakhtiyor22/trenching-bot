@@ -305,7 +305,9 @@ describe('RunDetailPage', () => {
     expect(screen.getAllByText('15%')).toHaveLength(2);
     expect(screen.getByText('30%')).toBeInTheDocument();
     expect(screen.getByText('$10,000')).toBeInTheDocument();
-    expect(screen.getByText('4,500 slots (about 30 min)')).toBeInTheDocument();
+    expect(
+      screen.getByText('4,500 slots (about 30 min at the nominal 400 ms per slot)'),
+    ).toBeInTheDocument();
     expect(screen.getByText('1 slot after each trigger')).toBeInTheDocument();
     expect(screen.getByText(`${TRANSACTION_COST} SOL per transaction`)).toBeInTheDocument();
     expect(screen.queryByText('Slippage')).not.toBeInTheDocument();

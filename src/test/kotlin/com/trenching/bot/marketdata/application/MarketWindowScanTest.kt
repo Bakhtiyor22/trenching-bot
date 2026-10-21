@@ -23,9 +23,10 @@ class MarketWindowScanTest {
     }
 
     @Test
-    fun `opens a window once the confirmed tip reaches its end`() {
-        assertEquals(window(), MarketWindowScan.atTip(window(), tip = TO_SLOT))
-        assertEquals(window(), MarketWindowScan.atTip(window().copy(coverage = MarketWindowCoverage.HORIZON_NOT_ELAPSED), tip = TO_SLOT + 1))
+    fun `opens a window once the confirmed tip reaches its end and records that tip`() {
+        assertEquals(window().copy(listedAtTip = TO_SLOT), MarketWindowScan.atTip(window(), tip = TO_SLOT))
+        assertEquals(window().copy(listedAtTip = TO_SLOT + 1),
+            MarketWindowScan.atTip(window().copy(coverage = MarketWindowCoverage.HORIZON_NOT_ELAPSED), tip = TO_SLOT + 1))
     }
 
     @Test
@@ -45,9 +46,14 @@ class MarketWindowScanTest {
     }
 
     @Test
-    fun `estimates the wait until the tip reaches the window end at 400 ms per slot`() {
-        assertEquals(Duration.ofSeconds(4), MarketWindowScan.untilEnd(window(), tip = TO_SLOT - 10))
-        assertEquals(Duration.ZERO, MarketWindowScan.untilEnd(window(), tip = TO_SLOT))
+    fun `estimates the wait until the tip reaches the window end at the measured pace with a tenth to spare`() {
+        assertEquals(Duration.ofMillis(2_387), MarketWindowScan.untilEnd(window(), tip = TO_SLOT - 10, Duration.ofMillis(217)))
+        assertEquals(Duration.ZERO, MarketWindowScan.untilEnd(window(), tip = TO_SLOT, Duration.ofMillis(217)))
+    }
+
+    @Test
+    fun `without a measured pace the wait uses the nominal 400 ms per slot`() {
+        assertEquals(Duration.ofMillis(4_400), MarketWindowScan.untilEnd(window(), tip = TO_SLOT - 10, null))
     }
 
     private fun window() = MarketWindowRecord(

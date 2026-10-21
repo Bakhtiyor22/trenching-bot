@@ -1,10 +1,13 @@
 package com.trenching.bot.chaincapture
 
 import com.trenching.bot.common.Base58
+import java.time.Duration
 import tools.jackson.databind.JsonNode
 
 /** The read requests captures make, with the shared commitment and transaction-version parameters. */
 object ChainCaptureReads {
+    private const val PERFORMANCE_RESPONSE = "PERFORMANCE_RESPONSE"
+
     /** Returns the endpoint's genesis hash after checking that it is mainnet. */
     fun requireMainnet(rpc: SolanaReadRpc, budget: CaptureBudget): String {
         val genesis = rpc.call(ChainCaptureFormat.GET_GENESIS, emptyList(), budget)
@@ -35,6 +38,28 @@ object ChainCaptureReads {
         val slot = rpc.call(ChainCaptureFormat.GET_SLOT, listOf(mapOf("commitment" to ChainCaptureFormat.COMMITMENT)), budget)
         if (!slot.isIntegralNumber || !slot.canConvertToLong() || slot.asLong() < 0) throw CaptureValidationException("SLOT_RESPONSE")
         return slot.asLong()
+    }
+
+    /**
+     * How long a slot has recently taken, from the endpoint's last one-minute performance samples; null when none holds a
+     * slot. Mainnet's slots run faster than the nominal 400 ms, so a wait in slots is converted with this.
+     */
+    fun recentSlotDuration(rpc: SolanaReadRpc, budget: CaptureBudget): Duration? {
+        val samples = rpc.call(ChainCaptureFormat.GET_PERFORMANCE_SAMPLES, listOf(ChainCaptureFormat.PERFORMANCE_SAMPLES), budget)
+        if (!samples.isArray) throw CaptureValidationException(PERFORMANCE_RESPONSE)
+        var slots = 0L
+        var seconds = 0L
+        for (sample in samples) {
+            slots += count(sample, "numSlots")
+            seconds += count(sample, "samplePeriodSecs")
+        }
+        return if (slots == 0L) null else Duration.ofSeconds(seconds).dividedBy(slots)
+    }
+
+    private fun count(sample: JsonNode, field: String): Long {
+        val value = sample.path(field)
+        if (!value.isIntegralNumber || !value.canConvertToInt() || value.asInt() < 0) throw CaptureValidationException(PERFORMANCE_RESPONSE)
+        return value.asLong()
     }
 
     fun transaction(rpc: SolanaReadRpc, signature: String, budget: CaptureBudget): JsonNode =

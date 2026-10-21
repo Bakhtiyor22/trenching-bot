@@ -80,10 +80,15 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         return node
     }
 
-    /** A window without a cutoff is written without the field, so a manifest without cutoffs keeps its version 2 bytes. */
+    /**
+     * A window without a cutoff or a listing tip is written without that field, so a manifest without cutoffs keeps its
+     * version 2 bytes and one saved before tips were recorded is read back unchanged.
+     */
     fun save(directory: Path, manifest: MarketHistoryManifest) {
         val tree = mapper.valueToTree<ObjectNode>(manifest)
-        tree.path("windows").forEach { window -> if (window.path(CUTOFF_FIELD).isNull) (window as ObjectNode).remove(CUTOFF_FIELD) }
+        tree.path("windows").forEach { window ->
+            OPTIONAL_WINDOW_FIELDS.forEach { field -> if (window.path(field).isNull) (window as ObjectNode).remove(field) }
+        }
         files.writeManifest(files.root(directory, create = true), MarketCaptureFormat.MANIFEST, tree)
     }
 
@@ -115,6 +120,7 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         array(node, "selection", MarketCaptureFormat.MAX_TRANSACTIONS).map(::listed),
         node.path("scanCursor").takeUnless { it.isNull || it.isMissingNode }?.let(::listed),
         node.path(CUTOFF_FIELD).takeUnless { it.isNull || it.isMissingNode }?.let(::cutoff),
+        node.path(LISTED_AT_TIP_FIELD).takeUnless { it.isNull || it.isMissingNode }?.let { integer(node, LISTED_AT_TIP_FIELD) },
     )
 
     private fun cutoff(node: JsonNode): MarketWindowCutoff = MarketWindowCutoff(
@@ -158,7 +164,9 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
             MarketWindowCoverage.OVER_CAP -> window.pagesScanned >= 1 && selection.isEmpty() && window.selected > 0
             MarketWindowCoverage.HORIZON_NOT_ELAPSED -> window.pagesScanned == 0 && selection.isEmpty()
         }
-        return counts && listed && coverage
+        // A tip is recorded only when it let the window open, so it is past the window's end and never on a held window.
+        val tip = window.listedAtTip.let { it == null || (it >= window.toSlot && window.coverage != MarketWindowCoverage.HORIZON_NOT_ELAPSED) }
+        return counts && listed && coverage && tip
     }
 
     /**
@@ -214,6 +222,8 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
 
     private companion object {
         const val CUTOFF_FIELD = "cutoff"
+        const val LISTED_AT_TIP_FIELD = "listedAtTip"
+        val OPTIONAL_WINDOW_FIELDS = listOf(CUTOFF_FIELD, LISTED_AT_TIP_FIELD)
         const val CUTOFF_INVALID = "CAPTURE_INVALID"
         val SHA256 = Regex("[0-9a-f]{64}")
     }

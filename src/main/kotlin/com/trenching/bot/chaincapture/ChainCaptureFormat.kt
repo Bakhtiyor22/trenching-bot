@@ -15,5 +15,9 @@ object ChainCaptureFormat {
     const val GET_TRANSACTION = "getTransaction"
     const val GET_ACCOUNT_INFO = "getAccountInfo"
     const val GET_SLOT = "getSlot"
-    val READ_METHODS = setOf(GET_GENESIS, GET_SIGNATURES, GET_TRANSACTION, GET_ACCOUNT_INFO, GET_SLOT)
+    const val GET_PERFORMANCE_SAMPLES = "getRecentPerformanceSamples"
+
+    /** One-minute samples averaged into the recent slot duration: enough to smooth a slow minute, recent enough to matter. */
+    const val PERFORMANCE_SAMPLES = 5
+    val READ_METHODS = setOf(GET_GENESIS, GET_SIGNATURES, GET_TRANSACTION, GET_ACCOUNT_INFO, GET_SLOT, GET_PERFORMANCE_SAMPLES)
 }

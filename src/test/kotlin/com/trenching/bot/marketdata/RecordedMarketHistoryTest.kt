@@ -208,7 +208,7 @@ class RecordedMarketHistoryTest {
         val selected = artifact(fixture())
         val sibling = artifact(fixture(signature(2), SLOT + 31))
         val selectedWindow = complete(MINT, listOf(selected))
-        val siblingWindow = complete(OTHER_MINT, listOf(sibling)).copy(fromSlot = FROM + 30, toSlot = TO + 30)
+        val siblingWindow = complete(OTHER_MINT, listOf(sibling)).copy(fromSlot = FROM + 30, toSlot = TO + 30, listedAtTip = TO + 30)
         save(listOf(selectedWindow, siblingWindow), listOf(selected, sibling))
         Files.writeString(directory.resolve(requireNotNull(sibling.artifact)), "corrupt sibling")
 
@@ -233,6 +233,29 @@ class RecordedMarketHistoryTest {
 
         assertTrue(result.ready)
         assertEquals(MarketCaseStage.DISCOVERY_PENDING, recorded.inspectCases(directory).cases.last().stage)
+    }
+
+    @Test
+    fun `a window listed before tips were recorded that skipped no newer trade is blocked until a new market attempt`() {
+        val record = artifact(fixture())
+        val legacy = complete(MINT, listOf(record)).copy(listedAtTip = null)
+        save(listOf(legacy), listOf(record))
+
+        val result = recorded.decodeCase(directory, MarketCaseId.from(windowValue(MINT)))
+
+        assertFalse(result.ready)
+        assertEquals(MarketCaptureReasons.MARKET_LISTED_BEFORE_END, result.blocker)
+        assertEquals(MarketCaptureReasons.MARKET_LISTED_BEFORE_END, recorded.inspectCases(directory).cases.single().blocker)
+        // Saved without a tip field, read back without one.
+        assertEquals(legacy, store.loadManifest(directory)?.windows?.single())
+    }
+
+    @Test
+    fun `a recorded listing tip must be past the window's end`() {
+        val record = artifact(fixture())
+        save(listOf(complete(MINT, listOf(record)).copy(listedAtTip = TO - 1)), listOf(record))
+
+        assertEquals("WINDOW_STATE", assertFailsWith<CaptureValidationException> { recorded.decodeCase(directory, MarketCaseId.from(windowValue(MINT))) }.category)
     }
 
     @Test
@@ -395,7 +418,7 @@ class RecordedMarketHistoryTest {
         val selection = records.sortedByDescending { it.slot }.map { MarketListedSignature(it.signature, it.slot) }
         return MarketWindowRecord(mint, MintAddress.WRAPPED_SOL.value, FROM, TO, UNTIL, MarketWindowCoverage.COMPLETE,
             pagesScanned = 1, scanned = selection.size, skippedFailed = 0, skippedNewer = 0, selected = selection.size,
-            selection = selection, scanCursor = selection.lastOrNull())
+            selection = selection, scanCursor = selection.lastOrNull(), listedAtTip = TO)
     }
 
     /** A window at the page bound keeps its in-window selection for a later extension; an over-cap window keeps none. */

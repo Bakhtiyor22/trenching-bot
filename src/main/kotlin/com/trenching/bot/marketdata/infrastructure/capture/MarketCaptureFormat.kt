@@ -31,8 +31,11 @@ internal object MarketCaptureFormat {
     /** Coverages whose discovery still needs provider requests: a capture holding one has not finished its acquisition. */
     val OPEN_COVERAGES = setOf(MarketWindowCoverage.PENDING, MarketWindowCoverage.HORIZON_NOT_ELAPSED)
 
-    /** Mainnet's target slot time, used only to estimate when a held window's end will be reached. */
-    val ESTIMATED_SLOT_DURATION: Duration = Duration.ofMillis(400)
+    /** Mainnet's target slot time, for estimating a held window's end when the recent slot duration cannot be measured. */
+    val NOMINAL_SLOT_DURATION: Duration = Duration.ofMillis(400)
+
+    /** Added to a held window's estimated wait, so a retry rarely arrives just before its end and is held again. */
+    const val WAIT_MARGIN_PERCENT = 10L
 
     /** Whether no window or record of a manifest still needs a provider request. */
     fun isAcquired(windows: List<MarketWindowRecord>, records: List<MarketTransactionRecord>): Boolean =

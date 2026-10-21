@@ -7,4 +7,10 @@ object MarketCaptureReasons {
 
     /** Market stage reason and case blocker while a window is [MarketWindowCoverage.HORIZON_NOT_ELAPSED]; a later resume finishes it. */
     const val MARKET_HORIZON_NOT_ELAPSED = "MARKET_HORIZON_NOT_ELAPSED"
+
+    /**
+     * Market stage reason and case blocker for a window [MarketWindowChecks.mayBeListedBeforeEnd] flags: a listing that began
+     * before the window ended misses its later trades for good, so only a new market attempt can capture them.
+     */
+    const val MARKET_LISTED_BEFORE_END = "MARKET_LISTED_BEFORE_END"
 }

@@ -71,13 +71,17 @@ internal object MarketWindowScan {
      */
     fun atTip(window: MarketWindowRecord, tip: Long): MarketWindowRecord = when {
         !needsTip(window) -> window
-        tip >= window.toSlot -> window.copy(coverage = MarketWindowCoverage.PENDING)
+        tip >= window.toSlot -> window.copy(coverage = MarketWindowCoverage.PENDING, listedAtTip = tip)
         else -> window.copy(coverage = MarketWindowCoverage.HORIZON_NOT_ELAPSED)
     }
 
-    /** An estimate of how long the confirmed tip needs to reach the window's end. */
-    fun untilEnd(window: MarketWindowRecord, tip: Long): Duration =
-        MarketCaptureFormat.ESTIMATED_SLOT_DURATION.multipliedBy((window.toSlot - tip).coerceAtLeast(0))
+    /**
+     * An estimate of how long the confirmed tip needs to reach the window's end at [slotDuration], the recently measured
+     * time per slot (the nominal one when unmeasured), plus a margin.
+     */
+    fun untilEnd(window: MarketWindowRecord, tip: Long, slotDuration: Duration?): Duration =
+        (slotDuration ?: MarketCaptureFormat.NOMINAL_SLOT_DURATION).multipliedBy((window.toSlot - tip).coerceAtLeast(0))
+            .multipliedBy(100 + MarketCaptureFormat.WAIT_MARGIN_PERCENT).dividedBy(100)
 
     /** Keeps the window's cursor, counts and in-window selection, so a resume with more pages can extend it losslessly. */
     fun boundReached(window: MarketWindowRecord): MarketWindowRecord =

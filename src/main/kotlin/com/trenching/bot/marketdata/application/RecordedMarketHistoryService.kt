@@ -109,7 +109,8 @@ internal class RecordedMarketHistoryService(
             unresolved > 0 -> MarketCaseStage.DETAILS_INCOMPLETE
             else -> MarketCaseStage.READY_TO_VALIDATE
         }
-        val blocker = when (stage) {
+        // Fetching more cannot recover trades a listing that began before the window's end never saw.
+        val blocker = if (MarketWindowChecks.mayBeListedBeforeEnd(window)) MarketCaptureReasons.MARKET_LISTED_BEFORE_END else when (stage) {
             MarketCaseStage.DISCOVERY_PENDING ->
                 if (window.coverage == MarketWindowCoverage.HORIZON_NOT_ELAPSED) MarketCaptureReasons.MARKET_HORIZON_NOT_ELAPSED else "MARKET_DISCOVERY_PENDING"
             MarketCaseStage.DISCOVERY_INCOMPLETE -> "MARKET_DISCOVERY_INCOMPLETE"

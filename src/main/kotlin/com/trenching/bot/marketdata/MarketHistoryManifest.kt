@@ -24,7 +24,8 @@ data class MarketHistoryManifest(
 /**
  * One window's discovery audit. [selected] counts in-window successful signatures; [selection] keeps them only while
  * the window is pending or complete, because the other coverages fetch no details. [cutoff] is set while the window's
- * outcome is decided at a slot before its end; the window is then observed only through that slot.
+ * outcome is decided at a slot before its end; the window is then observed only through that slot. [listedAtTip] is the
+ * confirmed tip read before the listing started, at or past [toSlot]; windows listed before it was recorded have none.
  */
 data class MarketWindowRecord(
     val baseMint: String,
@@ -41,6 +42,7 @@ data class MarketWindowRecord(
     val selection: List<MarketListedSignature>,
     val scanCursor: MarketListedSignature?,
     val cutoff: MarketWindowCutoff? = null,
+    val listedAtTip: Long? = null,
 )
 
 /** Where a decided window stops being observed, which outcome decided it, and the evaluator's identity. */

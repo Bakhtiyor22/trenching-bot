@@ -66,11 +66,13 @@ internal class MarketHistoryCaptureService(
 
     /**
      * Lists and fetches each window in order. The confirmed tip is read once, before the first window that has not started
-     * its listing; a window it has not passed is held, and the invocation then stops with the longest estimated wait.
+     * its listing; a window it has not passed is held, and the invocation then stops with the longest estimated wait, at the
+     * recent slot pace read once when the first window is held.
      */
     private fun discover(request: MarketHistoryCaptureRequest, saved: MarketHistoryManifest, budget: CaptureBudget, stop: CaptureStop): MarketHistoryManifest {
         var manifest = saved
         var tip: Long? = null
+        var pace: SlotPace? = null
         var heldFor: Duration? = null
         for (index in manifest.windows.indices) {
             var window = manifest.windows[index]
@@ -79,10 +81,12 @@ internal class MarketHistoryCaptureService(
                     ?: return manifest
                 window = MarketWindowScan.atTip(window, confirmedTip)
                 if (window.coverage == MarketWindowCoverage.HORIZON_NOT_ELAPSED) {
-                    val wait = MarketWindowScan.untilEnd(window, confirmedTip)
+                    val slotPace = pace ?: discoveryRead(window, stop) { SlotPace(ChainCaptureReads.recentSlotDuration(rpc, budget)) }
+                        ?.also { pace = it } ?: return manifest
+                    val wait = MarketWindowScan.untilEnd(window, confirmedTip, slotPace.slotDuration)
                     heldFor = maxOf(heldFor ?: wait, wait)
-                    log.info("market_capture window held mint={} fromSlot={} toSlot={} tipSlot={} estimatedWaitMs={}",
-                        window.baseMint, window.fromSlot, window.toSlot, confirmedTip, wait.toMillis())
+                    log.info("market_capture window held mint={} fromSlot={} toSlot={} tipSlot={} slotMs={} estimatedWaitMs={}",
+                        window.baseMint, window.fromSlot, window.toSlot, confirmedTip, slotPace.slotDuration?.toMillis(), wait.toMillis())
                 }
                 if (window != manifest.windows[index]) {
                     manifest = withWindow(manifest, index, window)
@@ -114,6 +118,9 @@ internal class MarketHistoryCaptureService(
         heldFor?.let { stop.record(MarketCaptureReasons.HORIZON_NOT_ELAPSED, it) }
         return manifest
     }
+
+    /** The recent time per slot, or null when the endpoint had no sample to measure it from. */
+    private data class SlotPace(val slotDuration: Duration?)
 
     /** Runs one discovery request; a provider or budget stop is recorded and yields null, so the caller keeps what it saved. */
     private fun <T : Any> discoveryRead(window: MarketWindowRecord, stop: CaptureStop, read: () -> T): T? = try {
