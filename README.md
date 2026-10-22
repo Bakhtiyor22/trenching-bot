@@ -142,7 +142,7 @@ Capture status polling, inspection, export and calibration are offline; the shar
 | `PATCH /api/captures/{id}` | Renames (`{requestId, name}`) with the same uniqueness rule; idempotent per `requestId` |
 | `GET /api/captures/names/check?name=` | `{available, normalized, suggestion}` for live checks |
 | `GET /api/captures/recommendations?wallet=&scope=&mint=` | Capture setup recommendations |
-| `GET /api/runs/preset` | The agreed-strategy preset: values, a status per field and the 8 spec rules the engine cannot apply ([decision](docs/adr/20261016-agreed-strategy-run-preset.md)) |
+| `GET /api/runs/preset` | The agreed-strategy preset: values, a status per field and the 9 spec rules the engine cannot apply ([decision](docs/adr/20261016-agreed-strategy-run-preset.md)) |
 | `GET /api/runs/recommendations?datasetId=` | Run setup recommendations |
 | `GET /api/config/defaults` | Adds `dipPercent`, `takeProfitPercent` and `stopLossPercent` beside each bps value in `defaults` and `limits`. The defaults are still `SimulationConfig.mvp()` |
 | `POST /api/runs` | `config` accepts the three `…Percent` strings instead of the bps fields (at most two decimals, never rounded; 400 `INVALID_PERCENT` or `CONFLICTING_FIELDS`). Optional `presetId` is validated and logged, never stored, and never changes the run id |

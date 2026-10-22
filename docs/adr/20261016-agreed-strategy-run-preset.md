@@ -57,3 +57,15 @@ The run form starts from the agreed values and shows which ones are exact, measu
 ## Revisit when
 
 The `decu-dip` v2 engine ships. The preset then points to that engine, the unsupported-rule list becomes empty and the `MISSING` horizon goes away. Revisit sooner if the user picks a horizon for `dip-entry` v1 or decides which configuration the `DECIDED` cutoff uses.
+
+## Amendment 2026-10-22: a ninth unsupported rule
+
+The list above missed one rule. Spec Section 5 compares every price as the post-trade price: the curve's virtual SOL over virtual token reserves right after a trade. `dip-entry` v1 compares each trade's average execution price, its SOL amount over its token amount, for the reference price (`DipEntryStrategy`), the dip trigger and the take-profit and stop-loss triggers (`PositionService`). For a large buy the two differ: the reference run `fbd3…2b0b`'s first buy averaged a $9,429 market cap, while the curve right after it stood near $9,780.
+
+The preset now lists it as the fourth rule, after `MCAP_AT_REFERENCE_BUY`:
+
+| Spec ref | Code | Rule |
+|---|---|---|
+| Section 5 | `POST_TRADE_PRICE` | Every comparison uses the post-trade price, never a trade's average execution price |
+
+`AgreedStrategyPresetTest` checks that Section 5 of the spec still states this. The configuration, run ids and stored runs are unchanged.

@@ -144,6 +144,7 @@ const explanations: Record<string, string> = {
   FIRST_EVER_BUY: 'First-ever buy proof',
   SIGNAL_OVER_1_9_SOL: 'Signal larger than 1.9 SOL',
   MCAP_AT_REFERENCE_BUY: 'Market cap at the reference buy',
+  POST_TRADE_PRICE: 'Post-trade prices for every comparison',
   DIP_WINDOW_30_SECONDS: 'A 30-second dip window',
   ENTRY_SLIPPAGE_15_PERCENT: 'A 15% entry slippage limit',
   TIMED_EXIT: 'Timed exit',

@@ -47,6 +47,8 @@ object AgreedStrategyPreset {
         UnsupportedSpecRule("P2", "FIRST_EVER_BUY"),
         UnsupportedSpecRule("P3", "SIGNAL_OVER_1_9_SOL"),
         UnsupportedSpecRule("P5", "MCAP_AT_REFERENCE_BUY"),
+        // dip-entry v1 compares each trade's average execution price; the spec compares the curve's price after it.
+        UnsupportedSpecRule("Section 5", "POST_TRADE_PRICE"),
         UnsupportedSpecRule("P7", "DIP_WINDOW_30_SECONDS"),
         UnsupportedSpecRule("P8", "ENTRY_SLIPPAGE_15_PERCENT"),
         UnsupportedSpecRule("P11", "TIMED_EXIT"),

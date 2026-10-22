@@ -62,8 +62,9 @@ class RunSetupControllerTest {
         assertEquals("""{"field":"horizonSlots","status":"MISSING","specRef":null,"noteCode":"NO_SINGLE_WINDOW_IN_SPEC"}""", horizon.toString())
         assertEquals(10, body["fields"].size())
         val rules = body["unsupportedRules"]
-        assertEquals(8, rules.size())
-        assertEquals("""{"specRef":"Section 8","code":"EXIT_RETRIES_AND_UNRESOLVED"}""", rules[6].toString())
+        assertEquals(9, rules.size())
+        assertEquals("""{"specRef":"Section 5","code":"POST_TRADE_PRICE"}""", rules[3].toString())
+        assertEquals("""{"specRef":"Section 8","code":"EXIT_RETRIES_AND_UNRESOLVED"}""", rules[7].toString())
     }
 
     @Test
@@ -73,7 +74,7 @@ class RunSetupControllerTest {
         assertEquals(listOf("USE_AGREED_STRATEGY", "ADD_LEGACY_COMPARISON", "SINGLE_TOKEN_DATASET"), body.items().map { it["id"].asString() })
         assertTrue(body.items().all { it["appliesTo"].asString() == "RUN" })
         assertEquals("""{"id":"USE_AGREED_STRATEGY","appliesTo":"RUN","setting":{"field":"presetId","value":"decu-dip-v2-on-dip-entry-v1"},""" +
-            """"facts":{"unsupportedRuleCount":8,"missingFieldCount":1},"caveatCode":null}""", body[0].toString())
+            """"facts":{"unsupportedRuleCount":9,"missingFieldCount":1},"caveatCode":null}""", body[0].toString())
         assertEquals("""{"dipPercent":"15","takeProfitPercent":"30","stopLossPercent":"15"}""", body[1]["facts"].toString())
         assertTrue(body[1]["setting"].isNull)
         assertEquals("""{"pairCount":1}""", body[2]["facts"].toString())

@@ -8,6 +8,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.time.LocalDate
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.nodes.MappingNode
@@ -63,9 +64,18 @@ class AgreedStrategyPresetTest {
     }
 
     @Test
-    fun `the eight spec rules dip-entry v1 cannot apply are listed`() {
-        assertEquals(listOf("P2", "P3", "P5", "P7", "P8", "P11", "Section 8", "P13"), preset.unsupportedRules.map { it.specRef })
+    fun `the nine spec rules dip-entry v1 cannot apply are listed`() {
+        assertEquals(listOf("P2", "P3", "P5", "Section 5", "P7", "P8", "P11", "Section 8", "P13"), preset.unsupportedRules.map { it.specRef })
         assertEquals(preset.unsupportedRules.size, preset.unsupportedRules.map { it.code }.toSet().size)
+    }
+
+    @Test
+    fun `the spec's post-trade price measure is listed, since dip-entry v1 compares average execution prices`() {
+        assertEquals(UnsupportedSpecRule("Section 5", "POST_TRADE_PRICE"), preset.unsupportedRules.single { it.code == "POST_TRADE_PRICE" })
+        val section = requireNotNull(Regex("## 5\\. Price measure\\s+(.*?)\\n## ", RegexOption.DOT_MATCHES_ALL)
+            .find(specText.replace("\r\n", "\n"))) { "spec Section 5 not found" }.groupValues[1]
+        assertTrue("**one measure: the post-trade price, in SOL per token**" in section)
+        assertTrue("The average fill price of a trade is never used as a trigger." in section)
     }
 
     private fun assertSameDecimal(expected: String, actual: BigDecimal) =
