@@ -1,0 +1,130 @@
+{
+  "pages": [
+    {
+      "page": "captures",
+      "viewport": 375,
+      "scrollWidth": 365,
+      "top": 0,
+      "width": 365
+    },
+    {
+      "page": "new-capture",
+      "viewport": 375,
+      "scrollWidth": 365,
+      "top": 0,
+      "width": 365
+    },
+    {
+      "page": "capture-detail",
+      "viewport": 375,
+      "scrollWidth": 365,
+      "top": 0,
+      "width": 365
+    },
+    {
+      "page": "new-run",
+      "viewport": 375,
+      "scrollWidth": 365,
+      "top": 0,
+      "width": 365
+    },
+    {
+      "page": "run-chart",
+      "viewport": 375,
+      "scrollWidth": 365,
+      "top": 0,
+      "width": 365
+    },
+    {
+      "page": "usage",
+      "viewport": 375,
+      "scrollWidth": 365,
+      "top": 0,
+      "width": 365
+    },
+    {
+      "page": "captures",
+      "viewport": 1440,
+      "scrollWidth": 1430,
+      "top": 0,
+      "width": 1430
+    },
+    {
+      "page": "new-capture",
+      "viewport": 1440,
+      "scrollWidth": 1430,
+      "top": 0,
+      "width": 1430
+    },
+    {
+      "page": "capture-detail",
+      "viewport": 1440,
+      "scrollWidth": 1430,
+      "top": 0,
+      "width": 1430
+    },
+    {
+      "page": "new-run",
+      "viewport": 1440,
+      "scrollWidth": 1430,
+      "top": 0,
+      "width": 1430
+    },
+    {
+      "page": "run-chart",
+      "viewport": 1440,
+      "scrollWidth": 1430,
+      "top": 0,
+      "width": 1430
+    },
+    {
+      "page": "usage",
+      "viewport": 1440,
+      "scrollWidth": 1430,
+      "top": 0,
+      "width": 1430
+    }
+  ],
+  "states": [
+    {
+      "state": "RPC_NOT_CONFIGURED",
+      "visible": true
+    },
+    {
+      "state": "PROVIDER_RATE_LIMITED",
+      "visible": true
+    },
+    {
+      "state": "PROVIDER_UNAVAILABLE",
+      "visible": true
+    },
+    {
+      "state": "NOT_MAINNET",
+      "visible": true
+    },
+    {
+      "state": "LOCAL_ACCESS_REQUIRED",
+      "visible": true
+    },
+    {
+      "state": "activity-empty",
+      "visible": true
+    },
+    {
+      "state": "captures-empty",
+      "visible": true
+    },
+    {
+      "state": "preset-unavailable",
+      "visible": true
+    },
+    {
+      "state": "usage-empty",
+      "visible": true
+    },
+    {
+      "state": "chart-empty",
+      "visible": true
+    }
+  ]
+}
