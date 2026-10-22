@@ -5,6 +5,7 @@ import com.trenching.bot.console.ChartFixtures.at
 import com.trenching.bot.console.application.ChartConsoleService
 import com.trenching.bot.console.config.ConditionalOnConsoleEnabled
 import com.trenching.bot.console.domain.CandleView
+import com.trenching.bot.console.domain.ChartCoverage
 import com.trenching.bot.console.domain.ChartExtent
 import com.trenching.bot.console.domain.ChartQuery
 import com.trenching.bot.console.domain.ChartRange
@@ -19,6 +20,8 @@ import com.trenching.bot.console.domain.ObservedMarkerView
 import com.trenching.bot.console.domain.PaperFillView
 import com.trenching.bot.console.domain.PaperPhase
 import com.trenching.bot.console.domain.ValuationBasisReason
+import com.trenching.bot.console.domain.TickView
+import com.trenching.bot.console.domain.TicksView
 import com.trenching.bot.console.domain.ValuationBasisView
 import com.trenching.bot.console.mapper.ChartResponseMapperImpl
 import com.trenching.bot.console.mapper.ConsoleErrorMapperImpl
@@ -48,7 +51,7 @@ class ChartControllerTest {
 
     @Test
     fun `a run chart serializes the contract's fields with decimals as plain strings`() {
-        Mockito.`when`(service.runChart("run-1", ChartQuery(null, null, null, null, null, emptyList(), null))).thenReturn(view())
+        Mockito.`when`(service.runChart("run-1", ChartQuery(null, null, null, null, null, emptyList(), null, null))).thenReturn(view())
 
         val body = body("/api/runs/run-1/chart", 200)
 
@@ -75,7 +78,8 @@ class ChartControllerTest {
         assertEquals("CLUSTERED", markers["mode"].asString())
         val item = markers["items"][0]
         assertEquals(listOf("kind", "observationId", "trader", "isTrackedWallet", "side", "solLamports", "tokenRaw", "price", "mcap", "slot", "time",
-            "signature", "source"), item.propertyNames().toList())
+            "estimatedTime", "signature", "source"), item.propertyNames().toList())
+        assertEquals("2026-10-01T00:00:01.250Z", item["estimatedTime"].asString())
         assertEquals("OBSERVED", item["kind"].asString())
         assertTrue(item["isTrackedWallet"].asBoolean())
         assertEquals("18446744073709551615", item["tokenRaw"].asString())
@@ -83,18 +87,28 @@ class ChartControllerTest {
         assertEquals(listOf("bucketStart", "count", "buyCount", "sellCount", "firstSlot", "lastSlot", "firstTime", "lastTime"),
             markers["clusters"][0].propertyNames().toList())
         val paper = body["paperFills"][0]
-        assertEquals(listOf("kind", "phase", "side", "intentId", "slot", "time", "price", "mcap", "quantity", "reason"), paper.propertyNames().toList())
+        assertEquals(listOf("kind", "phase", "side", "intentId", "slot", "time", "estimatedTime", "price", "mcap", "quantity", "reason"), paper.propertyNames().toList())
         assertEquals("PAPER", paper["kind"].asString())
         assertEquals("EXIT", paper["phase"].asString())
         assertEquals("0.100000000000", paper["quantity"].asString())
+        assertEquals(216.2, body["millisPerSlot"].asDouble())
+        assertEquals(8, body["coverage"][0]["fromSlot"].asLong())
+        val ticks = body["ticks"]
+        assertEquals(listOf("included", "total", "items"), ticks.propertyNames().toList())
+        val tick = ticks["items"][0]
+        assertEquals(listOf("observationId", "slot", "indexInSlot", "slotOrderProven", "time", "estimatedTime", "price", "mcap", "curvePrice",
+            "curveMcap", "side", "trader", "isTrackedWallet", "solLamports", "tokenRaw"), tick.propertyNames().toList())
+        assertEquals("2.00000000", tick["curvePrice"].asString())
+        assertEquals("BUY", tick["side"].asString())
+        assertEquals("18446744073709551615", tick["tokenRaw"].asString())
     }
 
     @Test
     fun `the query parameters reach the service as one query for runs and datasets`() {
-        val query = ChartQuery("a/b", at("2026-10-01T00:00:00Z"), at("2026-10-02T00:00:00Z"), 50, 20, listOf("w1", "w2"), "cur")
+        val query = ChartQuery("a/b", at("2026-10-01T00:00:00Z"), at("2026-10-02T00:00:00Z"), 50, 20, listOf("w1", "w2"), "cur", 25)
         Mockito.`when`(service.runChart("r", query)).thenReturn(view())
         Mockito.`when`(service.datasetChart("d", query)).thenReturn(view())
-        val parameters = "pair=a/b&from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z&maxBuckets=50&markerLimit=20&wallet=w1&wallet=w2&cursor=cur"
+        val parameters = "pair=a/b&from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z&maxBuckets=50&markerLimit=20&wallet=w1&wallet=w2&cursor=cur&tickLimit=25"
 
         body("/api/runs/r/chart?$parameters", 200)
         body("/api/datasets/d/chart?$parameters", 200)
@@ -102,11 +116,11 @@ class ChartControllerTest {
 
     @Test
     fun `invalid requests and unknown ids use the console error body`() {
-        Mockito.`when`(service.datasetChart("d", ChartQuery(null, null, null, null, null, emptyList(), null)))
+        Mockito.`when`(service.datasetChart("d", ChartQuery(null, null, null, null, null, emptyList(), null, null)))
             .thenThrow(InvalidConsoleRequestException("pair", "is required"))
-        Mockito.`when`(service.runChart("gone", ChartQuery(null, null, null, null, null, emptyList(), null)))
+        Mockito.`when`(service.runChart("gone", ChartQuery(null, null, null, null, null, emptyList(), null, null)))
             .thenThrow(SimulationRunNotFoundException("gone"))
-        Mockito.`when`(service.datasetChart("missing", ChartQuery(null, null, null, null, null, emptyList(), null)))
+        Mockito.`when`(service.datasetChart("missing", ChartQuery(null, null, null, null, null, emptyList(), null, null)))
             .thenThrow(DatasetNotFoundException("missing"))
 
         assertEquals("INVALID_REQUEST", body("/api/datasets/d/chart", 400)["code"].asString())
@@ -141,10 +155,14 @@ class ChartControllerTest {
         candles = listOf(CandleView(at("2026-10-01T00:00:00Z"), 2, Ohlc(price("0"), price("0"), price("0"), price("0")), null, 0, 3)),
         markers = MarkersView(true, null, MarkerMode.CLUSTERED, 3, listOf(
             ObservedMarkerView(MarkerKind.OBSERVED, "o1", TRACKED, true, TradeSide.BUY, BigInteger.TEN, BigInteger("18446744073709551615"),
-                price("1"), null, 7, at("2026-10-01T00:00:01Z"), null, "pumpfun-bonding-curve-trade/v1")), null, listOf(
+                price("1"), null, 7, at("2026-10-01T00:00:01Z"), at("2026-10-01T00:00:01.250Z"), null, "pumpfun-bonding-curve-trade/v1")), null, listOf(
             MarkerClusterView(at("2026-10-01T00:00:00Z"), 2, 1, 1, 1, 2, at("2026-10-01T00:00:00Z"), at("2026-10-01T00:00:01Z")))),
-        paperFills = listOf(PaperFillView(MarkerKind.PAPER, PaperPhase.EXIT, TradeSide.SELL, "i1", 9, at("2026-10-01T00:00:02Z"), price("1"), null,
-            BigDecimal("0.1").setScale(12), "TAKE_PROFIT")),
+        paperFills = listOf(PaperFillView(MarkerKind.PAPER, PaperPhase.EXIT, TradeSide.SELL, "i1", 9, at("2026-10-01T00:00:02Z"),
+            at("2026-10-01T00:00:02.500Z"), price("1"), null, BigDecimal("0.1").setScale(12), "TAKE_PROFIT")),
+        millisPerSlot = 216.2,
+        coverage = listOf(ChartCoverage(8, 9_000)),
+        ticks = TicksView(true, 1, listOf(TickView("o1", 7, 0, true, at("2026-10-01T00:00:01Z"), at("2026-10-01T00:00:01.250Z"), price("1"), null,
+            price("2"), null, TradeSide.BUY, TRACKED, true, BigInteger.TEN, BigInteger("18446744073709551615")))),
     )
 
     private fun price(value: String): BigDecimal = BigDecimal(value).setScale(8)

@@ -11,4 +11,5 @@ data class ChartQuery(
     val markerLimit: Int?,
     val wallets: List<String>,
     val cursor: String?,
+    val tickLimit: Int?,
 )

@@ -7,6 +7,7 @@ import com.trenching.bot.console.ChartFixtures.TRADER_B
 import com.trenching.bot.console.ChartFixtures.at
 import com.trenching.bot.console.ChartFixtures.tradeObservation
 import com.trenching.bot.console.application.ChartMarkers
+import com.trenching.bot.console.application.SlotClock
 import com.trenching.bot.console.application.ChartPoint
 import com.trenching.bot.console.application.ChartPosition
 import com.trenching.bot.console.application.PointValuation
@@ -118,7 +119,7 @@ class ChartMarkersTest {
     fun `points without a trade are skipped`() {
         val plain = ChartPoint(ChartFixtures.observation("p", start, "1"), PointValuation.MissingRate)
 
-        assertEquals(8, ChartMarkers.select(listOf(plain) + points, TRACKED, emptySet(), 100, null, 60).total)
+        assertEquals(8, ChartMarkers.select(listOf(plain) + points, TRACKED, emptySet(), 100, null, 60, SlotClock.of(emptyList())).total)
     }
 
     @Test
@@ -150,7 +151,7 @@ class ChartMarkersTest {
         wallets: Set<String> = emptySet(),
         after: ChartPosition? = null,
         bucketSeconds: Int = 60,
-    ): MarkersView = ChartMarkers.select(points, tracked, wallets, limit, after, bucketSeconds)
+    ): MarkersView = ChartMarkers.select(points, tracked, wallets, limit, after, bucketSeconds, SlotClock.of(emptyList()))
 
     private fun trade(id: String, offsetSeconds: Long, trader: String, side: TradeSide = TradeSide.BUY): MarketObservation =
         tradeObservation(id, start.plusSeconds(offsetSeconds), trader, side)

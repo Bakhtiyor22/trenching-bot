@@ -23,7 +23,15 @@ object ChartMarkers {
      * trade when [wallets] is empty. Up to [limit] matching trades are items; more are clustered per bucket, leaving the
      * tracked wallet's trades as items, paged from [after]. Clusters come with the first page only.
      */
-    fun select(points: List<ChartPoint>, trackedWallet: String?, wallets: Set<String>, limit: Int, after: ChartPosition?, bucketSeconds: Int): MarkersView {
+    fun select(
+        points: List<ChartPoint>,
+        trackedWallet: String?,
+        wallets: Set<String>,
+        limit: Int,
+        after: ChartPosition?,
+        bucketSeconds: Int,
+        clock: SlotClock,
+    ): MarkersView {
         val matching = points.mapNotNull { point -> point.observation.trade?.let { Traded(point, it) } }
             .filter { it.trade.trader == trackedWallet || wallets.isEmpty() || it.trade.trader in wallets }
         val clustered = matching.size > limit
@@ -36,7 +44,7 @@ object ChartMarkers {
             unavailableReason = null,
             mode = if (clustered) MarkerMode.CLUSTERED else MarkerMode.ITEMS,
             total = matching.size,
-            items = page.map { it.toItem(trackedWallet) },
+            items = page.map { it.toItem(trackedWallet, clock) },
             nextCursor = if (remaining.size > page.size) page.lastOrNull()?.let { ChartPosition.of(it.point.observation).encode() } else null,
             clusters = if (clustered && after == null) clusters(others, bucketSeconds) else emptyList(),
         )
@@ -65,11 +73,11 @@ object ChartMarkers {
         }
 
     private data class Traded(val point: ChartPoint, val trade: ObservedTrade) {
-        fun toItem(trackedWallet: String?): ObservedMarkerView {
+        fun toItem(trackedWallet: String?, clock: SlotClock): ObservedMarkerView {
             val observation = point.observation
             return ObservedMarkerView(MarkerKind.OBSERVED, observation.id, trade.trader, trade.trader == trackedWallet, trade.side,
                 trade.solLamports, trade.tokenRaw, observation.price, point.mcap, observation.slot.value, observation.observedTime,
-                ObservationSignature.of(observation), observation.source)
+                clock.estimate(observation.slot.value, observation.observedTime), ObservationSignature.of(observation), observation.source)
         }
     }
 }

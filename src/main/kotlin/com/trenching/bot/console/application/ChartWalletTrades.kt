@@ -22,18 +22,24 @@ import java.time.Instant
  */
 object ChartWalletTrades {
     /** [trades] are the wallet's accepted trades; those without a block time cannot be placed on a time axis and are left out. */
-    fun unobserved(trades: List<WalletTradeObserved>, observations: List<MarketObservation>, pair: MarketPair?, rates: ReferenceRates?): List<ObservedMarkerView> {
+    fun unobserved(
+        trades: List<WalletTradeObserved>,
+        observations: List<MarketObservation>,
+        pair: MarketPair?,
+        rates: ReferenceRates?,
+        clock: SlotClock,
+    ): List<ObservedMarkerView> {
         val observed = observations.mapNotNullTo(HashSet(), ObservationSignature::of)
         return trades.filter { it.pair == pair && it.signature.value !in observed }
-            .mapNotNull { trade -> trade.blockTime?.let { marker(trade, it, rates) } }
+            .mapNotNull { trade -> trade.blockTime?.let { marker(trade, it, rates, clock) } }
             .sortedWith(ChartMarkers.ITEM_ORDER)
     }
 
-    private fun marker(trade: WalletTradeObserved, time: Instant, rates: ReferenceRates?): ObservedMarkerView {
+    private fun marker(trade: WalletTradeObserved, time: Instant, rates: ReferenceRates?, clock: SlotClock): ObservedMarkerView {
         val price = DecimalPolicy.swapPrice(trade.quoteAmount, trade.baseAmount)
         return ObservedMarkerView(MarkerKind.OBSERVED, trade.id, trade.wallet.value, true, TradeSide.valueOf(trade.side.name),
             trade.quoteAmount.raw, trade.baseAmount.raw, price, mcap(trade, price, time, rates), trade.slot.value, time,
-            trade.signature.value, trade.source)
+            clock.estimate(trade.slot.value, time), trade.signature.value, trade.source)
     }
 
     /** Valued like a Pump.fun observation: only a SOL-quoted bonding-curve buy at the protocol's decimals, at its minute's rate. */

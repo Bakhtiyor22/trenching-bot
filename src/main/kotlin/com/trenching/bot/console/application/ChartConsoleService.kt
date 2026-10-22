@@ -1,6 +1,7 @@
 package com.trenching.bot.console.application
 
 import com.trenching.bot.common.MarketPair
+import com.trenching.bot.console.domain.ChartCoverage
 import com.trenching.bot.console.domain.ChartExtent
 import com.trenching.bot.console.domain.ChartQuery
 import com.trenching.bot.console.domain.ChartRange
@@ -57,10 +58,16 @@ class ChartConsoleService(
         val points = pairObservations.filter { parameters.contains(it.observedTime) }
             .sortedWith(ChartPosition.ORDER)
             .map { ChartPoint(it, ChartValuation.of(it, rates)) }
+        // Execution order within a slot decides each candle's open and close; markers keep the chart order their cursor pages by.
+        val executed = SlotExecutionOrder.order(points)
+        // Fitted to the pair's whole recording, so a zoomed window places every slot where the full chart does.
+        val walletSlots = source.walletTrades.filter { it.pair == pair }.mapNotNull { trade -> trade.blockTime?.let { trade.slot.value to it } }
+        val clock = SlotClock.of(pairObservations, walletSlots.toMap())
         val recordsTrades = source.observations.any { it.trade != null }
-        // Later pages continue the observed trades only, so the wallet's own trades come with the first page.
-        val walletMarkers = if (recordsTrades && parameters.cursor == null) {
-            ChartWalletTrades.unobserved(source.walletTrades, pairObservations, pair, rates).filter { parameters.contains(it.time) }
+        val firstPage = parameters.cursor == null
+        // Later pages continue the observed trades only, so the wallet's own trades and the ticks come with the first page.
+        val walletMarkers = if (recordsTrades && firstPage) {
+            ChartWalletTrades.unobserved(source.walletTrades, pairObservations, pair, rates, clock).filter { parameters.contains(it.time) }
         } else {
             emptyList()
         }
@@ -69,12 +76,13 @@ class ChartConsoleService(
         val bucketSeconds = ChartBuckets.bucketSeconds(range.from, range.to, parameters.maxBuckets)
         val trackedWallet = dataset?.trackedWallet?.value
         val markers = if (recordsTrades) {
-            val observed = ChartMarkers.select(points, trackedWallet, parameters.wallets, parameters.markerLimit, parameters.cursor, bucketSeconds)
+            val observed = ChartMarkers.select(points, trackedWallet, parameters.wallets, parameters.markerLimit, parameters.cursor, bucketSeconds,
+                clock)
             ChartMarkers.including(observed, walletMarkers)
         } else {
             ChartMarkers.notRecorded()
         }
-        val paperFills = source.run?.let { ChartPaperFills.of(it.scenarios, source.observations, pair, rates) }.orEmpty()
+        val paperFills = source.run?.let { ChartPaperFills.of(it.scenarios, source.observations, pair, rates, clock) }.orEmpty()
             .filter { parameters.contains(it.time) }
         return ChartView(
             bucketSeconds = bucketSeconds,
@@ -83,9 +91,12 @@ class ChartConsoleService(
             trackedWallet = trackedWallet,
             valuationBasis = ChartValuation.basis(source.quote, dataset?.let { ChartValuation.rateSource(it.referenceRates) },
                 rates != null, points.map { it.valuation }),
-            candles = ChartBuckets.candles(points, bucketSeconds),
+            candles = ChartBuckets.candles(executed.map { it.point }, bucketSeconds),
             markers = markers,
             paperFills = paperFills,
+            millisPerSlot = clock.millisPerSlot,
+            coverage = dataset?.coverage.orEmpty().filter { it.pair == pair }.map { ChartCoverage(it.fromSlot.value, it.throughSlot.value) },
+            ticks = ChartTicks.of(executed, trackedWallet, clock, rates, if (firstPage) parameters.tickLimit else 0),
         )
     }
 

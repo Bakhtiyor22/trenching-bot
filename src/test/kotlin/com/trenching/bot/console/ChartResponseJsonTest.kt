@@ -5,6 +5,7 @@ import com.trenching.bot.console.ChartFixtures.at
 import com.trenching.bot.console.api.dto.CandleResponse
 import com.trenching.bot.console.api.dto.ObservedMarkerResponse
 import com.trenching.bot.console.api.dto.OhlcResponse
+import com.trenching.bot.console.api.dto.TickResponse
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -23,7 +24,9 @@ class ChartResponseJsonTest {
         runner.run { context ->
             val json = context.getBean(JsonMapper::class.java)
             val marker = ObservedMarkerResponse("OBSERVED", "o1", TRACKED, true, "BUY", "10", "18446744073709551615", "0.00000010", "1E+3", 7,
-                at("2026-10-01T00:00:01Z"), null, "pumpfun-bonding-curve-trade/v1")
+                at("2026-10-01T00:00:01Z"), at("2026-10-01T00:00:01.250Z"), null, "pumpfun-bonding-curve-trade/v1")
+            val tick = TickResponse("o1", 7, 0, true, at("2026-10-01T00:00:01Z"), at("2026-10-01T00:00:01.250Z"), "0.00000010", null, null, null,
+                null, null, false, null, null)
             val candle = CandleResponse(at("2026-10-01T00:00:00Z"), 2, OhlcResponse("0.00000001", "0.00000002", "0.00000001", "0.00000002"), null, 1, 2)
 
             val markerNode = json.readTree(json.writeValueAsString(marker))

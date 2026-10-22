@@ -88,5 +88,6 @@ class ChartParametersTest {
         markerLimit: Int? = null,
         wallets: List<String> = emptyList(),
         cursor: String? = null,
-    ) = ChartQuery(pair, from, to, maxBuckets, markerLimit, wallets, cursor)
+        tickLimit: Int? = null,
+    ) = ChartQuery(pair, from, to, maxBuckets, markerLimit, wallets, cursor, tickLimit)
 }

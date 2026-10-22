@@ -13,6 +13,32 @@ data class ChartResponse(
     val candles: List<CandleResponse>,
     val markers: MarkersResponse,
     val paperFills: List<PaperFillResponse>,
+    val millisPerSlot: Double?,
+    val coverage: List<ChartCoverageResponse>,
+    val ticks: TicksResponse,
+)
+
+data class ChartCoverageResponse(val fromSlot: Long, val throughSlot: Long)
+
+data class TicksResponse(val included: Boolean, val total: Int, val items: List<TickResponse>)
+
+/** [tracked] is serialized as `isTrackedWallet`. */
+data class TickResponse(
+    val observationId: String,
+    val slot: Long,
+    val indexInSlot: Int,
+    val slotOrderProven: Boolean,
+    val time: Instant,
+    val estimatedTime: Instant,
+    val price: String,
+    val mcap: String?,
+    val curvePrice: String?,
+    val curveMcap: String?,
+    val side: String?,
+    val trader: String?,
+    @get:JsonProperty("isTrackedWallet") val tracked: Boolean,
+    val solLamports: String?,
+    val tokenRaw: String?,
 )
 
 data class ChartRangeResponse(val from: Instant?, val to: Instant?)
@@ -64,6 +90,7 @@ data class ObservedMarkerResponse(
     val mcap: String?,
     val slot: Long,
     val time: Instant,
+    val estimatedTime: Instant,
     val signature: String?,
     val source: String,
 )
@@ -86,6 +113,7 @@ data class PaperFillResponse(
     val intentId: String,
     val slot: Long,
     val time: Instant,
+    val estimatedTime: Instant,
     val price: String,
     val mcap: String?,
     val quantity: String,

@@ -15,7 +15,13 @@ import java.math.BigDecimal
 object ChartPaperFills {
     private val ORDER: Comparator<PaperFillView> = compareBy({ it.time }, { it.slot }, { it.intentId }, { it.phase })
 
-    fun of(scenarios: List<RunScenario>, observations: List<MarketObservation>, pair: MarketPair?, rates: ReferenceRates?): List<PaperFillView> {
+    fun of(
+        scenarios: List<RunScenario>,
+        observations: List<MarketObservation>,
+        pair: MarketPair?,
+        rates: ReferenceRates?,
+        clock: SlotClock,
+    ): List<PaperFillView> {
         val byId = observations.associateBy { it.id }
         return scenarios.filter { it.intent.pair == pair }.flatMap { scenario ->
             val fill = (scenario.outcome as? FillOutcome.Filled)?.fill
@@ -24,10 +30,12 @@ object ChartPaperFills {
             val entry = checkNotNull(scenario.selectedObservation) { "Missing fill observation intentId=$intentId" }
             val close = scenario.position?.close
             listOfNotNull(
-                view(PaperPhase.ENTRY, TradeSide.BUY, intentId, entry, fill.actualSlot.value, fill.executionPrice, fill.quantity, null, rates),
+                view(PaperPhase.ENTRY, TradeSide.BUY, intentId, entry, fill.actualSlot.value, fill.executionPrice, fill.quantity, null, rates,
+                    clock),
                 close?.let {
                     val exit = checkNotNull(byId[it.observationId]) { "Missing close observation intentId=$intentId id=${it.observationId}" }
-                    view(PaperPhase.EXIT, TradeSide.SELL, intentId, exit, it.slot.value, it.executionPrice, fill.quantity, it.reason.name, rates)
+                    view(PaperPhase.EXIT, TradeSide.SELL, intentId, exit, it.slot.value, it.executionPrice, fill.quantity, it.reason.name, rates,
+                        clock)
                 },
             )
         }.sortedWith(ORDER)
@@ -43,6 +51,7 @@ object ChartPaperFills {
         quantity: BigDecimal,
         reason: String?,
         rates: ReferenceRates?,
-    ) = PaperFillView(MarkerKind.PAPER, phase, side, intentId, slot, observation.observedTime, price,
-        ChartValuation.of(observation, rates).mcap, quantity, reason)
+        clock: SlotClock,
+    ) = PaperFillView(MarkerKind.PAPER, phase, side, intentId, slot, observation.observedTime,
+        clock.estimate(slot, observation.observedTime), price, ChartValuation.of(observation, rates).mcap, quantity, reason)
 }

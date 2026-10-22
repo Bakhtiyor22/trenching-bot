@@ -8,7 +8,9 @@ import java.time.Instant
 /**
  * One bounded chart of a pair: price and mcap candles, observed trade markers and, for a run, its paper fills. [range] is the
  * window the buckets were sized for: the requested bounds, else the first and last observation (null for no data). [extent] spans
- * all the pair's observations whatever the window, and is null when it has none.
+ * all the pair's observations whatever the window, and is null when it has none. [millisPerSlot] is the pace every
+ * `estimatedTime` was placed at, null when it could not be measured and each estimate is its block time. [coverage] is the
+ * slots the pair's market was recorded through. [ticks] are the window's single trades when asked for.
  */
 data class ChartView(
     val bucketSeconds: Int,
@@ -19,6 +21,39 @@ data class ChartView(
     val candles: List<CandleView>,
     val markers: MarkersView,
     val paperFills: List<PaperFillView>,
+    val millisPerSlot: Double?,
+    val coverage: List<ChartCoverage>,
+    val ticks: TicksView,
+)
+
+/** Slots `fromSlot..throughSlot` of one market window were recorded; trades outside them, even in its first buy's slot, were not. */
+data class ChartCoverage(val fromSlot: Long, val throughSlot: Long)
+
+/** The window's trades one by one: [items] holds all [total] when [included], else none. */
+data class TicksView(val included: Boolean, val total: Int, val items: List<TickView>)
+
+/**
+ * One observation in execution order. [indexInSlot] is its place among its slot's trades, proven by the curve reserves when
+ * [slotOrderProven], else only the id order. [price] is the trade's average execution price; [curvePrice] the bonding curve's
+ * price right after it (null when the observation is not a valued Pump.fun trade). [estimatedTime] places the slot inside its
+ * block time's second. The trade fields are null for an observation recorded without its trade.
+ */
+data class TickView(
+    val observationId: String,
+    val slot: Long,
+    val indexInSlot: Int,
+    val slotOrderProven: Boolean,
+    val time: Instant,
+    val estimatedTime: Instant,
+    val price: BigDecimal,
+    val mcap: BigDecimal?,
+    val curvePrice: BigDecimal?,
+    val curveMcap: BigDecimal?,
+    val side: TradeSide?,
+    val trader: String?,
+    val tracked: Boolean,
+    val solLamports: BigInteger?,
+    val tokenRaw: BigInteger?,
 )
 
 data class ChartRange(val from: Instant?, val to: Instant?)
@@ -90,6 +125,7 @@ data class ObservedMarkerView(
     val mcap: BigDecimal?,
     val slot: Long,
     val time: Instant,
+    val estimatedTime: Instant,
     val signature: String?,
     val source: String,
 )
@@ -115,6 +151,7 @@ data class PaperFillView(
     val intentId: String,
     val slot: Long,
     val time: Instant,
+    val estimatedTime: Instant,
     val price: BigDecimal,
     val mcap: BigDecimal?,
     val quantity: BigDecimal,

@@ -11,6 +11,10 @@ object ChartLimits {
     const val DEFAULT_MARKER_LIMIT = 500
     const val MAX_MARKER_LIMIT = 2_000
     const val MAX_WALLETS = 20
+
+    /** Ticks are opt-in: a window of trades one by one costs far more than its candles. */
+    const val DEFAULT_TICK_LIMIT = 0
+    const val MAX_TICK_LIMIT = 5_000
 }
 
 /** A validated [ChartQuery]: limits defaulted and clamped, the pair, wallets and cursor parsed. */
@@ -22,6 +26,7 @@ data class ChartParameters(
     val markerLimit: Int,
     val wallets: Set<String>,
     val cursor: ChartPosition?,
+    val tickLimit: Int,
 ) {
     fun contains(time: Instant): Boolean = (from == null || time >= from) && (to == null || time <= to)
 
@@ -31,6 +36,7 @@ data class ChartParameters(
         private const val MARKER_LIMIT = "markerLimit"
         private const val WALLET = "wallet"
         private const val CURSOR = "cursor"
+        private const val TICK_LIMIT = "tickLimit"
 
         /** @throws InvalidConsoleRequestException for the first invalid parameter. */
         fun of(query: ChartQuery): ChartParameters {
@@ -52,11 +58,12 @@ data class ChartParameters(
                 markerLimit = limit(MARKER_LIMIT, query.markerLimit, ChartLimits.DEFAULT_MARKER_LIMIT, ChartLimits.MAX_MARKER_LIMIT),
                 wallets = wallets,
                 cursor = query.cursor?.let { ChartPosition.decode(it) ?: throw InvalidConsoleRequestException(CURSOR, "is not a valid cursor") },
+                tickLimit = limit(TICK_LIMIT, query.tickLimit, ChartLimits.DEFAULT_TICK_LIMIT, ChartLimits.MAX_TICK_LIMIT, minimum = 0),
             )
         }
 
-        private fun limit(field: String, requested: Int?, default: Int, cap: Int): Int {
-            if (requested != null && requested < 1) throw InvalidConsoleRequestException(field, "must be at least 1")
+        private fun limit(field: String, requested: Int?, default: Int, cap: Int, minimum: Int = 1): Int {
+            if (requested != null && requested < minimum) throw InvalidConsoleRequestException(field, "must be at least $minimum")
             return minOf(requested ?: default, cap)
         }
     }

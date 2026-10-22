@@ -18,10 +18,12 @@ import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.console.ChartFixtures.OTHER_QUOTE_PAIR
 import com.trenching.bot.console.ChartFixtures.PAIR
 import com.trenching.bot.console.ChartFixtures.at
+import com.trenching.bot.console.ChartFixtures.curveTrade
 import com.trenching.bot.console.ChartFixtures.observation
 import com.trenching.bot.console.ChartFixtures.tradeObservation
 import com.trenching.bot.console.application.ChartConsoleService
 import com.trenching.bot.console.application.ConsoleService
+import com.trenching.bot.console.domain.ChartCoverage
 import com.trenching.bot.console.domain.ChartExtent
 import com.trenching.bot.console.domain.ChartQuery
 import com.trenching.bot.console.domain.ChartView
@@ -44,6 +46,7 @@ import com.trenching.bot.replay.domain.DatasetInvalidException
 import com.trenching.bot.replay.domain.DatasetNotFoundException
 import com.trenching.bot.replay.domain.DatasetRegistration
 import com.trenching.bot.replay.domain.DatasetSummary
+import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SampleDataset
@@ -392,6 +395,42 @@ class ChartConsoleServiceTest {
         assertFailsWith<com.trenching.bot.replay.domain.SimulationRunNotFoundException> { service.runChart("missing", query()) }
     }
 
+    @Test
+    fun `a candle opens and closes on the trades its slot executed first and last, whatever their ids`() {
+        val time = at("2026-10-21T04:10:18Z")
+        val sol = 60_000_000_000L
+        val token = 500_000_000_000_000L
+        val first = curveTrade("z-first", time, 10, sol, token)
+        val last = curveTrade("a-last", time, 10, sol + 1_000_000_000L, token - 30_000_000_000_000L, TradeSide.SELL, lamports = 400_000_000L,
+            tokens = 10_000_000_000_000L)
+        val dataset = syntheticDataset(listOf(last, first), listOf(rate("2026-10-21T04:10:00Z", "105.98")))
+        catalog.add(dataset)
+
+        val candle = datasetChart(dataset, PAIR).candles.single()
+
+        assertEquals(first.price, candle.price.open)
+        assertEquals(last.price, candle.price.close)
+    }
+
+    @Test
+    fun `ticks come in execution order only when asked for, with the pair's recorded window`() {
+        val time = at("2026-10-21T04:10:18Z")
+        val first = curveTrade("z-first", time, 10, 60_000_000_000L, 500_000_000_000_000L)
+        val second = curveTrade("a-second", time, 10, 61_000_000_000L, 470_000_000_000_000L)
+        val dataset = syntheticDataset(listOf(first, second), listOf(rate("2026-10-21T04:10:00Z", "105.98")))
+            .copy(coverage = listOf(MarketCoverage.of(PAIR, Slot.of(10), Slot.of(4_510))))
+        catalog.add(dataset)
+
+        val unasked = datasetChart(dataset, PAIR)
+        val asked = service.datasetChart(id(dataset), query(PAIR, tickLimit = 10))
+
+        assertFalse(unasked.ticks.included)
+        assertEquals(2, unasked.ticks.total)
+        assertEquals(listOf("z-first", "a-second"), asked.ticks.items.map { it.observationId })
+        assertEquals(listOf(ChartCoverage(10, 4_510)), asked.coverage)
+        assertNull(asked.millisPerSlot)
+    }
+
     private fun v4WithTracked(): ReplayDataset = DipSampleV4.dataset().let {
         it.copy(trackedWallet = WalletAddress.of(DipSampleV4.trade(0).trader),
             referenceRates = it.referenceRates.map { rate -> rate.copy(source = "v4-test") })
@@ -424,7 +463,8 @@ class ChartConsoleServiceTest {
         maxBuckets: Int? = null,
         markerLimit: Int? = null,
         wallets: List<String> = emptyList(),
-    ) = ChartQuery(pair?.let { "${it.base.value}/${it.quote.value}" }, from, to, maxBuckets, markerLimit, wallets, null)
+        tickLimit: Int? = null,
+    ) = ChartQuery(pair?.let { "${it.base.value}/${it.quote.value}" }, from, to, maxBuckets, markerLimit, wallets, null, tickLimit)
 
     private fun datasetChart(dataset: ReplayDataset, pair: MarketPair, maxBuckets: Int? = null, markerLimit: Int? = null): ChartView =
         service.datasetChart(id(dataset), query(pair, maxBuckets = maxBuckets, markerLimit = markerLimit))

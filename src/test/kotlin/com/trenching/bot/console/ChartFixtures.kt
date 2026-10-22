@@ -60,4 +60,28 @@ object ChartFixtures {
         val price = BondingCurve.price(trade.solLamports, trade.tokenRaw)
         return observation(id, time, price.toPlainString(), slot, sourceEventId = sourceEventId, trade = trade)
     }
+
+    /**
+     * A trade that moves the curve from [beforeSol] and [beforeToken] virtual reserves, as a recorded one does: a buy adds its
+     * lamports and removes its tokens, a sell the reverse. Its curve holds the reserves after it.
+     */
+    fun curveTrade(
+        id: String,
+        time: Instant,
+        slot: Long,
+        beforeSol: Long,
+        beforeToken: Long,
+        side: TradeSide = TradeSide.BUY,
+        lamports: Long = 1_000_000_000L,
+        tokens: Long = 30_000_000_000_000L,
+        trader: String = TRADER_A,
+    ): MarketObservation {
+        val sign = if (side == TradeSide.BUY) 1 else -1
+        val reserves = CurveReserves(BigInteger.valueOf(beforeSol + sign * lamports), BigInteger.valueOf(beforeToken - sign * tokens),
+            BigInteger.ZERO, BigInteger.ZERO)
+        val trade = ObservedTrade.of(trader, side, BigInteger.valueOf(lamports), BigInteger.valueOf(tokens))
+        return MarketObservation(id, PAIR, Slot.of(slot), Slot.of(slot), time, BondingCurve.price(trade.solLamports, trade.tokenRaw), null,
+            PumpFunLayout.TRADE_SOURCE, "$SIGNATURE:0", Commitment.CONFIRMED, ObservationQuality.LAST_TRADE, false,
+            CurveState(reserves, 0, 0), trade)
+    }
 }

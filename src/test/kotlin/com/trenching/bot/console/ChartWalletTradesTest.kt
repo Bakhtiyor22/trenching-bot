@@ -13,6 +13,7 @@ import com.trenching.bot.console.ChartFixtures.TRACKED
 import com.trenching.bot.console.ChartFixtures.at
 import com.trenching.bot.console.ChartFixtures.tradeObservation
 import com.trenching.bot.console.application.ChartWalletTrades
+import com.trenching.bot.console.application.SlotClock
 import com.trenching.bot.console.domain.MarkerKind
 import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.marketdata.domain.OrderedReferenceRates
@@ -35,7 +36,7 @@ class ChartWalletTradesTest {
 
     @Test
     fun `a first buy no observation records becomes a tracked wallet marker at the price it was made at`() {
-        val marker = ChartWalletTrades.unobserved(listOf(firstBuy()), emptyList(), PAIR, rates).single()
+        val marker = ChartWalletTrades.unobserved(listOf(firstBuy()), emptyList(), PAIR, rates, SlotClock.of(emptyList())).single()
 
         assertEquals(MarkerKind.OBSERVED, marker.kind)
         assertEquals(WalletEventIdentity.of(TransactionSignature.of(FIRST_BUY_SIGNATURE), 2), marker.observationId)
@@ -56,20 +57,20 @@ class ChartWalletTradesTest {
     fun `a trade the market tape already holds is not repeated`() {
         val observed = tradeObservation("o", firstBuyAt, TRACKED, sourceEventId = "$FIRST_BUY_SIGNATURE:4")
 
-        assertTrue(ChartWalletTrades.unobserved(listOf(firstBuy()), listOf(observed), PAIR, rates).isEmpty())
+        assertTrue(ChartWalletTrades.unobserved(listOf(firstBuy()), listOf(observed), PAIR, rates, SlotClock.of(emptyList())).isEmpty())
     }
 
     @Test
     fun `trades of another pair or without a block time are left out`() {
         val trades = listOf(firstBuy(pair = OTHER_QUOTE_PAIR), firstBuy(blockTime = null))
 
-        assertTrue(ChartWalletTrades.unobserved(trades, emptyList(), PAIR, rates).isEmpty())
+        assertTrue(ChartWalletTrades.unobserved(trades, emptyList(), PAIR, rates, SlotClock.of(emptyList())).isEmpty())
     }
 
     @Test
     fun `a minute without a rate or a trade that is not a SOL-quoted Pump fun buy has no mcap`() {
-        val noRate = ChartWalletTrades.unobserved(listOf(firstBuy()), emptyList(), PAIR, null).single()
-        val otherRoute = ChartWalletTrades.unobserved(listOf(firstBuy(source = "other-route/v1")), emptyList(), PAIR, rates).single()
+        val noRate = ChartWalletTrades.unobserved(listOf(firstBuy()), emptyList(), PAIR, null, SlotClock.of(emptyList())).single()
+        val otherRoute = ChartWalletTrades.unobserved(listOf(firstBuy(source = "other-route/v1")), emptyList(), PAIR, rates, SlotClock.of(emptyList())).single()
 
         assertNull(noRate.mcap)
         assertNull(otherRoute.mcap)
@@ -80,7 +81,7 @@ class ChartWalletTradesTest {
     fun `markers come in chart order`() {
         val later = firstBuy(blockTime = firstBuyAt.plusSeconds(5), signature = SIGNATURE)
 
-        val markers = ChartWalletTrades.unobserved(listOf(later, firstBuy()), emptyList(), PAIR, rates)
+        val markers = ChartWalletTrades.unobserved(listOf(later, firstBuy()), emptyList(), PAIR, rates, SlotClock.of(emptyList()))
 
         assertEquals(listOf(firstBuyAt, firstBuyAt.plusSeconds(5)), markers.map { it.time })
     }
