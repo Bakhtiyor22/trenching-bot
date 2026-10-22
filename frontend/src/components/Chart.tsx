@@ -83,6 +83,8 @@ export interface ChartProps {
   onEvents?: ChartEvents;
   onReady?: (instance: ECharts) => void;
   onDispose?: () => void;
+  notMerge?: boolean;
+  replaceMerge?: string[];
 }
 
 /**
@@ -96,6 +98,8 @@ export function Chart({
   onEvents,
   onReady,
   onDispose,
+  notMerge = true,
+  replaceMerge,
 }: ChartProps) {
   const dispose = useRef(onDispose);
   useEffect(() => {
@@ -109,12 +113,13 @@ export function Chart({
     ...option,
   };
   return (
-    <Box role="img" aria-label={ariaLabel} data-testid="chart">
+    <Box role="img" aria-label={ariaLabel} data-testid="chart" style={{ height }}>
       <ReactEChartsCore
         echarts={echarts}
         option={themed}
         theme={scheme === 'dark' ? TERMINAL_THEME : undefined}
-        notMerge
+        notMerge={notMerge}
+        replaceMerge={replaceMerge}
         lazyUpdate
         style={{ height, width: '100%' }}
         onEvents={onEvents}

@@ -1,4 +1,5 @@
 import type { ChartResponse } from '../api/types';
+import { plotTime } from './priceChart';
 import {
   addDecimals,
   compactDecimal,
@@ -24,13 +25,13 @@ export function marketValue(value: string | null, view: 'mcap' | 'price'): strin
   if (value == null) return '—';
   if (view === 'price') return `${compactDecimal(trimFractionZeros(value))} SOL`;
   const magnitude = value.replace(/^-/, '');
+  // Every magnitude, dollars included, is rounded to a tenth of its unit; the exact value belongs in a tooltip.
   const unit = [
     ['1000000000', 'b'],
     ['1000000', 'm'],
     ['1000', 'k'],
-  ].find(([threshold]) => compareDecimals(magnitude, threshold ?? '0') >= 0);
+  ].find(([threshold]) => compareDecimals(magnitude, threshold ?? '0') >= 0) ?? ['1', ''];
   const sign = value.startsWith('-') ? '−' : '';
-  if (!unit) return `${sign}$${trimFractionZeros(magnitude)}`;
   const scale = value.split('.')[1]?.length ?? 0;
   const denominator = BigInt(unit[0] ?? '1') * 10n ** BigInt(scale);
   const tenths = (scaled(magnitude, scale) * 10n + denominator / 2n) / denominator;
@@ -73,7 +74,7 @@ export function marketChange(first: string, last: string) {
 function trackedActions(data: ChartResponse) {
   return data.markers.items
     .filter((item) => item.isTrackedWallet)
-    .sort((a, b) => Date.parse(a.time) - Date.parse(b.time) || a.slot - b.slot);
+    .sort((a, b) => plotTime(a) - plotTime(b) || a.slot - b.slot);
 }
 
 /** When the cycle starts: the first buy at [sourceSlot], else the tracked wallet's first buy, else null. */
@@ -82,7 +83,7 @@ export function cycleStart(data: ChartResponse, sourceSlot?: number): number | n
   const first =
     actions.find((item) => item.side === 'BUY' && item.slot === sourceSlot) ??
     actions.find((item) => item.side === 'BUY');
-  return first ? Date.parse(first.time) : null;
+  return first ? plotTime(first) : null;
 }
 
 export function marketRange(
@@ -94,7 +95,8 @@ export function marketRange(
   const actions = trackedActions(data);
   const start = cycleStart(data, sourceSlot) ?? Date.parse(data.range.from);
   if (preset === 'cycle') {
-    const end = Math.max(start, Date.parse(actions.at(-1)?.time ?? data.range.to));
+    const last = actions.at(-1);
+    const end = Math.max(start, last ? plotTime(last) : Date.parse(data.range.to));
     return {
       from: new Date(start - 3 * MINUTE).toISOString(),
       to: new Date(end + 3 * MINUTE).toISOString(),
@@ -119,7 +121,9 @@ export function marketTime(time: string | number): string {
 }
 
 /** Whole seconds from [origin] to [time], signed, e.g. `-30s`, `0s`, `+42s`. */
-export function secondsFrom(time: number, origin: number): string {
-  const seconds = Math.round((time - origin) / 1000);
-  return seconds > 0 ? `+${seconds}s` : `${seconds}s`;
+export function secondsFrom(time: number, origin: number, fractional = false): string {
+  const seconds = fractional
+    ? ((time - origin) / 1000).toFixed(1)
+    : String(Math.round((time - origin) / 1000));
+  return Number(seconds) > 0 ? `+${seconds}s` : `${seconds}s`;
 }

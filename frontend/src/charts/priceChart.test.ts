@@ -1,44 +1,217 @@
 import type { LineSeriesOption } from 'echarts';
 import { describe, expect, it } from 'vitest';
-import { sampleObservations } from '../mocks/fixtures';
+import { sampleObservations, v4Chart } from '../mocks/fixtures';
 import type { ChartResponse } from '../api/types';
-import { chartCandleOption, chartMarketPoints, chartMarkerSeries, marketPointAt, mcapAxisLabel, observationSeries, observationTooltip, priceAxisLabel, secondTicks } from './priceChart';
+import {
+  chartCandleOption,
+  chartExtent,
+  chartMarketPoints,
+  chartMarkerSeries,
+  marketPointAt,
+  mcapAxisLabel,
+  observationSeries,
+  observationTooltip,
+  priceAxisLabel,
+  secondTicks,
+} from './priceChart';
 
 const time = '2026-10-15T00:00:00Z';
 const ohlc = { open: '1.00000000000001', close: '2', low: '1', high: '3' };
 const chart: ChartResponse = {
-  bucketSeconds: 60, range: { from: time, to: '2026-10-15T00:05:00Z' }, trackedWallet: 'wallet',
-  valuationBasis: { available: true, label: '<basis>', supply: '1000000000', supplySource: 'supply', quoteCurrency: 'USDT', rateSource: '<rate>', rateGranularity: 'MINUTE', unavailableReason: null },
+  millisPerSlot: null,
+  coverage: [],
+  ticks: { included: false, total: 0, items: [] },
+  bucketSeconds: 60,
+  range: { from: time, to: '2026-10-15T00:05:00Z' },
+  trackedWallet: 'wallet',
+  valuationBasis: {
+    available: true,
+    label: '<basis>',
+    supply: '1000000000',
+    supplySource: 'supply',
+    quoteCurrency: 'USDT',
+    rateSource: '<rate>',
+    rateGranularity: 'MINUTE',
+    unavailableReason: null,
+  },
   candles: [
-    { bucketStart: time, observationCount: 1, price: ohlc, mcap: ohlc, mcapMissingPoints: 0, mcapUnsupportedPoints: 0 },
-    { bucketStart: '2026-10-15T00:01:00Z', observationCount: 1, price: ohlc, mcap: null, mcapMissingPoints: 1, mcapUnsupportedPoints: 2 },
-    { bucketStart: '2026-10-15T00:04:00Z', observationCount: 1, price: ohlc, mcap: ohlc, mcapMissingPoints: 0, mcapUnsupportedPoints: 0 },
+    {
+      bucketStart: time,
+      observationCount: 1,
+      price: ohlc,
+      mcap: ohlc,
+      mcapMissingPoints: 0,
+      mcapUnsupportedPoints: 0,
+    },
+    {
+      bucketStart: '2026-10-15T00:01:00Z',
+      observationCount: 1,
+      price: ohlc,
+      mcap: null,
+      mcapMissingPoints: 1,
+      mcapUnsupportedPoints: 2,
+    },
+    {
+      bucketStart: '2026-10-15T00:04:00Z',
+      observationCount: 1,
+      price: ohlc,
+      mcap: ohlc,
+      mcapMissingPoints: 0,
+      mcapUnsupportedPoints: 0,
+    },
   ],
-  markers: { available: true, unavailableReason: null, mode: 'ITEMS', total: 1, nextCursor: null, clusters: [], items: [
-    { kind: 'OBSERVED', observationId: 'obs', trader: '<wallet>', isTrackedWallet: true, side: 'BUY', solLamports: '1000000001', tokenRaw: '1234567', price: '1.00000000000001', mcap: '25.00000000000001', slot: 1, time, signature: null, source: '<source>' },
-  ] },
-  paperFills: [{ kind: 'PAPER', phase: 'ENTRY', side: 'BUY', intentId: 'intent', time, slot: 1, price: '2.000000000001', mcap: '25.00000000000001', quantity: '123.000000000001', reason: null }],
+  markers: {
+    available: true,
+    unavailableReason: null,
+    mode: 'ITEMS',
+    total: 1,
+    nextCursor: null,
+    clusters: [],
+    items: [
+      {
+        kind: 'OBSERVED',
+        observationId: 'obs',
+        trader: '<wallet>',
+        isTrackedWallet: true,
+        side: 'BUY',
+        solLamports: '1000000001',
+        tokenRaw: '1234567',
+        price: '1.00000000000001',
+        mcap: '25.00000000000001',
+        slot: 1,
+        time,
+        estimatedTime: time,
+        signature: null,
+        source: '<source>',
+      },
+    ],
+  },
+  paperFills: [
+    {
+      kind: 'PAPER',
+      phase: 'ENTRY',
+      side: 'BUY',
+      intentId: 'intent',
+      time,
+      estimatedTime: time,
+      slot: 1,
+      price: '2.000000000001',
+      mcap: '25.00000000000001',
+      quantity: '123.000000000001',
+      reason: null,
+    },
+  ],
 };
 
 describe('time-axis candle chart', () => {
+  it('plots every tick in execution order at the estimated slot instant', () => {
+    const first = v4Chart.markers.items[0]!;
+    const estimatedTime = '2026-10-15T00:00:00.500Z';
+    const ticks = [3, 1, 2].map((value, index) => ({
+      ...first,
+      estimatedTime,
+      price: String(value),
+      indexInSlot: index,
+      slotOrderProven: true,
+      curvePrice: null,
+      curveMcap: null,
+    }));
+    const response = { ...v4Chart, ticks: { included: true, total: 3, items: ticks } };
+    expect(chartMarketPoints(response, 'price').map((point) => [point.time, point.value])).toEqual([
+      [Date.parse(estimatedTime), 3],
+      [Date.parse(estimatedTime), 1],
+      [Date.parse(estimatedTime), 2],
+    ]);
+    expect(
+      (chartCandleOption(response, 'price').series as Array<Record<string, unknown>>)[0],
+    ).toMatchObject({ type: 'line', step: 'end', showSymbol: true, symbolSize: 4 });
+  });
+
+  it('places a candle close at the end of its bucket', () => {
+    expect(chartMarketPoints(chart, 'price')[0]?.time).toBe(Date.parse(time) + 60_000);
+  });
+
+  it('keeps the final estimated tick inside the fit extent after its whole-second block time', () => {
+    const first = v4Chart.ticks.items[0]!;
+    const last = v4Chart.ticks.items.at(-1)!;
+    const estimatedTime = new Date(Date.parse(last.time) + 716).toISOString();
+    const response = {
+      ...v4Chart,
+      extent: {
+        firstTime: first.time,
+        lastTime: last.time,
+        firstSlot: first.slot,
+        lastSlot: last.slot,
+      },
+      ticks: {
+        ...v4Chart.ticks,
+        items: [...v4Chart.ticks.items.slice(0, -1), { ...last, estimatedTime }],
+      },
+    };
+    const extent = chartExtent(response);
+    expect(extent.to).toBe(Date.parse(estimatedTime));
+    const option = chartCandleOption(response, 'price');
+    const axis = option.xAxis as { min: number; max: number };
+    expect(axis.max).toBeGreaterThan(extent.to);
+    expect(option.dataZoom).toMatchObject([{ startValue: extent.from, endValue: extent.to }]);
+  });
+
+  it('includes candle ends and guarantees a usable extent for one instant', () => {
+    const response = {
+      ...chart,
+      extent: { firstTime: time, lastTime: time, firstSlot: 1, lastSlot: 1 },
+      candles: chart.candles.slice(0, 1),
+    };
+    expect(chartExtent(response).to).toBe(Date.parse(time) + 60_000);
+    const single = chartExtent({ ...response, candles: [] });
+    expect(single.to - single.from).toBe(2000);
+  });
+
+  it('uses subsecond labels and fits the y axis to the visible window', () => {
+    const start = Date.parse(v4Chart.range.from);
+    const config = {
+      extent: { from: start, to: start + 62_000 },
+      window: { from: start, to: start + 500 },
+      fullPage: true,
+    };
+    expect(secondTicks(start, start + 500, start)).toHaveLength(6);
+    const option = chartCandleOption(v4Chart, 'mcap', 'line', start, config);
+    expect(option.xAxis).toMatchObject({ min: start - 1240, max: start + 63_240 });
+    expect(option.dataZoom).toMatchObject([{ startValue: start, endValue: start + 500 }]);
+    expect(option.yAxis).toMatchObject({ min: 18000, max: 22000 });
+  });
   it('defaults to a quiet market line and removes the zoom slider and tooltip', () => {
     const option = chartCandleOption(chart, 'price');
-    expect((option.series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'line', connectNulls: false, step: 'end', lineStyle: { width: 2, color: '#3DDC97' } });
+    expect((option.series as Array<Record<string, unknown>>)[0]).toMatchObject({
+      type: 'line',
+      connectNulls: false,
+      step: 'end',
+      lineStyle: { width: 2, color: '#3DDC97' },
+    });
     expect(option.tooltip).toMatchObject({ show: false });
     expect(option.grid).toMatchObject({ right: 68 });
-    expect(option.yAxis).toMatchObject({ position: 'right', splitNumber: 3, splitLine: { lineStyle: { type: 'dashed' } } });
+    expect(option.yAxis).toMatchObject({
+      position: 'right',
+      splitNumber: 3,
+      splitLine: { lineStyle: { type: 'dashed' } },
+    });
     expect(option.dataZoom).toMatchObject([{ type: 'inside', zoomOnMouseWheel: 'ctrl' }]);
     expect(option.legend).toBeUndefined();
   });
   it('formats compact dollar labels', () => {
-    expect([10000, 1200000, 3400000000, 1.25].map(mcapAxisLabel)).toEqual(['$10k', '$1.2m', '$3.4b', '$1.3']);
+    expect([10000, 1200000, 3400000000, 1.25].map(mcapAxisLabel)).toEqual([
+      '$10k',
+      '$1.2m',
+      '$3.4b',
+      '$1.3',
+    ]);
   });
 
   it('retains exact closes, holds the price across buckets without trades and breaks only at null rates', () => {
     expect(chartMarketPoints(chart, 'mcap').map((p) => [p.time, p.value, p.exact])).toEqual([
-      [Date.parse(time), 2, '2'],
-      [Date.parse('2026-10-15T00:01:00Z'), null, null],
-      [Date.parse('2026-10-15T00:04:00Z'), 2, '2'],
+      [Date.parse('2026-10-15T00:01:00Z'), 2, '2'],
+      [Date.parse('2026-10-15T00:02:00Z'), null, null],
+      [Date.parse('2026-10-15T00:05:00Z'), 2, '2'],
     ]);
     const points = chartMarketPoints({ ...chart, candles: [...chart.candles].reverse() }, 'mcap');
     expect(points).toEqual(chartMarketPoints(chart, 'mcap'));
@@ -46,33 +219,66 @@ describe('time-axis candle chart', () => {
 
   it('reads the value in force at a time from the last point at or before it', () => {
     const points = chartMarketPoints(chart, 'price');
-    expect(marketPointAt(points, Date.parse('2026-10-15T00:03:59Z'))?.time).toBe(Date.parse('2026-10-15T00:01:00Z'));
-    expect(marketPointAt(points, Date.parse('2026-10-15T00:04:00Z'))?.time).toBe(Date.parse('2026-10-15T00:04:00Z'));
-    expect(marketPointAt(points, Date.parse(time) - 1)?.time).toBe(Date.parse(time));
+    expect(marketPointAt(points, Date.parse('2026-10-15T00:03:59Z'))?.time).toBe(
+      Date.parse('2026-10-15T00:02:00Z'),
+    );
+    expect(marketPointAt(points, Date.parse('2026-10-15T00:05:00Z'))?.time).toBe(
+      Date.parse('2026-10-15T00:05:00Z'),
+    );
+    expect(marketPointAt(points, Date.parse(time) - 1)).toBeNull();
     expect(marketPointAt([], 0)).toBeNull();
   });
 
   it('labels the time axis in seconds from the first buy and uses a dashed crosshair', () => {
     const firstBuy = Date.parse('2026-10-15T00:01:07Z');
     const option = chartCandleOption(chart, 'price', 'line', firstBuy);
-    const axis = option.xAxis as { min: number; max: number; axisLabel: { customValues: number[]; formatter: (v: number) => string } };
-    expect(axis.axisLabel.customValues.map(axis.axisLabel.formatter)).toEqual(['-60s', '0s', '+60s', '+120s', '+180s']);
+    const axis = option.xAxis as {
+      min: number;
+      max: number;
+      axisLabel: { customValues: number[]; formatter: (v: number) => string };
+    };
+    expect(axis.axisLabel.customValues.map(axis.axisLabel.formatter)).toEqual([
+      '-60s',
+      '0s',
+      '+60s',
+      '+120s',
+      '+180s',
+    ]);
     expect(option.xAxis).toMatchObject({ axisPointer: { lineStyle: { type: 'dashed' } } });
     const fromStart = chartCandleOption(chart, 'price').xAxis as typeof axis;
-    expect(fromStart.axisLabel.customValues.map(fromStart.axisLabel.formatter)).toEqual(['0s', '+60s', '+120s', '+180s', '+240s', '+300s']);
+    expect(fromStart.axisLabel.customValues.map(fromStart.axisLabel.formatter)).toEqual([
+      '0s',
+      '+60s',
+      '+120s',
+      '+180s',
+      '+240s',
+      '+300s',
+    ]);
   });
 
   it('spaces second ticks at the smallest round step that keeps six labels or fewer', () => {
     const origin = Date.parse(time);
-    expect(secondTicks(origin, origin + 5_000, origin).map((t) => (t - origin) / 1000)).toEqual([0, 1, 2, 3, 4, 5]);
-    expect(secondTicks(origin - 200_000, origin + 380_000, origin).map((t) => (t - origin) / 1000)).toEqual([-120, 0, 120, 240, 360]);
+    expect(secondTicks(origin, origin + 5_000, origin).map((t) => (t - origin) / 1000)).toEqual([
+      0, 1, 2, 3, 4, 5,
+    ]);
+    expect(
+      secondTicks(origin - 200_000, origin + 380_000, origin).map((t) => (t - origin) / 1000),
+    ).toEqual([-120, 0, 120, 240, 360]);
   });
 
   it('uses red for a falling market and supports optional OHLC candles', () => {
-    const falling = { ...chart, candles: chart.candles.map((c, i) => ({ ...c, price: { ...ohlc, close: String(3 - i) } })) };
-    expect((chartCandleOption(falling, 'price').series as Array<Record<string, unknown>>)[0]).toMatchObject({ lineStyle: { color: '#FF6B6B' } });
+    const falling = {
+      ...chart,
+      candles: chart.candles.map((c, i) => ({ ...c, price: { ...ohlc, close: String(3 - i) } })),
+    };
+    expect(
+      (chartCandleOption(falling, 'price').series as Array<Record<string, unknown>>)[0],
+    ).toMatchObject({ lineStyle: { color: '#FF6B6B' } });
     const option = chartCandleOption(chart, 'price', 'candles');
-    expect((option.series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'candlestick', data: expect.arrayContaining([{ value: [Date.parse(time), 1.00000000000001, 2, 1, 3] }]) });
+    expect((option.series as Array<Record<string, unknown>>)[0]).toMatchObject({
+      type: 'candlestick',
+      data: expect.arrayContaining([{ value: [Date.parse(time), 1.00000000000001, 2, 1, 3] }]),
+    });
   });
 
   it('uses sparse points on labelled dashed levels and at least ten percent axis padding', () => {
@@ -80,7 +286,21 @@ describe('time-axis candle chart', () => {
     const option = chartCandleOption(response, 'mcap', 'candles');
     const series = option.series as Array<Record<string, unknown>>;
     expect(series[0]).toMatchObject({ type: 'scatter' });
-    expect(series[1]).toMatchObject({ type: 'line', lineStyle: { type: 'dashed' }, endLabel: { formatter: '$2' }, data: [[Date.parse(time), 2], [Date.parse(chart.range.to), 2]] });
+    expect(series[1]).toMatchObject({
+      type: 'line',
+      lineStyle: { type: 'dashed' },
+      endLabel: { formatter: '$2' },
+      data: [
+        [Date.parse(time) + 60_000, 2],
+        [Date.parse(time) + 120_000, 2],
+      ],
+    });
+    const levels = series.filter((item) => item.name === 'Sparse market level') as Array<{
+      data: number[][];
+    }>;
+    expect(levels.every((level) => (level.data[0]?.[0] ?? 0) >= Date.parse(time) + 60_000)).toBe(
+      true,
+    );
     expect(option.yAxis).toMatchObject({ min: 1.8, max: 2.2 });
     const empty = chartCandleOption({ ...response, candles: [] }, 'mcap');
     expect(empty.yAxis).toMatchObject({ min: 0, max: 1 });
@@ -89,37 +309,100 @@ describe('time-axis candle chart', () => {
   it('steps across buckets without trades and marks only points cut off by missing rates', () => {
     const candle = chart.candles[0];
     if (!candle) throw new Error('Fixture needs one candle');
-    const spaced = { ...chart, candles: Array.from({ length: 3 }, (_, index) => ({ ...candle, bucketStart: new Date(Date.parse(time) + index * 120_000).toISOString() })) };
-    expect((chartCandleOption(spaced, 'mcap').series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'line', step: 'end', showSymbol: false });
-    const unrated = { ...spaced, candles: spaced.candles.map((item, index) => (index === 1 ? item : { ...item, mcap: null })) };
-    const withRate = { ...unrated, candles: [...unrated.candles, { ...candle, bucketStart: '2026-10-15T00:08:00Z' }, { ...candle, bucketStart: '2026-10-15T00:09:00Z' }] };
-    expect((chartCandleOption(withRate, 'mcap').series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'line', showSymbol: true, connectNulls: false });
+    const spaced = {
+      ...chart,
+      candles: Array.from({ length: 3 }, (_, index) => ({
+        ...candle,
+        bucketStart: new Date(Date.parse(time) + index * 120_000).toISOString(),
+      })),
+    };
+    expect(
+      (chartCandleOption(spaced, 'mcap').series as Array<Record<string, unknown>>)[0],
+    ).toMatchObject({ type: 'line', step: 'end', showSymbol: false });
+    const unrated = {
+      ...spaced,
+      candles: spaced.candles.map((item, index) => (index === 1 ? item : { ...item, mcap: null })),
+    };
+    const withRate = {
+      ...unrated,
+      candles: [
+        ...unrated.candles,
+        { ...candle, bucketStart: '2026-10-15T00:08:00Z' },
+        { ...candle, bucketStart: '2026-10-15T00:09:00Z' },
+      ],
+    };
+    expect(
+      (chartCandleOption(withRate, 'mcap').series as Array<Record<string, unknown>>)[0],
+    ).toMatchObject({ type: 'line', showSymbol: true, connectNulls: false });
   });
 
   it('falls back to price when no valuation is available', () => {
-    const option = chartCandleOption({ ...chart, valuationBasis: { ...chart.valuationBasis, available: false } }, 'mcap');
+    const option = chartCandleOption(
+      { ...chart, valuationBasis: { ...chart.valuationBasis, available: false } },
+      'mcap',
+    );
     expect(option.yAxis).toMatchObject({ name: 'Price (SOL)' });
     expect((option.series as Array<Record<string, unknown>>)[0]).toMatchObject({ type: 'line' });
   });
 
   it('leaves tracked and paper markers to the HTML overlay and draws noninteractive grey other traders', () => {
     const tracked = chart.markers.items[0]!;
-    const response = { ...chart, markers: { ...chart.markers, items: [tracked, { ...tracked, observationId: 'buy', isTrackedWallet: false }, { ...tracked, observationId: 'sell', side: 'SELL' as const, isTrackedWallet: false }] } };
-    const series = chartMarkerSeries(response, 'mcap') as Array<{ data: Array<{ value: number[]; itemStyle: { color: string; borderColor: string } }> }>;
+    const response = {
+      ...chart,
+      markers: {
+        ...chart.markers,
+        items: [
+          tracked,
+          { ...tracked, observationId: 'buy', isTrackedWallet: false },
+          { ...tracked, observationId: 'sell', side: 'SELL' as const, isTrackedWallet: false },
+        ],
+      },
+    };
+    const series = chartMarkerSeries(response, 'mcap') as Array<{
+      data: Array<{ value: number[]; itemStyle: { color: string; borderColor: string } }>;
+    }>;
     expect(series).toHaveLength(1);
     expect(series[0]).toMatchObject({ silent: true, symbolSize: 6 });
     expect(series[0]!.data).toHaveLength(2);
     expect(series[0]!.data[0]!.value).toEqual([Date.parse(time), 25.00000000000001]);
-    expect(series[0]!.data[0]!.itemStyle).toMatchObject({ color: '#5C6B78', borderColor: '#5C6B78' });
-    expect(series[0]!.data[1]!.itemStyle).toMatchObject({ color: '#0A0D10', borderColor: '#5C6B78' });
+    expect(series[0]!.data[0]!.itemStyle).toMatchObject({
+      color: '#5C6B78',
+      borderColor: '#5C6B78',
+    });
+    expect(series[0]!.data[1]!.itemStyle).toMatchObject({
+      color: '#0A0D10',
+      borderColor: '#5C6B78',
+    });
   });
 
   it('keeps clusters on a time rail without inventing price coordinates', () => {
-    const cluster = { bucketStart: time, firstTime: time, lastTime: time, firstSlot: 1, lastSlot: 1, count: 20, buyCount: 12, sellCount: 8 };
-    const response = { ...chart, markers: { ...chart.markers, mode: 'CLUSTERED' as const, clusters: [cluster] } };
-    const series = chartMarkerSeries(response, 'mcap') as Array<{ name: string; data: Array<{ value: number[] }> }>;
-    expect(series.find((s) => s.name === 'Captured traders')).toMatchObject({ xAxisIndex: 1, yAxisIndex: 1, data: [{ value: [Date.parse(time), 0.5], cluster }] });
-    expect(chartCandleOption(response, 'mcap').xAxis).toMatchObject([{ type: 'time' }, { type: 'time', gridIndex: 1 }]);
+    const cluster = {
+      bucketStart: time,
+      firstTime: time,
+      lastTime: time,
+      firstSlot: 1,
+      lastSlot: 1,
+      count: 20,
+      buyCount: 12,
+      sellCount: 8,
+    };
+    const response = {
+      ...chart,
+      markers: { ...chart.markers, mode: 'CLUSTERED' as const, clusters: [cluster] },
+    };
+    const series = chartMarkerSeries(response, 'mcap') as Array<{
+      name: string;
+      data: Array<{ value: number[] }>;
+    }>;
+    expect(series.find((s) => s.name === 'Captured traders')).toMatchObject({
+      xAxisIndex: 1,
+      yAxisIndex: 1,
+      data: [{ value: [Date.parse(time), 0.5], cluster }],
+    });
+    expect(chartCandleOption(response, 'mcap').xAxis).toMatchObject([
+      { type: 'time' },
+      { type: 'time', gridIndex: 1 },
+    ]);
   });
 });
 

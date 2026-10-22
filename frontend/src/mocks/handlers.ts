@@ -22,6 +22,7 @@ import {
   datasetObservations,
   edgeDataset,
   expandedRunChart,
+  firstSlotGapChart,
   realRunUsdt,
   REAL_RUN_ID,
   recordedRunRecords,
@@ -141,6 +142,7 @@ function legacyChart(
         intentId: scenario.intentId,
         slot: fill.actualSlot,
         time: entry.observedTime,
+        estimatedTime: entry.observedTime,
         price: fill.executionPrice,
         mcap: mockMcap(entry.price),
         quantity: fill.quantity,
@@ -156,6 +158,7 @@ function legacyChart(
         intentId: scenario.intentId,
         slot: close.slot,
         time: exit.observedTime,
+        estimatedTime: exit.observedTime,
         price: close.executionPrice,
         mcap: mockMcap(exit.price),
         quantity: fill.quantity,
@@ -164,6 +167,27 @@ function legacyChart(
   }
   return {
     ...v3Chart,
+    ticks: {
+      included: true,
+      total: sorted.length,
+      items: sorted.map((item) => ({
+        observationId: item.id,
+        slot: item.slot,
+        indexInSlot: 0,
+        slotOrderProven: false,
+        time: item.observedTime,
+        estimatedTime: item.observedTime,
+        price: item.price,
+        mcap: mockMcap(item.price),
+        curvePrice: null,
+        curveMcap: null,
+        trader: item.trade?.trader ?? null,
+        side: item.trade?.side ?? null,
+        isTrackedWallet: false,
+        solLamports: item.trade?.solLamports ?? null,
+        tokenRaw: item.trade?.tokenRaw ?? null,
+      })),
+    },
     range: {
       from: sorted[0]?.observedTime ?? v3Chart.range.from,
       to: sorted.at(-1)?.observedTime ?? v3Chart.range.to,
@@ -179,6 +203,7 @@ function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
   const to = params.get('to') ?? base.range.to;
   const maxBuckets = Number(params.get('maxBuckets') ?? 300);
   const markerLimit = Number(params.get('markerLimit') ?? 500);
+  const tickLimit = Number(params.get('tickLimit') ?? 0);
   const wallets = params.getAll('wallet');
   if (
     !Number.isFinite(Date.parse(from)) ||
@@ -192,6 +217,9 @@ function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
     maxBuckets < 1 ||
     !Number.isInteger(markerLimit) ||
     markerLimit < 1 ||
+    !Number.isInteger(tickLimit) ||
+    tickLimit < 0 ||
+    tickLimit > 5000 ||
     wallets.length > 20 ||
     wallets.some((wallet) => !isSolanaAddress(wallet))
   ) {
@@ -268,6 +296,8 @@ function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
     return error(400, 'INVALID_REQUEST', 'Invalid chart marker cursor');
   }
   const page = items.slice(offset, offset + Math.min(markerLimit, 2000));
+  const ticks = base.ticks.items.filter((item) => inRange(item.time));
+  const ticksIncluded = !cursor && tickLimit > 0 && ticks.length <= tickLimit;
   const clusterMap = new Map<string, ChartResponse['markers']['clusters'][number]>();
   if (clustered && !cursor) {
     for (const item of selected.filter((marker) => !marker.isTrackedWallet)) {
@@ -309,6 +339,11 @@ function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
     },
     bucketSeconds,
     range: { from, to },
+    ticks: {
+      included: ticksIncluded,
+      total: ticks.length,
+      items: ticksIncluded && mockState() !== 'chart-empty' ? ticks : [],
+    },
     candles: mockState() === 'chart-empty' && maxBuckets !== 1 ? [] : [...candles.values()],
     markers: {
       ...base.markers,
@@ -621,7 +656,11 @@ export function createHandlers(options: MockOptions = {}) {
         (item) => !pair || `${item.pair.base}/${item.pair.quote}` === pair,
       );
       return chartResponse(
-        params.id === REAL_RUN_ID ? expandedRunChart : legacyChart(observations, records),
+        mockState() === 'chart-first-slot-gap'
+          ? firstSlotGapChart
+          : params.id === REAL_RUN_ID
+            ? expandedRunChart
+            : legacyChart(observations, records),
         url,
       );
     }),

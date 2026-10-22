@@ -92,7 +92,12 @@ export const edgeDataset: Dataset = {
   createdAt: '2026-10-01T18:02:11Z',
 };
 
-function observation(slot: number, price: string, quality = 'LAST_TRADE', pair: Pair = PAIR): Observation {
+function observation(
+  slot: number,
+  price: string,
+  quality = 'LAST_TRADE',
+  pair: Pair = PAIR,
+): Observation {
   return {
     id: `observation-${slot}`,
     pair,
@@ -160,7 +165,14 @@ export const configDefaults: ConfigDefaults = {
 const mvpConfig: Config = configDefaults.defaults;
 
 /** A 0.1 SOL entry at the defaults: 125 bps of fees and the 0.001 SOL transaction cost on top. */
-function fill(id: string, dipSlot: number, slot: number, executionPrice: string, quantity: string, priceImpactBps: number): Fill {
+function fill(
+  id: string,
+  dipSlot: number,
+  slot: number,
+  executionPrice: string,
+  quantity: string,
+  priceImpactBps: number,
+): Fill {
   return {
     orderId: `order-${id}`,
     targetSlot: dipSlot,
@@ -179,7 +191,14 @@ function fill(id: string, dipSlot: number, slot: number, executionPrice: string,
   };
 }
 
-const takeProfitFill = fill('sample-tp', 1002, 1003, TAKE_PROFIT_ENTRY_PRICE, TAKE_PROFIT_QUANTITY, 19);
+const takeProfitFill = fill(
+  'sample-tp',
+  1002,
+  1003,
+  TAKE_PROFIT_ENTRY_PRICE,
+  TAKE_PROFIT_QUANTITY,
+  19,
+);
 /** Gross 0.133175124 less 0.00166469 in fees and the transaction cost; P&L = net - cost basis. */
 const takeProfitClose: Close = {
   slot: 1006,
@@ -194,7 +213,14 @@ const takeProfitClose: Close = {
   realizedPnl: SAMPLE_PNL,
   reason: 'TAKE_PROFIT',
 };
-const stopLossFill = fill('sample-sl', 2001, 2002, '0.00000008015764656323810068866023294541', '1247541.616895000000', 20);
+const stopLossFill = fill(
+  'sample-sl',
+  2001,
+  2002,
+  '0.00000008015764656323810068866023294541',
+  '1247541.616895000000',
+  20,
+);
 const stopLossClose: Close = {
   slot: 2005,
   observationId: 'observation-2005',
@@ -237,7 +263,13 @@ export const sampleScenarios: Scenario[] = [
   cycle('sample-tp', 1000, PAIR, {
     targetSlot: 1002,
     watch: 'TRIGGERED',
-    trigger: { observationId: 'observation-1002', slot: 1002, price: '0.000000084', marketCapUsd: '16800.000000000000', rate: '200' },
+    trigger: {
+      observationId: 'observation-1002',
+      slot: 1002,
+      price: '0.000000084',
+      marketCapUsd: '16800.000000000000',
+      rate: '200',
+    },
     status: 'FILLED',
     rejectionReason: null,
     fill: takeProfitFill,
@@ -254,7 +286,13 @@ export const sampleScenarios: Scenario[] = [
   cycle('sample-sl', 2000, STOP_LOSS_PAIR, {
     targetSlot: 2001,
     watch: 'TRIGGERED',
-    trigger: { observationId: 'observation-2001', slot: 2001, price: '0.00000008', marketCapUsd: '16000.000000000000', rate: '200' },
+    trigger: {
+      observationId: 'observation-2001',
+      slot: 2001,
+      price: '0.00000008',
+      marketCapUsd: '16000.000000000000',
+      rate: '200',
+    },
     status: 'FILLED',
     rejectionReason: null,
     fill: stopLossFill,
@@ -304,7 +342,13 @@ export const edgeScenarios: Scenario[] = [
     referencePrice: '0.0000000000145',
     dipPrice: '0.000000000012325',
     watch: 'TRIGGERED',
-    trigger: { observationId: 'observation-200', slot: 200, price: '0.00000000001234', marketCapUsd: '12340.000000000000', rate: '1000000' },
+    trigger: {
+      observationId: 'observation-200',
+      slot: 200,
+      price: '0.00000000001234',
+      marketCapUsd: '12340.000000000000',
+      rate: '1000000',
+    },
     status: 'FILLED',
     rejectionReason: null,
     fill: edgeFill,
@@ -319,16 +363,26 @@ export const edgeScenarios: Scenario[] = [
     },
     exitUnavailableReason: 'HORIZON_REACHED',
   }),
-  cycle('edge-2', 199, { base: STOP_LOSS_MINT, quote: SOL_MINT }, {
-    sourceEventId: 'event-edge-buy-200',
-    watch: 'DIP_BELOW_MIN_MARKET_CAP',
-    rejectionReason: 'DIP_BELOW_MIN_MARKET_CAP',
-  }),
-  cycle('edge-3', 199, { base: NO_DIP_MINT, quote: SOL_MINT }, {
-    sourceEventId: 'event-edge-buy-200',
-    watch: 'MIGRATED_BEFORE_ENTRY',
-    rejectionReason: 'MIGRATED_BEFORE_ENTRY',
-  }),
+  cycle(
+    'edge-2',
+    199,
+    { base: STOP_LOSS_MINT, quote: SOL_MINT },
+    {
+      sourceEventId: 'event-edge-buy-200',
+      watch: 'DIP_BELOW_MIN_MARKET_CAP',
+      rejectionReason: 'DIP_BELOW_MIN_MARKET_CAP',
+    },
+  ),
+  cycle(
+    'edge-3',
+    199,
+    { base: NO_DIP_MINT, quote: SOL_MINT },
+    {
+      sourceEventId: 'event-edge-buy-200',
+      watch: 'MIGRATED_BEFORE_ENTRY',
+      rejectionReason: 'MIGRATED_BEFORE_ENTRY',
+    },
+  ),
 ];
 
 export const edgeRun: RunSummary = {
@@ -347,7 +401,11 @@ export const edgeRun: RunSummary = {
   createdAt: '2026-10-01T18:05:00Z',
 };
 
-export const edgeRunDetail: RunDetail = { run: edgeRun, config: mvpConfig, scenarios: edgeScenarios };
+export const edgeRunDetail: RunDetail = {
+  run: edgeRun,
+  config: mvpConfig,
+  scenarios: edgeScenarios,
+};
 
 function event(
   slot: number,
@@ -463,7 +521,8 @@ export const datasetObservations: Record<string, Observation[]> = {
  * stay unchanged.
  */
 export const REAL_RUN_ID = '0bad5eed1234567890abcdef1234567890abcdef1234567890abcdef12345678';
-export const REAL_BUY_SIGNATURE = '35Vnpu9DSwADxy77FBQV8seGitMXuQRPB575AKXv1Jhh3NQSuZRKtuppUkiyLkYszxxi9HaKcmNN7fywqJ9R3mNA';
+export const REAL_BUY_SIGNATURE =
+  '35Vnpu9DSwADxy77FBQV8seGitMXuQRPB575AKXv1Jhh3NQSuZRKtuppUkiyLkYszxxi9HaKcmNN7fywqJ9R3mNA';
 export const REAL_MINT = '5bYUihkPWGph9BLyG4uUbNV634UTwjf3Ly5JEsnokbDs';
 /** The dip trade, then the entry fill. */
 export const REAL_FILL_SIGNATURES = [
@@ -496,7 +555,12 @@ const realObservations: Observation[] = REAL_TRADES.map((signature, index) => ({
   id: tradeId(signature),
   pair: REAL_PAIR,
   sourceEventId: `${signature}:1:7`,
-  trade: { trader: index % 2 === 0 ? WALLET : WATCHED_WALLET, side: index < 2 ? 'BUY' : 'SELL', solLamports: '1000000000', tokenRaw: '123456789012345' },
+  trade: {
+    trader: index % 2 === 0 ? WALLET : WATCHED_WALLET,
+    side: index < 2 ? 'BUY' : 'SELL',
+    solLamports: '1000000000',
+    tokenRaw: '123456789012345',
+  },
 }));
 
 const sampleTakeProfit = sampleScenarios[0] as Scenario;
@@ -511,7 +575,11 @@ const realScenarios: Scenario[] = [
     selectedObservation: realObservations[1] ?? null,
     position: {
       ...(sampleTakeProfit.position as NonNullable<Scenario['position']>),
-      exitTrigger: { observationId: tradeId(REAL_EXIT_SIGNATURES[0]!), slot: 1005, reason: 'TAKE_PROFIT' },
+      exitTrigger: {
+        observationId: tradeId(REAL_EXIT_SIGNATURES[0]!),
+        slot: 1005,
+        reason: 'TAKE_PROFIT',
+      },
       close: { ...takeProfitClose, observationId: tradeId(REAL_EXIT_SIGNATURES[1]!) },
     },
   },
@@ -552,7 +620,9 @@ export const recordedRunRecords: Record<string, MockRunRecords> = {
 };
 
 /** The real trades' prices at 200 USDT per SOL, at the price scale. */
-const REAL_PRICES_USDT = ['0.0000168', '0.0000172', '0.0000226', '0.000023'].map((price) => price.padEnd(40, '0'));
+const REAL_PRICES_USDT = ['0.0000168', '0.0000172', '0.0000226', '0.000023'].map((price) =>
+  price.padEnd(40, '0'),
+);
 
 /** The real run at a rate of 200 USDT per SOL; every other run is reported as not configured. */
 export const realRunUsdt: RunUsdtView = {
@@ -594,32 +664,192 @@ export const realRunUsdt: RunUsdtView = {
 };
 
 export const V4_DATASET_ID = 'cafef00d1234567890abcdef1234567890abcdef1234567890abcdef12345678';
-export const v4Dataset: Dataset = { ...edgeDataset, id: V4_DATASET_ID, name: 'chart-capture-v4', schemaVersion: 4, observationCount: 6 };
+export const v4Dataset: Dataset = {
+  ...edgeDataset,
+  id: V4_DATASET_ID,
+  name: 'chart-capture-v4',
+  schemaVersion: 4,
+  observationCount: 6,
+};
 
-const CHART_TIMES = [0, 1, 3, 60, 61, 62].map((second) => new Date(Date.parse(MINUTE) + second * 1000).toISOString());
-const CHART_PRICES = ['0.0000001', '0.00000008', '0.00000012', '0.00000011', '0.00000009', '0.00000013'];
+const CHART_TIMES = [0, 1, 3, 60, 61, 62].map((second) =>
+  new Date(Date.parse(MINUTE) + second * 1000).toISOString(),
+);
+const CHART_PRICES = [
+  '0.0000001',
+  '0.00000008',
+  '0.00000012',
+  '0.00000011',
+  '0.00000009',
+  '0.00000013',
+];
 const CHART_MCAPS = ['20000', '16000', '24000', '22000', '18000', '26000'];
 
 /** Static decimal strings remain exact; the deliberate empty seconds exercise real chart gaps. */
 export const v4Chart: ChartResponse = {
+  millisPerSlot: null,
+  coverage: [{ fromSlot: 1000, throughSlot: 1005 }],
+  ticks: {
+    included: true,
+    total: CHART_TIMES.length,
+    items: CHART_TIMES.map((time, index) => ({
+      observationId: `v4-observation-${index}`,
+      slot: 1000 + index,
+      indexInSlot: 0,
+      slotOrderProven: true,
+      time,
+      estimatedTime: time,
+      price: CHART_PRICES[index]!,
+      mcap: CHART_MCAPS[index]!,
+      curvePrice: CHART_PRICES[index]!,
+      curveMcap: CHART_MCAPS[index]!,
+      side: index % 2 === 0 ? 'BUY' : 'SELL',
+      trader: index % 2 === 0 ? WALLET : WATCHED_WALLET,
+      isTrackedWallet: index % 2 === 0,
+      solLamports: '1234567890',
+      tokenRaw: '123456789012345',
+    })),
+  },
   bucketSeconds: 1,
   range: { from: CHART_TIMES[0]!, to: CHART_TIMES.at(-1)! },
   trackedWallet: WALLET,
-  valuationBasis: { label: 'Fully diluted Mcap (USDT)', supply: '1000000000', supplySource: 'pumpfun-standard-supply', quoteCurrency: 'USDT', rateSource: 'recorded:SOLUSDT:1m:open', rateGranularity: '1m', available: true, unavailableReason: null },
-  candles: CHART_TIMES.map((bucketStart, index) => ({ bucketStart, observationCount: 1, price: { open: CHART_PRICES[index]!, high: CHART_PRICES[index]!, low: CHART_PRICES[index]!, close: CHART_PRICES[index]! }, mcap: { open: CHART_MCAPS[index]!, high: CHART_MCAPS[index]!, low: CHART_MCAPS[index]!, close: CHART_MCAPS[index]! }, mcapMissingPoints: 0, mcapUnsupportedPoints: 0 })),
+  valuationBasis: {
+    label: 'Fully diluted Mcap (USDT)',
+    supply: '1000000000',
+    supplySource: 'pumpfun-standard-supply',
+    quoteCurrency: 'USDT',
+    rateSource: 'recorded:SOLUSDT:1m:open',
+    rateGranularity: '1m',
+    available: true,
+    unavailableReason: null,
+  },
+  candles: CHART_TIMES.map((bucketStart, index) => ({
+    bucketStart,
+    observationCount: 1,
+    price: {
+      open: CHART_PRICES[index]!,
+      high: CHART_PRICES[index]!,
+      low: CHART_PRICES[index]!,
+      close: CHART_PRICES[index]!,
+    },
+    mcap: {
+      open: CHART_MCAPS[index]!,
+      high: CHART_MCAPS[index]!,
+      low: CHART_MCAPS[index]!,
+      close: CHART_MCAPS[index]!,
+    },
+    mcapMissingPoints: 0,
+    mcapUnsupportedPoints: 0,
+  })),
   markers: {
-    available: true, unavailableReason: null, mode: 'ITEMS', total: CHART_TIMES.length, nextCursor: null, clusters: [],
-    items: CHART_TIMES.map((time, index) => ({ kind: 'OBSERVED', observationId: `v4-observation-${index}`, trader: index % 2 === 0 ? WALLET : WATCHED_WALLET, isTrackedWallet: index % 2 === 0, side: index % 2 === 0 ? 'BUY' : 'SELL', solLamports: '1234567890', tokenRaw: '123456789012345', price: CHART_PRICES[index]!, mcap: CHART_MCAPS[index]!, slot: 1000 + index, time, signature: index === 0 ? null : SIGNATURE, source: 'pumpfun-bonding-curve-trade/v1' })),
+    available: true,
+    unavailableReason: null,
+    mode: 'ITEMS',
+    total: CHART_TIMES.length,
+    nextCursor: null,
+    clusters: [],
+    items: CHART_TIMES.map((time, index) => ({
+      kind: 'OBSERVED',
+      observationId: `v4-observation-${index}`,
+      trader: index % 2 === 0 ? WALLET : WATCHED_WALLET,
+      isTrackedWallet: index % 2 === 0,
+      side: index % 2 === 0 ? 'BUY' : 'SELL',
+      solLamports: '1234567890',
+      tokenRaw: '123456789012345',
+      price: CHART_PRICES[index]!,
+      mcap: CHART_MCAPS[index]!,
+      slot: 1000 + index,
+      time,
+      estimatedTime: time,
+      signature: index === 0 ? null : SIGNATURE,
+      source: 'pumpfun-bonding-curve-trade/v1',
+    })),
   },
   paperFills: [
-    { kind: 'PAPER', phase: 'ENTRY', side: 'BUY', intentId: 'chart-paper-entry', slot: 1001, time: CHART_TIMES[1]!, price: TAKE_PROFIT_ENTRY_PRICE, mcap: CHART_MCAPS[1]!, quantity: TAKE_PROFIT_QUANTITY, reason: null },
-    { kind: 'PAPER', phase: 'EXIT', side: 'SELL', intentId: 'chart-paper-entry', slot: 1002, time: CHART_TIMES[2]!, price: TAKE_PROFIT_EXIT_PRICE, mcap: CHART_MCAPS[2]!, quantity: TAKE_PROFIT_QUANTITY, reason: 'TAKE_PROFIT' },
+    {
+      kind: 'PAPER',
+      phase: 'ENTRY',
+      side: 'BUY',
+      intentId: 'chart-paper-entry',
+      slot: 1001,
+      time: CHART_TIMES[1]!,
+      estimatedTime: CHART_TIMES[1]!,
+      price: TAKE_PROFIT_ENTRY_PRICE,
+      mcap: CHART_MCAPS[1]!,
+      quantity: TAKE_PROFIT_QUANTITY,
+      reason: null,
+    },
+    {
+      kind: 'PAPER',
+      phase: 'EXIT',
+      side: 'SELL',
+      intentId: 'chart-paper-entry',
+      slot: 1002,
+      time: CHART_TIMES[2]!,
+      estimatedTime: CHART_TIMES[2]!,
+      price: TAKE_PROFIT_EXIT_PRICE,
+      mcap: CHART_MCAPS[2]!,
+      quantity: TAKE_PROFIT_QUANTITY,
+      reason: 'TAKE_PROFIT',
+    },
   ],
 };
 
 export const v3Chart: ChartResponse = {
   ...v4Chart,
-  markers: { available: false, unavailableReason: 'NOT_RECORDED_BEFORE_SCHEMA_V4', mode: 'ITEMS', total: 0, items: [], nextCursor: null, clusters: [] },
+  markers: {
+    available: false,
+    unavailableReason: 'NOT_RECORDED_BEFORE_SCHEMA_V4',
+    mode: 'ITEMS',
+    total: 0,
+    items: [],
+    nextCursor: null,
+    clusters: [],
+  },
+};
+
+/** Sanitized reference values from the handoff's missing first-slot example. */
+export const firstSlotGapChart: ChartResponse = {
+  ...v4Chart,
+  millisPerSlot: 216.2,
+  coverage: [{ fromSlot: 459490744, throughSlot: 459495064 }],
+  range: { from: '2026-10-21T04:10:18Z', to: '2026-10-21T04:10:23Z' },
+  markers: {
+    ...v4Chart.markers,
+    total: 1,
+    items: [
+      {
+        ...v4Chart.markers.items[0]!,
+        observationId: 'reference-first-buy',
+        slot: 459490743,
+        time: '2026-10-21T04:10:18Z',
+        estimatedTime: '2026-10-21T04:10:18.284Z',
+        price: '0.000000088971',
+        mcap: '9429',
+        solLamports: '1955555555',
+        tokenRaw: '21979703232124',
+      },
+    ],
+  },
+  ticks: {
+    included: true,
+    total: 1,
+    items: [
+      {
+        ...v4Chart.ticks.items[0]!,
+        observationId: 'reference-first-tick',
+        slot: 459490744,
+        time: '2026-10-21T04:10:18Z',
+        estimatedTime: '2026-10-21T04:10:18.500Z',
+        price: '0.000000124505',
+        mcap: '13195',
+        curvePrice: '0.000000125',
+        curveMcap: '13247.5',
+      },
+    ],
+  },
+  candles: [],
+  paperFills: [],
 };
 
 /** A six-minute run window for checking range controls and every scenario instant. */
@@ -630,23 +860,49 @@ export const expandedRunChart: ChartResponse = (() => {
   return {
     ...v4Chart,
     range: { from: timeAt(0), to: timeAt(5) },
+    ticks: {
+      ...v4Chart.ticks,
+      items: v4Chart.ticks.items.map((item, index) => ({
+        ...item,
+        time: timeAt(index),
+        estimatedTime: timeAt(index),
+      })),
+    },
     candles: v4Chart.candles.map((candle, index) => ({ ...candle, bucketStart: timeAt(index) })),
     markers: {
       ...v4Chart.markers,
-      items: v4Chart.markers.items.map((item, index) => ({ ...item, time: timeAt(index) })),
+      items: v4Chart.markers.items.map((item, index) => ({
+        ...item,
+        time: timeAt(index),
+        estimatedTime: timeAt(index),
+      })),
     },
     paperFills: v4Chart.paperFills.map((fill) => ({
       ...fill,
       time: fill.phase === 'ENTRY' ? timeAt(2) : timeAt(5),
+      estimatedTime: fill.phase === 'ENTRY' ? timeAt(2) : timeAt(5),
     })),
   };
 })();
 
 export const v4Observations: Observation[] = v4Chart.markers.items.map((item) => ({
-  id: item.observationId, pair: PAIR, slot: item.slot, priceSlot: item.slot, observedTime: item.time,
-  price: item.price, liquidityQuote: null, source: item.source, sourceEventId: item.signature ?? `v4-event-${item.slot}`,
-  commitment: 'CONFIRMED', quality: 'LAST_TRADE',
-  trade: { trader: item.trader, side: item.side, solLamports: item.solLamports, tokenRaw: item.tokenRaw },
+  id: item.observationId,
+  pair: PAIR,
+  slot: item.slot,
+  priceSlot: item.slot,
+  observedTime: item.time,
+  price: item.price,
+  liquidityQuote: null,
+  source: item.source,
+  sourceEventId: item.signature ?? `v4-event-${item.slot}`,
+  commitment: 'CONFIRMED',
+  quality: 'LAST_TRADE',
+  trade: {
+    trader: item.trader,
+    side: item.side,
+    solLamports: item.solLamports,
+    tokenRaw: item.tokenRaw,
+  },
 }));
 
 export const clusteredChart: ChartResponse = {
@@ -655,21 +911,65 @@ export const clusteredChart: ChartResponse = {
     ...v4Chart.markers,
     mode: 'CLUSTERED',
     items: v4Chart.markers.items.filter((item) => item.isTrackedWallet),
-    clusters: v4Chart.markers.items.filter((item) => !item.isTrackedWallet).map((item) => ({ bucketStart: item.time, count: 1, buyCount: item.side === 'BUY' ? 1 : 0, sellCount: item.side === 'SELL' ? 1 : 0, firstSlot: item.slot, lastSlot: item.slot, firstTime: item.time, lastTime: item.time })),
+    clusters: v4Chart.markers.items
+      .filter((item) => !item.isTrackedWallet)
+      .map((item) => ({
+        bucketStart: item.time,
+        count: 1,
+        buyCount: item.side === 'BUY' ? 1 : 0,
+        sellCount: item.side === 'SELL' ? 1 : 0,
+        firstSlot: item.slot,
+        lastSlot: item.slot,
+        firstTime: item.time,
+        lastTime: item.time,
+      })),
   },
 };
 
 export const rateGapChart: ChartResponse = {
   ...v4Chart,
-  candles: v4Chart.candles.map((candle, index) => index === 1 ? { ...candle, mcap: null, mcapMissingPoints: 1 } : index === 2 ? { ...candle, mcap: null, mcapUnsupportedPoints: 1 } : candle),
-  markers: { ...v4Chart.markers, items: v4Chart.markers.items.map((item, index) => index === 1 || index === 2 ? { ...item, mcap: null } : item) },
+  ticks: {
+    ...v4Chart.ticks,
+    items: v4Chart.ticks.items.map((item, index) =>
+      index === 1 || index === 2 ? { ...item, mcap: null, curveMcap: null } : item,
+    ),
+  },
+  candles: v4Chart.candles.map((candle, index) =>
+    index === 1
+      ? { ...candle, mcap: null, mcapMissingPoints: 1 }
+      : index === 2
+        ? { ...candle, mcap: null, mcapUnsupportedPoints: 1 }
+        : candle,
+  ),
+  markers: {
+    ...v4Chart.markers,
+    items: v4Chart.markers.items.map((item, index) =>
+      index === 1 || index === 2 ? { ...item, mcap: null } : item,
+    ),
+  },
 };
 
 export const unavailableChart: ChartResponse = {
   ...v4Chart,
-  valuationBasis: { ...v4Chart.valuationBasis, available: false, unavailableReason: 'RATES_UNAVAILABLE', rateSource: null },
-  candles: v4Chart.candles.map((candle) => ({ ...candle, mcap: null, mcapMissingPoints: candle.observationCount })),
-  markers: { ...v4Chart.markers, items: v4Chart.markers.items.map((item) => ({ ...item, mcap: null })) },
+  ticks: {
+    ...v4Chart.ticks,
+    items: v4Chart.ticks.items.map((item) => ({ ...item, mcap: null, curveMcap: null })),
+  },
+  valuationBasis: {
+    ...v4Chart.valuationBasis,
+    available: false,
+    unavailableReason: 'RATES_UNAVAILABLE',
+    rateSource: null,
+  },
+  candles: v4Chart.candles.map((candle) => ({
+    ...candle,
+    mcap: null,
+    mcapMissingPoints: candle.observationCount,
+  })),
+  markers: {
+    ...v4Chart.markers,
+    items: v4Chart.markers.items.map((item) => ({ ...item, mcap: null })),
+  },
   paperFills: v4Chart.paperFills.map((fill) => ({ ...fill, mcap: null })),
 };
 
@@ -715,7 +1015,12 @@ export function dashboardFixture(now: Date = new Date()): Dashboard {
     realizedPnlByQuoteMint: [{ quoteMint: SOL_MINT, realizedPnl: SAMPLE_TOTAL_PNL }],
     rejectionsByReason: REJECTION_REASONS.map((reason) => ({
       reason,
-      count: reason === 'NO_DIP' || reason === 'DIP_BELOW_MIN_MARKET_CAP' || reason === 'MIGRATED_BEFORE_ENTRY' ? 1 : 0,
+      count:
+        reason === 'NO_DIP' ||
+        reason === 'DIP_BELOW_MIN_MARKET_CAP' ||
+        reason === 'MIGRATED_BEFORE_ENTRY'
+          ? 1
+          : 0,
     })),
     gauges: {
       heapUsedBytes: 182_452_224 + Math.round(Math.random() * 20_000_000),

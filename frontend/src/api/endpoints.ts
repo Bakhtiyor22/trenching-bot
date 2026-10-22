@@ -42,13 +42,36 @@ function chartUrl(path: string, request: ChartRequest): string {
   return `${url}${url.includes('?') ? '&' : '?'}${params.toString()}`;
 }
 
+/** A backend process may still serve the previous contract until its next restart. */
+function chartResponse(response: ChartResponse): ChartResponse {
+  return {
+    ...response,
+    millisPerSlot: response.millisPerSlot ?? null,
+    coverage: response.coverage ?? [],
+    ticks: response.ticks ?? { included: false, total: 0, items: [] },
+    markers: {
+      ...response.markers,
+      items: response.markers.items.map((marker) => ({
+        ...marker,
+        estimatedTime: marker.estimatedTime ?? marker.time,
+      })),
+    },
+    paperFills: response.paperFills.map((fill) => ({
+      ...fill,
+      estimatedTime: fill.estimatedTime ?? fill.time,
+    })),
+  };
+}
+
 export const api = {
   datasets: (page: number, size: number, signal?: AbortSignal) =>
     getJson<Page<Dataset>>(withQuery(`${API_BASE}/datasets`, { page, size }), signal),
   dataset: (id: string, signal?: AbortSignal) =>
     getJson<Dataset>(`${API_BASE}/datasets/${enc(id)}`, signal),
   datasetChart: (id: string, request: ChartRequest, signal?: AbortSignal) =>
-    getJson<ChartResponse>(chartUrl(`${API_BASE}/datasets/${enc(id)}/chart`, request), signal),
+    getJson<ChartResponse>(chartUrl(`${API_BASE}/datasets/${enc(id)}/chart`, request), signal).then(
+      chartResponse,
+    ),
   deleteDataset: (id: string) => deleteRequest(`${API_BASE}/datasets/${enc(id)}`),
   datasetObservations: (id: string, pair: string | null, signal?: AbortSignal) =>
     getJson<Observation[]>(
@@ -70,9 +93,12 @@ export const api = {
   startRun: (body: RunStartRequest) => postJson<RunStart>(`${API_BASE}/runs`, body),
   runs: (page: number, size: number, datasetId: string | null, signal?: AbortSignal) =>
     getJson<Page<RunSummary>>(withQuery(`${API_BASE}/runs`, { page, size, datasetId }), signal),
-  run: (id: string, signal?: AbortSignal) => getJson<RunDetail>(`${API_BASE}/runs/${enc(id)}`, signal),
+  run: (id: string, signal?: AbortSignal) =>
+    getJson<RunDetail>(`${API_BASE}/runs/${enc(id)}`, signal),
   runChart: (id: string, request: ChartRequest, signal?: AbortSignal) =>
-    getJson<ChartResponse>(chartUrl(`${API_BASE}/runs/${enc(id)}/chart`, request), signal),
+    getJson<ChartResponse>(chartUrl(`${API_BASE}/runs/${enc(id)}/chart`, request), signal).then(
+      chartResponse,
+    ),
   runEvents: (id: string, signal?: AbortSignal) =>
     getJson<RunEvent[]>(`${API_BASE}/runs/${enc(id)}/events`, signal),
   runObservations: (id: string, signal?: AbortSignal) =>
@@ -84,12 +110,14 @@ export const api = {
   runReportUrl: (id: string) => `${API_BASE}/runs/${enc(id)}/report`,
   runUsdt: (id: string, signal?: AbortSignal) =>
     getJson<RunUsdtView>(`${API_BASE}/runs/${enc(id)}/usdt`, signal),
-  solUsdtPrice: (signal?: AbortSignal) => getJson<SolUsdtPrice>(`${API_BASE}/market/sol-usdt`, signal),
+  solUsdtPrice: (signal?: AbortSignal) =>
+    getJson<SolUsdtPrice>(`${API_BASE}/market/sol-usdt`, signal),
 
   dashboard: (signal?: AbortSignal) => getJson<Dashboard>(`${API_BASE}/dashboard`, signal),
   actuatorHealth: (signal?: AbortSignal) => getJson<ActuatorHealth>('/actuator/health', signal),
 
-  solanaStatus: (signal?: AbortSignal) => getJson<SolanaStatus>(`${API_BASE}/solana/status`, signal),
+  solanaStatus: (signal?: AbortSignal) =>
+    getJson<SolanaStatus>(`${API_BASE}/solana/status`, signal),
   solanaCheck: () => postJson<SolanaCheck>(`${API_BASE}/solana/check`),
   addressCheck: (address: string) =>
     postJson<AddressCheck>(`${API_BASE}/solana/address-check`, { address }),

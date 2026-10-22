@@ -10,7 +10,14 @@ import {
   TAKE_PROFIT_LEVEL,
 } from '../../mocks/fixtures';
 import type { ChartResponse } from '../../api/types';
-import { chartTimelineOption, LEVEL_COLORS, LEVELS_SERIES, timelineMarkers, timelineOption, usdtValues } from './timelineChart';
+import {
+  chartTimelineOption,
+  LEVEL_COLORS,
+  LEVELS_SERIES,
+  timelineMarkers,
+  timelineOption,
+  usdtValues,
+} from './timelineChart';
 
 describe('timelineMarkers', () => {
   it('marks each first buy, entry fill, exit and the cycle levels for the sample run', () => {
@@ -48,8 +55,15 @@ describe('timelineMarkers', () => {
   });
 
   it('draws no strategy levels in USDT, where a level has no single value', () => {
-    const view = { runId: 'run', rateSource: null, unavailableReason: null, observations: [], scenarios: [],
-      realizedPnlUsdt: null, realizedPnlUnavailableReason: null };
+    const view = {
+      runId: 'run',
+      rateSource: null,
+      unavailableReason: null,
+      observations: [],
+      scenarios: [],
+      realizedPnlUsdt: null,
+      realizedPnlUnavailableReason: null,
+    };
     expect(timelineMarkers(sampleScenarios, usdtValues(view)).levels).toEqual([]);
   });
 });
@@ -57,9 +71,33 @@ describe('timelineMarkers', () => {
 describe('timelineOption', () => {
   it('preserves strategy levels across the time domain only in the SOL price view', () => {
     const response: ChartResponse = {
-      bucketSeconds: 60, range: { from: '2026-10-15T00:00:00Z', to: '2026-10-15T00:05:00Z' }, trackedWallet: null,
-      valuationBasis: { label: 'Recorded supply', available: true, supply: '1000', supplySource: 'recorded', quoteCurrency: 'USDT', rateSource: 'recorded', rateGranularity: 'MINUTE', unavailableReason: null },
-      candles: [], markers: { available: false, unavailableReason: 'NOT_RECORDED_BEFORE_SCHEMA_V4', mode: 'ITEMS', total: 0, items: [], clusters: [], nextCursor: null }, paperFills: [],
+      millisPerSlot: null,
+      coverage: [],
+      ticks: { included: false, total: 0, items: [] },
+      bucketSeconds: 60,
+      range: { from: '2026-10-15T00:00:00Z', to: '2026-10-15T00:05:00Z' },
+      trackedWallet: null,
+      valuationBasis: {
+        label: 'Recorded supply',
+        available: true,
+        supply: '1000',
+        supplySource: 'recorded',
+        quoteCurrency: 'USDT',
+        rateSource: 'recorded',
+        rateGranularity: 'MINUTE',
+        unavailableReason: null,
+      },
+      candles: [],
+      markers: {
+        available: false,
+        unavailableReason: 'NOT_RECORDED_BEFORE_SCHEMA_V4',
+        mode: 'ITEMS',
+        total: 0,
+        items: [],
+        clusters: [],
+        nextCursor: null,
+      },
+      paperFills: [],
     };
     const option = chartTimelineOption(response, 'price', sampleScenarios.slice(0, 1));
     expect(option.grid).toMatchObject({ right: 68 });
@@ -68,14 +106,25 @@ describe('timelineOption', () => {
     const series = option.series as Array<{ name: string; data: Array<[number, number]> }>;
     const axis = option.xAxis as { min: number; max: number };
     expect(series.filter((s) => s.name === LEVELS_SERIES).map((s) => s.data)).toEqual(
-      [0.0000001, 0.000000085, Number(TAKE_PROFIT_LEVEL), Number(STOP_LOSS_LEVEL)].map((price) => [[axis.min, price], [axis.max, price]]),
+      [0.0000001, 0.000000085, Number(TAKE_PROFIT_LEVEL), Number(STOP_LOSS_LEVEL)].map((price) => [
+        [axis.min, price],
+        [axis.max, price],
+      ]),
     );
-    expect((chartTimelineOption(response, 'mcap', sampleScenarios).series as Array<{ name: string }>).some((s) => s.name === LEVELS_SERIES)).toBe(false);
+    expect(
+      (
+        chartTimelineOption(response, 'mcap', sampleScenarios).series as Array<{ name: string }>
+      ).some((s) => s.name === LEVELS_SERIES),
+    ).toBe(false);
   });
   it('draws each level as a line across the whole slot range, labelled at its end', () => {
     const [takeProfit] = sampleScenarios;
     const option = timelineOption(sampleObservations.slice(0, 5), [takeProfit!]);
-    const series = option.series as Array<{ name: string; data: Array<[number, number]>; endLabel?: { formatter: string } }>;
+    const series = option.series as Array<{
+      name: string;
+      data: Array<[number, number]>;
+      endLabel?: { formatter: string };
+    }>;
     const levels = series.filter((s) => s.name === LEVELS_SERIES);
     const axis = option.xAxis as { min: number; max: number };
     expect(levels.map((l) => l.data)).toEqual(

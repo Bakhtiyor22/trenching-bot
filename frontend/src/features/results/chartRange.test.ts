@@ -20,4 +20,15 @@ describe('chart navigation', () => {
   it('pads the selected trade by ten seconds before and thirty after its exit', () => {
     expect(tradeRange(120_000, 150_000, extent)).toEqual({ from: 110_000, to: 180_000 });
   });
+  it('keeps a two-second minimum and zooms around the cursor', () => {
+    expect(zoomRange({ from: 120_000, to: 120_500 }, 0.5, extent)).toEqual({
+      from: 119_250,
+      to: 121_250,
+    });
+    expect(zoomRange(extent, 0.5, extent, 120_000)).toEqual({ from: 110_000, to: 160_000 });
+    expect(clampRange({ from: 100_000, to: 100_100 }, { from: 100_000, to: 101_000 })).toEqual({
+      from: 100_000,
+      to: 101_000,
+    });
+  });
 });

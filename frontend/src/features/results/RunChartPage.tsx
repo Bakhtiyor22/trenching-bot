@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   Alert,
-  Badge,
   Box,
   Button,
   Group,
@@ -11,15 +10,16 @@ import {
   TextInput,
   UnstyledButton,
 } from '@mantine/core';
-import { useDebouncedValue } from '@mantine/hooks';
 import { useQuery } from '@tanstack/react-query';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { api, pairKey } from '../../api/endpoints';
 import { useConfigDefaults, useRun } from '../../api/queries';
 import { setupApi } from '../../api/setup';
 import type { ChartResponse, Scenario } from '../../api/types';
-import { marketValue, shortPrice } from '../../charts/marketSummary';
+import { marketRange, marketValue, shortPrice } from '../../charts/marketSummary';
+import { chartExtent } from '../../charts/priceChart';
+import { chartSearchParams, useChartView } from '../../charts/chartViewState';
 import { exactUnits } from '../../charts/tradeWallets';
 import { Section } from '../../components/Panels';
 import { SourceLinks } from '../../components/SourceLinks';
@@ -29,10 +29,10 @@ import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
 import { mintLabel } from '../../lib/format';
 import { formatPercent, levelPercent } from '../../lib/percent';
 import { paths } from '../../paths';
-import { changedSettings, NOMINAL_SLOT_MS, SETTING_LABELS } from '../runs/configLabels';
+import { changedSettings, SETTING_LABELS } from '../runs/configLabels';
 import { formValuesFrom } from '../runs/runForm';
 import { scenarioOutcome } from '../runs/scenarioOutcome';
-import { clampRange, panRange, tradeRange, zoomRange, type TimeRange } from './chartRange';
+import { clampRange, type TimeRange } from './chartRange';
 
 function localInput(ms: number): string {
   const date = new Date(ms);
@@ -184,81 +184,25 @@ export function RunChartPage() {
   const key = pair ? pairKey(pair) : '';
   const full = useQuery({
     queryKey: ['run', id, 'chart-extent', key],
-    queryFn: ({ signal }) => api.runChart(id, { pair: key, maxBuckets: 1, markerLimit: 1 }, signal),
+    queryFn: ({ signal }) =>
+      api.runChart(id, { pair: key, maxBuckets: 2000, tickLimit: 5000 }, signal),
     enabled: !!key,
     staleTime: Infinity,
   });
   const scenario = run.data?.scenarios.find((item) => pairKey(item.pair) === key);
-  const extentValue = full.data?.extent;
-  const extent: TimeRange | null = full.data
-    ? {
-        from: Date.parse(extentValue?.firstTime ?? full.data.range.from),
-        to: Date.parse(extentValue?.lastTime ?? full.data.range.to),
-      }
-    : null;
-  const firstBuy = Date.parse(scenario?.timeline?.firstBuyAt ?? full.data?.range.from ?? '');
-  const end =
-    Date.parse(scenario?.timeline?.exitAt ?? '') ||
-    (extent && scenario
-      ? Math.min(
-          extent.to,
-          firstBuy +
-            Math.max(0, scenario.horizonEndSlot - scenario.sourceSlot) *
-              (run.data?.millisPerSlot ?? NOMINAL_SLOT_MS),
-        )
-      : (extent?.to ?? 0));
-  const initialRange =
-    extent && Number.isFinite(firstBuy) ? tradeRange(firstBuy, end, extent) : extent;
-  const urlFrom = Date.parse(params.get('from') ?? '');
-  const urlTo = Date.parse(params.get('to') ?? '');
-  const range =
-    extent && Number.isFinite(urlFrom) && Number.isFinite(urlTo) && urlFrom < urlTo
-      ? clampRange({ from: urlFrom, to: urlTo }, extent)
-      : initialRange;
-  const [debouncedFrom] = useDebouncedValue(range?.from, 300);
-  const [debouncedTo] = useDebouncedValue(range?.to, 300);
-  const debouncedRange =
-    debouncedFrom !== undefined && debouncedTo !== undefined
-      ? { from: debouncedFrom, to: debouncedTo }
-      : null;
-  const view = params.get('view') === 'price' ? 'price' : 'mcap';
-  const host = useRef<HTMLDivElement>(null);
-  const [fullscreen, setFullscreen] = useState(false);
+  const extent: TimeRange | null = full.data ? chartExtent(full.data) : null;
+  const cycleRange = full.data ? marketRange(full.data, 'cycle', scenario?.sourceSlot) : null;
+  const initialRange = cycleRange
+    ? { from: Date.parse(cycleRange.from), to: Date.parse(cycleRange.to) }
+    : extent;
+  const chartView = useChartView({ kind: 'run', extent, resetRange: initialRange });
+  const range = chartView.window;
   const [latestSnapshot, setLatestSnapshot] = useState<{ pair: string; data: ChartResponse }>();
   const latestChart = latestSnapshot?.pair === key ? latestSnapshot.data : undefined;
   const onChartData = useCallback(
     (data: ChartResponse, chartPair: string) => setLatestSnapshot({ pair: chartPair, data }),
     [],
   );
-  useEffect(() => {
-    const changed = () => {
-      if (!document.fullscreenElement) setFullscreen(false);
-    };
-    document.addEventListener('fullscreenchange', changed);
-    return () => document.removeEventListener('fullscreenchange', changed);
-  }, []);
-  function writeRange(next: TimeRange) {
-    setParams(
-      (current) => {
-        const nextParams = new URLSearchParams(current);
-        nextParams.set('from', new Date(next.from).toISOString());
-        nextParams.set('to', new Date(next.to).toISOString());
-        if (key) nextParams.set('pair', key);
-        return nextParams;
-      },
-      { replace: true },
-    );
-  }
-  function move(kind: 'in' | 'out' | 'left' | 'right' | 'reset') {
-    if (!range || !extent || !initialRange) return;
-    writeRange(
-      kind === 'reset'
-        ? initialRange
-        : kind === 'left' || kind === 'right'
-          ? panRange(range, kind === 'left' ? -0.25 : 0.25, extent)
-          : zoomRange(range, kind === 'in' ? 0.5 : 2, extent),
-    );
-  }
   function chooseToken(index: number) {
     const nextPair = pairs[index];
     if (!nextPair) return;
@@ -271,19 +215,6 @@ export function RunChartPage() {
       next.delete('fill');
       return next;
     });
-  }
-  async function toggleFullscreen() {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-      setFullscreen(false);
-    } else if (host.current?.requestFullscreen) {
-      try {
-        await host.current.requestFullscreen();
-        setFullscreen(true);
-      } catch {
-        setFullscreen((value) => !value);
-      }
-    } else setFullscreen((value) => !value);
   }
   if (run.isPending) return <LoadingState label="Loading run chart…" />;
   if (run.isError) return <ErrorState error={run.error} onRetry={() => void run.refetch()} />;
@@ -304,22 +235,6 @@ export function RunChartPage() {
   const outcome = scenario ? scenarioOutcome(scenario) : null;
   const tokenIndex = pairs.findIndex((item) => pairKey(item) === key);
   const events = scenarioEvents(scenario, latestChart, full.data);
-  const presets =
-    extent && initialRange
-      ? [
-          { label: 'This trade', range: initialRange },
-          ...[1, 5, 15].map((minutes) => ({
-            label: `${minutes}m`,
-            range: clampRange({ from: firstBuy, to: firstBuy + minutes * 60_000 }, extent),
-          })),
-          { label: 'Whole window', range: extent },
-        ]
-      : [];
-  const active =
-    range?.from === extent?.from && range?.to === extent?.to
-      ? 'Whole window'
-      : presets.find((item) => item.range.from === range?.from && item.range.to === range?.to)
-          ?.label;
   return (
     <Stack gap="lg">
       <SourceLinks source={run.data.source} runId={id} chart />
@@ -385,7 +300,11 @@ export function RunChartPage() {
             </ActionIcon>
           </Group>
           <Group gap="xs">
-            <Button component={Link} to={paths.run(id)} variant="default">
+            <Button
+              component={Link}
+              to={`${paths.run(id)}${chartSearchParams(params, key)}`}
+              variant="default"
+            >
               ← Back to run
             </Button>
             {run.data.source?.captureId && (
@@ -411,132 +330,36 @@ export function RunChartPage() {
         extent &&
         initialRange && (
           <>
-            <Stack
-              ref={host}
-              gap="sm"
-              p={fullscreen ? 'md' : 0}
-              style={
-                fullscreen
-                  ? {
-                      position: 'fixed',
-                      inset: 0,
-                      zIndex: 300,
-                      background: 'var(--mantine-color-body)',
-                      overflow: 'auto',
-                    }
-                  : { background: 'var(--mantine-color-body)' }
-              }
-              onKeyDown={(event) => {
-                if (event.target instanceof HTMLInputElement) return;
-                const mapping: Record<string, 'in' | 'out' | 'left' | 'right' | 'reset'> = {
-                  '+': 'in',
-                  '=': 'in',
-                  '-': 'out',
-                  ArrowLeft: 'left',
-                  ArrowRight: 'right',
-                  '0': 'reset',
-                };
-                const action = mapping[event.key];
-                if (action) {
-                  event.preventDefault();
-                  move(action);
-                }
-                if (event.key === 'Escape') setFullscreen(false);
-              }}
-              tabIndex={0}
-              aria-label="Interactive results chart"
-            >
-              <Group gap="xs" align="flex-end" wrap="wrap">
-                <Group gap={4} aria-label="Chart range presets">
-                  {presets.map((item) => (
-                    <Button
-                      key={item.label}
-                      variant={active === item.label ? 'light' : 'default'}
-                      size="xs"
-                      aria-pressed={active === item.label}
-                      onClick={() => writeRange(item.range)}
-                    >
-                      {item.label}
-                    </Button>
-                  ))}
-                  {!active && <Badge variant="outline">Custom</Badge>}
-                </Group>
-                <RangeInputs
-                  key={`${range.from}/${range.to}`}
-                  range={range}
-                  extent={extent}
-                  onChange={writeRange}
-                />
-                <Group gap={4}>
-                  <ActionIcon variant="default" aria-label="Zoom in" onClick={() => move('in')}>
-                    +
-                  </ActionIcon>
-                  <ActionIcon variant="default" aria-label="Zoom out" onClick={() => move('out')}>
-                    −
-                  </ActionIcon>
-                  <ActionIcon variant="default" aria-label="Pan left" onClick={() => move('left')}>
-                    ←
-                  </ActionIcon>
-                  <ActionIcon
-                    variant="default"
-                    aria-label="Pan right"
-                    onClick={() => move('right')}
-                  >
-                    →
-                  </ActionIcon>
-                  <Button variant="light" size="xs" onClick={() => move('reset')}>
-                    Reset view
-                  </Button>
-                </Group>
-              </Group>
+            <Stack gap="sm">
+              <RangeInputs
+                key={`${range.from}/${range.to}`}
+                range={range}
+                extent={extent}
+                onChange={chartView.setWindow}
+              />
               <TradeChart
                 kind="run"
                 id={id}
                 pair={key}
                 trackedWallet={full.data?.trackedWallet ?? null}
+                initialChart={full.data}
                 scenarios={run.data.scenarios}
                 cycle={scenario}
-                range={
-                  debouncedRange
-                    ? {
-                        from: new Date(debouncedRange.from).toISOString(),
-                        to: new Date(debouncedRange.to).toISOString(),
-                      }
-                    : undefined
-                }
-                view={view}
                 onData={onChartData}
-                fullscreen={fullscreen}
-                onToggleFullscreen={() => void toggleFullscreen()}
-                onViewChange={(value) =>
-                  setParams(
-                    (current) => {
-                      const next = new URLSearchParams(current);
-                      next.set('view', value);
-                      return next;
-                    },
-                    { replace: true },
-                  )
-                }
-                onRangeChange={(next) =>
-                  writeRange(
-                    clampRange({ from: Date.parse(next.from), to: Date.parse(next.to) }, extent),
-                  )
-                }
                 emptyActions={
                   <Group>
-                    <Button variant="default" onClick={() => move('reset')}>
-                      Reset view
+                    <Button variant="default" onClick={chartView.reset}>
+                      Reset
                     </Button>
-                    <Button onClick={() => move('out')}>Zoom out</Button>
+                    <Button onClick={() => chartView.zoom(2)}>Zoom out</Button>
                   </Group>
                 }
                 height="max(480px, 62vh)"
                 expanded
               />
               <Text size="xs" c="dimmed">
-                Wheel to zoom · drag to pan · use the navigator below · focus the chart and press +
-                / −, ← / →, or 0 to reset.
+                Wheel to zoom · drag to pan · double-click to fit · focus the chart and press + / −,
+                ← / →, 0 to reset, or F to fit.
               </Text>
             </Stack>
             <Section title="What happened · click to jump">
@@ -547,7 +370,7 @@ export function RunChartPage() {
                       w="100%"
                       py="xs"
                       onClick={() =>
-                        writeRange(
+                        chartView.setWindow(
                           clampRange(
                             {
                               from: Date.parse(event.at) - 15_000,

@@ -24,6 +24,40 @@ export function markerLabel(action: MarketAction): string {
     : `Bot paper ${action.phase.toLowerCase()}, ${trimDecimal(action.quantity)} tokens at ${actionTime(action.time)}`;
 }
 
+/** Pixels between a marker's pin and the card it opens. */
+export const ACTION_CARD_GAP = 26;
+
+/** Pixels an action card keeps from the plot's left and right edges. */
+const ACTION_CARD_MARGIN = 8;
+
+export interface CardSize {
+  width: number;
+  height: number;
+}
+
+/**
+ * Where an action card goes inside a plot: below a marker in the plot's upper half and above one in its lower half, centred
+ * on it. A card too tall for either goes beside the marker, on the side with room, so it never hides the marker it describes.
+ * It never starts above the plot's top, where the page header would cover it. An unmeasured plot (height 0) puts it below.
+ */
+export function actionCardPosition(anchor: MarkerAnchor, card: CardSize, plot: CardSize): MarkerAnchor {
+  const centred = Math.max(ACTION_CARD_MARGIN, Math.min(anchor.x - card.width / 2, plot.width - card.width - ACTION_CARD_MARGIN));
+  const below = anchor.y + ACTION_CARD_GAP;
+  if (plot.height <= 0) return { x: centred, y: below };
+  const above = anchor.y - ACTION_CARD_GAP - card.height;
+  const preferred = anchor.y < plot.height / 2 ? below : above;
+  const fits = (top: number) => top >= 0 && top + card.height <= plot.height;
+  if (fits(preferred)) return { x: centred, y: preferred };
+  const other = preferred === below ? above : below;
+  if (fits(other)) return { x: centred, y: other };
+  const top = Math.max(0, Math.min(anchor.y - card.height / 2, plot.height - card.height));
+  const right = anchor.x + ACTION_CARD_GAP;
+  const left = anchor.x - ACTION_CARD_GAP - card.width;
+  if (right + card.width <= plot.width - ACTION_CARD_MARGIN) return { x: right, y: top };
+  if (left >= ACTION_CARD_MARGIN) return { x: left, y: top };
+  return { x: centred, y: Math.max(0, Math.min(preferred, plot.height - card.height)) };
+}
+
 /** Connected Decu pins form one stack at the current pixel scale. Paper fills stay individual. */
 export function groupMarkerPositions(positions: MarkerPosition[]): MarkerGroup[] {
   const remaining = [...positions].sort((a, b) => Date.parse(a.action.time) - Date.parse(b.action.time) || a.action.slot - b.action.slot);

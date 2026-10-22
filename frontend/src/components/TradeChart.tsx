@@ -6,6 +6,7 @@ import {
   Checkbox,
   Divider,
   Group,
+  Modal,
   Popover,
   ScrollArea,
   SegmentedControl,
@@ -16,9 +17,13 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
+import { useDebouncedValue } from '@mantine/hooks';
 import type { ECharts } from 'echarts';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
+import { useChartView, type ChartLayer } from '../charts/chartViewState';
+import { chartContainsPoint } from '../charts/chartGeometry';
+import { useChartDrawings, type DrawingTool } from '../charts/chartDrawings';
 import { api } from '../api/endpoints';
 import { useDatasetChart, useRunChart } from '../api/queries';
 import type { ChartRequest, ChartResponse, Scenario } from '../api/types';
@@ -39,13 +44,21 @@ import {
   type MarketRangePreset,
   type MarketTimeRange,
 } from '../charts/marketSummary';
-import { chartCandleOption, chartMarketPoints, marketPointAt } from '../charts/priceChart';
+import {
+  chartCandleOption,
+  chartExtent,
+  chartMarketPoints,
+  marketPointAt,
+  plotTime,
+} from '../charts/priceChart';
 import { readWatchlist, WATCHLIST_KEY, WATCHLIST_LIMIT } from '../charts/tradeWallets';
 import { chartTimelineOption } from '../features/runs/timelineChart';
+import { clampRange } from '../features/results/chartRange';
 import { isSolanaAddress } from '../lib/base58';
 import { mintLabel, shortId } from '../lib/format';
 import { FONT_MONO, terminal } from '../theme';
 import { Chart } from './Chart';
+import { ChartDrawingLayer } from './ChartDrawingLayer';
 import { CopyValue } from './DisplayValues';
 import { MarketActionCard } from './MarketActionCard';
 import { MarketMarkerOverlay } from './MarketMarkerOverlay';
@@ -57,6 +70,7 @@ interface TradeChartProps {
   id: string;
   pair: string;
   trackedWallet?: string | null;
+  initialChart?: ChartResponse;
   scenarios?: Scenario[];
   cycle?: Scenario | null;
   onOpenAction?: (action: MarketAction) => void;
@@ -104,7 +118,7 @@ export function TradeChart(props: TradeChartProps) {
     queryFn: ({ signal }) =>
       (props.kind === 'run' ? api.runChart : api.datasetChart)(
         props.id,
-        { pair: props.pair, maxBuckets: 1, markerLimit: 1 },
+        { pair: props.pair, maxBuckets: MAX_BUCKETS, tickLimit: 5000, markerLimit: 1 },
         signal,
       ),
     enabled: props.trackedWallet === undefined,
@@ -150,6 +164,10 @@ function filterRange(data: ChartResponse, range: MarketTimeRange | null): ChartR
   return {
     ...data,
     range,
+    ticks: {
+      ...data.ticks,
+      items: data.ticks.items.filter((item) => timeInRange(item.estimatedTime, range)),
+    },
     candles: data.candles.filter(
       (candle) =>
         Date.parse(candle.bucketStart) + data.bucketSeconds * 1000 > Date.parse(range.from) &&
@@ -157,7 +175,7 @@ function filterRange(data: ChartResponse, range: MarketTimeRange | null): ChartR
     ),
     markers: {
       ...data.markers,
-      items: data.markers.items.filter((item) => timeInRange(item.time, range)),
+      items: data.markers.items.filter((item) => timeInRange(item.estimatedTime, range)),
       clusters: data.markers.clusters.filter(
         (item) =>
           timeInRange(item.firstTime, range) ||
@@ -166,7 +184,7 @@ function filterRange(data: ChartResponse, range: MarketTimeRange | null): ChartR
             Date.parse(item.lastTime) > Date.parse(range.to)),
       ),
     },
-    paperFills: data.paperFills.filter((item) => timeInRange(item.time, range)),
+    paperFills: data.paperFills.filter((item) => timeInRange(item.estimatedTime, range)),
   };
 }
 
@@ -177,6 +195,7 @@ function TradeChartView({
   scenarios = [],
   cycle,
   trackedWallet,
+  initialChart,
   onOpenAction,
   range: controlledRange,
   view: controlledView,
@@ -186,22 +205,29 @@ function TradeChartView({
   expanded = false,
   onData,
   emptyActions,
-  onToggleFullscreen,
-  fullscreen = false,
 }: TradeChartProps & { trackedWallet: string | null }) {
   const [params, setParams] = useSearchParams();
   const [watchlist, setWatchlist] = useState(readWatchlist);
   const [wallet, setWallet] = useState('');
   const [inputError, setInputError] = useState<string | null>(null);
   const [storageError, setStorageError] = useState(false);
-  const [allTraders, setAllTraders] = useState(false);
-  const [paperLayer, setPaperLayer] = useState(kind === 'run');
-  const [decuLayer, setDecuLayer] = useState(true);
-  const [levelsLayer, setLevelsLayer] = useState(true);
-  const [metric, setMetric] = useState<'mcap' | 'price'>('mcap');
-  const [style, setStyle] = useState<'line' | 'candles'>('line');
   const [preset, setPreset] = useState<MarketRangePreset>('cycle');
-  const [zoomRange, setZoomRange] = useState<MarketTimeRange | null>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [tool, setTool] = useState<DrawingTool>('pointer');
+  const [clearOpen, setClearOpen] = useState(false);
+  const expandButton = useRef<HTMLButtonElement>(null);
+  const drawingState = useChartDrawings(kind, id, pair);
+  const layers = params.get('layers')?.split(',') ?? [
+    'decu',
+    'levels',
+    'watchlist',
+    ...(kind === 'run' ? ['paper'] : []),
+  ];
+  const allTraders = layers.includes('traders');
+  const paperLayer = layers.includes('paper');
+  const decuLayer = layers.includes('decu');
+  const levelsLayer = layers.includes('levels');
+  const watchlistLayer = layers.includes('watchlist');
   const [layersOpen, setLayersOpen] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
   const [stack, setStack] = useState<{ actions: MarketAction[]; anchor: MarkerAnchor } | null>(
@@ -212,52 +238,103 @@ function TradeChartView({
   const [fallbackAnchor, setFallbackAnchor] = useState<MarkerAnchor>({ x: 180, y: 240 });
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const chartHost = useRef<HTMLDivElement>(null);
-  const zoomTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [width, setWidth] = useState(640);
-  const wallets = [...new Set([...(trackedWallet ? [trackedWallet] : []), ...watchlist])];
+  const wallets = [
+    ...new Set([...(trackedWallet ? [trackedWallet] : []), ...(watchlistLayer ? watchlist : [])]),
+  ];
   const walletFilter = allTraders || wallets.length === 0 ? {} : { wallet: wallets };
-  const full = useChartData(kind, id, { pair, ...walletFilter, maxBuckets: MAX_BUCKETS });
-  const fullData = full.data;
-  const allActions: MarketAction[] = [
-    ...(fullData?.markers.items.filter((item) => item.isTrackedWallet) ?? []),
-    ...(kind === 'run' ? (fullData?.paperFills ?? []) : []),
-  ].sort((a, b) => Date.parse(a.time) - Date.parse(b.time) || a.slot - b.slot);
-  const selectedKey = params.get('action') ?? params.get('fill');
-  const selected = allActions.find((action) => actionKey(action) === selectedKey) ?? null;
-  const configuredRange = fullData
-    ? (controlledRange ?? zoomRange ?? marketRange(fullData, preset, cycle?.sourceSlot))
+  const full = useChartData(
+    kind,
+    id,
+    { pair, ...walletFilter, maxBuckets: MAX_BUCKETS, tickLimit: 5000 },
+    initialChart === undefined || allTraders || (watchlistLayer && watchlist.length > 0),
+  );
+  const fullData = full.data ?? initialChart;
+  const extent = fullData ? chartExtent(fullData) : null;
+  const cycleRange = fullData ? marketRange(fullData, 'cycle', cycle?.sourceSlot) : null;
+  const chartView = useChartView({
+    kind,
+    extent,
+    resetRange: cycleRange
+      ? { from: Date.parse(cycleRange.from), to: Date.parse(cycleRange.to) }
+      : extent,
+  });
+  const { metric, setMetric, style, setStyle } = chartView;
+  const window = controlledRange
+    ? { from: Date.parse(controlledRange.from), to: Date.parse(controlledRange.to) }
+    : chartView.window;
+  const range = window
+    ? { from: new Date(window.from).toISOString(), to: new Date(window.to).toISOString() }
     : null;
-  const widenForSelection = selected !== null && !timeInRange(selected.time, configuredRange);
-  const range = !controlledRange && widenForSelection ? null : configuredRange;
-  const activePreset = widenForSelection ? 'all' : zoomRange ? null : preset;
+  const [fetchFrom] = useDebouncedValue(range?.from, 250);
+  const [fetchTo] = useDebouncedValue(range?.to, 250);
+  const needsWindowData = fullData !== undefined && !fullData.ticks.included && range !== null;
   const ranged = useChartData(
     kind,
     id,
-    { pair, ...walletFilter, maxBuckets: MAX_BUCKETS, ...range },
-    fullData !== undefined,
+    {
+      pair,
+      ...walletFilter,
+      maxBuckets: MAX_BUCKETS,
+      tickLimit: 5000,
+      ...(needsWindowData ? { from: fetchFrom, to: fetchTo } : {}),
+    },
+    needsWindowData && fetchFrom !== undefined && fetchTo !== undefined,
   );
-  const response = ranged.data ?? fullData;
+  const response = needsWindowData ? (ranged.data ?? fullData) : fullData;
+  const allActions: MarketAction[] = [
+    ...(fullData?.markers.items.filter((item) => item.isTrackedWallet) ?? []),
+    ...(kind === 'run' ? (fullData?.paperFills ?? []) : []),
+  ].sort((a, b) => plotTime(a) - plotTime(b) || a.slot - b.slot);
+  const selectedKey = params.get('action') ?? params.get('fill');
+  const selected = allActions.find((action) => actionKey(action) === selectedKey) ?? null;
+  const matchingPreset = (candidate: MarketRangePreset) => {
+    if (!fullData || !extent || !window) return false;
+    const candidateRange = marketRange(fullData, candidate, cycle?.sourceSlot);
+    const expected = candidateRange
+      ? clampRange(
+          { from: Date.parse(candidateRange.from), to: Date.parse(candidateRange.to) },
+          extent,
+        )
+      : extent;
+    return expected.from === window.from && expected.to === window.to;
+  };
+  // A preset clamped to a short recording can equal the whole of it; that window is All unless the preset was chosen.
+  const activePreset = matchingPreset(preset)
+    ? preset
+    : matchingPreset('all')
+      ? 'all'
+      : (RANGE_OPTIONS.find((item) => matchingPreset(item.value))?.value ?? null);
   useEffect(() => {
     if (response) onData?.(response, pair);
   }, [response, onData, pair]);
-  const data = response ? filterRange(response, range) : null;
+  const data = response ?? null;
+  const inWindow = data ? filterRange(data, range) : null;
   const view = data?.valuationBasis.available ? (controlledView ?? metric) : 'price';
   const points = data ? chartMarketPoints(data, view) : [];
-  const validPoints = points.filter((point) => point.exact !== null);
+  const validPoints = points.filter(
+    (point) =>
+      point.exact !== null && (!window || (point.time >= window.from && point.time <= window.to)),
+  );
   // The line steps, so the value under the cursor is the last trade's at or before it.
   const held = hoverTime === null ? null : marketPointAt(points, hoverTime);
-  const hovered = held && hoverTime !== null ? { ...held, time: hoverTime } : null;
+  const hovered = held;
   const origin = fullData ? cycleStart(fullData, cycle?.sourceSlot) : null;
   const zero = origin ?? (data?.range.from ? Date.parse(data.range.from) : null);
-  const hoverLabel = (time: number) =>
-    `${zero === null ? '' : `${secondsFrom(time, zero)} · `}${marketTime(time)}`;
+  const span = window ? window.to - window.from : Infinity;
+  const hoverLabel = (time: number) => {
+    const precise = span < 120_000;
+    const clock = precise ? `${new Date(time).toISOString().slice(11, 21)} UTC` : marketTime(time);
+    const tick = marketPointAt(points, time)?.tick;
+    return `${zero === null ? '' : `${secondsFrom(time, zero, precise)} · `}${clock}${tick ? ` · slot ${tick.slot.toLocaleString('en-US')} · #${tick.indexInSlot + 1} in slot` : ''}`;
+  };
   const displayed = hovered ?? validPoints.at(-1);
   const change =
     validPoints[0]?.exact && displayed?.exact
       ? marketChange(validPoints[0].exact, displayed.exact)
       : null;
   const decuActions = allActions.filter(
-    (action) => action.kind === 'OBSERVED' && timeInRange(action.time, range),
+    (action) => action.kind === 'OBSERVED' && timeInRange(action.estimatedTime, range),
   );
   const decuTotal = allActions.filter((action) => action.kind === 'OBSERVED').length;
   const selectedIndex = decuActions.findIndex((action) => actionKey(action) === selectedKey);
@@ -268,15 +345,18 @@ function TradeChartView({
         markers: {
           ...data.markers,
           items: data.markers.items.filter((item) =>
-            item.isTrackedWallet ? decuLayer : allTraders || watchlist.includes(item.trader),
+            item.isTrackedWallet
+              ? decuLayer
+              : allTraders || (watchlistLayer && watchlist.includes(item.trader)),
           ),
-          clusters: allTraders || watchlist.length > 0 ? data.markers.clusters : [],
+          clusters:
+            allTraders || (watchlistLayer && watchlist.length > 0) ? data.markers.clusters : [],
         },
       }
     : null;
   const overlayActions = visible
     ? [...visible.markers.items.filter((item) => item.isTrackedWallet), ...visible.paperFills].sort(
-        (a, b) => Date.parse(a.time) - Date.parse(b.time) || a.slot - b.slot,
+        (a, b) => plotTime(a) - plotTime(b) || a.slot - b.slot,
       )
     : [];
   const option = visible
@@ -287,14 +367,20 @@ function TradeChartView({
           levelsLayer ? scenarios.filter((s) => `${s.pair.base}/${s.pair.quote}` === pair) : [],
           style,
           origin,
+          {
+            window: window ?? undefined,
+            extent: extent ?? undefined,
+            fullPage: expanded || fullscreen,
+            drawing: tool !== 'pointer',
+          },
         )
-      : chartCandleOption(visible, view, style, origin)
+      : chartCandleOption(visible, view, style, origin, {
+          window: window ?? undefined,
+          extent: extent ?? undefined,
+          fullPage: expanded || fullscreen,
+          drawing: tool !== 'pointer',
+        })
     : {};
-  if (expanded && Array.isArray(option.dataZoom))
-    option.dataZoom = option.dataZoom.map((zoom) => ({
-      ...zoom,
-      ...(zoom.type === 'inside' ? { zoomOnMouseWheel: true } : {}),
-    }));
 
   const writeSelection = useCallback(
     (action: MarketAction | null) => {
@@ -354,12 +440,42 @@ function TradeChartView({
     observer.observe(element);
     return () => observer.disconnect();
   }, [full.isPending]);
-  useEffect(
-    () => () => {
-      if (zoomTimer.current) clearTimeout(zoomTimer.current);
-    },
-    [],
-  );
+  useEffect(() => {
+    if (!fullscreen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [fullscreen]);
+  useEffect(() => {
+    if (!fullscreen) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || tool !== 'pointer' || clearOpen || layersOpen || infoOpen)
+        return;
+      event.preventDefault();
+      setFullscreen(false);
+      requestAnimationFrame(() => expandButton.current?.focus());
+    };
+    document.addEventListener('keydown', escape);
+    return () => document.removeEventListener('keydown', escape);
+  }, [fullscreen, tool, clearOpen, layersOpen, infoOpen]);
+  useEffect(() => {
+    const host = chartHost.current;
+    if (!host || !chart || expanded || fullscreen || tool !== 'pointer') return;
+    const wheel = (event: WheelEvent) => {
+      if (!event.metaKey || event.ctrlKey || chart.isDisposed()) return;
+      const bounds = host.getBoundingClientRect();
+      const pixel = [event.clientX - bounds.left, event.clientY - bounds.top];
+      if (!chartContainsPoint(chart, pixel)) return;
+      const value = chart.convertFromPixel({ xAxisIndex: 0, yAxisIndex: 0 }, pixel) as number[];
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      chartView.zoom(Math.exp(Math.max(-1, Math.min(1, event.deltaY * 0.002))), value[0]);
+    };
+    host.addEventListener('wheel', wheel, { passive: false, capture: true });
+    return () => host.removeEventListener('wheel', wheel, { capture: true });
+  }, [chart, expanded, fullscreen, tool, chartView]);
   useEffect(() => {
     if (!chart || chart.isDisposed()) return;
     const leave = () => setHoverTime(null);
@@ -388,10 +504,15 @@ function TradeChartView({
           !['radio', 'checkbox', 'button'].includes(event.target.type));
       if (typing) return;
       if (event.key === 'Escape') {
+        if (fullscreen || tool !== 'pointer') return;
         event.preventDefault();
         close();
       }
-      if (selected && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      if (
+        selected &&
+        (event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
+        !(event.target instanceof Element && event.target.closest('[data-chart-plot]'))
+      ) {
         event.preventDefault();
         step(event.key === 'ArrowRight' ? 1 : -1);
       }
@@ -432,29 +553,32 @@ function TradeChartView({
     setInputError(null);
   }
   function chooseRange(next: MarketRangePreset) {
-    if (zoomTimer.current) clearTimeout(zoomTimer.current);
     const nextRange = fullData ? marketRange(fullData, next, cycle?.sourceSlot) : null;
-    if (selected && !timeInRange(selected.time, nextRange)) close(false);
     setHoverTime(null);
     setStack(null);
-    setZoomRange(null);
     setPreset(next);
+    if (next === 'all') chartView.fit();
+    else if (next === 'cycle') chartView.reset();
+    else if (nextRange)
+      chartView.setWindow({ from: Date.parse(nextRange.from), to: Date.parse(nextRange.to) });
   }
   function requestRange(from: number, to: number) {
     if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return;
     const next = { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
-    if (onRangeChange) {
-      onRangeChange(next);
-      return;
-    }
-    if (selected && !timeInRange(selected.time, next)) close(false);
+    chartView.setWindow({ from, to });
+    onRangeChange?.(next);
     setStack(null);
     setHoverTime(null);
-    if (zoomTimer.current) clearTimeout(zoomTimer.current);
-    zoomTimer.current = setTimeout(() => setZoomRange(next), 300);
+  }
+  function setLayer(layer: ChartLayer, checked: boolean) {
+    chartView.setLayers(
+      checked
+        ? [...chartView.layers.filter((item) => item !== layer), layer]
+        : chartView.layers.filter((item) => item !== layer),
+    );
   }
 
-  if (full.isPending)
+  if (full.isPending && !fullData)
     return (
       <ChartState>
         <LoadingState label="Loading chart…" />
@@ -471,19 +595,6 @@ function TradeChartView({
       </ChartState>
     );
   if (!data || !visible) return null;
-  if (emptyActions && data.candles.length === 0 && !ranged.isFetching) {
-    const from = new Date(data.range.from).toLocaleString(undefined, { hour12: false });
-    const to = new Date(data.range.to).toLocaleString(undefined, { hour12: false });
-    return (
-      <Card component="section" padding="lg" aria-label="Market and trades">
-        <EmptyState
-          title={`No trades between ${from} and ${to}`}
-          description="Nobody traded this token in the selected range."
-          action={emptyActions}
-        />
-      </Card>
-    );
-  }
   const basis = data.valuationBasis;
   const missing = data.candles.reduce((sum, candle) => sum + candle.mcapMissingPoints, 0);
   const unsupported = data.candles.reduce((sum, candle) => sum + candle.mcapUnsupportedPoints, 0);
@@ -502,9 +613,30 @@ function TradeChartView({
       : undefined;
 
   return (
-    <Card component="section" padding="lg" className={classes.root} aria-label="Market and trades">
+    <Card
+      component="section"
+      padding="lg"
+      className={`${classes.root} ${fullscreen ? classes.fullPage : ''}`}
+      aria-label="Market and trades"
+    >
+      {fullscreen && (
+        <Group justify="flex-end" mb="xs" data-market-control data-chart-exit>
+          <Button
+            variant="default"
+            onClick={() => {
+              setFullscreen(false);
+              requestAnimationFrame(() => expandButton.current?.focus());
+            }}
+          >
+            Exit full page · Esc
+          </Button>
+        </Group>
+      )}
       <Group justify="space-between" gap="sm" wrap="wrap" mb="md">
-        <Tooltip label="Market cap and recorded trades over time. Ctrl + scroll to zoom; drag the chart to pan. Price in SOL shows strategy levels.">
+        <Tooltip
+          zIndex={1200}
+          label="Market cap and recorded trades over time. Ctrl + scroll to zoom; drag the chart to pan. Price in SOL shows strategy levels."
+        >
           <Title order={3} fz={15} className={classes.title}>
             Market &amp; trades ·{' '}
             <span>
@@ -571,6 +703,7 @@ function TradeChartView({
           position="bottom-start"
           width={320}
           shadow="md"
+          zIndex={1100}
         >
           <Popover.Target>
             <ActionIcon
@@ -586,7 +719,7 @@ function TradeChartView({
               ⓘ
             </ActionIcon>
           </Popover.Target>
-          <Popover.Dropdown>
+          <Popover.Dropdown data-market-control>
             <Stack gap="xs">
               <Text size="sm" fw={600}>
                 {basis.label}
@@ -652,11 +785,243 @@ function TradeChartView({
           onRetry={() => void ranged.refetch()}
         />
       )}
-      <Box ref={chartHost} className={classes.plot} style={{ height }} aria-busy={ranged.isFetching}>
+      <Group justify="space-between" gap="sm" mt="sm" wrap="wrap" data-market-control>
+        {
+          <Group className={classes.rangeTrack} gap={2} wrap="nowrap">
+            {RANGE_OPTIONS.map((item) => (
+              <button
+                key={item.value}
+                className={classes.rangePill}
+                aria-pressed={activePreset === item.value}
+                onClick={() => chooseRange(item.value)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </Group>
+        }
+        <Group gap="xs">
+          <Button size="compact-xs" variant="default" onClick={() => chooseRange('all')}>
+            Fit
+          </Button>
+          <Button size="compact-xs" variant="default" onClick={() => chooseRange('cycle')}>
+            Reset
+          </Button>
+          <ActionIcon
+            aria-label="Zoom in"
+            title="Zoom in (+)"
+            variant="default"
+            onClick={() => chartView.zoom(0.5)}
+          >
+            +
+          </ActionIcon>
+          <ActionIcon
+            aria-label="Zoom out"
+            title="Zoom out (-)"
+            variant="default"
+            onClick={() => chartView.zoom(2)}
+          >
+            −
+          </ActionIcon>
+          {(['pointer', 'trend', 'measure'] as const).map((value) => (
+            <Tooltip
+              zIndex={1200}
+              key={value}
+              label={
+                value === 'pointer' ? 'Pointer (Esc)' : value === 'trend' ? 'Trend line' : 'Measure'
+              }
+            >
+              <ActionIcon
+                aria-label={
+                  value === 'pointer' ? 'Pointer' : value === 'trend' ? 'Trend line' : 'Measure'
+                }
+                aria-pressed={tool === value}
+                variant={tool === value ? 'filled' : 'default'}
+                onClick={() => setTool(value)}
+              >
+                {value === 'pointer' ? '↖' : value === 'trend' ? '╱' : '▧'}
+              </ActionIcon>
+            </Tooltip>
+          ))}
+          <ActionIcon
+            aria-label="Clear all drawings"
+            title="Clear all drawings"
+            variant="default"
+            disabled={!drawingState.drawings.length}
+            onClick={() => setClearOpen(true)}
+          >
+            ⌫
+          </ActionIcon>
+          {!fullscreen && (
+            <ActionIcon
+              ref={expandButton}
+              aria-label="Open full-page chart"
+              title="Expand"
+              variant="default"
+              radius="xl"
+              onClick={() => setFullscreen(true)}
+            >
+              ⛶
+            </ActionIcon>
+          )}
+          <ActionIcon
+            aria-label={style === 'line' ? 'Show candles' : 'Show line'}
+            title={style === 'line' ? 'Show candles' : 'Show line'}
+            variant="default"
+            radius="xl"
+            onClick={() => setStyle(style === 'line' ? 'candles' : 'line')}
+          >
+            {style === 'line' ? '▥' : '⌁'}
+          </ActionIcon>
+          <Popover
+            opened={layersOpen}
+            onChange={setLayersOpen}
+            position="top-end"
+            width={320}
+            shadow="md"
+            zIndex={1100}
+          >
+            <Popover.Target>
+              <ActionIcon
+                aria-label="Layers"
+                title="Layers"
+                variant="default"
+                radius="xl"
+                onClick={() => {
+                  setLayersOpen(!layersOpen);
+                  setInfoOpen(false);
+                }}
+              >
+                ⋯
+              </ActionIcon>
+            </Popover.Target>
+            <Popover.Dropdown data-market-control>
+              <Stack gap="sm">
+                <Checkbox
+                  label="Decu actions"
+                  checked={decuLayer}
+                  onChange={(event) => setLayer('decu', event.currentTarget.checked)}
+                />
+                <Checkbox
+                  label="Strategy levels"
+                  checked={levelsLayer}
+                  onChange={(event) => setLayer('levels', event.currentTarget.checked)}
+                />
+                {kind === 'run' && (
+                  <Checkbox
+                    label="Bot paper fills"
+                    checked={paperLayer}
+                    onChange={(event) => {
+                      setLayer('paper', event.currentTarget.checked);
+                      if (!event.currentTarget.checked && selected?.kind === 'PAPER') close(false);
+                    }}
+                  />
+                )}
+                <Checkbox
+                  label="All captured traders"
+                  checked={allTraders}
+                  onChange={(event) => setLayer('traders', event.currentTarget.checked)}
+                />
+                <Checkbox
+                  label="Watchlist"
+                  checked={watchlistLayer}
+                  onChange={(event) => setLayer('watchlist', event.currentTarget.checked)}
+                />
+                <Divider />
+                <Text size="xs" c="dimmed">
+                  Watchlist wallets · {watchlist.length} / 20
+                </Text>
+                <Group align="flex-start" gap="xs">
+                  <TextInput
+                    label="Watchlist wallet"
+                    value={wallet}
+                    onChange={(event) => setWallet(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') addWallet();
+                    }}
+                    error={inputError}
+                    style={{ flex: 1 }}
+                  />
+                  <Button size="xs" mt={24} onClick={addWallet}>
+                    Add wallet
+                  </Button>
+                </Group>
+                {(storageError || drawingState.storageError) && (
+                  <Text size="xs" role="status">
+                    Browser storage unavailable; changes last for this visit.
+                  </Text>
+                )}
+                <ScrollArea.Autosize mah={160}>
+                  {watchlist.map((address) => (
+                    <Group key={address} justify="space-between" gap={4} wrap="nowrap">
+                      <Text size="xs" title={address}>
+                        {shortId(address)}
+                      </Text>
+                      <Button
+                        size="compact-xs"
+                        variant="subtle"
+                        aria-label={`Remove ${address}`}
+                        onClick={() =>
+                          updateWatchlist(watchlist.filter((item) => item !== address))
+                        }
+                      >
+                        Remove
+                      </Button>
+                    </Group>
+                  ))}
+                </ScrollArea.Autosize>
+              </Stack>
+            </Popover.Dropdown>
+          </Popover>
+        </Group>
+      </Group>
+      <Box
+        ref={chartHost}
+        className={classes.plot}
+        data-chart-plot
+        tabIndex={0}
+        aria-label="Interactive market chart"
+        style={{ height: fullscreen ? 'max(60vh, calc(100dvh - 360px))' : height }}
+        aria-busy={needsWindowData && ranged.isFetching}
+        onDoubleClick={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (
+            chart &&
+            chartContainsPoint(chart, [event.clientX - rect.left, event.clientY - rect.top])
+          )
+            chooseRange('all');
+        }}
+        onKeyDown={(event) => {
+          if (
+            event.defaultPrevented ||
+            event.target instanceof HTMLInputElement ||
+            event.target instanceof HTMLTextAreaElement ||
+            (event.target instanceof Element && event.target.closest('[data-market-action-card]'))
+          )
+            return;
+          const actions: Record<string, () => void> = {
+            '+': () => chartView.zoom(0.5),
+            '=': () => chartView.zoom(0.5),
+            '-': () => chartView.zoom(2),
+            ArrowLeft: () => chartView.pan(-0.25),
+            ArrowRight: () => chartView.pan(0.25),
+            '0': () => chooseRange('cycle'),
+            f: () => chooseRange('all'),
+            F: () => chooseRange('all'),
+          };
+          const action = actions[event.key];
+          if (action) {
+            event.preventDefault();
+            action();
+          }
+        }}
+      >
         <Chart
-          height={height}
+          height="100%"
           ariaLabel="Market cap and trades over time"
           option={option}
+          notMerge={false}
+          replaceMerge={['series', 'grid', 'xAxis', 'yAxis']}
           onReady={onReady}
           onDispose={onDispose}
           onEvents={{
@@ -701,6 +1066,7 @@ function TradeChartView({
           actions={overlayActions}
           view={view}
           chart={chart}
+          response={data}
           selectedKey={selectedKey}
           onSelect={select}
           onStack={(actions, position) => {
@@ -709,6 +1075,36 @@ function TradeChartView({
           }}
           onPositions={onPositions}
         />
+        <ChartDrawingLayer
+          chart={chart}
+          drawings={drawingState.drawings}
+          onChange={drawingState.setDrawings}
+          tool={tool}
+          onToolChange={setTool}
+          metric={view}
+          points={points}
+        />
+        {emptyActions &&
+          inWindow?.candles.length === 0 &&
+          inWindow.ticks.items.length === 0 &&
+          !ranged.isFetching && (
+            <Box
+              data-market-control
+              style={{
+                position: 'absolute',
+                inset: '15% 8%',
+                zIndex: 7,
+                background: terminal.panel,
+                overflow: 'auto',
+              }}
+            >
+              <EmptyState
+                title={`No trades between ${new Date(range?.from ?? data.range.from).toLocaleString(undefined, { hour12: false })} and ${new Date(range?.to ?? data.range.to).toLocaleString(undefined, { hour12: false })}`}
+                description="Nobody traded this token in the selected range."
+                action={emptyActions}
+              />
+            </Box>
+          )}
         {hovered && hoverPixel && Number.isFinite(hoverPixel[0]) && (
           <>
             <span
@@ -730,6 +1126,7 @@ function TradeChartView({
         {selected && (
           <MarketActionCard
             action={selected}
+            response={data}
             index={Math.max(1, selectedIndex + 1)}
             total={decuActions.length}
             firstBuy={
@@ -795,7 +1192,7 @@ function TradeChartView({
                 variant="subtle"
                 size="xs"
                 onClick={() => {
-                  const times = stack.actions.map((action) => Date.parse(action.time));
+                  const times = stack.actions.map(plotTime);
                   requestRange(Math.min(...times) - 1000, Math.max(...times) + 1000);
                 }}
               >
@@ -805,6 +1202,18 @@ function TradeChartView({
           </Box>
         )}
       </Box>
+      {span < 60_000 && (
+        <Text size="xs" c="dimmed" mt="xs">
+          {data.millisPerSlot != null
+            ? `Block times are whole seconds. Inside a second, trades are placed by slot at the recorded ${data.millisPerSlot} ms per slot; trades of one slot are in their on-chain order but share one instant.`
+            : 'Block times are whole seconds; positions inside a second are not known.'}
+          {inWindow &&
+            new Set(
+              inWindow.ticks.items.filter((tick) => !tick.slotOrderProven).map((tick) => tick.slot),
+            ).size > 0 &&
+            ` ${new Set(inWindow.ticks.items.filter((tick) => !tick.slotOrderProven).map((tick) => tick.slot)).size} slots have no proven trade order.`}
+        </Text>
+      )}
       {validPoints.length < 3 && (
         <Text className={classes.status} size="xs">
           Not enough market data to draw a line in this range.
@@ -815,143 +1224,35 @@ function TradeChartView({
           Decu's actions can't be placed: this dataset was recorded before trader data (v3).
         </Text>
       )}
-      <Group justify="space-between" gap="sm" mt="sm" wrap="wrap" data-market-control>
-        {!expanded && (
-          <Group className={classes.rangeTrack} gap={2} wrap="nowrap">
-            {RANGE_OPTIONS.map((item) => (
-              <button
-                key={item.value}
-                className={classes.rangePill}
-                aria-pressed={activePreset === item.value}
-                onClick={() => chooseRange(item.value)}
-              >
-                {item.label}
-              </button>
-            ))}
-            {zoomRange && (
-              <button className={classes.rangePill} onClick={() => chooseRange('cycle')}>
-                Reset zoom
-              </button>
-            )}
-          </Group>
-        )}
-        <Group gap="xs">
-          {onToggleFullscreen && (
-            <ActionIcon
-              aria-label={fullscreen ? 'Exit full screen' : 'Full screen'}
-              title={fullscreen ? 'Exit full screen' : 'Full screen'}
-              variant="default"
-              radius="xl"
-              onClick={onToggleFullscreen}
-            >
-              ⛶
-            </ActionIcon>
-          )}
-          <ActionIcon
-            aria-label={style === 'line' ? 'Show candles' : 'Show line'}
-            title={style === 'line' ? 'Show candles' : 'Show line'}
-            variant="default"
-            radius="xl"
-            onClick={() => setStyle(style === 'line' ? 'candles' : 'line')}
+      {drawingState.storageError && (
+        <Text size="xs" role="status">
+          Browser storage unavailable; changes last for this visit.
+        </Text>
+      )}
+      <Modal
+        data-market-control
+        zIndex={1200}
+        opened={clearOpen}
+        onClose={() => setClearOpen(false)}
+        title="Clear all drawings?"
+        centered
+      >
+        <Text size="sm">Remove all trend lines and measurements for this pair?</Text>
+        <Group justify="flex-end" mt="md">
+          <Button variant="default" onClick={() => setClearOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            color="red"
+            onClick={() => {
+              drawingState.setDrawings([]);
+              setClearOpen(false);
+            }}
           >
-            {style === 'line' ? '▥' : '⌁'}
-          </ActionIcon>
-          <Popover
-            opened={layersOpen}
-            onChange={setLayersOpen}
-            position="top-end"
-            width={320}
-            shadow="md"
-          >
-            <Popover.Target>
-              <ActionIcon
-                aria-label="Layers"
-                title="Layers"
-                variant="default"
-                radius="xl"
-                onClick={() => {
-                  setLayersOpen(!layersOpen);
-                  setInfoOpen(false);
-                }}
-              >
-                ⋯
-              </ActionIcon>
-            </Popover.Target>
-            <Popover.Dropdown>
-              <Stack gap="sm">
-                <Checkbox
-                  label="Decu actions"
-                  checked={decuLayer}
-                  onChange={(event) => setDecuLayer(event.currentTarget.checked)}
-                />
-                <Checkbox
-                  label="Strategy levels"
-                  checked={levelsLayer}
-                  onChange={(event) => setLevelsLayer(event.currentTarget.checked)}
-                />
-                {kind === 'run' && (
-                  <Checkbox
-                    label="Bot paper fills"
-                    checked={paperLayer}
-                    onChange={(event) => {
-                      setPaperLayer(event.currentTarget.checked);
-                      if (!event.currentTarget.checked && selected?.kind === 'PAPER') close(false);
-                    }}
-                  />
-                )}
-                <Checkbox
-                  label="All captured traders"
-                  checked={allTraders}
-                  onChange={(event) => setAllTraders(event.currentTarget.checked)}
-                />
-                <Divider />
-                <Text size="xs" c="dimmed">
-                  Watchlist wallets · {watchlist.length} / 20
-                </Text>
-                <Group align="flex-start" gap="xs">
-                  <TextInput
-                    label="Watchlist wallet"
-                    value={wallet}
-                    onChange={(event) => setWallet(event.currentTarget.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') addWallet();
-                    }}
-                    error={inputError}
-                    style={{ flex: 1 }}
-                  />
-                  <Button size="xs" mt={24} onClick={addWallet}>
-                    Add wallet
-                  </Button>
-                </Group>
-                {storageError && (
-                  <Text size="xs" role="status">
-                    Browser storage unavailable; changes last for this visit.
-                  </Text>
-                )}
-                <ScrollArea.Autosize mah={160}>
-                  {watchlist.map((address) => (
-                    <Group key={address} justify="space-between" gap={4} wrap="nowrap">
-                      <Text size="xs" title={address}>
-                        {shortId(address)}
-                      </Text>
-                      <Button
-                        size="compact-xs"
-                        variant="subtle"
-                        aria-label={`Remove ${address}`}
-                        onClick={() =>
-                          updateWatchlist(watchlist.filter((item) => item !== address))
-                        }
-                      >
-                        Remove
-                      </Button>
-                    </Group>
-                  ))}
-                </ScrollArea.Autosize>
-              </Stack>
-            </Popover.Dropdown>
-          </Popover>
+            Clear all
+          </Button>
         </Group>
-      </Group>
+      </Modal>
       <Group justify="space-between" gap="xs" mt="sm" className={classes.legend}>
         <Group gap="md">
           <Text size="xs">

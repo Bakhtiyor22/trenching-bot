@@ -22,13 +22,32 @@ The stepper and arrow keys visit Decu actions; Escape closes the card. Selected
 actions use `action` or `fill` URL parameters. **Open action** and **Open fill**
 jump to the existing cycle or stored-record details.
 
-Cycle, 5m, 15m, 1H and All choose the visible time window. Ctrl + wheel and
-dragging zoom or pan with debounced requests; every opaque marker cursor is
-followed while first-page clusters are retained. Out-of-range selected actions
-close; deep-linked actions outside the default Cycle range open in All.
+Cycle, 5m, 15m, 1H and All choose the visible time window. Ctrl/⌘ + wheel zooms
+around the cursor in an embedded chart; the chart page and expanded view use
+plain wheel. Drag pans; double-click or Fit shows the whole extent. Reset returns
+to the cycle. Focus the plot for +/− zoom, ←/→ pan, 0 reset and F fit.
+Every request asks for up to 5,000 execution-ordered ticks. Complete tick windows
+zoom and pan locally; larger windows debounce visible-data requests by 250 ms
+while retaining previous data. Opaque marker cursors retain the first page's ticks
+and clusters. The visible window, metric, style, layers and selected action survive
+reloads and the Open chart/Back to run links through URL parameters.
 Nearby Decu pins stack and offer a list and zoom action. Hover updates the
-headline value, change and time. Fewer than three market points get a sparse
-data state instead of candles. Select a cluster count to narrow its range.
+headline value, change, estimated UTC instant, slot and position within its slot.
+Ticks and markers share the backend's estimated sub-second coordinates; cards
+retain whole-second block time. A missing capture stretch after a tracked buy is
+shown as a dashed “unrecorded” connector and explained in its card. The execution
+marker stays at its actual execution value. Candle-line fallback closes appear
+at bucket end, and the y-axis fits the visible data. The resolution note explains
+slot timing and any unproven execution order. Select a cluster count to narrow its range.
+
+Pointer, Trend line and Measure tools store data-coordinate drawings per pair in
+`trenching.chart.drawings.v1:{kind}:{id}:{pair}`. Points snap within 8 px; Alt places
+free points. Select a drawing to move its endpoints or body, then Delete/Backspace
+or its Delete button removes it. Clear all asks for confirmation. Labels show
+signed percent, value and time changes, including a dash for percent from zero.
+Storage failure leaves drawings usable for the current visit and shows a status.
+Expand keeps the chart mounted in a full-page layer; Exit full page or Escape
+returns with the same window, metric, style, layers, action and drawings.
 
 ## Cluster contract limitation
 
@@ -73,9 +92,9 @@ Fixtures include v3 and v4 charts, clustering, rate gaps and unavailable
 valuation. Tests cover exact decimal details, requests, cursor cancellation,
 chart rendering and page integration. No database schema changes are required.
 
-Browser inspection against the mocked local dev server was unavailable because
-the browser connection timed out. ECharts rendering is covered by the SVG
-integration test instead.
-
-Verification on 2026-10-16: all 212 tests passed across 33 files; lint passed
-with zero warnings, and the production build passed.
+The dev-only `?mockState=chart-first-slot-gap` chart preview reproduces the
+reference $9.4k execution marker and $13.2k first recorded trade. The actual
+reference capture still requires checking against a backend process serving the
+new contract. Until that process is restarted, the frontend accepts the previous
+contract, uses bucket-end candles and whole-second markers, and reports that
+positions inside a second are unknown.

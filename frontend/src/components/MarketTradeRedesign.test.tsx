@@ -9,8 +9,19 @@ import { TradeChart } from './TradeChart';
 afterEach(() => localStorage.clear());
 function setup(url = '/') {
   const requests: URL[] = [];
-  server.use(http.get('/api/datasets/test/chart', ({ request }) => { requests.push(new URL(request.url)); return HttpResponse.json({ ...v4Chart, paperFills: [] }); }));
-  return { ...renderPage(<TradeChart kind="dataset" id="test" pair="base/quote" trackedWallet={WALLET} />, { url }), requests };
+  server.use(
+    http.get('/api/datasets/test/chart', ({ request }) => {
+      requests.push(new URL(request.url));
+      return HttpResponse.json({ ...v4Chart, paperFills: [] });
+    }),
+  );
+  return {
+    ...renderPage(
+      <TradeChart kind="dataset" id="test" pair="base/quote" trackedWallet={WALLET} />,
+      { url },
+    ),
+    requests,
+  };
 }
 describe('Market & trades redesign', () => {
   it('hides secondary controls by default and exposes provenance and layers in popovers', async () => {
@@ -27,18 +38,26 @@ describe('Market & trades redesign', () => {
     const { user, router } = setup('/?quote=usdt');
     await user.click(await screen.findByRole('button', { name: 'Next Decu action' }));
     expect(await screen.findByRole('dialog', { name: 'Trade details' })).toBeInTheDocument();
-    const first = v4Chart.markers.items.filter((item) => item.isTrackedWallet).sort((a, b) => Date.parse(a.time) - Date.parse(b.time))[0]!;
-    expect(router.state.location.search).toContain(`action=${encodeURIComponent(first.observationId)}`);
+    const first = v4Chart.markers.items
+      .filter((item) => item.isTrackedWallet)
+      .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))[0]!;
+    expect(router.state.location.search).toContain(
+      `action=${encodeURIComponent(first.observationId)}`,
+    );
     await user.keyboard('{ArrowLeft}');
     expect(router.state.location.search).toContain('action=');
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(router.state.location.search).toBe('?quote=usdt');
+    const params = new URLSearchParams(router.state.location.search);
+    expect(params.get('quote')).toBe('usdt');
+    expect(params.has('action')).toBe(false);
   });
-  it('requests duration ranges and All clears range parameters', async () => {
-    const { user, requests } = setup();
+  it('writes duration ranges to the URL and reuses complete ticks for navigation', async () => {
+    const { user, requests, router } = setup();
     await user.click(await screen.findByRole('button', { name: '15m' }));
-    await waitFor(() => expect(requests.at(-1)?.searchParams.has('from')).toBe(true));
+    await waitFor(() => expect(router.state.location.search).toContain('from='));
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.searchParams.get('tickLimit')).toBe('5000');
     await user.click(screen.getByRole('button', { name: 'All' }));
     expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
   });

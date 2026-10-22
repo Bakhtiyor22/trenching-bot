@@ -1,6 +1,6 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChartResponse } from '../api/types';
 import { server } from '../mocks/server';
 import { renderPage } from '../test/render';
@@ -19,9 +19,18 @@ vi.mock('./Chart', async () => {
         const noop = () => {};
         onReady?.({
           convertToPixel: (_finder: unknown, values: number[]) => [
-            ((values[0]! / 1000) % 60) * 40 + 40,
-            200,
+            (values[0]! - Date.parse(time)) / 25 + 40,
+            values[1]! >= 1 ? 400 - values[1]! / 100 : 200,
           ],
+          convertFromPixel: (_finder: unknown, values: number[]) => [
+            Date.parse(time) + (values[0]! - 40) * 25,
+            (400 - values[1]!) * 100,
+          ],
+          getModel: () => ({
+            getComponent: () => ({
+              coordinateSystem: { getRect: () => ({ x: 12, y: 34, width: 560, height: 320 }) },
+            }),
+          }),
           containPixel: () => true,
           on: noop,
           off: noop,
@@ -39,6 +48,9 @@ const wallet = '1'.repeat(32);
 const other = 'So11111111111111111111111111111111111111112';
 const time = '2026-10-15T00:00:00Z';
 const chart: ChartResponse = {
+  millisPerSlot: null,
+  coverage: [],
+  ticks: { included: false, total: 0, items: [] },
   bucketSeconds: 1,
   range: { from: time, to: '2026-10-15T00:00:10Z' },
   trackedWallet: wallet,
@@ -82,6 +94,7 @@ const chart: ChartResponse = {
         mcap: '10000',
         slot: 1,
         time,
+        estimatedTime: time,
         signature: null,
         source: 'fixture',
       },
@@ -90,6 +103,35 @@ const chart: ChartResponse = {
   paperFills: [],
 };
 const marker = /^Decu buy, 18446744073\.709551615 SOL/;
+const tickChart: ChartResponse = {
+  ...chart,
+  millisPerSlot: 216.2,
+  ticks: {
+    included: true,
+    total: 3,
+    items: [0, 1, 2].map((index) => ({
+      observationId: `tick-${index}`,
+      slot: 459490744 + index,
+      indexInSlot: index === 0 ? 1 : 0,
+      slotOrderProven: index !== 2,
+      time,
+      estimatedTime: new Date(Date.parse(time) + 500 + index * 1000).toISOString(),
+      price: '0.01',
+      mcap: String(10000 + index * 1000),
+      curvePrice: '0.011',
+      curveMcap: '11000',
+      side: 'BUY',
+      trader: wallet,
+      isTrackedWallet: false,
+      solLamports: '1000000000',
+      tokenRaw: '1000000',
+    })),
+  },
+};
+beforeAll(() => {
+  if (!window.PointerEvent)
+    Object.defineProperty(window, 'PointerEvent', { value: MouseEvent, configurable: true });
+});
 
 afterEach(() => {
   localStorage.clear();
@@ -98,6 +140,108 @@ afterEach(() => {
 });
 
 describe('TradeChart', () => {
+  it('keeps tick zoom and pan local, preserves the view on refetch, and fits the extent', async () => {
+    let requests = 0;
+    server.use(
+      http.get('/api/datasets/local-ticks/chart', () => {
+        requests++;
+        return HttpResponse.json(tickChart);
+      }),
+    );
+    const { user, router, queryClient } = renderPage(
+      <TradeChart kind="dataset" id="local-ticks" pair="base/quote" trackedWallet={wallet} />,
+    );
+    await screen.findByRole('button', { name: 'Fit' });
+    await waitFor(() =>
+      expect(new URLSearchParams(router.state.location.search).has('from')).toBe(true),
+    );
+    const start = Date.parse(time) + 1000;
+    act(() =>
+      renderedChart.current?.onEvents?.datazoom?.({ startValue: start, endValue: start + 3000 }),
+    );
+    expect(new URLSearchParams(router.state.location.search).get('from')).toBe(
+      new Date(start).toISOString(),
+    );
+    act(() =>
+      renderedChart.current?.onEvents?.datazoom?.({
+        batch: [{ startValue: start + 1000, endValue: start + 4000 }],
+      }),
+    );
+    expect(requests).toBe(1);
+    const zoom = renderedChart.current?.option.dataZoom as {
+      startValue: number;
+      endValue: number;
+    }[];
+    expect(zoom[0]).toMatchObject({ startValue: start + 1000, endValue: start + 4000 });
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['dataset', 'local-ticks', 'chart'] });
+    });
+    expect(requests).toBe(2);
+    expect((renderedChart.current?.option.dataZoom as object[])[0]).toMatchObject(zoom[0] ?? {});
+    await user.click(screen.getByRole('button', { name: 'Fit' }));
+    expect(new URLSearchParams(router.state.location.search).get('from')).toBe(
+      new Date(Date.parse(time)).toISOString(),
+    );
+    expect(renderedChart.current?.notMerge).toBe(false);
+    // Every preset clamps to this short recording; the whole of it is All, not 1H.
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: '1H' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByText('over this range')).toBeInTheDocument();
+  });
+
+  it('shows tick hover metadata and resolution quality inside a minute', async () => {
+    server.use(http.get('/api/datasets/tick-hover/chart', () => HttpResponse.json(tickChart)));
+    renderPage(
+      <TradeChart kind="dataset" id="tick-hover" pair="base/quote" trackedWallet={wallet} />,
+    );
+    await screen.findByRole('button', { name: 'Fit' });
+    act(() =>
+      renderedChart.current?.onEvents?.updateAxisPointer?.({
+        axesInfo: [{ axisDim: 'x', value: Date.parse(time) + 500 }],
+      }),
+    );
+    expect(
+      screen.getAllByText(/\+0\.5s · 00:00:00\.5 UTC · slot 459,490,744 · #2 in slot/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText(/recorded 216.2 ms per slot/)).toHaveTextContent(
+      '1 slots have no proven trade order.',
+    );
+  });
+
+  it('expands the same chart, draws and zooms, then exits with state and focus preserved', async () => {
+    server.use(http.get('/api/datasets/expand/chart', () => HttpResponse.json(tickChart)));
+    const { user, router } = renderPage(
+      <TradeChart kind="dataset" id="expand" pair="base/quote" trackedWallet={wallet} />,
+    );
+    const expand = await screen.findByRole('button', { name: 'Open full-page chart' });
+    await user.click(screen.getByRole('button', { name: 'Next Decu action' }));
+    await user.click(expand);
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(screen.getByRole('dialog', { name: 'Trade details' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Trend line' }));
+    const surface = screen.getByLabelText('Chart drawing tools');
+    fireEvent.pointerDown(surface, { button: 0, clientX: 100, clientY: 260 });
+    fireEvent.pointerMove(surface, { clientX: 200, clientY: 210, altKey: true });
+    fireEvent.pointerUp(surface, { clientX: 200, clientY: 210, altKey: true });
+    await user.click(screen.getByRole('button', { name: 'Pointer' }));
+    await user.click(screen.getByRole('button', { name: 'Zoom in' }));
+    const search = router.state.location.search;
+    const drawing = localStorage.getItem('trenching.chart.drawings.v1:dataset:expand:base/quote');
+    expect(JSON.parse(drawing ?? '[]')).toHaveLength(1);
+    await user.click(screen.getByRole('button', { name: 'Exit full page · Esc' }));
+    expect(router.state.location.search).toBe(search);
+    expect(localStorage.getItem('trenching.chart.drawings.v1:dataset:expand:base/quote')).toBe(
+      drawing,
+    );
+    expect(document.body.style.overflow).toBe('');
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Open full-page chart' })).toHaveFocus(),
+    );
+    await user.click(screen.getByRole('button', { name: 'Open full-page chart' }));
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('button', { name: 'Exit full page · Esc' })).not.toBeInTheDocument();
+  });
+
   it('uses gold for simulated paper trade diamonds and their legend', async () => {
     server.use(
       http.get('/api/runs/test/chart', () =>
@@ -111,6 +255,7 @@ describe('TradeChart', () => {
               intentId: 'paper-entry',
               slot: 1,
               time,
+              estimatedTime: time,
               price: '0.01',
               mcap: '10000',
               quantity: '10',
@@ -157,9 +302,12 @@ describe('TradeChart', () => {
     );
     expect(await screen.findByText(/No trades between/)).toBeInTheDocument();
     expect(screen.getByText('Nobody traded this token in the selected range.')).toBeInTheDocument();
-    expect(onData).toHaveBeenCalledWith(expect.objectContaining({ bucketSeconds: 5 }), 'base/quote');
+    expect(onData).toHaveBeenCalledWith(
+      expect.objectContaining({ bucketSeconds: 5 }),
+      'base/quote',
+    );
     await user.click(screen.getByRole('button', { name: 'Reset view' }));
-    await user.click(screen.getByRole('button', { name: 'Zoom out' }));
+    await user.click(screen.getByText('Zoom out', { selector: 'button' }));
     expect(reset).toHaveBeenCalledOnce();
     expect(zoom).toHaveBeenCalledOnce();
   });
@@ -185,6 +333,7 @@ describe('TradeChart', () => {
                       observationId: 'two',
                       slot: 2,
                       time: '2026-10-15T00:00:02Z',
+                      estimatedTime: '2026-10-15T00:00:02Z',
                     },
                   ]
                 : chart.markers.items,
@@ -221,7 +370,7 @@ describe('TradeChart', () => {
     expect(datasetRequests).toBe(0);
   });
 
-  it('debounces zoom against the plotted axis and offers a reset', async () => {
+  it('applies zoom immediately, debounces coarse data requests and offers Reset', async () => {
     const requests: URL[] = [];
     server.use(
       http.get('/api/datasets/test/chart', ({ request }) => {
@@ -246,7 +395,7 @@ describe('TradeChart', () => {
       renderedChart.current?.onEvents?.datazoom?.({ batch: [{ start: 30, end: 70 }] });
     });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(299);
+      await vi.advanceTimersByTimeAsync(249);
     });
     expect(requests).toHaveLength(settled);
     await act(async () => {
@@ -260,8 +409,7 @@ describe('TradeChart', () => {
     expect(requests.at(-1)?.searchParams.get('to')).toBe(
       new Date(axis.min + (axis.max - axis.min) * 0.7).toISOString(),
     );
-    await user.click(await screen.findByRole('button', { name: 'Reset zoom' }));
-    expect(screen.queryByRole('button', { name: 'Reset zoom' })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Reset' }));
     expect(screen.getByRole('button', { name: 'Cycle' })).toHaveAttribute('aria-pressed', 'true');
   });
 

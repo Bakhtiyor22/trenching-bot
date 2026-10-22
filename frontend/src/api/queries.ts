@@ -116,6 +116,7 @@ export function useDatasetChart(id: string, request: ChartRequest, enabled = tru
     queryFn: ({ signal }) =>
       completeChart((page, pageSignal) => api.datasetChart(id, page, pageSignal), request, signal),
     enabled,
+    placeholderData: keepPreviousData,
     staleTime: Infinity,
   });
 }

@@ -93,6 +93,8 @@ export interface ChartRequest {
   from?: IsoInstant;
   to?: IsoInstant;
   maxBuckets?: number;
+  /** 0–5000; zero omits individual market trades. */
+  tickLimit?: number;
   markerLimit?: number;
   wallet?: string[];
   /** Opaque backend token. */
@@ -123,6 +125,7 @@ export interface ObservedChartMarker extends ObservationTrade {
   mcap: DecimalString | null;
   slot: number;
   time: IsoInstant;
+  estimatedTime: IsoInstant;
   signature: string | null;
   source: string;
 }
@@ -134,6 +137,7 @@ export interface PaperChartFill {
   intentId: string;
   slot: number;
   time: IsoInstant;
+  estimatedTime: IsoInstant;
   price: DecimalString;
   mcap: DecimalString | null;
   quantity: DecimalString;
@@ -152,6 +156,9 @@ export interface ChartCluster {
 }
 
 export interface ChartResponse {
+  millisPerSlot: number | null;
+  coverage: { fromSlot: number; throughSlot: number }[];
+  ticks: { included: boolean; total: number; items: ChartTick[] };
   extent?: {
     firstTime: IsoInstant;
     lastTime: IsoInstant;
@@ -182,6 +189,24 @@ export interface ChartResponse {
     clusters: ChartCluster[];
   };
   paperFills: PaperChartFill[];
+}
+
+export interface ChartTick {
+  observationId: string;
+  slot: number;
+  indexInSlot: number;
+  slotOrderProven: boolean;
+  time: IsoInstant;
+  estimatedTime: IsoInstant;
+  price: DecimalString;
+  mcap: DecimalString | null;
+  curvePrice: DecimalString | null;
+  curveMcap: DecimalString | null;
+  side: 'BUY' | 'SELL' | null;
+  trader: string | null;
+  isTrackedWallet: boolean;
+  solLamports: string | null;
+  tokenRaw: string | null;
 }
 
 export interface Config {

@@ -9,6 +9,7 @@ import {
   slotAxes,
   type ChartView,
   type MarketChartStyle,
+  type MarketChartConfig,
 } from '../../charts/priceChart';
 import { compactDecimal, formatDecimal, toChartNumber } from '../../lib/decimal';
 import { formatSlot, humanizeCode, signedBps, usdtRateNote } from '../../lib/format';
@@ -339,8 +340,9 @@ export function chartTimelineOption(
   scenarios: Scenario[],
   style: MarketChartStyle = 'line',
   origin?: number | null,
+  config?: MarketChartConfig,
 ): EChartsOption {
-  const option = chartCandleOption(response, view, style, origin);
+  const option = chartCandleOption(response, view, style, origin, config);
   if (view === 'mcap' && response.valuationBasis.available) return option;
   const axis = (Array.isArray(option.xAxis) ? option.xAxis[0] : option.xAxis) as {
     min: number;

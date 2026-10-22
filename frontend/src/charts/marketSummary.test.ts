@@ -17,6 +17,13 @@ describe('market summary', () => {
     expect(marketValue('-20000', 'mcap')).toBe('−$20k');
     expect(marketValue('-512.5', 'mcap')).toBe('−$512.5');
   });
+  it('rounds an Mcap under $1k to a tenth like the larger units', () => {
+    expect(marketValue('133.059998492402', 'mcap')).toBe('$133.1');
+    expect(marketValue('-133.059998492402', 'mcap')).toBe('−$133.1');
+    expect(marketValue('122.900634246698', 'mcap')).toBe('$122.9');
+    expect(marketValue('999.96', 'mcap')).toBe('$1000');
+    expect(marketValue('0.04', 'mcap')).toBe('$0');
+  });
   it('cuts a long tiny price to five significant digits without rounding', () => {
     expect(shortPrice('0.00000019602539916404059943319355964918')).toBe('0.0₆19602 SOL');
     expect(shortPrice('0.0000000775')).toBe('0.0₇775 SOL');
@@ -60,5 +67,7 @@ describe('market summary', () => {
     expect(secondsFrom(origin, origin)).toBe('0s');
     expect(secondsFrom(origin + 42_400, origin)).toBe('+42s');
     expect(secondsFrom(origin - 90_000, origin)).toBe('-90s');
+    expect(secondsFrom(origin + 400, origin, true)).toBe('+0.4s');
+    expect(secondsFrom(origin, origin, true)).toBe('0.0s');
   });
 });

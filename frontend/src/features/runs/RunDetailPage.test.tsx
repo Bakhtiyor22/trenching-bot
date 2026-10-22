@@ -72,6 +72,21 @@ function renderRun(id: string, state?: unknown) {
 describe('RunDetailPage', () => {
   beforeEach(() => localStorage.clear());
 
+  it('keeps the chart window, value choices and selected action in Open chart', async () => {
+    renderPage(<RunDetailPage />, {
+      path: '/runs/:id',
+      url: `/runs/${REAL_RUN_ID}?from=2026-10-15T00%3A00%3A00Z&to=2026-10-15T00%3A01%3A00Z&view=price&style=candles&layers=decu,paper&action=buy-1`,
+    });
+    const link = await screen.findByRole('link', { name: 'Open chart' });
+    const target = new URL(link.getAttribute('href') ?? '', 'http://localhost');
+    expect(target.searchParams.get('pair')).toBeTruthy();
+    expect(target.searchParams.get('from')).toBe('2026-10-15T00:00:00Z');
+    expect(target.searchParams.get('view')).toBe('price');
+    expect(target.searchParams.get('style')).toBe('candles');
+    expect(target.searchParams.get('layers')).toBe('decu,paper');
+    expect(target.searchParams.get('action')).toBe('buy-1');
+  });
+
   it('shows the valuation basis and requests the pinned wallet plus the watchlist', async () => {
     const requests: URL[] = [];
     server.use(

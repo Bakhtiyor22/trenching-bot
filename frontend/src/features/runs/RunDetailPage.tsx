@@ -35,6 +35,7 @@ import type {
   RunUsdtView,
   Scenario,
 } from '../../api/types';
+import { chartSearchParams } from '../../charts/chartViewState';
 import { TradeChart } from '../../components/TradeChart';
 import { SourceLinks } from '../../components/SourceLinks';
 import { CopyValue, Decimal, Mint, Pnl, ShortId, Timestamp } from '../../components/DisplayValues';
@@ -195,11 +196,12 @@ function Timeline({
   cycle: Scenario;
   onOpenAction: (action: ObservedChartMarker | PaperChartFill) => void;
 }) {
+  const [chartParams] = useSearchParams();
   return (
     <Stack gap="sm">
       <Button
         component={Link}
-        to={`${paths.runChart(runId)}?pair=${encodeURIComponent(pairKey(cycle.pair))}`}
+        to={`${paths.runChart(runId)}${chartSearchParams(chartParams, pairKey(cycle.pair))}`}
         variant="light"
       >
         Open chart
@@ -439,17 +441,25 @@ export function RunDetailPage() {
   const location = useLocation();
   const navigationState = location.state as RunStartNavigationState | null;
   const run = useRun(id);
+  const [chartParams] = useSearchParams();
   const [usdtSelected, setUsdtSelected] = useQuoteCurrency();
   const solQuoted = run.data?.run.quoteMint === WRAPPED_SOL_MINT;
   const usdtQuery = useRunUsdt(id, solQuoted && usdtSelected);
-  const [selected, setSelected] = useState(0);
+  const [selectedIndex, setSelected] = useState<number | null>(null);
   const [recordTab, setRecordTab] = useState<RecordTab>('events');
   const [selectedObservation, setSelectedObservation] = useState<string | null>(null);
   const [selectedFill, setSelectedFill] = useState<PaperChartFill | null>(null);
   const [navigationRequest, setNavigationRequest] = useState(0);
   const cycles = run.data ? byFirstBuy(run.data.scenarios) : [];
+  const selected =
+    selectedIndex ??
+    Math.max(
+      0,
+      cycles.findIndex((cycle) => pairKey(cycle.pair) === chartParams.get('pair')),
+    );
   const step = (by: number) => {
-    if (cycles.length > 0) setSelected((current) => (current + by + cycles.length) % cycles.length);
+    if (cycles.length > 0)
+      setSelected((current) => ((current ?? selected) + by + cycles.length) % cycles.length);
   };
 
   useHotkeys([
