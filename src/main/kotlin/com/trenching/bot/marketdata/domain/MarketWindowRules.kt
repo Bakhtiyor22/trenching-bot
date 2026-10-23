@@ -18,5 +18,6 @@ internal object MarketWindowRules {
     }
 
     fun isValid(parameters: MarketCaptureWindowParameters): Boolean =
-        parameters.horizonSlots in HORIZON && parameters.maxAgeSlots in SLOT_PARAMETER
+        parameters.horizonSlots in HORIZON && parameters.maxAgeSlots in SLOT_PARAMETER &&
+            (parameters.leadSlots == MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS || parameters.leadSlots in SLOT_PARAMETER)
 }

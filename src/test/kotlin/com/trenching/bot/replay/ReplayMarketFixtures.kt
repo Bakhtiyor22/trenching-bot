@@ -29,18 +29,26 @@ import java.time.Instant
 
 internal object ReplayMarketFixtures {
     private const val SCAN_PAGES = 20
+    /** The parameters of a capture saved before the lead (manifest versions 2 and 3): windows start at `S + 1`. */
     val PARAMETERS = MarketCaptureWindowParameters(horizonSlots = 4500, maxAgeSlots = 2)
+
+    /** The parameters of a capture with the lead (manifest version 4): windows start at `S - 50`. */
+    val LEAD_PARAMETERS = PARAMETERS.copy(leadSlots = MarketCaptureWindowParameters.DEFAULT_LEAD_SLOTS)
     private val CURVE = CurveState(
         CurveReserves(BigInteger("80123104314"), BigInteger("401756777019139"), BigInteger("50123104314"), BigInteger("121856777019139")),
         feeBps = 95,
         creatorFeeBps = 30,
     )
 
-    /** A manifest whose windows each selected [records]; the first window is [firstCoverage]. */
+    /**
+     * A manifest whose windows each selected [records], newest first; the first window is [firstCoverage]. Legacy [parameters]
+     * write manifest version 2, lead ones version 4.
+     */
     fun manifest(
         windows: List<MarketCaptureWindow>,
         records: List<MarketTransactionRecord> = emptyList(),
         firstCoverage: MarketWindowCoverage = MarketWindowCoverage.COMPLETE,
+        parameters: MarketCaptureWindowParameters = PARAMETERS,
     ): MarketHistoryManifest {
         val selection = records.map { MarketListedSignature(it.signature, it.slot) }
         val windowRecords = windows.mapIndexed { index, window ->
@@ -57,8 +65,8 @@ internal object ReplayMarketFixtures {
         val acquired = windowRecords.none { it.coverage == MarketWindowCoverage.PENDING } &&
             records.none { it.outcome == MarketTransactionOutcome.PENDING }
         return MarketHistoryManifest(
-            schemaVersion = 2, genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", commitment = "confirmed",
-            capturedAt = "2026-10-04T00:00:00Z", windowParameters = PARAMETERS, scanPageLimit = SCAN_PAGES, maxTransactions = 300,
+            schemaVersion = if (parameters.leadSlots == MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS) 2 else 4, genesisHash = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d", commitment = "confirmed",
+            capturedAt = "2026-10-04T00:00:00Z", windowParameters = parameters, scanPageLimit = SCAN_PAGES, maxTransactions = 300,
             windows = windowRecords, records = records, acquisitionComplete = acquired,
             complete = acquired && windowRecords.all { it.coverage == MarketWindowCoverage.COMPLETE }, requestsUsed = 5, bytesUsed = 4096,
         )

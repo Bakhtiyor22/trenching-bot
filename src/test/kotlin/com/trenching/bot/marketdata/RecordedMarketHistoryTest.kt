@@ -301,6 +301,38 @@ class RecordedMarketHistoryTest {
     }
 
     @Test
+    fun `window parameters come from the saved manifest alone, without reading or hash checking any artifact`() {
+        val record = artifact(fixture())
+        save(listOf(complete(MINT, listOf(record))), listOf(record))
+        Files.writeString(directory.resolve(requireNotNull(record.artifact)), "{}")
+
+        assertEquals(PARAMETERS, recorded.windowParameters(directory))
+        assertEquals(MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS, recorded.windowParameters(directory)?.leadSlots)
+        assertFailsWith<CaptureValidationException> { recorded.inspect(directory) }
+    }
+
+    @Test
+    fun `window parameters of a lead capture carry its lead`() {
+        val record = artifact(fixture())
+        val lead = PARAMETERS.copy(leadSlots = MarketCaptureWindowParameters.DEFAULT_LEAD_SLOTS)
+        store.save(directory, manifest(listOf(complete(MINT, listOf(record))), listOf(record)).copy(schemaVersion = 4, windowParameters = lead))
+
+        assertEquals(lead, recorded.windowParameters(directory))
+    }
+
+    @Test
+    fun `window parameters are absent without a manifest, and a present but tampered manifest still fails`() {
+        assertEquals(null, recorded.windowParameters(directory.resolve("never-captured")))
+        assertEquals(null, recorded.windowParameters(directory))
+
+        val record = artifact(fixture())
+        save(listOf(complete(MINT, listOf(record))), listOf(record))
+        val manifestFile = directory.resolve("market-manifest.json")
+        Files.writeString(manifestFile, Files.readString(manifestFile).replace("\"selected\":1", "\"selected\":2"))
+        assertCategory("MANIFEST_HASH") { recorded.windowParameters(directory) }
+    }
+
+    @Test
     fun `internally consistent forged manifests are rejected`() {
         val record = artifact(fixture())
         val window = complete(MINT, listOf(record))

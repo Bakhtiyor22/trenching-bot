@@ -21,8 +21,9 @@ class ExecutionCalibrationService(
     private val planning = RecordedWalletPlanning(walletHistory, planner)
 
     fun calibrate(walletCaptureDirectory: Path, marketCaptureDirectory: Path): CalibrationReport {
-        val planned = planning.plan(walletCaptureDirectory)
+        val history = planning.history(walletCaptureDirectory)
         val market = marketHistory.decode(marketCaptureDirectory)
+        val planned = planning.plan(history, market.windowParameters.leadSlots)
         RecordedMarketVerification.requireMatching(planned.plan, market)
         if (!RecordedMarketVerification.coversCalibration(planned.history.buyFacts, market)) {
             log.warn("execution_calibration refused reason={} wallet={}", VerdictReasons.MARKET_COVERAGE_ENDED, planned.history.wallet.value)

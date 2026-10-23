@@ -22,8 +22,9 @@ import tools.jackson.databind.ObjectMapper
  * Exports a recorded wallet capture, the market capture planned from it and the rates recorded for that market capture as
  * one canonical v5 dataset. All three are verified offline. The market capture must hold exactly the planned windows, each
  * complete and free of detail gaps and in-window exclusions through its observed end, so a missing trade can never read as
- * an absence of trades; the dataset's coverage records that end per window, the window's last slot or its cutoff. Every
- * trade's minute must have a rate. The JSON is loaded back before it is written.
+ * an absence of trades; the dataset's coverage records each window from its first slot (its lead before the first buy, or
+ * the slot after it for a capture without one) to that end, the window's last slot or its cutoff. Every trade's minute must
+ * have a rate. The JSON is loaded back before it is written.
  */
 class RecordedReplayExportService(
     walletHistory: RecordedWalletHistory,
@@ -36,8 +37,9 @@ class RecordedReplayExportService(
     private val planning = RecordedWalletPlanning(walletHistory, planner)
 
     fun export(request: RecordedReplayExportRequest): RecordedReplayExport {
-        val planned = planning.plan(request.walletCaptureDirectory)
+        val history = planning.history(request.walletCaptureDirectory)
         val market = marketHistory.decode(request.marketCaptureDirectory)
+        val planned = planning.plan(history, market.windowParameters.leadSlots)
         RecordedMarketVerification.requireMatching(planned.plan, market)
         if (!DatasetTrades.allPresent(market.observations)) {
             log.warn("recorded_replay_export refused reason={} observations={}", DatasetTrades.FIELDS_MISSING, market.observations.size)

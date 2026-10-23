@@ -8,6 +8,7 @@ import com.trenching.bot.common.Slot
 import com.trenching.bot.marketdata.CutoffDecision
 import com.trenching.bot.marketdata.CutoffIdentity
 import com.trenching.bot.marketdata.MarketCaptureWindow
+import com.trenching.bot.marketdata.MarketCaptureWindowParameters
 import com.trenching.bot.marketdata.RateLookup
 import com.trenching.bot.marketdata.RateUnavailableReason
 import com.trenching.bot.marketdata.ReferenceRate
@@ -67,6 +68,27 @@ class DipOutcomeCutoffTest {
 
         assertEquals(CutoffDecision.Decided(Slot.of(9500), "UNSUPPORTED_SUPPLY"), decision)
         assertEquals(emptyList(), rates.requests)
+    }
+
+    @Test
+    fun `a lead window holding the buy's own slot and dip-priced lead trades is decided as without its lead`() {
+        val window = leadWindow(DipSample.TAKE_PROFIT)
+        val cutoff = DipOutcomeCutoff(sample.trackedWallet, mapOf(window to listOf(buy(DipSample.TAKE_PROFIT))), FakeRates())
+        val lead = leadTrades(DipSample.TAKE_PROFIT)
+
+        assertEquals(CutoffDecision.Undecided, cutoff.evaluate(window, canonical(lead + prefix(DipSample.TAKE_PROFIT, 1005)), Slot.of(1005)))
+        assertEquals(CutoffDecision.Decided(Slot.of(1006), "TAKE_PROFIT"),
+            cutoff.evaluate(window, canonical(lead + prefix(DipSample.TAKE_PROFIT, 1006)), Slot.of(1006)))
+    }
+
+    @Test
+    fun `a lead window decided at its buy records coverage through the buy's slot`() {
+        val window = leadWindow(DipSample.UNSUPPORTED_SUPPLY)
+        val cutoff = DipOutcomeCutoff(sample.trackedWallet, mapOf(window to listOf(buy(DipSample.UNSUPPORTED_SUPPLY))), FakeRates())
+
+        val decision = cutoff.evaluate(window, canonical(leadTrades(DipSample.UNSUPPORTED_SUPPLY)), Slot.of(9500))
+
+        assertEquals(CutoffDecision.Decided(Slot.of(9500), "UNSUPPORTED_SUPPLY"), decision)
     }
 
     @Test
@@ -157,6 +179,25 @@ class DipOutcomeCutoffTest {
     private fun window(cycle: Int): MarketCaptureWindow = buy(cycle).let {
         MarketCaptureWindow.of(DipSample.mint(cycle), it.slot.plus(1), it.slot.plus(HORIZON), it.signature)
     }
+
+    private fun leadWindow(cycle: Int): MarketCaptureWindow = buy(cycle).let {
+        MarketCaptureWindow.forFirstBuy(DipSample.mint(cycle), it.slot, it.signature,
+            MarketCaptureWindowParameters(HORIZON, 2, MarketCaptureWindowParameters.DEFAULT_LEAD_SLOTS))
+    }
+
+    /** Copies of the take-profit cycle's dip trigger in the lead `S - 50`, `S - 1` and twice in the buy's slot S. */
+    private fun leadTrades(cycle: Int): List<MarketObservation> {
+        val trigger = ReplayRunner().run(sample, SimulationConfig.mvp()).scenarios
+            .single { it.intent.pair == DipSample.pair(DipSample.TAKE_PROFIT) }.intent.trigger
+        val dip = sample.observations.single { it.id == trigger?.observationId }
+        val buySlot = buy(cycle).slot.value
+        return listOf(buySlot - 50, buySlot - 1, buySlot, buySlot).mapIndexed { index, slot ->
+            dip.copy(id = "lead:$cycle:$index", sourceEventId = "lead:$cycle:$index", pair = DipSample.pair(cycle), slot = Slot.of(slot),
+                priceSlot = Slot.of(slot))
+        }
+    }
+
+    private fun canonical(observations: List<MarketObservation>) = OrderedMarketData.canonical(observations)
 
     /** The cycle's trades in `[fromSlot, through]`, in the canonical order the capture hands them over. */
     private fun prefix(cycle: Int, through: Long): List<MarketObservation> {

@@ -22,6 +22,8 @@ internal class RecordedMarketHistoryService(
 
     override fun inspect(directory: Path): MarketHistoryCaptureResult = store.inspect(directory)
 
+    override fun windowParameters(directory: Path): MarketCaptureWindowParameters? = store.loadManifest(directory)?.windowParameters
+
     override fun decode(directory: Path): MarketHistoryDecodeResult {
         val verified = store.inspect(directory)
         if (!verified.manifest.acquisitionComplete) throw CaptureValidationException("CAPTURE_INCOMPLETE")

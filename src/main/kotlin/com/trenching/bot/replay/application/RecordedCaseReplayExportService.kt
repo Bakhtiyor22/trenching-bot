@@ -18,6 +18,11 @@ import com.trenching.bot.walletactivity.RecordedWalletHistory
 import org.slf4j.LoggerFactory
 import tools.jackson.databind.ObjectMapper
 
+/**
+ * Exports one market case of a recorded wallet capture as a v5 dataset: its anchor buy and the case's observations, with
+ * coverage from the window's first slot through its observed end. The case is planned with the lead its market capture
+ * recorded, so a case captured before the lead exports with its `S + 1` window.
+ */
 internal class RecordedCaseReplayExportService(
     walletHistory: RecordedWalletHistory,
     private val markets: RecordedMarketHistory,
@@ -28,7 +33,9 @@ internal class RecordedCaseReplayExportService(
     private val planning = RecordedWalletPlanning(walletHistory)
 
     fun export(request: CaptureCaseExportRequest): CaptureCaseExport {
-        val planned = planning.plan(request.walletCaptureDirectory)
+        val history = planning.history(request.walletCaptureDirectory)
+        val decoded = markets.decodeCase(request.marketCaptureDirectory, request.caseId)
+        val planned = planning.plan(history, decoded.windowParameters.leadSlots)
         val window = planned.plan.windows.singleOrNull { MarketCaseId.from(it) == request.caseId }
             ?: throw CaptureValidationException("MARKET_CASE_NOT_FOUND")
         val anchor = planning.anchor(planned, window)
@@ -42,7 +49,6 @@ internal class RecordedCaseReplayExportService(
         if (sameTransaction.size != 1) throw CaptureValidationException("CASE_ANCHOR_MULTITRADE_TRANSACTION")
         val walletTransaction = sameTransaction.single().takeIf { it.instructionIndex == anchor.instructionIndex }
             ?: throw CaptureValidationException("MARKET_CAPTURE_MISMATCH")
-        val decoded = markets.decodeCase(request.marketCaptureDirectory, request.caseId)
         if (!decoded.ready) throw CaptureValidationException(decoded.blocker ?: "MARKET_CASE_INCOMPLETE")
         if (decoded.progress.window != window || decoded.windowParameters != planned.plan.parameters) {
             throw CaptureValidationException("MARKET_CAPTURE_MISMATCH")

@@ -5,12 +5,14 @@ import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.chaincapture.SolanaReadRpc
 import com.trenching.bot.common.Base58
 import com.trenching.bot.common.Slot
+import com.trenching.bot.marketdata.MarketCaptureWindowParameters
 import com.trenching.bot.marketdata.MarketCutoffMode
 import com.trenching.bot.marketdata.MarketHistoryCaptureConfiguration
 import com.trenching.bot.marketdata.MarketHistoryCaptureResult
 import com.trenching.bot.marketdata.MarketTransactionOutcome
 import com.trenching.bot.marketdata.MarketWindowCutoff
 import com.trenching.bot.marketdata.RateLookup
+import com.trenching.bot.marketdata.RecordedMarketHistory
 import com.trenching.bot.marketdata.RecordedReferenceRates
 import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.marketdata.ReferenceRateCaptureResult
@@ -20,6 +22,7 @@ import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifact
 import com.trenching.bot.portfolio.domain.CloseReason
 import com.trenching.bot.protocol.pumpfun.PumpFunLayout
 import com.trenching.bot.replay.RecordedWalletFixtures.MINT
+import com.trenching.bot.replay.RecordedWalletFixtures.SIGNATURE
 import com.trenching.bot.replay.RecordedWalletFixtures.SLOT
 import com.trenching.bot.replay.application.DipOutcomeCutoff
 import com.trenching.bot.replay.application.RecordedReplayExportService
@@ -133,6 +136,39 @@ class OutcomeBoundedCaptureTest {
         assertEquals(Slot.of(SLOT + 4500), export("no-dip").coverage.single().throughSlot)
     }
 
+    @Test
+    fun `a decided capture saved before the lead resumes with its legacy window and stays version three`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val rates = FixedRates()
+        val beforeLead = Chain(::takeProfitTape)
+        val stopped = capture(beforeLead, "legacy", MarketCutoffMode.DECIDED, rates, requestBudget = 40, markets = plannedBeforeLead())
+        assertEquals(2, stopped.manifest.schemaVersion)
+        assertNull(stopped.manifest.windows.single().cutoff)
+
+        val resumed = Chain(::takeProfitTape)
+        val decided = capture(resumed, "legacy", MarketCutoffMode.DECIDED, rates).manifest
+        val again = Chain(::takeProfitTape)
+        val rerun = capture(again, "legacy", MarketCutoffMode.DECIDED, rates).manifest
+
+        assertEquals(SLOT + 1, decided.windows.single().fromSlot)
+        assertEquals(MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS, decided.windowParameters.leadSlots)
+        assertEquals(3, decided.schemaVersion)
+        assertEquals(SLOT + 40, decided.windows.single().cutoff?.throughSlot)
+        assertTrue((beforeLead.listings + resumed.listings).all { it["until"] == SIGNATURE })
+        assertTrue(Files.readString(directory.resolve("legacy").resolve("market-manifest.json")).contains("\"schemaVersion\":3"))
+        assertEquals(emptyList(), again.fetchedSlots)
+        assertEquals(decided.copy(requestsUsed = 0), rerun.copy(requestsUsed = 0))
+    }
+
+    /** Plans as this service did before the lead existed: a directory without a manifest gets the legacy `S + 1` window. */
+    private fun plannedBeforeLead(): RecordedMarketHistory {
+        val recorded = MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper)
+        return object : RecordedMarketHistory by recorded {
+            override fun windowParameters(directory: Path): MarketCaptureWindowParameters =
+                recorded.windowParameters(directory) ?: MarketCaptureWindowParameters(SimulationConfig.mvp().horizonSlots, SimulationConfig.mvp().maxAgeSlots)
+        }
+    }
+
     private fun takeProfitTape(offset: Long): BigInteger = when (offset) {
         10L -> DIP
         39L -> TAKE_PROFIT
@@ -140,10 +176,11 @@ class OutcomeBoundedCaptureTest {
     }
 
     private fun capture(chain: Chain, name: String, mode: MarketCutoffMode, rates: SolUsdtRateSource? = null,
-        usage: ApiUsageContext = ApiUsageContext.UNATTRIBUTED): MarketHistoryCaptureResult =
-        ReplayMarketCaptureService(WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper),
+        usage: ApiUsageContext = ApiUsageContext.UNATTRIBUTED, requestBudget: Int = 1000,
+        markets: RecordedMarketHistory = MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper)): MarketHistoryCaptureResult =
+        ReplayMarketCaptureService(WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper), markets,
             { MarketHistoryCaptureService(chain.rpc(), MarketHistoryArtifactStore(mapper), CLOCK) }, rates)
-            .capture(ReplayMarketCaptureRequest(wallet(), directory.resolve(name), 20, 1000, 1000, 104_857_600, cutoffMode = mode, usage = usage))
+            .capture(ReplayMarketCaptureRequest(wallet(), directory.resolve(name), 20, 1000, requestBudget, 104_857_600, cutoffMode = mode, usage = usage))
 
     private fun export(name: String): ReplayDataset {
         val output = directory.resolve("$name.json")
@@ -171,6 +208,7 @@ class OutcomeBoundedCaptureTest {
         private val slots = (SLOT + 1..SLOT + TRADES).toList()
         private val slotOf = slots.associateBy(::signature)
         val fetchedSlots = mutableListOf<Long>()
+        val listings = mutableListOf<Map<*, *>>()
         val usages: MutableSet<ApiUsageContext> = java.util.concurrent.ConcurrentHashMap.newKeySet()
 
         fun rpc() = SolanaReadRpc { method, params, budget ->
@@ -179,7 +217,7 @@ class OutcomeBoundedCaptureTest {
             when (method) {
                 "getGenesisHash" -> mapper.readTree("\"$GENESIS\"")
                 "getSlot" -> mapper.readTree(Long.MAX_VALUE.toString())
-                "getSignaturesForAddress" -> mapper.readTree(slots.sortedDescending()
+                "getSignaturesForAddress" -> mapper.readTree(slots.sortedDescending().also { listings += params[1] as Map<*, *> }
                     .joinToString(",", "[", "]") { """{"signature":"${signature(it)}","slot":$it,"err":null,"memo":null,"blockTime":1791049629}""" })
                 "getTransaction" -> {
                     val slot = slotOf.getValue(params[0] as String)

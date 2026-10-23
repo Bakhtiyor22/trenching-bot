@@ -67,7 +67,8 @@ internal class MarketHistoryCaptureService(
     /**
      * Lists and fetches each window in order. The confirmed tip is read once, before the first window that has not started
      * its listing; a window it has not passed is held, and the invocation then stops with the longest estimated wait, at the
-     * recent slot pace read once when the first window is held.
+     * recent slot pace read once when the first window is held. A window with a lead lists through its first buy and stops
+     * only below its start; a legacy one lists only newer than the buy, so a resumed old capture lists as before.
      */
     private fun discover(request: MarketHistoryCaptureRequest, saved: MarketHistoryManifest, budget: CaptureBudget, stop: CaptureStop): MarketHistoryManifest {
         var manifest = saved
@@ -93,9 +94,10 @@ internal class MarketHistoryCaptureService(
                     checkpoint(request, summarized(manifest, budget), budget)
                 }
             }
+            val until = window.untilSignature.takeUnless { MarketCaptureFormat.hasLead(manifest.windowParameters) }
             while (window.coverage == MarketWindowCoverage.PENDING) {
                 val page = discoveryRead(window, stop) {
-                    ChainCaptureReads.signaturePage(rpc, window.baseMint, window.scanCursor?.signature, window.untilSignature, budget)
+                    ChainCaptureReads.signaturePage(rpc, window.baseMint, window.scanCursor?.signature, until, budget)
                 } ?: return manifest
                 val admitted = manifest.records.mapTo(HashSet()) { it.signature }
                 val scanned = MarketWindowScan.apply(window, SignatureListing.parse(page), admitted, request.maxTransactions - manifest.records.size)
@@ -260,7 +262,7 @@ internal class MarketHistoryCaptureService(
     /** Sets the cumulative usage, the completion flags and the schema version the manifest's content needs. */
     private fun summarized(manifest: MarketHistoryManifest, budget: CaptureBudget): MarketHistoryManifest {
         val acquired = MarketCaptureFormat.isAcquired(manifest.windows, manifest.records)
-        return manifest.copy(schemaVersion = MarketCaptureFormat.versionFor(manifest.windows),
+        return manifest.copy(schemaVersion = MarketCaptureFormat.versionFor(manifest.windowParameters, manifest.windows),
             requestsUsed = budget.cumulativeRequests(), bytesUsed = budget.cumulativeBytes(), acquisitionComplete = acquired,
             complete = acquired && manifest.windows.all { it.coverage == MarketWindowCoverage.COMPLETE })
     }

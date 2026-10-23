@@ -32,3 +32,7 @@ Market capture fetches every successful trade of a mint in `[S+1, S+4500]`, one 
 - A strategy whose decisions are not causal over slots is added (for example one reading future trades).
 - `decu-dip` v2 is approved and needs its own cutoff.
 - Within-slot order is recorded, which would allow prefixes inside a slot.
+
+## Amendment 2026-10-22: windows with a lead
+
+New captures plan each window from 50 slots before the wallet's first buy, `[S-50, S+4500]`, list through the buy, and record the lead in market manifest version 4 ([decision](20261022-market-window-lead.md)). A cutoff is accepted only from the first buy's slot S on, never inside the lead; for version 2 and 3 captures S is the slot before the window's start, so their rule is unchanged.

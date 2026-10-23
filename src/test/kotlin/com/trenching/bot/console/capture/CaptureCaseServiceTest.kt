@@ -128,12 +128,45 @@ class CaptureCaseServiceTest {
         assertEquals(140L, CaptureResponseMapperImpl().captureCase(item).observedThrough)
     }
 
-    private class FakeCaseWorkflow(private val ratesComplete: Boolean = true, private val corrupt: Boolean = false, observedThrough: Long? = null) : CaptureWorkflow {
+    @Test
+    fun `a case and its export record state the window lead with its horizon and max age`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val worker = ManualExecutor()
+        val cases = CaptureCaseService(fixture.store, FakeCaseWorkflow(parameters = MarketCaptureWindowParameters(100, 10, 50)),
+            CaptureResponseMapperImpl(), DatasetResponseMapperImpl(), FakeCatalog(), fixture.clock, worker)
+        val stated = mapOf("horizonSlots" to 100L, "maxAgeSlots" to 10L, "leadSlots" to 50L)
+
+        val item = cases.cases("session-1").items.single()
+        assertEquals(stated, item.windowParameters)
+        assertEquals(stated, CaptureResponseMapperImpl().captureCase(item).windowParameters)
+
+        cases.captureRates("session-1", item.caseId, "case-rates")
+        worker.runAll()
+        cases.export("session-1", item.caseId, "case-export")
+        worker.runAll()
+        val exportOperation = requireNotNull(fixture.store.captureCaseOrNull("session-1", item.caseId)?.exportOperationId)
+        assertEquals(stated, fixture.store.operationOrNull("session-1", exportOperation)?.caseExport?.windowParameters)
+    }
+
+    @Test
+    fun `a case captured before the lead states the legacy lead`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val cases = CaptureCaseService(fixture.store, FakeCaseWorkflow(), CaptureResponseMapperImpl(), DatasetResponseMapperImpl(),
+            FakeCatalog(), fixture.clock, ManualExecutor())
+
+        assertEquals(MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS, cases.cases("session-1").items.single().windowParameters["leadSlots"])
+    }
+
+    private class FakeCaseWorkflow(
+        private val ratesComplete: Boolean = true,
+        private val corrupt: Boolean = false,
+        observedThrough: Long? = null,
+        parameters: MarketCaptureWindowParameters = MarketCaptureWindowParameters(100, 10),
+    ) : CaptureWorkflow {
         private val wallet = WalletAddress.of(CaptureConsoleFixture.WALLET)
         private val mint = MintAddress.of(CaptureTokenFixtures.MINT)
         private val signature = TransactionSignature.of("1".repeat(64))
         private val window = MarketCaptureWindow.of(mint, Slot.of(100), Slot.of(200), signature)
-        private val parameters = MarketCaptureWindowParameters(100, 10)
         private val summary = CaptureCaseInspection(MarketCaseId.from(window), wallet, mint, signature, 100, 2, window,
             parameters, MarketWindowCoverage.COMPLETE, 4, 4, 0, CaptureCaseStage.READY_TO_VALIDATE, false,
             "MARKET_CASE_NOT_VALIDATED", 0, observedThrough)

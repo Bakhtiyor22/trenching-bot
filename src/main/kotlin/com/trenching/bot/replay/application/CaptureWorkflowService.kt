@@ -36,10 +36,12 @@ class CaptureWorkflowService(
     override fun execute(command: CaptureStepCommand, checkpoints: CaptureCheckpointObserver): CaptureStepResult = when (command) {
         is CaptureStepCommand.Wallet -> CaptureStepResult.Wallet(walletCapture(checkpoints).capture(command.request))
         is CaptureStepCommand.Markets -> CaptureStepResult.Markets(
-            ReplayMarketCaptureService(wallets, { marketCapture(checkpoints) }, cutoffRates).capture(command.request))
+            ReplayMarketCaptureService(wallets, markets, { marketCapture(checkpoints) }, cutoffRates).capture(command.request))
         is CaptureStepCommand.Rates -> {
-            val planned = RecordedWalletPlanning(wallets).plan(command.wallet)
+            val planning = RecordedWalletPlanning(wallets)
+            val history = planning.history(command.wallet)
             val market = markets.decode(command.market)
+            val planned = planning.plan(history, market.windowParameters.leadSlots)
             RecordedMarketVerification.requireMatching(planned.plan, market)
             if (market.observations.isEmpty()) throw com.trenching.bot.chaincapture.CaptureValidationException("NO_OBSERVATIONS")
             CaptureStepResult.Rates(rateCapture(checkpoints).capture(ReferenceRateCaptureRequest(command.market, command.directory, usage = command.usage)))
@@ -76,11 +78,12 @@ class CaptureWorkflowService(
 
     private fun verifiedCase(walletDirectory: java.nio.file.Path, marketDirectory: java.nio.file.Path, caseId: MarketCaseId) {
         val planning = RecordedWalletPlanning(wallets)
-        val planned = planning.plan(walletDirectory)
+        val history = planning.history(walletDirectory)
+        val decoded = markets.decodeCase(marketDirectory, caseId)
+        val planned = planning.plan(history, decoded.windowParameters.leadSlots)
         val window = planned.plan.windows.singleOrNull { MarketCaseId.from(it) == caseId }
             ?: throw com.trenching.bot.chaincapture.CaptureValidationException("MARKET_CASE_NOT_FOUND")
         planning.anchor(planned, window)
-        val decoded = markets.decodeCase(marketDirectory, caseId)
         if (decoded.windowParameters != planned.plan.parameters) {
             throw com.trenching.bot.chaincapture.CaptureValidationException("MARKET_CAPTURE_MISMATCH")
         }

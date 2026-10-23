@@ -61,10 +61,10 @@ A v5 dataset says how far each market window was observed, so a slot nobody fetc
 | Field | Meaning | Rule |
 |---|---|---|
 | `baseMint`, `quoteMint` | the window's market pair | base58 addresses that differ; one entry per pair |
-| `fromSlot` | the window's first slot, S+1 after the wallet's first buy S | integer, nonnegative |
+| `fromSlot` | the first recorded slot: S−50 for captures from market manifest version 4, S+1 before, S being the wallet's first buy | integer, nonnegative |
 | `throughSlot` | the last slot whose trades the dataset holds completely | integer, at least `fromSlot - 1` |
 
-`throughSlot = fromSlot - 1` is a window decided at the buy itself, which observed no slot. A full-window capture has `throughSlot = S + horizon`. Observations past `throughSlot` may be present, but nothing promises they are all of that slot's trades.
+A window decided at the buy itself records through S: `[S−50, S]` with the lead, and `throughSlot = fromSlot - 1` (no slot observed) for a capture from before it. The lead's trades, the tracked wallet's own buy in slot S among them, are recorded but never read by a run, which watches from S+1. A full-window capture has `throughSlot = S + horizon`. Observations past `throughSlot` may be present, but nothing promises they are all of that slot's trades.
 
 Refusal codes: `COVERAGE_MISSING` (no `coverage` key in a v5 file, or an observation whose pair has no entry), `COVERAGE_INVALID` (not an array, a missing or non-integer field, a negative slot, equal mints, `throughSlot` below `fromSlot - 1`, or two entries for one pair) and `COVERAGE_BEFORE_V5` (a `coverage` key in a v3 or v4 file, so their meaning cannot change by editing).
 

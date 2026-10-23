@@ -5,7 +5,8 @@ import com.trenching.bot.common.Slot
 
 /**
  * The slots of one market window whose trades a schema v5 dataset holds completely: every trade of [pair] in
- * `[fromSlot, throughSlot]`. A window decided at its first buy observed nothing, so `throughSlot = fromSlot - 1` is allowed.
+ * `[fromSlot, throughSlot]`. A window with a lead decided at its first buy S covers `[S - lead, S]`; one recorded before the
+ * lead starts at `S + 1` and then observed nothing, so `throughSlot = fromSlot - 1` is allowed.
  */
 @ConsistentCopyVisibility
 data class MarketCoverage private constructor(val pair: MarketPair, val fromSlot: Slot, val throughSlot: Slot) {

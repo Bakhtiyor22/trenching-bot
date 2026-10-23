@@ -42,24 +42,28 @@ internal class WindowCutoffEvaluator(
 
     fun decided(manifest: MarketHistoryManifest): Boolean = manifest.windows[index].cutoff != null
 
-    /** Returns [manifest] with the window decided, or unchanged when it is undecided or its prefix did not advance. */
+    /**
+     * Returns [manifest] with the window decided, or unchanged when it is undecided or its prefix did not advance. A decision
+     * is never before the window's first buy, so a prefix still inside its lead is not asked about.
+     */
     fun evaluate(manifest: MarketHistoryManifest): MarketHistoryManifest {
         val record = manifest.windows[index]
         if (record.cutoff != null) return manifest
         val records = manifest.records.associateBy { it.signature }
         val prefixEnd = MarketCutoffRules.prefixEnd(record, records.mapValues { it.value.outcome })
-        if (prefixEnd < 0 || evaluatedThrough?.let { prefixEnd <= it } == true) return manifest
-        evaluatedThrough = prefixEnd
         val window = MarketWindowRecords.window(record)
+        val firstBuySlot = window.firstBuySlot(manifest.windowParameters)
+        if (prefixEnd < 0 || prefixEnd < firstBuySlot || evaluatedThrough?.let { prefixEnd <= it } == true) return manifest
+        evaluatedThrough = prefixEnd
         return when (val decision = cutoff.evaluate(window, observations(record, window, records, prefixEnd), Slot.of(prefixEnd))) {
             CutoffDecision.Undecided -> manifest
-            is CutoffDecision.Decided -> apply(manifest, record, decision, prefixEnd)
+            is CutoffDecision.Decided -> apply(manifest, record, decision, firstBuySlot..prefixEnd)
         }
     }
 
-    private fun apply(manifest: MarketHistoryManifest, record: MarketWindowRecord, decision: CutoffDecision.Decided, prefixEnd: Long): MarketHistoryManifest {
+    private fun apply(manifest: MarketHistoryManifest, record: MarketWindowRecord, decision: CutoffDecision.Decided, decidable: LongRange): MarketHistoryManifest {
         val slot = decision.slot.value
-        if (slot !in (record.fromSlot - 1)..prefixEnd || !MarketCaptureFormat.isCutoffText(decision.outcome)) {
+        if (slot !in decidable || !MarketCaptureFormat.isCutoffText(decision.outcome)) {
             throw CaptureValidationException(CUTOFF_DECISION)
         }
         val decided = MarketCutoffRules.decided(manifest, index,

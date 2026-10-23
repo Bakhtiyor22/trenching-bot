@@ -6,6 +6,7 @@ import com.trenching.bot.marketdata.domain.MarketObservation
 /**
  * Decides whether a window's outcome can still change. It receives the window's canonical observations in
  * `[fromSlot, observedThrough]`, where every selected transaction was captured, and must not depend on anything later.
+ * `observedThrough` is never before the window's first buy; a decision is accepted only from that slot on, never in a lead.
  */
 fun interface MarketCaptureCutoff {
     fun evaluate(window: MarketCaptureWindow, observations: List<MarketObservation>, observedThrough: Slot): CutoffDecision

@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata.infrastructure.capture
 
+import com.trenching.bot.marketdata.MarketCaptureWindowParameters
 import com.trenching.bot.marketdata.MarketHistoryCaptureLimits
 import com.trenching.bot.marketdata.MarketTransactionOutcome
 import com.trenching.bot.marketdata.MarketTransactionRecord
@@ -13,7 +14,13 @@ internal object MarketCaptureFormat {
 
     /** Version 3: version 2 plus a window cutoff and the `NOT_NEEDED` outcome; only a manifest holding a cutoff uses it. */
     const val CUTOFF_VERSION = 3
-    val SUPPORTED_VERSIONS = setOf(VERSION, CUTOFF_VERSION)
+
+    /**
+     * Version 4: windows start `windowParameters.leadSlots` before each first buy and list through it, with or without a
+     * cutoff. Only a capture planned with a lead uses it; versions 2 and 3 carry no lead and mean the legacy `S + 1` start.
+     */
+    const val LEAD_VERSION = 4
+    val SUPPORTED_VERSIONS = setOf(VERSION, CUTOFF_VERSION, LEAD_VERSION)
 
     /** Bounds a cutoff's outcome, engine version and configuration hash. */
     const val MAX_CUTOFF_TEXT = 128
@@ -41,8 +48,18 @@ internal object MarketCaptureFormat {
     fun isAcquired(windows: List<MarketWindowRecord>, records: List<MarketTransactionRecord>): Boolean =
         windows.none { it.coverage in OPEN_COVERAGES } && records.none { it.outcome in UNRESOLVED_OUTCOMES }
 
-    /** A manifest without a cutoff keeps version 2, so a full capture, and a fully extended one, stays readable as before. */
-    fun versionFor(windows: List<MarketWindowRecord>): Int = if (windows.any { it.cutoff != null }) CUTOFF_VERSION else VERSION
+    /**
+     * A capture with a lead is version 4. Without one, a manifest without a cutoff keeps version 2, so a full capture, and a
+     * fully extended one, stays readable as before; an old capture is never rewritten to a newer version.
+     */
+    fun versionFor(parameters: MarketCaptureWindowParameters, windows: List<MarketWindowRecord>): Int = when {
+        hasLead(parameters) -> LEAD_VERSION
+        windows.any { it.cutoff != null } -> CUTOFF_VERSION
+        else -> VERSION
+    }
+
+    /** Whether windows start before their first buy and are therefore listed through it rather than only newer than it. */
+    fun hasLead(parameters: MarketCaptureWindowParameters): Boolean = parameters.leadSlots != MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS
 
     fun isCutoffText(value: String): Boolean = value.isNotBlank() && value.length <= MAX_CUTOFF_TEXT
 }

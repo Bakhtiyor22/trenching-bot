@@ -81,11 +81,13 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
     }
 
     /**
-     * A window without a cutoff or a listing tip is written without that field, so a manifest without cutoffs keeps its
-     * version 2 bytes and one saved before tips were recorded is read back unchanged.
+     * A window without a cutoff or a listing tip is written without that field, and a capture without a lead without
+     * `leadSlots`, so a manifest without cutoffs keeps its version 2 bytes and one saved before tips were recorded is read
+     * back unchanged.
      */
     fun save(directory: Path, manifest: MarketHistoryManifest) {
         val tree = mapper.valueToTree<ObjectNode>(manifest)
+        if (!MarketCaptureFormat.hasLead(manifest.windowParameters)) (tree.path(WINDOW_PARAMETERS_FIELD) as ObjectNode).remove(LEAD_SLOTS_FIELD)
         tree.path("windows").forEach { window ->
             OPTIONAL_WINDOW_FIELDS.forEach { field -> if (window.path(field).isNull) (window as ObjectNode).remove(field) }
         }
@@ -98,8 +100,8 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         files.writeTransaction(directory, signature, raw)
 
     private fun parse(node: JsonNode): MarketHistoryManifest = try {
-        val parameters = node.path("windowParameters").let { value ->
-            MarketCaptureWindowParameters(integer(value, "horizonSlots"), integer(value, "maxAgeSlots"))
+        val parameters = node.path(WINDOW_PARAMETERS_FIELD).let { value ->
+            MarketCaptureWindowParameters(integer(value, "horizonSlots"), integer(value, "maxAgeSlots"), leadSlots(node, value))
         }
         val windows = array(node, "windows", MarketCaptureFormat.MAX_WINDOWS).map(::window)
         val records = array(node, "records", MarketCaptureFormat.MAX_TRANSACTIONS).map { value -> MarketTransactionRecord(
@@ -111,6 +113,13 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
             windows, records, boolean(node, "acquisitionComplete"), boolean(node, "complete"),
             smallInteger(node, "requestsUsed"), integer(node, "bytesUsed"))
     } catch (_: IllegalArgumentException) { fail("MANIFEST_FIELDS") }
+
+    /** Only version 4 records a lead, and must; versions 2 and 3 mean the legacy start and may not carry one. */
+    private fun leadSlots(manifest: JsonNode, parameters: JsonNode): Long = when {
+        smallInteger(manifest, "schemaVersion") == MarketCaptureFormat.LEAD_VERSION -> integer(parameters, LEAD_SLOTS_FIELD)
+        parameters.has(LEAD_SLOTS_FIELD) -> fail("MANIFEST_FIELDS")
+        else -> MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS
+    }
 
     private fun window(node: JsonNode): MarketWindowRecord = MarketWindowRecord(
         string(node, "baseMint"), string(node, "quoteMint"), integer(node, "fromSlot"), integer(node, "toSlot"),
@@ -179,16 +188,18 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
             .all { it.coverage == MarketWindowCoverage.PENDING && it.pagesScanned == 0 }
 
     /**
-     * A cutoff sits on a complete window between the slot before its start and its end, with every selected record through
-     * it captured; a record is `NOT_NEEDED`, without an artifact, exactly when every selecting window was decided before it.
+     * A cutoff sits on a complete window between its first buy's slot (the slot before its start without a lead) and its
+     * end, with every selected record through it captured; a record is `NOT_NEEDED`, without an artifact, exactly when every
+     * selecting window was decided before it.
      */
     private fun validateCutoffs(manifest: MarketHistoryManifest) {
-        if (manifest.schemaVersion != MarketCaptureFormat.versionFor(manifest.windows)) fail("MANIFEST_VERSION")
+        if (manifest.schemaVersion != MarketCaptureFormat.versionFor(manifest.windowParameters, manifest.windows)) fail("MANIFEST_VERSION")
         val outcomes = manifest.records.associate { it.signature to it.outcome }
         manifest.windows.forEach { window ->
             val cutoff = window.cutoff ?: return@forEach
+            val firstBuySlot = MarketWindowRecords.window(window).firstBuySlot(manifest.windowParameters)
             val consistent = window.coverage == MarketWindowCoverage.COMPLETE && cutoff.throughSlot >= 0 &&
-                cutoff.throughSlot in (window.fromSlot - 1)..window.toSlot &&
+                cutoff.throughSlot in firstBuySlot..window.toSlot &&
                 listOf(cutoff.outcome, cutoff.engineVersion, cutoff.configurationHash).all(MarketCaptureFormat::isCutoffText) &&
                 MarketCutoffRules.observedSelection(window).all { outcomes[it.signature] == MarketTransactionOutcome.CAPTURED }
             if (!consistent) fail(CUTOFF_INVALID)
@@ -221,6 +232,8 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
     private fun fail(category: String): Nothing = throw CaptureValidationException(category)
 
     private companion object {
+        const val WINDOW_PARAMETERS_FIELD = "windowParameters"
+        const val LEAD_SLOTS_FIELD = "leadSlots"
         const val CUTOFF_FIELD = "cutoff"
         const val LISTED_AT_TIP_FIELD = "listedAtTip"
         val OPTIONAL_WINDOW_FIELDS = listOf(CUTOFF_FIELD, LISTED_AT_TIP_FIELD)

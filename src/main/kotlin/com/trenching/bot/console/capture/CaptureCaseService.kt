@@ -11,6 +11,7 @@ import com.trenching.bot.console.api.dto.CaptureBudget
 import com.trenching.bot.console.api.dto.DatasetRegistrationResponse
 import com.trenching.bot.console.mapper.CaptureResponseMapper
 import com.trenching.bot.console.mapper.DatasetResponseMapper
+import com.trenching.bot.marketdata.MarketCaptureWindowParameters
 import com.trenching.bot.marketdata.MarketCaseId
 import com.trenching.bot.replay.CaptureCaseInspection
 import com.trenching.bot.replay.CaptureCaseExport
@@ -275,7 +276,7 @@ class CaptureCaseService(
         return CaptureCaseView(
             inspection.caseId.value, inspection.wallet.value, inspection.mint.value, inspection.anchorSignature.value,
             inspection.anchorSlot, inspection.instructionIndex, inspection.window.fromSlot.value, inspection.window.toSlot.value,
-            mapOf("horizonSlots" to inspection.windowParameters.horizonSlots, "maxAgeSlots" to inspection.windowParameters.maxAgeSlots),
+            windowParameters(inspection.windowParameters),
             inspection.selected, inspection.captured, inspection.gaps, inspection.stage.name, inspection.coverage.name,
             operation?.progress, readiness, captureComplete, validated, validated, exportReady,
             exportReady && record.datasetId == null, inspection.stage == CaptureCaseStage.READY_TO_VALIDATE && !validated && !active,
@@ -331,9 +332,13 @@ class CaptureCaseService(
     private fun exportRecord(value: CaptureCaseExport, artifact: String, provenanceArtifact: String) = CaptureCaseExportRecord(
         value.caseId.value, value.trackedWallet.value, value.mint.value, value.anchorSignature.value, value.anchorSlot,
         value.instructionIndex, value.fromSlot, value.toSlot,
-        mapOf("horizonSlots" to value.windowParameters.horizonSlots, "maxAgeSlots" to value.windowParameters.maxAgeSlots),
+        windowParameters(value.windowParameters),
         value.extractor.name, artifact, value.checksum, provenanceArtifact,
     )
+
+    /** The capture's window parameters as console records state them, its lead included (-1 for a capture from before it). */
+    private fun windowParameters(parameters: MarketCaptureWindowParameters): Map<String, Long> = mapOf(
+        "horizonSlots" to parameters.horizonSlots, "maxAgeSlots" to parameters.maxAgeSlots, "leadSlots" to parameters.leadSlots)
 
     private fun requireSameCase(first: CaptureCaseInspection, second: CaptureCaseInspection) {
         if (first.caseId != second.caseId || first.wallet != second.wallet || first.mint != second.mint ||

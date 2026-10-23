@@ -48,7 +48,7 @@ internal class ReplayMarketCommands(
         output.println("directory=${result.directory}")
         output.println("manifest=${result.manifestFile}")
         output.println("scope=MINT_REFERENCED_PUMPFUN_BONDING_CURVE_TRADES commitment=${manifest.commitment}")
-        output.println("horizonSlots=${parameters.horizonSlots} maxAgeSlots=${parameters.maxAgeSlots}")
+        output.println("horizonSlots=${parameters.horizonSlots} maxAgeSlots=${parameters.maxAgeSlots} leadSlots=${parameters.leadSlots}")
         output.println("windows=${manifest.windows.size} scanPages=${manifest.scanPageLimit} maxTransactions=${manifest.maxTransactions} " +
             "acquisitionComplete=${manifest.acquisitionComplete} complete=${manifest.complete}")
         manifest.windows.forEach { window ->

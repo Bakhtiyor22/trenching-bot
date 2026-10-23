@@ -1,5 +1,6 @@
 package com.trenching.bot.marketdata.application
 
+import com.trenching.bot.chaincapture.SignatureListingEntry
 import com.trenching.bot.marketdata.MarketListedSignature
 import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.marketdata.MarketWindowRecord
@@ -56,6 +57,48 @@ class MarketWindowScanTest {
         assertEquals(Duration.ofMillis(4_400), MarketWindowScan.untilEnd(window(), tip = TO_SLOT - 10, null))
     }
 
+    @Test
+    fun `a lead window listed without an until completes at the first entry below its lead and keeps the buy and the rest of its slot`() {
+        val lead = window().copy(fromSlot = BUY_SLOT - 50, toSlot = BUY_SLOT + 4500, untilSignature = BUY)
+        val page = listOf(entry("newer", BUY_SLOT + 4501), entry("after", BUY_SLOT + 1), entry("sameSlotAfter", BUY_SLOT), entry(BUY, BUY_SLOT),
+            entry("sameSlotBefore", BUY_SLOT), entry("leadFailed", BUY_SLOT - 10, failed = true), entry("leadStart", BUY_SLOT - 50),
+            entry("beforeLead", BUY_SLOT - 51), entry("older", BUY_SLOT - 52))
+
+        val scanned = MarketWindowScan.apply(lead, page, admitted = emptySet(), capacity = 10)
+
+        assertEquals(MarketWindowCoverage.COMPLETE, scanned.coverage)
+        assertEquals(listOf("after", "sameSlotAfter", BUY, "sameSlotBefore", "leadStart"), scanned.selection.map { it.signature })
+        assertEquals(1, scanned.skippedNewer)
+        assertEquals(1, scanned.skippedFailed)
+        assertEquals(7, scanned.scanned)
+        assertEquals(MarketListedSignature("leadStart", BUY_SLOT - 50), scanned.scanCursor)
+    }
+
+    @Test
+    fun `a legacy window selects nothing of the buy's slot and completes below it`() {
+        val legacy = window().copy(fromSlot = BUY_SLOT + 1, toSlot = BUY_SLOT + 4500, untilSignature = BUY)
+        val page = listOf(entry("after", BUY_SLOT + 1), entry("sameSlot", BUY_SLOT))
+
+        val scanned = MarketWindowScan.apply(legacy, page, admitted = emptySet(), capacity = 10)
+
+        assertEquals(MarketWindowCoverage.COMPLETE, scanned.coverage)
+        assertEquals(listOf("after"), scanned.selection.map { it.signature })
+    }
+
+    @Test
+    fun `lead trades count toward the cap and a busy lead makes the window over the cap without trimming it`() {
+        val lead = window().copy(fromSlot = BUY_SLOT - 50, toSlot = BUY_SLOT + 4500, untilSignature = BUY)
+        val page = listOf(entry(BUY, BUY_SLOT), entry("lead1", BUY_SLOT - 1), entry("lead2", BUY_SLOT - 2), entry("beforeLead", BUY_SLOT - 51))
+
+        val scanned = MarketWindowScan.apply(lead, page, admitted = emptySet(), capacity = 2)
+
+        assertEquals(MarketWindowCoverage.OVER_CAP, scanned.coverage)
+        assertEquals(3, scanned.selected)
+        assertEquals(emptyList(), scanned.selection)
+    }
+
+    private fun entry(signature: String, slot: Long, failed: Boolean = false) = SignatureListingEntry(signature, slot, failed)
+
     private fun window() = MarketWindowRecord(
         baseMint = "mint", quoteMint = "quote", fromSlot = FROM_SLOT, toSlot = TO_SLOT, untilSignature = "until",
         coverage = MarketWindowCoverage.PENDING, pagesScanned = 0, scanned = 0, skippedFailed = 0, skippedNewer = 0, selected = 0,
@@ -65,5 +108,7 @@ class MarketWindowScanTest {
     private companion object {
         const val FROM_SLOT = 458_870_212L
         const val TO_SLOT = 458_874_711L
+        const val BUY_SLOT = 459_490_743L
+        const val BUY = "buy"
     }
 }

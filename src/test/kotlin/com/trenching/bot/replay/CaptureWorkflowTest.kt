@@ -184,6 +184,20 @@ class CaptureWorkflowTest {
     }
 
     @Test
+    fun `a market capture with the lead is matched against the wallet's lead windows and unlocks rates`() {
+        RecordedWalletFixtures.save(mapper, wallet)
+        val leadWindow = MarketCaptureWindow.of(window().baseMint, Slot.of(RecordedWalletFixtures.SLOT - 50), window().toSlot,
+            window().untilSignature)
+        val lead = ReplayMarketFixtures.decoded(market,
+            ReplayMarketFixtures.manifest(listOf(leadWindow), parameters = ReplayMarketFixtures.LEAD_PARAMETERS), 1)
+        val leadWindowsLegacyParameters = lead.copy(windowParameters = ReplayMarketFixtures.PARAMETERS)
+
+        assertEquals(CaptureStageState.READY, workflow(lead).inspect(CapturePaths(wallet, market)).market.state)
+        assertTrue((workflow(lead).execute(CaptureStepCommand.Rates(wallet, market, rates)) as CaptureStepResult.Rates).capture.manifest.complete)
+        assertEquals("MARKET_CAPTURE_MISMATCH", workflow(leadWindowsLegacyParameters).inspect(CapturePaths(wallet, market)).market.reason)
+    }
+
+    @Test
     fun `tampered wallet is invalid and cannot unlock later stages`() {
         RecordedWalletFixtures.save(mapper, wallet)
         val artifact = wallets.inspect(wallet).manifest.records.single().artifact

@@ -23,6 +23,7 @@ fun main(args: Array<String>) {
     val clock = Clock.systemUTC()
     val service = ReplayMarketCaptureService(
         walletHistory = WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper),
+        markets = recorded,
         marketCapture = {
             markets.cachedCapture(MarketHistoryCaptureProperties(endpoint = System.getenv("SOLANA_RPC_URL")), mapper, clock, cacheDirectory?.let { SharedTransactionCache(it, mapper) })
         },

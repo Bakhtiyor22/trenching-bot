@@ -78,7 +78,7 @@ class ExecutionCalibrationTest {
     }
 
     @Test
-    fun `Decu's first buy of a mint has no prior captured state, since its window starts the slot after it`() {
+    fun `without a lead, Decu's first buy of a mint has no prior captured state, since its window starts the slot after it`() {
         RecordedWalletFixtures.save(mapper, wallet())
 
         val report = service(plannedMarket()).calibrate(wallet(), markets())
@@ -88,6 +88,30 @@ class ExecutionCalibrationTest {
         assertEquals(0, report.summary.latencyChecked)
         assertNull(report.summary.medianErrorBps)
         assertNull(report.summary.maxErrorBps)
+    }
+
+    @Test
+    fun `with a lead, Decu's first buy is predicted from the newest lead trade of its mint in an earlier slot`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        val lead = leadMarket(listOf(observation("lead-older", SLOT - 40, OTHER_STATE), observation("lead-newest", SLOT - 3, LAUNCH_STATE),
+            observation("own-slot", SLOT, OTHER_STATE)))
+
+        val report = service(lead).calibrate(wallet(), markets())
+
+        val latency = assertIs<LatencyCheck.Checked>(report.buys.single().latency)
+        assertEquals("lead-newest", latency.observationId)
+        assertEquals(Slot.of(SLOT - 3), latency.observationSlot)
+        assertEquals(1, report.summary.latencyChecked)
+        assertEquals(0, report.summary.noPriorState)
+    }
+
+    @Test
+    fun `with a lead holding no trade before the buy's slot, Decu's first buy still has no prior state`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+
+        val report = service(leadMarket(listOf(observation("own-slot", SLOT, OTHER_STATE)))).calibrate(wallet(), markets())
+
+        assertEquals(LatencyCheck.NoPriorState, report.buys.single().latency)
     }
 
     @Test
@@ -484,6 +508,12 @@ class ExecutionCalibrationTest {
             }
         }
         return ExecutionCalibrationService(wallets, markets)
+    }
+
+    /** A lead capture of Decu's buy, `[S - 50, S + 4500]`, holding [observations]. */
+    private fun leadMarket(observations: List<MarketObservation>): MarketHistoryDecodeResult {
+        val manifest = ReplayMarketFixtures.manifest(listOf(window(SLOT - 50, SLOT + 4500)), parameters = ReplayMarketFixtures.LEAD_PARAMETERS)
+        return ReplayMarketFixtures.decoded(markets(), manifest, 0).copy(observations = observations)
     }
 
     private fun plannedMarket(): MarketHistoryDecodeResult =

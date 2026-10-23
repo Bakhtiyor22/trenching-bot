@@ -16,9 +16,9 @@ import java.math.BigDecimal
 import java.time.Instant
 
 /**
- * The tracked wallet's own trades of the pair that no observation records, as tracked markers. A market window starts at the
- * slot after the first buy it follows, so without these the chart would show every one of the wallet's trades except the first
- * buy each cycle starts from.
+ * The tracked wallet's own trades of the pair that no observation records, as tracked markers. A market window captured before
+ * the lead starts at the slot after the first buy it follows, so without these the chart would show every one of the wallet's
+ * trades except the first buy each cycle starts from. A capture with a lead records that buy itself as an observation.
  */
 object ChartWalletTrades {
     /** [trades] are the wallet's accepted trades; those without a block time cannot be placed on a time axis and are left out. */

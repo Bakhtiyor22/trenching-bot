@@ -11,6 +11,9 @@ import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.marketdata.MarketCaptureWindow
 import com.trenching.bot.marketdata.MarketCaptureWindowParameters
 import com.trenching.bot.marketdata.MarketCutoffMode
+import com.trenching.bot.marketdata.MarketHistoryCaptureConfiguration
+import com.trenching.bot.marketdata.MarketWindowCoverage
+import com.trenching.bot.marketdata.infrastructure.capture.MarketHistoryArtifactStore
 import com.trenching.bot.marketdata.MarketHistoryCapture
 import com.trenching.bot.marketdata.MarketHistoryCaptureRequest
 import com.trenching.bot.marketdata.MarketHistoryCaptureResult
@@ -46,19 +49,32 @@ class ReplayMarketWindowPlannerTest {
     private var captured: MarketHistoryCaptureRequest? = null
 
     @Test
-    fun `plans one window over the horizon after the source buy with the default simulation parameters`() {
+    fun `plans one window from the lead before the source buy over the horizon after it with the default simulation parameters`() {
         val plan = planner.plan(history(buy(SIGNATURE, SLOT)))
+        assertEquals(listOf(window(MINT, SLOT - 50, SLOT + 4500, SIGNATURE)), plan.windows)
+        assertEquals(MarketCaptureWindowParameters(horizonSlots = 4500, maxAgeSlots = 2, leadSlots = 50), plan.parameters)
+        assertEquals(1, plan.sourceBuys)
+    }
+
+    @Test
+    fun `the legacy lead plans the window from the slot after the source buy`() {
+        val plan = planner.plan(history(buy(SIGNATURE, SLOT)), leadSlots = MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS)
         assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 4500, SIGNATURE)), plan.windows)
         assertEquals(MarketCaptureWindowParameters(horizonSlots = 4500, maxAgeSlots = 2), plan.parameters)
-        assertEquals(1, plan.sourceBuys)
+    }
+
+    @Test
+    fun `a first buy whose lead would start before slot zero is an invalid window`() {
+        assertCategory("MARKET_WINDOW_INVALID") { planner.plan(history(buy(SIGNATURE, 49))) }
+        assertEquals(listOf(window(MINT, 0, 4550, SIGNATURE)), planner.plan(history(buy(SIGNATURE, 50))).windows)
     }
 
     @Test
     fun `derives the window span from the horizon it is given`() {
         val config = SimulationConfig.of(BigDecimal("0.1"), 4, 1500, 3000, 1500, BigDecimal("10000"), 900, 1, BigDecimal("0.001"))
         val plan = planner.plan(history(buy(SIGNATURE, SLOT)), config)
-        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 900, SIGNATURE)), plan.windows)
-        assertEquals(MarketCaptureWindowParameters(900, 4), plan.parameters)
+        assertEquals(listOf(window(MINT, SLOT - 50, SLOT + 900, SIGNATURE)), plan.windows)
+        assertEquals(MarketCaptureWindowParameters(900, 4, 50), plan.parameters)
     }
 
     @Test
@@ -68,8 +84,8 @@ class ReplayMarketWindowPlannerTest {
             buy(signature(5), SLOT, OTHER_MINT),
         ))
         assertEquals(setOf(
-            window(MINT, SLOT + 1, SLOT + 4500, signature(1)),
-            window(OTHER_MINT, SLOT + 1, SLOT + 4500, signature(5)),
+            window(MINT, SLOT - 50, SLOT + 4500, signature(1)),
+            window(OTHER_MINT, SLOT - 50, SLOT + 4500, signature(5)),
         ), plan.windows.toSet())
         assertEquals(4, plan.sourceBuys)
     }
@@ -77,7 +93,7 @@ class ReplayMarketWindowPlannerTest {
     @Test
     fun `breaks a same slot tie between source buys by signature`() {
         val plan = planner.plan(history(buy(signature(9), SLOT), buy(signature(8), SLOT)))
-        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 4500, signature(8))), plan.windows)
+        assertEquals(listOf(window(MINT, SLOT - 50, SLOT + 4500, signature(8))), plan.windows)
     }
 
     @Test
@@ -90,11 +106,12 @@ class ReplayMarketWindowPlannerTest {
     }
 
     @Test
-    fun `captures the windows planned from a complete recorded wallet capture with the requested bounds`() {
+    fun `a new capture records the windows planned with the lead from a complete recorded wallet capture with the requested bounds`() {
         saveWalletCapture(complete = true)
         val result = service().capture(ReplayMarketCaptureRequest(directory, directory.resolve("markets"), 7, 30, 70, 1_000_000))
         val request = requireNotNull(captured)
-        assertEquals(listOf(window(MINT, SLOT + 1, SLOT + 4500, SIGNATURE)), request.windows)
+        assertEquals(listOf(window(MINT, SLOT - 50, SLOT + 4500, SIGNATURE)), request.windows)
+        assertEquals(50, request.windowParameters.leadSlots)
         assertEquals(directory.resolve("markets"), request.directory)
         assertEquals(listOf(7, 30, 70), listOf(request.scanPages, request.maxTransactions, request.requestBudget))
         assertEquals(1_000_000L, request.byteBudget)
@@ -103,6 +120,20 @@ class ReplayMarketWindowPlannerTest {
         assertEquals(null, request.cutoffIdentity)
         assertEquals(1, factoryCalls)
         assertEquals(directory.resolve("markets"), result.directory)
+    }
+
+    @Test
+    fun `resuming a capture saved before the lead plans its legacy windows and parameters again`() {
+        saveWalletCapture(complete = true)
+        val legacy = window(MINT, SLOT + 1, SLOT + 4500, SIGNATURE)
+        MarketHistoryArtifactStore(mapper).save(directory.resolve("markets"),
+            ReplayMarketFixtures.manifest(listOf(legacy), firstCoverage = MarketWindowCoverage.PENDING))
+
+        service().capture(ReplayMarketCaptureRequest(directory, directory.resolve("markets"), 7, 30, 70, 1_000_000))
+
+        val request = requireNotNull(captured)
+        assertEquals(listOf(legacy), request.windows)
+        assertEquals(ReplayMarketFixtures.PARAMETERS, request.windowParameters)
     }
 
     @Test
@@ -146,6 +177,7 @@ class ReplayMarketWindowPlannerTest {
 
     private fun service(rates: SolUsdtRateSource? = null) = ReplayMarketCaptureService(
         walletHistory = WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper),
+        markets = MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper),
         marketCapture = {
             factoryCalls++
             object : MarketHistoryCapture {

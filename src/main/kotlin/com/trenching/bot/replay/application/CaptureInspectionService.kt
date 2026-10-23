@@ -5,7 +5,6 @@ import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.marketdata.*
 import com.trenching.bot.replay.*
 import com.trenching.bot.replay.domain.MarketPlanDecision
-import com.trenching.bot.replay.domain.ReplayMarketWindowPlan
 import com.trenching.bot.walletactivity.*
 import java.nio.file.Path
 import java.time.Instant
@@ -18,7 +17,6 @@ internal class CaptureInspectionService(
     fun inspect(paths: CapturePaths): CaptureInspection {
         var walletCapture: WalletHistoryCaptureResult? = null
         var walletDecoded: WalletHistoryDecodeResult? = null
-        var walletPlan: ReplayMarketWindowPlan? = null
         val wallet = verified {
             walletCapture = wallets.inspect(paths.wallet)
             val captured = requireNotNull(walletCapture)
@@ -32,11 +30,8 @@ internal class CaptureInspectionService(
                 else -> {
                     val decoded = wallets.decode(paths.wallet, WalletAddress.of(captured.manifest.wallet))
                     walletDecoded = decoded
-                    when (val decision = MarketPlanGate().plan(decoded)) {
-                        is MarketPlanDecision.Planned -> {
-                            walletPlan = decision.plan
-                            CaptureStageSummary(CaptureStageState.READY)
-                        }
+                    when (val decision = MarketPlanGate().plan(decoded, MarketCaptureWindowParameters.DEFAULT_LEAD_SLOTS)) {
+                        is MarketPlanDecision.Planned -> CaptureStageSummary(CaptureStageState.READY)
                         is MarketPlanDecision.Refused -> CaptureStageSummary(CaptureStageState.UNUSABLE, decision.reason)
                     }
                 }
@@ -60,7 +55,7 @@ internal class CaptureInspectionService(
                     CaptureStageSummary(CaptureStageState.INCOMPLETE, MarketCaptureReasons.MARKET_HORIZON_NOT_ELAPSED, canResume = true)
                 !captured.manifest.acquisitionComplete -> CaptureStageSummary(CaptureStageState.INCOMPLETE, "MARKET_CAPTURE_INCOMPLETE", canResume = true)
                 decoded == null -> CaptureStageSummary(CaptureStageState.INCOMPLETE, "MARKET_CAPTURE_INCOMPLETE")
-                else -> marketReady(requireNotNull(walletPlan), decoded)
+                else -> marketReady(requireNotNull(walletDecoded), decoded)
             }
         }.let { if (it.state == CaptureStageState.NOT_STARTED) absent(walletReady, "WALLET_CAPTURE_NOT_READY") else it }
         val marketReady = market.state == CaptureStageState.READY
@@ -84,7 +79,12 @@ internal class CaptureInspectionService(
             walletCapture, walletDecoded, marketCapture, marketDecoded, rateCapture, walletDecoded?.targetToken)
     }
 
-    private fun marketReady(plan: ReplayMarketWindowPlan, market: MarketHistoryDecodeResult): CaptureStageSummary {
+    /** The market capture is matched against the wallet's windows planned with the lead it recorded. */
+    private fun marketReady(wallet: WalletHistoryDecodeResult, market: MarketHistoryDecodeResult): CaptureStageSummary {
+        val plan = when (val decision = MarketPlanGate().plan(wallet, market.windowParameters.leadSlots)) {
+            is MarketPlanDecision.Planned -> decision.plan
+            is MarketPlanDecision.Refused -> return CaptureStageSummary(CaptureStageState.UNUSABLE, decision.reason)
+        }
         if (market.windowParameters != plan.parameters || market.windows.map { it.window }.toSet() != plan.windows.toSet())
             return CaptureStageSummary(CaptureStageState.INVALID, "MARKET_CAPTURE_MISMATCH", requiresNewAttempt = true)
         if (market.windows.any { it.coverage != MarketWindowCoverage.COMPLETE })

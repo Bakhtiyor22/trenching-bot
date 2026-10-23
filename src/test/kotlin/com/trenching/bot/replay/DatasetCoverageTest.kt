@@ -181,6 +181,20 @@ class DatasetCoverageTest {
         assertEquals(emptyList(), DatasetCoverage.undecided(ReplayRunner().run(earlier, config), earlier))
     }
 
+    @Test
+    fun `a lead coverage recorded through the buy's slot decides only the scenario decided at its buy`() {
+        val full = DipSampleV5.dataset()
+        val buySlots = full.transactions.groupBy { it.pair }.mapValues { (_, buys) -> buys.minOf { it.slot.value } }
+        val throughBuy = full.copy(coverage = full.coverage.map {
+            MarketCoverage.of(it.pair, Slot.of(buySlots.getValue(it.pair) - 50), Slot.of(buySlots.getValue(it.pair)))
+        })
+
+        val shortfalls = DatasetCoverage.undecided(ReplayRunner().run(throughBuy, config), throughBuy)
+
+        assertEquals(buySlots.keys - DipSample.pair(DipSample.UNSUPPORTED_SUPPLY), shortfalls.map(CoverageShortfall::pair).toSet())
+        assertEquals(shortfalls.associate { it.pair to Slot.of(buySlots.getValue(it.pair)) }, shortfalls.associate { it.pair to it.throughSlot })
+    }
+
     /** The take-profit cycle's intent (trigger at slot 1002, horizon end 5500), filled against [observations] instead. */
     private fun filled(observations: List<MarketObservation>, config: SimulationConfig): ScenarioResult {
         val intent = report.scenarios.single { it.intent.pair == DipSample.pair(DipSample.TAKE_PROFIT) }.intent.copy(notional = config.notional)

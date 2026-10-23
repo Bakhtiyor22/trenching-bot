@@ -101,7 +101,7 @@ class ReplayMarketCommandsTest {
         val lines = output.toString().lines()
         assertTrue(lines.contains("window=$MINT fromSlot=453004997 toSlot=453005008 coverage=COMPLETE scanned=1003 skippedFailed=1000 skippedNewer=2 selected=1"), output.toString())
         assertTrue(lines.contains("windows=1 scanPages=20 maxTransactions=300 acquisitionComplete=true complete=true"))
-        assertTrue(lines.contains("horizonSlots=4500 maxAgeSlots=2"))
+        assertTrue(lines.contains("horizonSlots=4500 maxAgeSlots=2 leadSlots=-1"), output.toString())
         assertTrue(lines.contains("requestsUsed=5 bytesUsed=4096"))
         assertTrue(lines.contains("transaction.CAPTURED=1"))
         assertTrue(lines.contains("transaction.WITHHELD_UNSAFE_TEXT=0"))
@@ -128,7 +128,8 @@ class ReplayMarketCommandsTest {
             complete = false, discoveryComplete = true, discoveryStop = WalletHistoryDiscoveryStop.HISTORY_END,
             scannedSignatures = 1, skippedFailed = 0, scanCursor = WalletHistoryScanCursor(SIGNATURE, SLOT), requestsUsed = 2, bytesUsed = 0))
         var adapters = 0
-        val service = ReplayMarketCaptureService(WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper), {
+        val service = ReplayMarketCaptureService(WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper),
+            MarketHistoryCaptureConfiguration().recordedMarketHistory(mapper), {
             adapters++
             object : MarketHistoryCapture {
                 override fun capture(request: MarketHistoryCaptureRequest): MarketHistoryCaptureResult = error("Must not capture")

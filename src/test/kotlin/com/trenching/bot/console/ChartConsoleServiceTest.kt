@@ -431,6 +431,35 @@ class ChartConsoleServiceTest {
         assertNull(asked.millisPerSlot)
     }
 
+    @Test
+    fun `with coverage from before the buy, the first buy's marker and tick come from its own trade in its chained place in its slot`() {
+        val time = at("2026-10-21T04:10:18Z")
+        val lead = curveTrade("lead", time.minusSeconds(4), 90, 59_000_000_000L, 530_000_000_000_000L)
+        val before = curveTrade("c-before", time, 100, 60_000_000_000L, 500_000_000_000_000L)
+        val own = curveTrade("b-own", time, 100, 61_000_000_000L, 470_000_000_000_000L, trader = ChartFixtures.TRACKED)
+            .copy(sourceEventId = "$FIRST_BUY_SIGNATURE:2")
+        val after = curveTrade("a-after", time, 100, 62_000_000_000L, 440_000_000_000_000L)
+        val tracked = WalletAddress.of(ChartFixtures.TRACKED)
+        val buy = WalletTransaction(tracked, TransactionSignature.of(FIRST_BUY_SIGNATURE), 2, Slot.of(100), time, PAIR,
+            BigInteger.valueOf(30_000_000_000_000L), BigInteger.valueOf(-1_000_000_000L), PumpFunLayout.TOKEN_DECIMALS,
+            PumpFunLayout.SOL_AMOUNT_DECIMALS, true, true, true, PumpFunLayout.BUY_SOURCE, Commitment.CONFIRMED)
+        val dataset = syntheticDataset(listOf(after, own, lead, before), listOf(rate("2026-10-21T04:10:00Z", "105.98")))
+            .copy(schemaVersion = ReplayDataset.SCHEMA_V5, trackedWallet = tracked, transactions = listOf(buy),
+                coverage = listOf(MarketCoverage.of(PAIR, Slot.of(50), Slot.of(4_600))))
+        catalog.add(dataset)
+
+        val chart = service.datasetChart(id(dataset), query(PAIR, tickLimit = 10))
+
+        assertEquals(listOf("b-own"), chart.markers.items.filter { it.tracked }.map { it.observationId })
+        assertTrue(chart.markers.items.none { it.observationId == WalletEventIdentity.of(buy.signature, buy.instructionIndex) })
+        val slotTicks = chart.ticks.items.filter { it.slot == 100L }
+        assertEquals(listOf("c-before", "b-own", "a-after"), slotTicks.map { it.observationId })
+        assertEquals(listOf(0, 1, 2), slotTicks.map { it.indexInSlot })
+        assertTrue(slotTicks.all { it.slotOrderProven })
+        assertEquals(listOf(false, true, false), slotTicks.map { it.tracked })
+        assertEquals(listOf(ChartCoverage(50, 4_600)), chart.coverage)
+    }
+
     private fun v4WithTracked(): ReplayDataset = DipSampleV4.dataset().let {
         it.copy(trackedWallet = WalletAddress.of(DipSampleV4.trade(0).trader),
             referenceRates = it.referenceRates.map { rate -> rate.copy(source = "v4-test") })
