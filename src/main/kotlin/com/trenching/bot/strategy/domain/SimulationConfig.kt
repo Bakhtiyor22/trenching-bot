@@ -5,10 +5,10 @@ import com.trenching.bot.common.MintAddress
 import java.math.BigDecimal
 
 /**
- * One dip-entry run's parameters, per the dip-entry-strategy ADR: buy [dipBps] below the wallet's first price when the
- * market cap is at least [minMarketCapUsd], then exit [takeProfitBps] above or [stopLossBps] below the entry, all within
- * [horizonSlots] of the wallet's buy. Per the bonding-curve-execution ADR, each entry and exit fills [latencySlots] or
- * more slots after its trigger and pays [transactionCostSol] on top of the curve's own fees.
+ * One dip-entry run's parameters, per the dip-entry-strategy ADR: buy [dipBps] below the wallet's first price when that
+ * buy's market cap is above [minMarketCapUsd] (the dip's is not checked), then exit [takeProfitBps] above or [stopLossBps]
+ * below the entry, all within [horizonSlots] of the wallet's buy. Per the bonding-curve-execution ADR, each entry and exit
+ * fills [latencySlots] or more slots after its trigger and pays [transactionCostSol] on top of the curve's own fees.
  */
 data class SimulationConfig private constructor(
     val strategyName: String,

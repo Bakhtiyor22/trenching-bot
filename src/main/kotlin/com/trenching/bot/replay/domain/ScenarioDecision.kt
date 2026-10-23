@@ -30,7 +30,7 @@ internal object ScenarioDecision {
     /** [watchedFrom] is the first slot the phase that gave [reason] read: after the buy, the trigger's slot, or after the fill. */
     private fun rejected(reason: RejectionReason, intent: TradeIntent, watchedFrom: Slot, source: MarketDataSource, config: SimulationConfig): Slot =
         when (reason) {
-            RejectionReason.UNSUPPORTED_SUPPLY -> intent.creationSlot
+            RejectionReason.UNSUPPORTED_SUPPLY, RejectionReason.REFERENCE_BELOW_MIN_MARKET_CAP -> intent.creationSlot
             RejectionReason.MIGRATED_BEFORE_ENTRY, RejectionReason.MIGRATED -> checkNotNull(firstCompletion(intent, watchedFrom, source)) {
                 "Migration without a completed curve intentId=${intent.id} reason=$reason"
             }

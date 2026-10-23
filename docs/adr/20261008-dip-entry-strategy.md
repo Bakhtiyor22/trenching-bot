@@ -6,6 +6,8 @@ It supersedes the strategy, fill and exit rules of [ADR 0001](0001-fixture-simul
 
 2026-10-09: the execution part of this decision (the flat `feeBps` and `slippageBps`, zero price impact and priority fee, and the fill at the next later slot) is superseded by the [bonding-curve execution decision](20261009-bonding-curve-execution.md), engine `dip-paper-v2`. The triggers below (dip, market cap, take profit, stop loss, migration, horizon) are unchanged; the hand-checked figures below are those of `dip-paper-v1`.
 
+2026-10-23: the market-cap part of the dip trigger is superseded by the [reference market cap decision](20261023-reference-market-cap.md), engine `dip-paper-v3`: the wallet's buy must be valued strictly above the minimum, and the dip trade is no longer checked.
+
 ## Context
 
 Replay copied each tracked-wallet buy at source slot +1, +2 and +3 and exited after a fixed number of slots. The user replaced this with a dip-entry strategy, in their words:

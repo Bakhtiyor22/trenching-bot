@@ -151,6 +151,7 @@ class FillModelTest {
         mapOf(
             DipWatchOutcome.NO_DIP to RejectionReason.NO_DIP,
             DipWatchOutcome.DIP_BELOW_MIN_MARKET_CAP to RejectionReason.DIP_BELOW_MIN_MARKET_CAP,
+            DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP to RejectionReason.REFERENCE_BELOW_MIN_MARKET_CAP,
             DipWatchOutcome.MIGRATED_BEFORE_ENTRY to RejectionReason.MIGRATED_BEFORE_ENTRY,
             DipWatchOutcome.UNSUPPORTED_SUPPLY to RejectionReason.UNSUPPORTED_SUPPLY,
         ).forEach { (watch, reason) ->

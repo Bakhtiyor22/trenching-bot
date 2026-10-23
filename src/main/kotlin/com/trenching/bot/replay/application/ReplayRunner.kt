@@ -87,8 +87,11 @@ class ReplayRunner(
     }
 
     companion object {
-        /** dip-paper-v2: dip-paper-v1's triggers with bonding-curve execution on schema v3 datasets. */
-        const val ENGINE_VERSION = "dip-paper-v2"
+        /**
+         * dip-paper-v3: dip-paper-v2 with the minimum market cap checked at the wallet's buy (strictly above) instead of at the
+         * dip. dip-paper-v2 was dip-paper-v1's triggers with bonding-curve execution on schema v3 datasets.
+         */
+        const val ENGINE_VERSION = "dip-paper-v3"
 
         /** Fills trade against the fill trade's post-trade curve, outputs rounded down and fees rounded up. */
         private const val CURVE_RULE = "curve-post-trade-floor-fees-ceil"

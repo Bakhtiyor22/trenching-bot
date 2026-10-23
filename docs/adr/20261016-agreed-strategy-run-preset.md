@@ -69,3 +69,7 @@ The preset now lists it as the fourth rule, after `MCAP_AT_REFERENCE_BUY`:
 | Section 5 | `POST_TRADE_PRICE` | Every comparison uses the post-trade price, never a trade's average execution price |
 
 `AgreedStrategyPresetTest` checks that Section 5 of the spec still states this. The configuration, run ids and stored runs are unchanged.
+
+## Amendment 2026-10-23: the market cap is checked at the reference buy
+
+Engine `dip-paper-v3` checks P5 as the spec states it: the wallet's buy must be valued strictly above `minMarketCapUsd`, and the dip is not checked ([decision](20261023-reference-market-cap.md)). `minMarketCapUsd` is now `AGREED` without a note (it was `AGREED_MEASURED_DIFFERENTLY` with `MEASURED_AT_DIP_INCLUSIVE`), and `MCAP_AT_REFERENCE_BUY` leaves the unsupported list, which keeps 8 rules with `POST_TRADE_PRICE` third. The preset's values and configuration hash are unchanged; its run ids change with the engine version.

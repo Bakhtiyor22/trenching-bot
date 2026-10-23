@@ -46,7 +46,6 @@ class DatasetCoverageTest {
     @Test
     fun `outcomes that need the whole window are decided at the horizon end`() {
         assertEquals(Slot.of(7500), decidedAt(DipSample.NO_DIP))
-        assertEquals(Slot.of(8500), decidedAt(DipSample.LOW_CAP))
         assertEquals(Slot.of(11500), decidedAt(DipSample.HORIZON))
         assertEquals(Slot.of(12500), decidedAt(DipSample.NO_EXIT_FILL))
         assertEquals(Slot.of(13500), decidedAt(DipSample.NO_FILL))
@@ -61,6 +60,11 @@ class DatasetCoverageTest {
     @Test
     fun `an unsupported supply is decided at the buy without market data`() {
         assertEquals(Slot.of(9500), decidedAt(DipSample.UNSUPPORTED_SUPPLY))
+    }
+
+    @Test
+    fun `a buy below the minimum market cap is decided at the buy`() {
+        assertEquals(Slot.of(4000), decidedAt(DipSample.LOW_CAP))
     }
 
     @Test
@@ -182,7 +186,7 @@ class DatasetCoverageTest {
     }
 
     @Test
-    fun `a lead coverage recorded through the buy's slot decides only the scenario decided at its buy`() {
+    fun `a lead coverage recorded through the buy's slot decides only the scenarios decided at their buy`() {
         val full = DipSampleV5.dataset()
         val buySlots = full.transactions.groupBy { it.pair }.mapValues { (_, buys) -> buys.minOf { it.slot.value } }
         val throughBuy = full.copy(coverage = full.coverage.map {
@@ -191,7 +195,7 @@ class DatasetCoverageTest {
 
         val shortfalls = DatasetCoverage.undecided(ReplayRunner().run(throughBuy, config), throughBuy)
 
-        assertEquals(buySlots.keys - DipSample.pair(DipSample.UNSUPPORTED_SUPPLY), shortfalls.map(CoverageShortfall::pair).toSet())
+        assertEquals(buySlots.keys - DipSample.pair(DipSample.UNSUPPORTED_SUPPLY) - DipSample.pair(DipSample.LOW_CAP), shortfalls.map(CoverageShortfall::pair).toSet())
         assertEquals(shortfalls.associate { it.pair to Slot.of(buySlots.getValue(it.pair)) }, shortfalls.associate { it.pair to it.throughSlot })
     }
 

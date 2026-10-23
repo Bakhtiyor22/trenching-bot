@@ -39,7 +39,9 @@ data class DipTrigger(
 enum class DipWatchOutcome {
     TRIGGERED,
     NO_DIP,
+    // Engine dip-paper-v2 only: it checked the minimum market cap at the dip. Kept so its stored runs still read.
     DIP_BELOW_MIN_MARKET_CAP,
+    REFERENCE_BELOW_MIN_MARKET_CAP,
     MIGRATED_BEFORE_ENTRY,
     UNSUPPORTED_SUPPLY,
 }

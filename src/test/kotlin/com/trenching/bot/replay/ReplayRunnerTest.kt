@@ -8,6 +8,7 @@ import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.portfolio.domain.CloseReason
 import com.trenching.bot.portfolio.domain.PositionState
 import com.trenching.bot.replay.application.ReplayRunner
+import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.domain.ScenarioResult
 import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
@@ -18,6 +19,7 @@ import com.trenching.bot.support.DipSampleV4
 import com.trenching.bot.walletactivity.domain.IngestionReason
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
 import java.math.BigDecimal
+import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
@@ -100,11 +102,11 @@ class ReplayRunnerTest {
     @Test
     fun `cycles without an entry are rejected with their reason`() {
         assertEquals(RejectionReason.NO_DIP, rejection(DipSample.NO_DIP))
-        assertEquals(RejectionReason.DIP_BELOW_MIN_MARKET_CAP, rejection(DipSample.LOW_CAP))
+        assertEquals(RejectionReason.REFERENCE_BELOW_MIN_MARKET_CAP, rejection(DipSample.LOW_CAP))
         assertEquals(RejectionReason.MIGRATED_BEFORE_ENTRY, rejection(DipSample.MIGRATED_EARLY))
         assertEquals(RejectionReason.NO_FILL_AFTER_TRIGGER, rejection(DipSample.NO_FILL))
         assertEquals(RejectionReason.UNSUPPORTED_SUPPLY, rejection(DipSample.UNSUPPORTED_SUPPLY))
-        assertEquals(DipWatchOutcome.DIP_BELOW_MIN_MARKET_CAP, scenario(DipSample.LOW_CAP).intent.watch)
+        assertEquals(DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP, scenario(DipSample.LOW_CAP).intent.watch)
         assertNull(scenario(DipSample.LOW_CAP).intent.trigger)
         assertEquals(DipWatchOutcome.TRIGGERED, scenario(DipSample.NO_FILL).intent.watch)
         listOf(DipSample.NO_DIP, DipSample.LOW_CAP, DipSample.MIGRATED_EARLY, DipSample.NO_FILL, DipSample.UNSUPPORTED_SUPPLY)
@@ -138,7 +140,7 @@ class ReplayRunnerTest {
     }
 
     @Test
-    fun `a lower minimum market cap lets the low cap dip enter`() {
+    fun `a lower minimum market cap lets the low cap token enter`() {
         val config = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("1000"), 4500, 1, BigDecimal("0.001"))
         val scenario = ReplayRunner().run(DipSample.load(), config).scenarios.single { it.intent.pair == DipSample.pair(DipSample.LOW_CAP) }
         assertEquals(DipWatchOutcome.TRIGGERED, scenario.intent.watch)
@@ -146,8 +148,30 @@ class ReplayRunnerTest {
     }
 
     @Test
-    fun `engine dip-paper-v2 hashes latency and transaction cost into the configuration and the run`() {
-        assertEquals("dip-paper-v2", report.engineVersion)
+    fun `the minimum market cap is checked at the wallet's buy, not at the dip`() {
+        // The take-profit buy is at $20,000 (1e-7 SOL per token at 200 USDT); its dip is below $19,000.
+        assertEquals(DipWatchOutcome.TRIGGERED, takeProfitWatch(DipSample.load(), BigDecimal("19000")))
+        assertEquals(DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP, takeProfitWatch(DipSample.load(), BigDecimal("20000")))
+    }
+
+    @Test
+    fun `a buy whose minute has no rate is valued at the rate of the token's next trade`() {
+        val original = DipSample.load()
+        val buySlot = Slot.of(1000)
+        val unrated = original.copy(transactions = original.transactions.map {
+            if (it.slot == buySlot) it.copy(blockTime = Instant.parse("2026-09-30T23:59:00Z")) else it
+        })
+        assertEquals(DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP, takeProfitWatch(unrated, BigDecimal("20000")))
+    }
+
+    private fun takeProfitWatch(dataset: ReplayDataset, minMarketCapUsd: BigDecimal): DipWatchOutcome {
+        val config = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, minMarketCapUsd, 4500, 1, BigDecimal("0.001"))
+        return ReplayRunner().run(dataset, config).scenarios.single { it.intent.pair == DipSample.pair(DipSample.TAKE_PROFIT) }.intent.watch
+    }
+
+    @Test
+    fun `engine dip-paper-v3 hashes latency and transaction cost into the configuration and the run`() {
+        assertEquals("dip-paper-v3", report.engineVersion)
         val slower = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 2, BigDecimal("0.001"))
         val dearer = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.002"))
         listOf(slower, dearer).map { ReplayRunner().run(DipSample.load(), it) }.forEach { other ->
@@ -158,7 +182,7 @@ class ReplayRunnerTest {
     }
 
     @Test
-    fun `dip-sample-v3 and its v4 twin keep the run identity and result they had before schema v5`() {
+    fun `dip-sample-v3 and its v4 twin keep their pinned dip-paper-v3 run identity and result`() {
         val v4 = ReplayRunner().run(DipSampleV4.dataset(), SimulationConfig.mvp())
 
         assertEquals(listOf(PINNED_V3_RUN_ID, PINNED_CONFIGURATION_HASH, PINNED_V3_RESULT_CHECKSUM),
@@ -214,9 +238,9 @@ class ReplayRunnerTest {
 
     private companion object {
         const val PINNED_CONFIGURATION_HASH = "be937336820a84b0af7482105efb9334ebb710c0ccf8e4d6bae88f2666a0a329"
-        const val PINNED_V3_RUN_ID = "734e3b09bba7bcf7d0d824cd99875ee6d0f2a27cd1ccb1eed6d20f64b6c08d37"
-        const val PINNED_V3_RESULT_CHECKSUM = "2d2e378e7d4d69a9aecc863b35b001031c0036d8b2261c1b3cd9b41c498874cd"
-        const val PINNED_V4_RUN_ID = "721699d35b7da69d1603f1761b84b20b3e2e580c4216c74e20446e4d01543c7f"
-        const val PINNED_V4_RESULT_CHECKSUM = "4bcb0d921c16618bb5fe973cd8f7f6e517cddf7d64092513199b624a916ff9c5"
+        const val PINNED_V3_RUN_ID = "3ec5984abf7e67dad91089961bfbb247b62d425b1ba77281194cfd581ab9d512"
+        const val PINNED_V3_RESULT_CHECKSUM = "7dde0b61d4f503a7ff6b45e9b024065a893c57d720522d9bc5ecf0d5f3f490ac"
+        const val PINNED_V4_RUN_ID = "f7aaab5afff8776db00c3c02ed95aad40d5cf81c63a1d75147ee8cfe26dbfc3d"
+        const val PINNED_V4_RESULT_CHECKSUM = "2eae1e3abc2bdd8db609e2e14489fa7536d9502a6cbf70069d84dfee7ebbce6a"
     }
 }

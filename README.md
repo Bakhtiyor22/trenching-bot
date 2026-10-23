@@ -1,6 +1,6 @@
 # trenching-bot
 
-Read-only Solana paper-trading research system. The deterministic fixture slice is implemented: wallet balance deltas -> the dip-entry strategy (the tracked wallet's first buy of each token, a 15% dip at a market cap of at least $10,000, then +30% take profit or -15% stop loss, all within about 30 minutes) -> modeled fills -> atomic PostgreSQL persistence and JSON report. Live wallet/market ingestion remains pending. No transactions are constructed, signed or sent.
+Read-only Solana paper-trading research system. The deterministic fixture slice is implemented: wallet balance deltas -> the dip-entry strategy (the tracked wallet's first buy of each token when it is valued above a $10,000 market cap, a 15% dip from it, then +30% take profit or -15% stop loss, all within about 30 minutes) -> modeled fills -> atomic PostgreSQL persistence and JSON report. Live wallet/market ingestion remains pending. No transactions are constructed, signed or sent.
 
 The roadmap is [WEEKLY_EXECUTION_PLAN](docs/WEEKLY_EXECUTION_PLAN.md). See [implementation status](docs/IMPLEMENTATION_STATUS.md), [the dip-entry strategy](docs/adr/20261008-dip-entry-strategy.md), [original fixture semantics](docs/adr/0001-fixture-simulation-semantics.md), [fixture format](docs/REPLAY_FORMAT.md), and [provider research/setup](docs/PROVIDER_SPIKE.md).
 
@@ -27,7 +27,8 @@ The default dataset is the bundled synthetic sample `src/main/resources/replay/s
 
 The run totals -0.013487824000 SOL over 10 cycles (5 entered, 2 closed). The [dip-entry decision](docs/adr/20261008-dip-entry-strategy.md) records every rule. In short:
 - one cycle per token starts at the tracked wallet's first confirmed signer buy of it, at that buy's price P0;
-- the first eligible trade in a later slot at or below P0 × 0.85, with a market cap of at least $10,000 (price × 1B supply × the dataset's SOL/USDT rate) and before the bonding curve completes, triggers the entry;
+- the buy must be valued above $10,000 market cap (P0 × 1B supply × the dataset's SOL/USDT rate for its minute), otherwise the cycle ends as `REFERENCE_BELOW_MIN_MARKET_CAP` ([decision](docs/adr/20261023-reference-market-cap.md), engine `dip-paper-v3`);
+- the first eligible trade in a later slot at or below P0 × 0.85 and before the bonding curve completes triggers the entry, whatever its own market cap;
 - entries and exits fill at the first eligible trade at least `latencySlots` (default 1) after their trigger;
 - take profit is at Pe × 1.30 and stop loss at Pe × 0.85, where Pe is the entry's curve execution price (our own price impact included, fees excluded);
 - everything happens within 4,500 slots of the buy.
@@ -142,7 +143,7 @@ Capture status polling, inspection, export and calibration are offline; the shar
 | `PATCH /api/captures/{id}` | Renames (`{requestId, name}`) with the same uniqueness rule; idempotent per `requestId` |
 | `GET /api/captures/names/check?name=` | `{available, normalized, suggestion}` for live checks |
 | `GET /api/captures/recommendations?wallet=&scope=&mint=` | Capture setup recommendations |
-| `GET /api/runs/preset` | The agreed-strategy preset: values, a status per field and the 9 spec rules the engine cannot apply ([decision](docs/adr/20261016-agreed-strategy-run-preset.md)) |
+| `GET /api/runs/preset` | The agreed-strategy preset: values, a status per field and the 8 spec rules the engine cannot apply ([decision](docs/adr/20261016-agreed-strategy-run-preset.md)) |
 | `GET /api/runs/recommendations?datasetId=` | Run setup recommendations |
 | `GET /api/config/defaults` | Adds `dipPercent`, `takeProfitPercent` and `stopLossPercent` beside each bps value in `defaults` and `limits`. The defaults are still `SimulationConfig.mvp()` |
 | `POST /api/runs` | `config` accepts the three `…Percent` strings instead of the bps fields (at most two decimals, never rounded; 400 `INVALID_PERCENT` or `CONFLICTING_FIELDS`). Optional `presetId` is validated and logged, never stored, and never changes the run id |

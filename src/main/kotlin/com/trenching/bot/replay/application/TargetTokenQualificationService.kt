@@ -138,7 +138,7 @@ class TargetTokenQualificationService(
                     entry(scenario.outcome), exit(scenario), cycleProvenance, evidence)
             }
             DipWatchOutcome.NO_DIP, DipWatchOutcome.DIP_BELOW_MIN_MARKET_CAP, DipWatchOutcome.MIGRATED_BEFORE_ENTRY,
-            DipWatchOutcome.UNSUPPORTED_SUPPLY ->
+            DipWatchOutcome.UNSUPPORTED_SUPPLY, DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP ->
                 ran(CaseClassification.NEGATIVE_CASE, DipVerdict.NotQualified(intent.watch), null, null, cycleProvenance, evidence)
         }
     }

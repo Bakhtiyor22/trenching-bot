@@ -88,7 +88,7 @@ class TargetTokenQualificationServiceTest {
     fun `a dip that never triggers is a negative case with no entry or exit`() {
         mapOf(
             DipSample.NO_DIP to DipWatchOutcome.NO_DIP,
-            DipSample.LOW_CAP to DipWatchOutcome.DIP_BELOW_MIN_MARKET_CAP,
+            DipSample.LOW_CAP to DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP,
             DipSample.MIGRATED_EARLY to DipWatchOutcome.MIGRATED_BEFORE_ENTRY,
             DipSample.UNSUPPORTED_SUPPLY to DipWatchOutcome.UNSUPPORTED_SUPPLY,
         ).forEach { (cycle, outcome) ->

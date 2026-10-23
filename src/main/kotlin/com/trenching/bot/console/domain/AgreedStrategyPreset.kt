@@ -37,7 +37,7 @@ object AgreedStrategyPreset {
         PresetField("notional", PresetFieldStatus.AGREED, "P12", "CURVE_PAYMENT_FEES_ON_TOP"),
         PresetField("transactionCostSol", PresetFieldStatus.AGREED, "entryPriorityFeeSol", "NETWORK_FEE_NOT_ADDED"),
         PresetField("quoteMint", PresetFieldStatus.AGREED, "P15", null),
-        PresetField("minMarketCapUsd", PresetFieldStatus.AGREED_MEASURED_DIFFERENTLY, "P5", "MEASURED_AT_DIP_INCLUSIVE"),
+        PresetField("minMarketCapUsd", PresetFieldStatus.AGREED, "P5", null),
         PresetField("latencySlots", PresetFieldStatus.ASSUMPTION, null, "REPLAY_LATENCY_ASSUMED"),
         PresetField("horizonSlots", PresetFieldStatus.MISSING, null, "NO_SINGLE_WINDOW_IN_SPEC"),
         PresetField("maxAgeSlots", PresetFieldStatus.ENGINE_DEFAULT, null, null),
@@ -46,7 +46,6 @@ object AgreedStrategyPreset {
     val UNSUPPORTED_RULES: List<UnsupportedSpecRule> = listOf(
         UnsupportedSpecRule("P2", "FIRST_EVER_BUY"),
         UnsupportedSpecRule("P3", "SIGNAL_OVER_1_9_SOL"),
-        UnsupportedSpecRule("P5", "MCAP_AT_REFERENCE_BUY"),
         // dip-entry v1 compares each trade's average execution price; the spec compares the curve's price after it.
         UnsupportedSpecRule("Section 5", "POST_TRADE_PRICE"),
         UnsupportedSpecRule("P7", "DIP_WINDOW_30_SECONDS"),

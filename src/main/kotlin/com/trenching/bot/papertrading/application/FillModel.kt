@@ -20,6 +20,7 @@ class FillModel {
             DipWatchOutcome.TRIGGERED -> checkNotNull(intent.trigger) { "Triggered intent without a trigger id=${intent.id}" }
             DipWatchOutcome.NO_DIP -> return FillOutcome.Rejected(intent.id, RejectionReason.NO_DIP)
             DipWatchOutcome.DIP_BELOW_MIN_MARKET_CAP -> return FillOutcome.Rejected(intent.id, RejectionReason.DIP_BELOW_MIN_MARKET_CAP)
+            DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP -> return FillOutcome.Rejected(intent.id, RejectionReason.REFERENCE_BELOW_MIN_MARKET_CAP)
             DipWatchOutcome.MIGRATED_BEFORE_ENTRY -> return FillOutcome.Rejected(intent.id, RejectionReason.MIGRATED_BEFORE_ENTRY)
             DipWatchOutcome.UNSUPPORTED_SUPPLY -> return FillOutcome.Rejected(intent.id, RejectionReason.UNSUPPORTED_SUPPLY)
         }
