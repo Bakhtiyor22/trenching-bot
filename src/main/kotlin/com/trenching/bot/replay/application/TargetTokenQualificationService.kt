@@ -38,7 +38,8 @@ import tools.jackson.core.JacksonException
 
 /**
  * The offline verdict of a wallet + token capture, per Domain Rules 7–10 of the wallet-token capture plan. [qualify] replays
- * the exported, checksum-verified dataset with [SimulationConfig.mvp]: no provider call, no clock and no database write, so
+ * the exported, checksum-verified dataset with [SimulationConfig.agreed], the configuration the `DECIDED` market cutoff judges
+ * a capture with, so a cut capture is never refused for its own cut: no provider call, no clock and no database write, so
  * the same dataset always gives the same run and verdict. A replay failure is its own classification, never a negative case;
  * a capture that is not export ready is classified from inspection alone. For a wallet + token capture, a cycle that starts
  * from another buy than the proven actual first buy is a replay failure, since its P0 would not be the buy the strategy requires.
@@ -57,7 +58,7 @@ class TargetTokenQualificationService(
         val evidence = inspection.targetToken
         val verdict = try {
             val loaded = load(dataset)
-            val report = runner.run(loaded, SimulationConfig.mvp())
+            val report = runner.run(loaded, SimulationConfig.agreed())
             DatasetCoverage.undecided(report, loaded).firstOrNull()?.let { coverageEnded(it, evidence) } ?: replayed(report, evidence)
         } catch (exception: Exception) {
             val category = failureCategory(exception)

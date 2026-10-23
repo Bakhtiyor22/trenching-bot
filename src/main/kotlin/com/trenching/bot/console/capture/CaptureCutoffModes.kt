@@ -5,8 +5,10 @@ import com.trenching.bot.marketdata.MarketCutoffMode
 
 /**
  * How a market attempt or operation bounds each window. `DECIDED` stops a window once its outcome under
- * `SimulationConfig.mvp()` is decided, which prices triggers with the reference rate source, so it is refused up front
- * when that source is disabled.
+ * `SimulationConfig.agreed()` is decided and the recording reaches four minutes after the buy; it prices triggers with the
+ * reference rate source, so it is refused up front when that source is disabled. A run whose settings differ from the agreed
+ * ones may need more of a window than a decided capture holds and is then refused `MARKET_COVERAGE_ENDED`; `FULL` records the
+ * whole window for such runs.
  */
 object CaptureCutoffModes {
     const val FIELD = "cutoffMode"

@@ -8,6 +8,7 @@ enum class ApiPurpose {
     MINT_PROGRAM_CHECK,
     CONNECTION_CHECK,
     SLOT_PACE,
+    BLOCK_TIME,
     MINUTE_RATES,
     LIVE_RATE,
     UNKNOWN;
@@ -23,6 +24,8 @@ enum class ApiPurpose {
                 "getVersion" to CONNECTION_CHECK,
                 "getSlot" to CONNECTION_CHECK,
                 "getRecentPerformanceSamples" to SLOT_PACE,
+                "getBlockTime" to BLOCK_TIME,
+                "getBlocks" to BLOCK_TIME,
             ),
             ApiProvider.BINANCE to mapOf(
                 "/api/v3/klines" to MINUTE_RATES,

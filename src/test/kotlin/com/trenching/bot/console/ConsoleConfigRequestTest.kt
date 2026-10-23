@@ -154,6 +154,9 @@ class ConsoleConfigRequestTest {
             limits.minMarketCapUsd to { config(marketCap = it) },
             limits.horizonSlots to { config(horizon = it) },
             limits.latencySlots to { config(latency = it) },
+            limits.dipWindowMs to { config().copyOf(dipWindowMs = it) },
+            limits.maxHoldMs to { config().copyOf(maxHoldMs = it, hardExitStartMs = 240_000) },
+            limits.hardExitStartMs to { config().copyOf(maxHoldMs = 180_000, hardExitStartMs = it) },
         )
 
         bounded.forEach { (range, build) ->
@@ -176,11 +179,49 @@ class ConsoleConfigRequestTest {
     }
 
     @Test
+    fun `the timed clocks are sent as whole milliseconds and the exit pair together`() {
+        val config = config("""{"dipWindowMs":30000,"maxHoldMs":180000,"hardExitStartMs":240000}""")
+
+        assertEquals(listOf(30_000L, 180_000L, 240_000L), listOf(config.dipWindowMs, config.maxHoldMs, config.hardExitStartMs))
+        assertEquals(30_000L, config("""{"dipWindowMs":30000}""").dipWindowMs)
+    }
+
+    @Test
+    fun `timed clocks sent as null are not set, which keeps the run untimed`() {
+        assertEquals(SimulationConfig.mvp(), config("""{"dipWindowMs":null,"maxHoldMs":null,"hardExitStartMs":null}"""))
+    }
+
+    @Test
+    fun `an exit clock without its pair is rejected on the missing field`() {
+        assertEquals(mapOf("hardExitStartMs" to "must be set together with maxHoldMs"), fields("""{"maxHoldMs":180000}"""))
+        assertEquals(mapOf("maxHoldMs" to "must be set together with hardExitStartMs"), fields("""{"hardExitStartMs":240000}"""))
+    }
+
+    @Test
+    fun `an invalid exit clock is reported alone, not also as a missing pair`() {
+        assertEquals(mapOf("maxHoldMs" to "must be an integer between 1000 and 3600000"), fields("""{"maxHoldMs":999}"""))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["999", "600001", "30000.5", "\"30000\"", "true"])
+    fun `a dip window outside one second to ten minutes of whole milliseconds is rejected on its field only`(value: String) {
+        assertEquals(mapOf("dipWindowMs" to "must be an integer between 1000 and 600000"), fields("""{"dipWindowMs":$value}"""))
+    }
+
+    @Test
+    fun `exit clocks outside one second to an hour are rejected on each field`() {
+        assertEquals(mapOf("maxHoldMs" to "must be an integer between 1000 and 3600000",
+            "hardExitStartMs" to "must be an integer between 1000 and 3600000"),
+            fields("""{"maxHoldMs":3600001,"hardExitStartMs":0}"""))
+    }
+
+    @Test
     fun `levels sent as percents build the same configuration as the same levels in basis points`() {
         val shared = """"notional":"0.1","minMarketCapUsd":"10000","latencySlots":1,"transactionCostSol":"0.001""""
-        val percents = config("""{$shared,"dipPercent":"20","takeProfitPercent":"55","stopLossPercent":"40"}""")
+        val clocks = """"dipWindowMs":30000,"maxHoldMs":180000,"hardExitStartMs":240000"""
+        val percents = config("""{$shared,$clocks,"dipPercent":"20","takeProfitPercent":"55","stopLossPercent":"40"}""")
 
-        assertEquals(config("""{$shared,"dipBps":2000,"takeProfitBps":5500,"stopLossBps":4000}"""), percents)
+        assertEquals(config("""{$shared,$clocks,"dipBps":2000,"takeProfitBps":5500,"stopLossBps":4000}"""), percents)
         assertEquals(AgreedStrategyPreset.CONFIG, percents)
         assertEquals(1550, config("""{"dipPercent":"15.5"}""").dipBps)
         assertEquals(1, config("""{"stopLossPercent":"0.01"}""").stopLossBps)
@@ -241,8 +282,13 @@ class ConsoleConfigRequestTest {
     @Test
     fun `the range boundaries agree with SimulationConfig of`() {
         val body = """{"maxAgeSlots":1000,"dipBps":1,"takeProfitBps":9999,"stopLossBps":9999,"minMarketCapUsd":"1000000000",
-            "horizonSlots":1,"latencySlots":150,"transactionCostSol":"0.1"}"""
+            "horizonSlots":1,"latencySlots":150,"transactionCostSol":"0.1","dipWindowMs":600000,"maxHoldMs":1000,"hardExitStartMs":3600000}"""
 
         assertIs<ConfigValidation.Valid>(validate(body))
     }
+
+    private fun SimulationConfig.copyOf(dipWindowMs: Long? = this.dipWindowMs, maxHoldMs: Long? = this.maxHoldMs,
+                                        hardExitStartMs: Long? = this.hardExitStartMs): SimulationConfig =
+        SimulationConfig.of(notional, maxAgeSlots, dipBps, takeProfitBps, stopLossBps, minMarketCapUsd, horizonSlots, latencySlots,
+            transactionCostSol, quoteMint = quoteMint, dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs, hardExitStartMs = hardExitStartMs)
 }

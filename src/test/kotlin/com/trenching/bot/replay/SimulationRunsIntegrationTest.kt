@@ -102,8 +102,10 @@ class SimulationRunsIntegrationTest {
     @Test
     fun `open positions store zero realized pnl at model scale`() {
         val original = variant("open")
-        // Up to three slots after each buy: every entry fills, and no exit can follow.
-        val record = persistedReplay.execute(original.copy(observations = original.observations.filter { it.slot.value % 1000 <= 3 }),
+        // Up to three slots after each buy, without the standing-curve cycle's take profit: every entry fills, and no exit can follow.
+        val record = persistedReplay.execute(original.copy(observations = original.observations.filter {
+            it.slot.value % 1000 <= 3 && it.slot.value != DipSample.STANDING_CURVE_TRIGGER_SLOT
+        }),
             SimulationConfig.mvp())
         val run = requireNotNull(runs.find(record.id))
         assertEquals(listOf(5, 0, 5), listOf(run.filledCount, run.closedCount, run.openCount))

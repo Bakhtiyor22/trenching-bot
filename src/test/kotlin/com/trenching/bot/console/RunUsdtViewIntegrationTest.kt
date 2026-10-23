@@ -56,7 +56,7 @@ class RunUsdtViewIntegrationTest {
         assertEquals("0.00001723269028708764211495110270087600", fill.path("executionPriceUsdt").asString())
         assertEquals("20.450000000000", fill.path("costBasisUsdt").asString())
         assertEquals("0.200000000000", fill.path("priorityFeeUsdt").asString())
-        assertEquals(listOf("0.200000000000", "0.200000000000"), body.path("scenarios").toList().filter { !it.path("close").isNull }
+        assertEquals(List(2) { "0.200000000000" }, body.path("scenarios").toList().filter { !it.path("close").isNull }
             .map { it.path("close").path("transactionCostUsdt").asString() })
         assertEquals("200", fill.path("rate").asString())
         assertEquals("2026-10-01T00:00:00Z", fill.path("minute").asString())

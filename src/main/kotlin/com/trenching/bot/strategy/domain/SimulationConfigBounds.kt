@@ -19,4 +19,10 @@ object SimulationConfigBounds {
     /** About a minute at 400 ms slots. */
     val LATENCY_SLOTS: LongRange = 1L..150L
     val MAX_TRANSACTION_COST_SOL: BigDecimal = BigDecimal("0.1")
+
+    /** Spec P7's dip window, from the wallet buy's block time: one second to ten minutes. */
+    val DIP_WINDOW_MS: LongRange = 1_000L..600_000L
+
+    /** Spec P11's maximum hold and hard exit start: one second to an hour each. */
+    val EXIT_CLOCK_MS: LongRange = 1_000L..3_600_000L
 }

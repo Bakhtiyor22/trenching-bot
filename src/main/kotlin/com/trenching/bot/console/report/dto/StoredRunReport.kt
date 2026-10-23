@@ -9,6 +9,7 @@ data class StoredRunReport(
     val configuration: StoredConfiguration,
 )
 
+/** The timed fields are absent from a snapshot stored before engine dip-paper-v4, so they default to null (untimed). */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class StoredConfiguration(
     val strategyName: String,
@@ -23,6 +24,9 @@ data class StoredConfiguration(
     val latencySlots: Long,
     val transactionCostSol: BigDecimal,
     val quoteMint: StoredAddress,
+    val dipWindowMs: Long? = null,
+    val maxHoldMs: Long? = null,
+    val hardExitStartMs: Long? = null,
 )
 
 data class StoredAddress(val value: String)

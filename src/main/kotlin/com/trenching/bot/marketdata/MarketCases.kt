@@ -5,6 +5,7 @@ import com.trenching.bot.marketdata.domain.MarketObservation
 import java.nio.file.Path
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.time.Instant
 
 /** Stable, path-safe identity derived from the exact mint, wallet anchor signature, and inclusive slot window. */
 data class MarketCaseId private constructor(val value: String) {
@@ -28,7 +29,10 @@ data class MarketCaseId private constructor(val value: String) {
 
 data class MarketCaseInventory(val directory: Path, val cases: List<MarketCaseProgress>)
 
-/** [captured] and [unresolved] count only the selected transactions through [observedThrough]. */
+/**
+ * [captured] and [unresolved] count only the selected transactions through [observedThrough]; [observedThroughTime] is the
+ * block time recorded for that slot, when the capture has one.
+ */
 data class MarketCaseProgress(
     val caseId: MarketCaseId,
     val window: MarketCaptureWindow,
@@ -39,6 +43,7 @@ data class MarketCaseProgress(
     val unresolved: Int,
     val blocker: String?,
     val observedThrough: Slot = window.toSlot,
+    val observedThroughTime: Instant? = null,
 )
 
 enum class MarketCaseStage {

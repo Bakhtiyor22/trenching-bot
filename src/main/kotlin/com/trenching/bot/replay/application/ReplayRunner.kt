@@ -14,7 +14,10 @@ import com.trenching.bot.strategy.domain.*
 import com.trenching.bot.walletactivity.application.WalletNormalizer
 import com.trenching.bot.walletactivity.domain.*
 
-/** Replays a v3, v4 or v5 dataset under the dip-entry strategy: one cycle per mint, from the tracked wallet's first buy of it. */
+/**
+ * Replays a v3 to v6 dataset under the dip-entry strategy: one cycle per mint, from the tracked wallet's first buy of it. Each
+ * position's exit is judged against how far the dataset proves its market recorded, per [DatasetCoverage.recordedThrough].
+ */
 class ReplayRunner(
     private val normalizer: WalletNormalizer = WalletNormalizer(),
     private val strategy: DipEntryStrategy = DipEntryStrategy(),
@@ -26,6 +29,7 @@ class ReplayRunner(
         val transactions = OrderedWalletTransactions.canonical(dataset.transactions)
         val source = OrderedMarketData(dataset.observations)
         val rates = OrderedReferenceRates(dataset.referenceRates)
+        val recordedThrough = DatasetCoverage.recordedThrough(dataset)
         val datasetHash = DatasetFingerprint.checksum(dataset)
         val configHash = configurationHash(config)
         val runId = StableHash.of(listOf(ENGINE_VERSION, datasetHash, configHash))
@@ -42,8 +46,8 @@ class ReplayRunner(
             when (val outcome = fills.fill(intent, source, config)) {
                 is FillOutcome.Rejected -> ScenarioResult(intent, outcome, null, null)
                 is FillOutcome.Filled -> {
-                    val opened = positions.open(intent, outcome.fill, config)
-                    when (val closed = positions.close(opened, intent, source, config)) {
+                    val opened = positions.open(intent, outcome.fill, source, config)
+                    when (val closed = positions.close(opened, intent, source, config, recordedThrough(intent))) {
                         is CloseOutcome.Closed -> ScenarioResult(intent, outcome, closed.position, null)
                         is CloseOutcome.Unavailable -> ScenarioResult(intent, outcome, closed.position, closed.reason)
                         is CloseOutcome.AlreadyClosed -> ScenarioResult(intent, outcome, closed.position, null)
@@ -71,13 +75,17 @@ class ReplayRunner(
                         fill.costBasis.toPlainString(), scenario.position?.state?.name ?: "",
                         scenario.exitUnavailable?.name ?: ""))
                     scenario.position?.let { position ->
-                        parts.addAll(listOf(position.takeProfitPrice.toPlainString(), position.stopLossPrice.toPlainString()))
-                        position.exitTrigger?.let { parts.addAll(listOf(it.observationId, it.slot.value.toString(), it.reason.name)) }
+                        parts.addAll(listOf(position.takeProfitPrice.toPlainString(), position.stopLossPrice.toPlainString(),
+                            position.exitStart?.toString() ?: ""))
+                        position.exitTrigger?.let {
+                            parts.addAll(listOf(it.observationId, it.slot.value.toString(), it.time?.toString() ?: "", it.reason.name))
+                        }
                         position.close?.let { close ->
                             parts.addAll(listOf(close.observationId, close.slot.value.toString(),
                                 close.executionPrice.toPlainString(), close.grossProceeds.toPlainString(), close.fee.toPlainString(),
                                 close.feeBps.toString(), close.transactionCost.toPlainString(), close.priceImpactBps.toString(),
-                                close.netProceeds.toPlainString(), close.realizedPnl.toPlainString(), close.reason.name))
+                                close.netProceeds.toPlainString(), close.realizedPnl.toPlainString(), close.reason.name,
+                                close.priceAssumption.name))
                         }
                     }
                 }
@@ -88,21 +96,31 @@ class ReplayRunner(
 
     companion object {
         /**
-         * dip-paper-v3: dip-paper-v2 with the minimum market cap checked at the wallet's buy (strictly above) instead of at the
-         * dip. dip-paper-v2 was dip-paper-v1's triggers with bonding-curve execution on schema v3 datasets.
+         * dip-paper-v4: dip-paper-v3 with the optional block-time clocks (a dip window and a timed exit) and exits sold against
+         * the standing curve when no later trade lands. dip-paper-v3 checked the minimum market cap at the wallet's buy (strictly
+         * above) instead of at the dip; dip-paper-v2 was dip-paper-v1's triggers with bonding-curve execution on schema v3 datasets.
          */
-        const val ENGINE_VERSION = "dip-paper-v3"
+        const val ENGINE_VERSION = "dip-paper-v4"
 
         /** Fills trade against the fill trade's post-trade curve, outputs rounded down and fees rounded up. */
         private const val CURVE_RULE = "curve-post-trade-floor-fees-ceil"
 
-        /** The hash a report of [config] carries; it depends on the configuration and the engine's rules only, never on a dataset. */
+        /**
+         * The hash a report of [config] carries; it depends on the configuration and the engine's rules only, never on a dataset.
+         * A timed field is named only when set, so an untimed configuration keeps its dip-paper-v3 hash.
+         */
         fun configurationHash(config: SimulationConfig): String =
             StableHash.of(listOf(config.strategyName, config.strategyVersion, config.notional.toPlainString(),
                 config.maxAgeSlots.toString(), config.dipBps.toString(), config.takeProfitBps.toString(), config.stopLossBps.toString(),
                 config.minMarketCapUsd.toPlainString(), config.horizonSlots.toString(), "latencySlots=${config.latencySlots}",
                 "transactionCostSol=${config.transactionCostSol.toPlainString()}", config.quoteMint.value,
                 "scale=${DecimalPolicy.SCALE}", "priceScale=${DecimalPolicy.PRICE_SCALE}", DecimalPolicy.ROUNDING.name,
-                "supply=${PumpFunLayout.TOKEN_SUPPLY}", "fills=first-eligible-after-latency", CURVE_RULE, "confirmed-signer-buys"))
+                "supply=${PumpFunLayout.TOKEN_SUPPLY}", "fills=first-eligible-after-latency", CURVE_RULE, "confirmed-signer-buys") + timedParts(config))
+
+        private fun timedParts(config: SimulationConfig): List<String> = listOfNotNull(
+            config.dipWindowMs?.let { "dipWindowMs=$it" },
+            config.maxHoldMs?.let { "maxHoldMs=$it" },
+            config.hardExitStartMs?.let { "hardExitStartMs=$it" },
+        )
     }
 }

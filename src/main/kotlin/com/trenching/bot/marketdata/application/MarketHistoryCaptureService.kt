@@ -51,7 +51,7 @@ internal class MarketHistoryCaptureService(
         val budget = CaptureBudget(request.requestBudget, request.byteBudget, saved?.requestsUsed ?: 0, saved?.bytesUsed ?: 0, request.operationTimeout, request.usage)
         val genesis = ChainCaptureReads.requireMainnet(rpc, budget)
         var manifest = saved ?: MarketHistoryManifest(
-            schemaVersion = MarketCaptureFormat.VERSION, genesisHash = genesis, commitment = ChainCaptureFormat.COMMITMENT,
+            schemaVersion = MarketCaptureFormat.initialVersion(request.windowParameters), genesisHash = genesis, commitment = ChainCaptureFormat.COMMITMENT,
             capturedAt = clock.instant().toString(), windowParameters = request.windowParameters, scanPageLimit = request.scanPages,
             maxTransactions = request.maxTransactions, windows = windows.map(MarketWindowRecords::pending), records = emptyList(),
             acquisitionComplete = false, complete = false, requestsUsed = 0, bytesUsed = 0,
@@ -71,6 +71,7 @@ internal class MarketHistoryCaptureService(
      * only below its start; a legacy one lists only newer than the buy, so a resumed old capture lists as before.
      */
     private fun discover(request: MarketHistoryCaptureRequest, saved: MarketHistoryManifest, budget: CaptureBudget, stop: CaptureStop): MarketHistoryManifest {
+        val blockTimes = BlockTimes(rpc, budget)
         var manifest = saved
         var tip: Long? = null
         var pace: SlotPace? = null
@@ -112,13 +113,42 @@ internal class MarketHistoryCaptureService(
             log.info("market_capture window mint={} fromSlot={} toSlot={} coverage={} scanned={} skippedFailed={} skippedNewer={} selected={}",
                 window.baseMint, window.fromSlot, window.toSlot, window.coverage, window.scanned, window.skippedFailed, window.skippedNewer, window.selected)
             if (window.coverage == MarketWindowCoverage.COMPLETE) {
-                manifest = fetchDetails(request, manifest, budget, stop, index)
+                manifest = fetchDetails(request, manifest, budget, blockTimes, stop, index)
                 checkpoint(request, summarized(manifest, budget), budget)
                 if (stop.reason != null) return manifest
+                manifest = withThroughBlockTime(request, manifest, budget, blockTimes, index)
             }
         }
         heldFor?.let { stop.record(MarketCaptureReasons.HORIZON_NOT_ELAPSED, it) }
         return manifest
+    }
+
+    /**
+     * Records the block time of the slot a settled window is observed through, once, in a capture that records block times.
+     * A window is settled when nothing it is observed through still needs a fetch, so its observed end can no longer move.
+     */
+    private fun withThroughBlockTime(
+        request: MarketHistoryCaptureRequest,
+        manifest: MarketHistoryManifest,
+        budget: CaptureBudget,
+        blockTimes: BlockTimes,
+        index: Int,
+    ): MarketHistoryManifest {
+        val window = manifest.windows[index]
+        if (!MarketCaptureFormat.recordsBlockTimes(manifest.schemaVersion) || window.throughBlockTime != null || !settled(manifest, window)) return manifest
+        val slot = MarketCutoffRules.observedThrough(window)
+        val time = blockTimes.at(slot) { category ->
+            log.warn("market_capture block_time_unavailable mint={} slot={} category={}", window.baseMint, slot, category)
+        } ?: return manifest
+        val updated = manifest.copy(windows = manifest.windows.toMutableList().apply { set(index, window.copy(throughBlockTime = time)) })
+        checkpoint(request, summarized(updated, budget), budget)
+        return updated
+    }
+
+    private fun settled(manifest: MarketHistoryManifest, window: MarketWindowRecord): Boolean {
+        if (window.coverage != MarketWindowCoverage.COMPLETE) return false
+        val outcomes = manifest.records.associate { it.signature to it.outcome }
+        return MarketCutoffRules.observedSelection(window).none { outcomes[it.signature] in MarketCaptureFormat.UNRESOLVED_OUTCOMES }
     }
 
     /** The recent time per slot, or null when the endpoint had no sample to measure it from. */
@@ -179,13 +209,14 @@ internal class MarketHistoryCaptureService(
         request: MarketHistoryCaptureRequest,
         saved: MarketHistoryManifest,
         budget: CaptureBudget,
+        blockTimes: BlockTimes,
         stop: CaptureStop,
         index: Int,
     ): MarketHistoryManifest {
         val window = saved.windows[index]
         val unresolved = unresolved(saved, window)
         if (window.cutoff != null || unresolved.isEmpty()) return saved
-        val evaluator = evaluator(request, index)
+        val evaluator = evaluator(request, index, blockTimes)
         val initial = evaluator?.evaluate(saved) ?: saved
         if (evaluator?.decided(initial) == true) return initial
         return detailBatches.run(
@@ -210,11 +241,11 @@ internal class MarketHistoryCaptureService(
             .sortedWith(compareBy({ it.value.slot }, { it.value.signature }))
     }
 
-    private fun evaluator(request: MarketHistoryCaptureRequest, index: Int): WindowCutoffEvaluator? = when (request.cutoffMode) {
+    private fun evaluator(request: MarketHistoryCaptureRequest, index: Int, blockTimes: BlockTimes): WindowCutoffEvaluator? = when (request.cutoffMode) {
         MarketCutoffMode.FULL -> null
         MarketCutoffMode.DECIDED -> WindowCutoffEvaluator(request.directory, index,
             requireNotNull(request.cutoff) { "A decided capture was validated with a cutoff" },
-            requireNotNull(request.cutoffIdentity) { "A decided capture was validated with a cutoff identity" }, store, extractor)
+            requireNotNull(request.cutoffIdentity) { "A decided capture was validated with a cutoff identity" }, store, extractor, blockTimes)
     }
 
     private fun fetchDetail(record: MarketTransactionRecord, budget: CaptureBudget): DetailFetch<MarketTransactionOutcome> =
@@ -262,7 +293,8 @@ internal class MarketHistoryCaptureService(
     /** Sets the cumulative usage, the completion flags and the schema version the manifest's content needs. */
     private fun summarized(manifest: MarketHistoryManifest, budget: CaptureBudget): MarketHistoryManifest {
         val acquired = MarketCaptureFormat.isAcquired(manifest.windows, manifest.records)
-        return manifest.copy(schemaVersion = MarketCaptureFormat.versionFor(manifest.windowParameters, manifest.windows),
+        val recordsBlockTimes = MarketCaptureFormat.recordsBlockTimes(manifest.schemaVersion)
+        return manifest.copy(schemaVersion = MarketCaptureFormat.versionFor(manifest.windowParameters, manifest.windows, recordsBlockTimes),
             requestsUsed = budget.cumulativeRequests(), bytesUsed = budget.cumulativeBytes(), acquisitionComplete = acquired,
             complete = acquired && manifest.windows.all { it.coverage == MarketWindowCoverage.COMPLETE })
     }

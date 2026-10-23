@@ -17,7 +17,8 @@ data class DecimalRange(val min: BigDecimal, val max: BigDecimal) {
 /**
  * Editable ranges sourced from strategy so each field can be reported separately. A notional has at most
  * [notionalScale] decimals (whole lamports) and [notionalPrecision] digits at that scale; a transaction cost is
- * rounded to [transactionCostScale] decimals.
+ * rounded to [transactionCostScale] decimals. The timed clocks are optional; their ranges, in milliseconds, bound a value
+ * only when it is set.
  */
 data class SimulationConfigLimits(
     val notionalScale: Int,
@@ -31,6 +32,9 @@ data class SimulationConfigLimits(
     val latencySlots: NumberRange,
     val transactionCostScale: Int,
     val transactionCostSol: DecimalRange,
+    val dipWindowMs: NumberRange,
+    val maxHoldMs: NumberRange,
+    val hardExitStartMs: NumberRange,
 ) {
     companion object {
         private val LEVELS = range(SimulationConfigBounds.LEVEL_BASIS_POINTS)
@@ -47,6 +51,9 @@ data class SimulationConfigLimits(
             latencySlots = range(SimulationConfigBounds.LATENCY_SLOTS),
             transactionCostScale = DecimalPolicy.SCALE,
             transactionCostSol = DecimalRange(BigDecimal.ZERO, SimulationConfigBounds.MAX_TRANSACTION_COST_SOL),
+            dipWindowMs = range(SimulationConfigBounds.DIP_WINDOW_MS),
+            maxHoldMs = range(SimulationConfigBounds.EXIT_CLOCK_MS),
+            hardExitStartMs = range(SimulationConfigBounds.EXIT_CLOCK_MS),
         )
 
         private fun range(values: IntRange) = NumberRange(values.first.toLong(), values.last.toLong())

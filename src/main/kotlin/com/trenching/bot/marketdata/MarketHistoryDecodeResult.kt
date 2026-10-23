@@ -4,6 +4,7 @@ import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.marketdata.domain.MarketObservation
 import java.nio.file.Path
+import java.time.Instant
 
 /**
  * A verified capture whose acquisition finished, turned into observations offline. [observations] are in canonical
@@ -23,7 +24,8 @@ data class MarketHistoryDecodeResult(
 /**
  * [yieldsObservations] holds only for a complete window whose every transaction through [observedThrough] was captured;
  * [detailGaps] counts those that were not, so a gap is never read as an absence of trades. [observedThrough] is the
- * window's end, or its cutoff slot when its outcome was decided earlier.
+ * window's end, or its cutoff slot when its outcome was decided earlier; [observedThroughTime] is the block time recorded for
+ * it, null for a capture before manifest version 5 or a read that has not succeeded yet.
  */
 data class MarketWindowDecodeRecord(
     val window: MarketCaptureWindow,
@@ -33,6 +35,7 @@ data class MarketWindowDecodeRecord(
     val yieldsObservations: Boolean,
     val observations: Int,
     val observedThrough: Slot = window.toSlot,
+    val observedThroughTime: Instant? = null,
 )
 
 data class MarketTransactionDecodeRecord(

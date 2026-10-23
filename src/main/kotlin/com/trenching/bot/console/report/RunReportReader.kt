@@ -19,7 +19,8 @@ class RunReportReader(private val json: ObjectMapper) {
         val config = SimulationConfig.of(configuration.notional, configuration.maxAgeSlots, configuration.dipBps,
             configuration.takeProfitBps, configuration.stopLossBps, configuration.minMarketCapUsd, configuration.horizonSlots,
             configuration.latencySlots, configuration.transactionCostSol, configuration.strategyName,
-            configuration.strategyVersion, MintAddress.of(configuration.quoteMint.value))
+            configuration.strategyVersion, MintAddress.of(configuration.quoteMint.value), configuration.dipWindowMs,
+            configuration.maxHoldMs, configuration.hardExitStartMs)
         return StoredReportFacts(config)
     }
 }

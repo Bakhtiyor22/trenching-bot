@@ -59,6 +59,7 @@ internal object MarketCutoffRules {
         return needed.filterValues { !it }.keys
     }
 
+    /** A block time belongs to the slot the window is observed through, so a cutoff change drops it until it is read again. */
     private fun withCutoff(manifest: MarketHistoryManifest, index: Int, cutoff: MarketWindowCutoff?): MarketHistoryManifest =
-        manifest.copy(windows = manifest.windows.toMutableList().apply { set(index, get(index).copy(cutoff = cutoff)) })
+        manifest.copy(windows = manifest.windows.toMutableList().apply { set(index, get(index).copy(cutoff = cutoff, throughBlockTime = null)) })
 }

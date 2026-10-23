@@ -2,11 +2,13 @@ package com.trenching.bot.chaincapture
 
 import com.trenching.bot.common.Base58
 import java.time.Duration
+import java.time.Instant
 import tools.jackson.databind.JsonNode
 
 /** The read requests captures make, with the shared commitment and transaction-version parameters. */
 object ChainCaptureReads {
     private const val PERFORMANCE_RESPONSE = "PERFORMANCE_RESPONSE"
+    private const val BLOCKS_RESPONSE = "BLOCKS_RESPONSE"
 
     /** Returns the endpoint's genesis hash after checking that it is mainnet. */
     fun requireMainnet(rpc: SolanaReadRpc, budget: CaptureBudget): String {
@@ -54,6 +56,39 @@ object ChainCaptureReads {
             seconds += count(sample, "samplePeriodSecs")
         }
         return if (slots == 0L) null else Duration.ofSeconds(seconds).dividedBy(slots)
+    }
+
+    /**
+     * The block time of the nearest produced block at or below [slot], so it is never later than the slot's own time. A
+     * skipped slot steps back through the produced blocks of the [ChainCaptureFormat.BLOCK_TIME_LOOKBACK_SLOTS] below it;
+     * null when none was produced there or the provider has no time for the block.
+     */
+    fun blockTime(rpc: SolanaReadRpc, slot: Long, budget: CaptureBudget): Instant? {
+        require(slot >= 0) { "Block time slot must not be negative slot=$slot" }
+        val time = try {
+            rpc.call(ChainCaptureFormat.GET_BLOCK_TIME, listOf(slot), budget)
+        } catch (skipped: CaptureProviderException) {
+            if (skipped.category != CaptureCategory.SLOT_SKIPPED) throw skipped
+            val produced = producedBelow(rpc, slot, budget) ?: return null
+            rpc.call(ChainCaptureFormat.GET_BLOCK_TIME, listOf(produced), budget)
+        }
+        return unixSeconds(time)
+    }
+
+    private fun producedBelow(rpc: SolanaReadRpc, slot: Long, budget: CaptureBudget): Long? {
+        val from = maxOf(0, slot - ChainCaptureFormat.BLOCK_TIME_LOOKBACK_SLOTS)
+        val blocks = rpc.call(ChainCaptureFormat.GET_BLOCKS, listOf(from, slot, mapOf("commitment" to ChainCaptureFormat.COMMITMENT)), budget)
+        if (!blocks.isArray) throw CaptureValidationException(BLOCKS_RESPONSE)
+        return blocks.maxOfOrNull { block ->
+            if (!block.isIntegralNumber || !block.canConvertToLong() || block.asLong() !in from..slot) throw CaptureValidationException(BLOCKS_RESPONSE)
+            block.asLong()
+        }
+    }
+
+    private fun unixSeconds(time: JsonNode): Instant? {
+        if (time.isNull) return null
+        if (!time.isIntegralNumber || !time.canConvertToLong() || time.asLong() < 0) throw CaptureValidationException("BLOCK_TIME_RESPONSE")
+        return Instant.ofEpochSecond(time.asLong())
     }
 
     private fun count(sample: JsonNode, field: String): Long {

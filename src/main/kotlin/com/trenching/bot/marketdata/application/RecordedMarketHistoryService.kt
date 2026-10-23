@@ -41,7 +41,8 @@ internal class RecordedMarketHistoryService(
         val windows = manifest.windows.map { record ->
             val window = MarketWindowRecords.window(record)
             MarketWindowDecodeRecord(window, record.coverage, record.selected, detailGaps(record, outcomes), yieldsObservations(record, outcomes),
-                observations.count { window.contains(it.pair.base, it.slot) }, Slot.of(MarketCutoffRules.observedThrough(record)))
+                observations.count { window.contains(it.pair.base, it.slot) }, Slot.of(MarketCutoffRules.observedThrough(record)),
+                record.throughBlockTime)
         }
         val transactions = manifest.records.map { record ->
             val extracted = extractions[record.signature].orEmpty()
@@ -122,7 +123,7 @@ internal class RecordedMarketHistoryService(
         }
         val captureWindow = MarketWindowRecords.window(window)
         return MarketCaseProgress(MarketCaseId.from(captureWindow), captureWindow, window.coverage, stage, selected, captured, unresolved,
-            blocker, Slot.of(MarketCutoffRules.observedThrough(window)))
+            blocker, Slot.of(MarketCutoffRules.observedThrough(window)), window.throughBlockTime)
     }
 
     private companion object {

@@ -31,6 +31,13 @@ class AgreedStrategyPresetTest {
     }
 
     @Test
+    fun `the spec's dip window, maximum hold and hard exit start are the preset's clocks`() {
+        assertEquals(spec.getValue("dipWindowMs").toLong(), preset.config.dipWindowMs)
+        assertEquals(spec.getValue("maxHoldMs").toLong(), preset.config.maxHoldMs)
+        assertEquals(spec.getValue("hardExitStartMs").toLong(), preset.config.hardExitStartMs)
+    }
+
+    @Test
     fun `the preset names the spec it was recovered from`() {
         assertEquals(spec.getValue("strategyName"), preset.source.strategy)
         assertEquals(spec.getValue("strategyVersion").toInt(), preset.source.version)
@@ -40,33 +47,39 @@ class AgreedStrategyPresetTest {
     }
 
     @Test
-    fun `the preset runs on dip-entry v1 and keeps the engine defaults for what the spec does not set`() {
+    fun `the preset is the strategy's agreed configuration on dip-entry v1, with the engine defaults for what the spec does not set`() {
         val mvp = SimulationConfig.mvp()
+        assertEquals(SimulationConfig.agreed(), preset.config)
         assertEquals(SimulationConfig.of(BigDecimal("0.1"), mvp.maxAgeSlots, 2000, 5500, 4000, BigDecimal("10000"), mvp.horizonSlots, 1,
-            BigDecimal("0.001"), quoteMint = MintAddress.WRAPPED_SOL), preset.config)
+            BigDecimal("0.001"), quoteMint = MintAddress.WRAPPED_SOL, dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000),
+            preset.config)
         assertEquals(4500L, preset.config.horizonSlots)
     }
 
     @Test
-    fun `every configuration field has its status and spec reference, with the horizon flagged missing`() {
+    fun `every configuration field has its status and spec reference, with the horizon only bounding the recording`() {
         assertEquals(listOf(
             PresetField("dipBps", PresetFieldStatus.AGREED, "P6", null),
+            PresetField("dipWindowMs", PresetFieldStatus.AGREED, "P7", null),
             PresetField("takeProfitBps", PresetFieldStatus.AGREED, "P9", null),
             PresetField("stopLossBps", PresetFieldStatus.AGREED, "P10", null),
+            PresetField("maxHoldMs", PresetFieldStatus.AGREED, "P11", null),
+            PresetField("hardExitStartMs", PresetFieldStatus.AGREED, "P11", null),
             PresetField("notional", PresetFieldStatus.AGREED, "P12", "CURVE_PAYMENT_FEES_ON_TOP"),
             PresetField("transactionCostSol", PresetFieldStatus.AGREED, "entryPriorityFeeSol", "NETWORK_FEE_NOT_ADDED"),
             PresetField("quoteMint", PresetFieldStatus.AGREED, "P15", null),
             PresetField("minMarketCapUsd", PresetFieldStatus.AGREED, "P5", null),
             PresetField("latencySlots", PresetFieldStatus.ASSUMPTION, null, "REPLAY_LATENCY_ASSUMED"),
-            PresetField("horizonSlots", PresetFieldStatus.MISSING, null, "NO_SINGLE_WINDOW_IN_SPEC"),
+            PresetField("horizonSlots", PresetFieldStatus.ENGINE_DEFAULT, null, "RECORDING_BOUND_ONLY"),
             PresetField("maxAgeSlots", PresetFieldStatus.ENGINE_DEFAULT, null, null),
         ), preset.fields)
     }
 
     @Test
-    fun `the eight spec rules dip-entry v1 cannot apply are listed`() {
-        assertEquals(listOf("P2", "P3", "Section 5", "P7", "P8", "P11", "Section 8", "P13"), preset.unsupportedRules.map { it.specRef })
-        assertEquals(preset.unsupportedRules.size, preset.unsupportedRules.map { it.code }.toSet().size)
+    fun `the six spec rules dip-entry v1 cannot apply are listed`() {
+        assertEquals(listOf("P2", "P3", "Section 5", "P8", "Section 8", "P13"), preset.unsupportedRules.map { it.specRef })
+        assertEquals(listOf("FIRST_EVER_BUY", "SIGNAL_OVER_1_9_SOL", "POST_TRADE_PRICE", "ENTRY_SLIPPAGE_15_PERCENT", "EXIT_RETRY_ECONOMICS",
+            "ONE_POSITION_INCLUDING_IN_FLIGHT"), preset.unsupportedRules.map { it.code })
     }
 
     @Test

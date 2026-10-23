@@ -63,7 +63,7 @@ class RecordedReplayExportTest {
     private var marketDecodes = 0
 
     @Test
-    fun `exports the real recorded buy, its in-window trade and that trade's rate as canonical v5 json, with the trade's actor and the full window's coverage, that the loader round-trips`() {
+    fun `exports the real recorded buy, its in-window trade and that trade's rate as canonical v6 json, with the trade's actor and the full window's coverage, that the loader round-trips`() {
         RecordedWalletFixtures.save(mapper, wallet())
         saveRealMarketCapture()
 
@@ -86,7 +86,7 @@ class RecordedReplayExportTest {
             CurveReserves(BigInteger("80123104314"), BigInteger("401756777019139"), BigInteger("50123104314"), BigInteger("121856777019139")),
             feeBps = 95, creatorFeeBps = 30), observation.curve)
         assertEquals(listOf(RATE), dataset.referenceRates)
-        assertEquals(ReplayDataset.SCHEMA_V5, dataset.schemaVersion)
+        assertEquals(ReplayDataset.SCHEMA_V6, dataset.schemaVersion)
         assertEquals(listOf(MarketCoverage.of(observation.pair, Slot.of(SLOT + 1), Slot.of(SLOT + 4500))), dataset.coverage)
         assertEquals(fixtureTrade().user.value, observation.trade?.trader)
         assertEquals(fixtureTrade().solAmount, observation.trade?.solLamports)
@@ -134,7 +134,7 @@ class RecordedReplayExportTest {
         assertEquals(listOf(SIGNATURE), dataset.transactions.map { it.signature.value })
         assertEquals(1, dataset.observations.size)
         assertEquals(listOf(RATE), dataset.referenceRates)
-        assertEquals(ReplayDataset.SCHEMA_V5, dataset.schemaVersion)
+        assertEquals(ReplayDataset.SCHEMA_V6, dataset.schemaVersion)
         assertEquals(listOf(MarketCoverage.of(window.pair, window.fromSlot, window.toSlot)), dataset.coverage)
         assertEquals(fixtureTrade().user.value, dataset.observations.single().trade?.trader)
     }
@@ -228,6 +228,36 @@ class RecordedReplayExportTest {
         assertEquals(listOf(MarketCoverage.of(listed.window.pair, Slot.of(SLOT - 50), Slot.of(SLOT + 4500))), exported(export).coverage)
     }
 
+    @Test
+    fun `a version 5 capture exports its window's block time as the v6 coverage throughTime, in the full and the case export`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveLeadMarketCapture(BLOCK_TIME)
+        val expected = listOf(MarketCoverage.of(window(SLOT - 50, SLOT + 4500).pair, Slot.of(SLOT - 50), Slot.of(SLOT + 4500), BLOCK_TIME))
+
+        val export = service().export(request())
+        val (_, case) = throughCasePath()
+
+        val full = Files.newInputStream(output()).use { ReplayDatasetLoader(mapper).load(it) }
+        assertEquals(ReplayDataset.SCHEMA_V6, full.schemaVersion)
+        assertEquals(expected, full.coverage)
+        assertEquals(DatasetFingerprint.checksum(full), export.checksum)
+        assertEquals(expected, exported(case).coverage)
+        assertTrue(Files.readString(output()).contains("\"throughTime\":\"$BLOCK_TIME\""))
+    }
+
+    @Test
+    fun `a version 4 capture exports a v6 dataset whose coverage has no throughTime`() {
+        RecordedWalletFixtures.save(mapper, wallet())
+        saveLeadMarketCapture()
+
+        service().export(request())
+
+        val dataset = Files.newInputStream(output()).use { ReplayDatasetLoader(mapper).load(it) }
+        assertEquals(ReplayDataset.SCHEMA_V6, dataset.schemaVersion)
+        assertEquals(null, dataset.coverage.single().throughTime)
+        assertFalse(Files.readString(output()).contains("throughTime"))
+    }
+
     /**
      * Lists the cases, inspects the single one and exports it from that inspection, as the console's case operations do. The
      * listing reads no artifact.
@@ -278,7 +308,7 @@ class RecordedReplayExportTest {
         val full = Files.newInputStream(output()).use { ReplayDatasetLoader(mapper).load(it) }
         val single = Files.newInputStream(case.output).use { ReplayDatasetLoader(mapper).load(it) }
 
-        assertEquals(ReplayDataset.SCHEMA_V5, single.schemaVersion)
+        assertEquals(ReplayDataset.SCHEMA_V6, single.schemaVersion)
         assertEquals(full.observations.map { it.trade }, single.observations.map { it.trade })
         assertEquals(full.coverage, single.coverage)
     }
@@ -457,9 +487,13 @@ class RecordedReplayExportTest {
     private fun saveRealMarketCapture(cutoff: MarketWindowCutoff? = null) =
         saveMarketCapture(window(SLOT + 1, SLOT + 4500), ReplayMarketFixtures.PARAMETERS, listOf(Triple(TRADE, SLOT + 1, TRADE_RESOURCE)), cutoff)
 
-    /** A capture with the lead: its window starts 50 slots before the buy and holds the buy's own transaction and the next trade. */
-    private fun saveLeadMarketCapture() = saveMarketCapture(window(SLOT - 50, SLOT + 4500), ReplayMarketFixtures.LEAD_PARAMETERS,
-        listOf(Triple(TRADE, SLOT + 1, TRADE_RESOURCE), Triple(SIGNATURE, SLOT, BUY_RESOURCE)))
+    /**
+     * A capture with the lead: its window starts 50 slots before the buy and holds the buy's own transaction and the next trade.
+     * With a [throughBlockTime] it is a version 5 capture whose window recorded it.
+     */
+    private fun saveLeadMarketCapture(throughBlockTime: Instant? = null) = saveMarketCapture(window(SLOT - 50, SLOT + 4500),
+        ReplayMarketFixtures.LEAD_PARAMETERS, listOf(Triple(TRADE, SLOT + 1, TRADE_RESOURCE), Triple(SIGNATURE, SLOT, BUY_RESOURCE)),
+        throughBlockTime = throughBlockTime)
 
     /** [transactions] are (signature, slot, resource), newest first as discovery lists them. */
     private fun saveMarketCapture(
@@ -467,6 +501,7 @@ class RecordedReplayExportTest {
         parameters: MarketCaptureWindowParameters,
         transactions: List<Triple<String, Long, String>>,
         cutoff: MarketWindowCutoff? = null,
+        throughBlockTime: Instant? = null,
     ) {
         val store = MarketHistoryArtifactStore(mapper)
         val records = transactions.map { (signature, slot, resource) ->
@@ -475,7 +510,11 @@ class RecordedReplayExportTest {
             MarketTransactionRecord(signature, slot, MarketTransactionOutcome.CAPTURED, artifact.path, artifact.sha256, artifact.bytes)
         }
         val manifest = ReplayMarketFixtures.manifest(listOf(window), records, parameters = parameters)
-        store.save(markets(), if (cutoff == null) manifest else manifest.copy(schemaVersion = 3, windows = manifest.windows.map { it.copy(cutoff = cutoff) }))
+        store.save(markets(), when {
+            cutoff != null -> manifest.copy(schemaVersion = 3, windows = manifest.windows.map { it.copy(cutoff = cutoff) })
+            throughBlockTime != null -> manifest.copy(schemaVersion = 5, windows = manifest.windows.map { it.copy(throughBlockTime = throughBlockTime) })
+            else -> manifest
+        })
     }
 
     @Test
@@ -561,6 +600,7 @@ class RecordedReplayExportTest {
     private companion object {
         /** A synthetic test rate for the minute of the captured trade; never a recorded Binance value. */
         val RATE = ReferenceRate(Instant.parse("2026-10-03T17:47:00Z"), BigDecimal("150"), "test-fixture:SOLUSDT:1m:open")
+        val BLOCK_TIME: Instant = Instant.parse("2026-10-03T18:17:00Z")
         const val TRADE = "2YHkUxxjxax3y2f8efvMgzboRQ6XDMQpqck7pNpBbEawhFhgAzB32Lh7eRX7RhfkvgjARf2kHgQJWz7rZPDnhvxM"
         const val TRADE_RESOURCE = "/marketdata/pumpfun-trade-453004997.json"
 

@@ -21,12 +21,14 @@ import com.trenching.bot.marketdata.infrastructure.capture.MarketWindowRecords
 import com.trenching.bot.marketdata.infrastructure.extraction.PumpFunTradeObservationExtractor
 import com.trenching.bot.marketdata.infrastructure.extraction.TradeExtraction
 import java.nio.file.Path
+import java.time.Instant
 import org.slf4j.LoggerFactory
 
 /**
  * Asks a capture's cutoff whether one window's outcome is decided over its slot-complete captured prefix, at most once per
  * prefix end, and applies a decision. The prefix's observations are extracted from the stored artifacts, so a resumed
- * capture sees exactly what an uninterrupted one would.
+ * capture sees exactly what an uninterrupted one would. The prefix end's block time is read from [blockTimes] only when the
+ * cutoff asks for it, and only in a capture that records block times; otherwise the cutoff is told there is none.
  */
 internal class WindowCutoffEvaluator(
     private val directory: Path,
@@ -35,6 +37,7 @@ internal class WindowCutoffEvaluator(
     private val identity: CutoffIdentity,
     private val store: MarketHistoryArtifactStore,
     private val extractor: PumpFunTradeObservationExtractor,
+    private val blockTimes: BlockTimes,
 ) {
     private val log = LoggerFactory.getLogger(WindowCutoffEvaluator::class.java)
     private val observationsBySignature = HashMap<String, List<MarketObservation>>()
@@ -55,10 +58,17 @@ internal class WindowCutoffEvaluator(
         val firstBuySlot = window.firstBuySlot(manifest.windowParameters)
         if (prefixEnd < 0 || prefixEnd < firstBuySlot || evaluatedThrough?.let { prefixEnd <= it } == true) return manifest
         evaluatedThrough = prefixEnd
-        return when (val decision = cutoff.evaluate(window, observations(record, window, records, prefixEnd), Slot.of(prefixEnd))) {
+        val observedThroughTime = { if (MarketCaptureFormat.recordsBlockTimes(manifest.schemaVersion)) blockTime(record, prefixEnd) else null }
+        val observations = observations(record, window, records, prefixEnd)
+        return when (val decision = cutoff.evaluate(window, observations, Slot.of(prefixEnd), observedThroughTime)) {
             CutoffDecision.Undecided -> manifest
             is CutoffDecision.Decided -> apply(manifest, record, decision, firstBuySlot..prefixEnd)
         }
+    }
+
+    /** A missing time leaves the window undecided, so the capture continues in full. */
+    private fun blockTime(record: MarketWindowRecord, slot: Long): Instant? = blockTimes.at(slot) { category ->
+        log.warn("market_capture cutoff block_time_unavailable mint={} slot={} category={}", record.baseMint, slot, category)
     }
 
     private fun apply(manifest: MarketHistoryManifest, record: MarketWindowRecord, decision: CutoffDecision.Decided, decidable: LongRange): MarketHistoryManifest {

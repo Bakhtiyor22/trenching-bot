@@ -47,4 +47,5 @@ data class PositionResponse(
     val takeProfitPrice: String,
     val stopLossPrice: String,
     val exitTrigger: ExitTriggerResponse?,
+    val exitStart: Instant?,
 )

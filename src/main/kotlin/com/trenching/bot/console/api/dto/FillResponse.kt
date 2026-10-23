@@ -27,7 +27,9 @@ data class FillResponse(
 /**
  * Exit economics of a closed position, exact decimal strings in quote units: [netProceeds] is [grossProceeds] less
  * [fee] (charged at [feeBps]) and [transactionCost]; [priceImpactBps] is negative for the sale. Each `…Percent` is its
- * basis point twin as an exact signed percent string.
+ * basis point twin as an exact signed percent string. [priceAssumption] is `NEXT_TRADE` (sold into the first trade after
+ * the trigger) or `STANDING_CURVE` (sold against the curve standing at the sale's moment, the post-trade curve of
+ * [observationId]).
  */
 data class CloseResponse(
     val slot: Long,
@@ -43,4 +45,5 @@ data class CloseResponse(
     val netProceeds: String,
     val realizedPnl: String,
     val reason: String,
+    val priceAssumption: String,
 )

@@ -34,3 +34,7 @@ A market window was `[S+1, S+4500]`, S being the slot of the tracked wallet's fi
 - The strategy should see trades in slot S after the buy (with latency 1 a dip there could fill in S+1); decide it with the `decu-dip` v2 engine.
 - A different lead size is needed, or it should become a capture setting.
 - Existing captures should be extended backward instead of re-captured.
+
+## Amendment 2026-10-24: market manifest version 5
+
+A capture now records, for each window whose coverage completes, the block time it was recorded through: `throughBlockTime`, the block time of the nearest produced block at or below the window's last slot, read once with `getBlockTime` (API usage purpose `BLOCK_TIME`) ([decision](20261024-timed-dip-window-and-exit.md)). It is written in `market-manifest.json` version 5, which keeps every version 4 field, the lead included. Versions 4 and earlier read it as null and are never rewritten; a failed read leaves it null and is retried on resume. The export carries it into dataset schema v6 as `coverage[].throughTime`, where it proves that a time exit's moment is covered on a token that stopped trading.

@@ -135,7 +135,7 @@ class MarketHistoryCutoffCaptureTest {
     @Test
     fun `a decision beyond the captured prefix is refused as a programming error`() {
         val chain = Chain(MINT to (1001..1250))
-        val beyond = MarketCaptureCutoff { _, _, _ -> CutoffDecision.Decided(Slot.of(1200), OUTCOME) }
+        val beyond = MarketCaptureCutoff { _, _, _, _ -> CutoffDecision.Decided(Slot.of(1200), OUTCOME) }
 
         assertCategory("CUTOFF_DECISION") { capture(chain, cutoff = beyond) }
         assertEquals(emptyList(), chain.fetched)
@@ -205,7 +205,7 @@ class MarketHistoryCutoffCaptureTest {
     fun `a record shared by a decided and an undecided window stays and is fetched`() {
         val shared = 1060
         val chain = Chain(OTHER_MINT to listOf(1200, shared), MINT to (1001..1100).toList())
-        val decidesOtherFirst = MarketCaptureCutoff { window, _, _ ->
+        val decidesOtherFirst = MarketCaptureCutoff { window, _, _, _ ->
             if (window.baseMint.value == OTHER_MINT) CutoffDecision.Decided(Slot.of(1000), OUTCOME) else CutoffDecision.Undecided
         }
 

@@ -82,15 +82,17 @@ class ReplayLifecyclePersistenceIntegrationTest {
     @Test
     fun `missing exits retain open positions and explicit reasons`() {
         val original = dataset()
-        // Up to three slots after each buy: every entry fills, and no take-profit or stop-loss exit can follow.
-        val input = original.copy(observations = original.observations.filter { it.slot.value % 1000 <= 3 })
+        // Up to three slots after each buy, without the standing-curve cycle's take profit: every entry fills, and no exit can follow.
+        val input = original.copy(observations = original.observations.filter {
+            it.slot.value % 1000 <= 3 && it.slot.value != DipSample.STANDING_CURVE_TRIGGER_SLOT
+        })
         val run = application.execute(input, SimulationConfig.mvp())
         assertEquals(5, positions.positions(run.id).size)
         assertTrue(positions.positions(run.id).all { it.state == PositionState.OPEN && it.close == null })
         dataSource.connection.use { connection ->
             connection.prepareStatement("select count(*) from positions where run_id = ? and exit_unavailable = 'HORIZON_REACHED'").use { statement ->
                 statement.setString(1, run.id)
-                statement.executeQuery().use { rows -> assertTrue(rows.next()); assertEquals(3, rows.getInt(1)) }
+                statement.executeQuery().use { rows -> assertTrue(rows.next()); assertEquals(4, rows.getInt(1)) }
             }
         }
     }

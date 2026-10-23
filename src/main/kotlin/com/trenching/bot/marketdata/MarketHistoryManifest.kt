@@ -1,5 +1,7 @@
 package com.trenching.bot.marketdata
 
+import java.time.Instant
+
 /**
  * [acquisitionComplete] means no window or transaction still needs a provider request. [complete] additionally
  * requires every window to be [MarketWindowCoverage.COMPLETE]; a window at the page bound or over the cap stays a gap.
@@ -26,6 +28,9 @@ data class MarketHistoryManifest(
  * the window is pending or complete, because the other coverages fetch no details. [cutoff] is set while the window's
  * outcome is decided at a slot before its end; the window is then observed only through that slot. [listedAtTip] is the
  * confirmed tip read before the listing started, at or past [toSlot]; windows listed before it was recorded have none.
+ * [throughBlockTime] is the block time of the nearest produced block at or below the slot the window is observed through
+ * (its cutoff, or [toSlot]), read once the window is settled; only a version 5 capture records it, and a failed read leaves
+ * it null until a resume reads it again.
  */
 data class MarketWindowRecord(
     val baseMint: String,
@@ -43,6 +48,7 @@ data class MarketWindowRecord(
     val scanCursor: MarketListedSignature?,
     val cutoff: MarketWindowCutoff? = null,
     val listedAtTip: Long? = null,
+    val throughBlockTime: Instant? = null,
 )
 
 /** Where a decided window stops being observed, which outcome decided it, and the evaluator's identity. */

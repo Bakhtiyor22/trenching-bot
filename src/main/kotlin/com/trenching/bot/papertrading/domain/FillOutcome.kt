@@ -13,7 +13,7 @@ val FillOutcome.orderId: String
     }
 
 /**
- * Why a dip cycle bought nothing, or (for the last three) why its position stayed open; per the dip-entry-strategy ADR.
+ * Why a dip cycle bought nothing, or (for the exit reasons, see [ENTRY]) why its position stayed open; per the dip-entry-strategy ADR.
  */
 enum class RejectionReason {
     NO_DIP,
@@ -28,11 +28,14 @@ enum class RejectionReason {
     ZERO_QUANTITY,
     HORIZON_REACHED,
     MIGRATED,
+    // Engine dip-paper-v3 and earlier only: a triggered exit with no later trade stayed open. v4 sells against the standing curve.
     NO_EXIT_FILL,
+    /** The exit was triggered, but no curve it could sell against could pay the sale. */
+    UNRESOLVED,
     ;
 
     companion object {
         /** Reasons an order is rejected; the rest only ever explain an open position's missing exit. */
-        val ENTRY: List<RejectionReason> = entries - setOf(HORIZON_REACHED, MIGRATED, NO_EXIT_FILL)
+        val ENTRY: List<RejectionReason> = entries - setOf(HORIZON_REACHED, MIGRATED, NO_EXIT_FILL, UNRESOLVED)
     }
 }

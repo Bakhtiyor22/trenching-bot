@@ -25,10 +25,13 @@ abstract class PositionMapper {
         Mapping(target = "netProceeds", source = "position.close.netProceeds"),
         Mapping(target = "realizedPnl", source = "position.close.realizedPnl"),
         Mapping(target = "closeReason", source = "position.close.reason"),
+        Mapping(target = "closePriceAssumption", source = "position.close.priceAssumption"),
         Mapping(target = "exitUnavailable", source = "exitUnavailable"),
         Mapping(target = "exitTriggerObservationId", source = "position.exitTrigger.observationId"),
         Mapping(target = "exitTriggerSlot", source = "position.exitTrigger.slot.value"),
+        Mapping(target = "exitTriggerTime", source = "position.exitTrigger.time"),
         Mapping(target = "exitTriggerReason", source = "position.exitTrigger.reason"),
+        Mapping(target = "exitStart", source = "position.exitStart"),
         Mapping(target = "version", ignore = true),
     ])
     abstract fun toEntity(position: Position, exitUnavailable: RejectionReason?): PositionEntity
@@ -45,6 +48,7 @@ abstract class PositionMapper {
         Mapping(target = "takeProfitPrice", expression = "java(required(entity.getTakeProfitPrice(), entity))"),
         Mapping(target = "stopLossPrice", expression = "java(required(entity.getStopLossPrice(), entity))"),
         Mapping(target = "exitTrigger", expression = "java(exitTrigger(entity))"),
+        Mapping(target = "exitStart", source = "entity.exitStart"),
     ])
     abstract fun toPosition(entity: PositionEntity, fill: PaperFill): Position
 
@@ -57,6 +61,7 @@ abstract class PositionMapper {
         Mapping(target = "transactionCost", expression = "java(requiredClose(entity.getCloseTransactionCost(), entity))"),
         Mapping(target = "priceImpactBps", expression = "java(requiredClose(entity.getClosePriceImpactBps(), entity))"),
         Mapping(target = "reason", source = "closeReason"),
+        Mapping(target = "priceAssumption", expression = "java(priceAssumption(entity))"),
     ])
     abstract fun toClose(entity: PositionEntity): PositionClose
 
@@ -67,6 +72,8 @@ abstract class PositionMapper {
     fun <T : Any> requiredClose(value: T?, entity: PositionEntity): T =
         requireNotNull(value) { "Closed position without curve exit fields id=${entity.id}" }
     fun exitTrigger(entity: PositionEntity): ExitTrigger? = entity.exitTriggerObservationId?.let { observationId ->
-        ExitTrigger(observationId, Slot.of(requireNotNull(entity.exitTriggerSlot)), requireNotNull(entity.exitTriggerReason))
+        ExitTrigger(observationId, Slot.of(requireNotNull(entity.exitTriggerSlot)), entity.exitTriggerTime,
+            requireNotNull(entity.exitTriggerReason))
     }
+    fun priceAssumption(entity: PositionEntity): ExitPriceAssumption = entity.closePriceAssumption ?: ExitPriceAssumption.NEXT_TRADE
 }

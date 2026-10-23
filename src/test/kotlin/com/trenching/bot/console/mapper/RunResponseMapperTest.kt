@@ -10,8 +10,10 @@ import com.trenching.bot.console.domain.TimedRunScenario
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.RunSummary
+import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.DipSample
+import com.trenching.bot.support.DipSampleV6
 import java.math.BigDecimal
 import java.time.Instant
 import kotlin.test.assertEquals
@@ -63,9 +65,10 @@ class RunResponseMapperTest {
     @Test
     fun `a triggered and closed scenario carries every instant of its timeline`() {
         val timeline = scenario(body(DatasetSource("dataset-1", null, null)), DipSample.TAKE_PROFIT)["timeline"]
+        val triggerTime = report.scenarios.single { it.intent.pair == DipSample.pair(DipSample.TAKE_PROFIT) }.position?.exitTrigger?.time
 
         assertEquals(listOf("firstBuyAt", "dipAt", "entryAt", "exitTriggerAt", "exitAt"), timeline.propertyNames().toList())
-        assertEquals(listOf("2026-10-01T00:16:40Z", "2026-10-01T00:16:42Z", "2026-10-01T00:16:43Z", "2026-10-01T00:16:45Z", "2026-10-01T00:16:46Z"),
+        assertEquals(listOf("2026-10-01T00:16:40Z", "2026-10-01T00:16:42Z", "2026-10-01T00:16:43Z", triggerTime.toString(), "2026-10-01T00:16:46Z"),
             timeline.propertyNames().map { timeline[it].asString() })
     }
 
@@ -77,12 +80,27 @@ class RunResponseMapperTest {
         assertTrue(listOf("dipAt", "entryAt", "exitTriggerAt", "exitAt").all { timeline[it].isNull })
     }
 
-    private fun body(source: DatasetSource): JsonNode = json.readTree(json.writeValueAsString(mapper.toResponse(detail(source))))
+    @Test
+    fun `a position carries its exit start, its trigger's time and how its sale was priced`() {
+        val noExitFill = DipSample.pair(DipSample.NO_EXIT_FILL)
+        val covered = ReplayRunner().run(DipSampleV6.dataset(mapOf(noExitFill to Instant.parse("2026-10-01T00:02:01Z"))), SimulationConfig.mvp())
+        val position = scenario(body(DatasetSource("dataset-1", null, null), covered), DipSample.NO_EXIT_FILL)["position"]
+        val trigger = covered.scenarios.single { it.intent.pair == noExitFill }.position?.exitTrigger
+
+        assertEquals("STANDING_CURVE", position["close"]["priceAssumption"].asString())
+        assertEquals(listOf("observationId", "slot", "time", "reason"), position["exitTrigger"].propertyNames().toList())
+        assertEquals(trigger?.time.toString(), position["exitTrigger"]["time"].asString())
+        assertTrue(position.has("exitStart") && position["exitStart"].isNull)
+        assertEquals("NEXT_TRADE", scenario(body(DatasetSource("dataset-1", null, null)), DipSample.TAKE_PROFIT)["position"]["close"]["priceAssumption"].asString())
+    }
+
+    private fun body(source: DatasetSource, report: SimulationReport = this.report): JsonNode =
+        json.readTree(json.writeValueAsString(mapper.toResponse(detail(source, report))))
 
     private fun scenario(body: JsonNode, cycle: Int): JsonNode =
         body["scenarios"].single { it["pair"]["base"].asString() == DipSample.mint(cycle).value }
 
-    private fun detail(source: DatasetSource): SourcedRunDetail {
+    private fun detail(source: DatasetSource, report: SimulationReport = this.report): SourcedRunDetail {
         val scenarios = report.scenarios.map { result ->
             val selected = (result.outcome as? FillOutcome.Filled)?.let { observations[it.fill.observationId] }
             val firstBuyAt = MIDNIGHT.plusSeconds(result.intent.creationSlot.value)

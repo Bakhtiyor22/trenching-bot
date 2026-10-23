@@ -2,11 +2,13 @@ package com.trenching.bot.strategy.domain
 
 import com.trenching.bot.common.*
 import java.math.BigDecimal
+import java.time.Instant
 
 /**
  * The dip-entry decision for one mint, made from the tracked wallet's first buy of it at [creationSlot].
  * [referencePrice] is that buy's price (P0) and [dipPrice] the level a trade must reach. [trigger] is set exactly when
- * [watch] is [DipWatchOutcome.TRIGGERED]; [targetSlot] is the trigger's slot, or the first watched slot without one.
+ * [watch] is [DipWatchOutcome.TRIGGERED]; [targetSlot] is the trigger's slot, or the first watched slot without one. [t0] is
+ * that buy's block time, which the timed clocks count from; null when the buy recorded none.
  */
 data class TradeIntent(
     val id: String,
@@ -18,6 +20,7 @@ data class TradeIntent(
     val configurationHash: String,
     val entryOffset: Int,
     val creationSlot: Slot,
+    val t0: Instant?,
     val targetSlot: Slot,
     val notional: BigDecimal,
     val referencePrice: BigDecimal,

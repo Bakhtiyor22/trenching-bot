@@ -13,8 +13,8 @@ import java.math.BigDecimal
 
 /**
  * WAIT_FIRST_BUY and WAIT_DIP of the dip-entry strategy. The tracked wallet's first buy of a mint sets P0 and must be
- * valued above the minimum market cap. The first eligible trade in a later slot within the horizon, at or below the dip
- * level and before the bonding curve completes, triggers the entry, whatever the market cap there.
+ * valued above the minimum market cap. The first eligible trade in a later slot within the horizon and the [DipWindow], at
+ * or below the dip level and before the bonding curve completes, triggers the entry, whatever the market cap there.
  */
 class DipEntryStrategy {
     fun plan(
@@ -45,14 +45,16 @@ class DipEntryStrategy {
         val referencePrice = DecimalPolicy.swapPrice(buy.quoteAmount, buy.baseAmount)
         val dipPrice = DecimalPolicy.price(referencePrice.multiply(BigDecimal.ONE.subtract(DecimalPolicy.fraction(config.dipBps))))
         val horizonEnd = buy.slot.plus(config.horizonSlots)
+        val window = DipWindow.of(config, buy.blockTime)
         val (watch, trigger) = when {
             !supported(buy) -> DipWatchOutcome.UNSUPPORTED_SUPPLY to null
             belowMinMarketCap(buy, referencePrice, horizonEnd, config, source, rates) -> DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP to null
-            else -> watch(buy, dipPrice, horizonEnd, config, source, rates)
+            window is DipWindow.Closed -> DipWatchOutcome.NO_DIP to null
+            else -> watch(buy, dipPrice, horizonEnd, window, config, source, rates)
         }
         return TradeIntent("$runId:${buy.id}", runId, buy.id, buy.pair, config.strategyName, config.strategyVersion, configHash,
-            ENTRY_OFFSET, buy.slot, trigger?.slot ?: buy.slot.plus(1), config.notional, referencePrice, dipPrice, horizonEnd,
-            watch, trigger)
+            ENTRY_OFFSET, buy.slot, buy.blockTime, trigger?.slot ?: buy.slot.plus(1), config.notional, referencePrice, dipPrice,
+            horizonEnd, watch, trigger)
     }
 
     /** Market cap assumes the fixed bonding-curve supply, so only Pump.fun buys with its decimals qualify. */
@@ -82,11 +84,13 @@ class DipEntryStrategy {
         buy: WalletTradeObserved,
         dipPrice: BigDecimal,
         horizonEnd: Slot,
+        window: DipWindow,
         config: SimulationConfig,
         source: MarketDataSource,
         rates: ReferenceRates,
     ): Pair<DipWatchOutcome, DipTrigger?> {
         for (observation in source.observations(buy.pair, buy.slot.plus(1), horizonEnd)) {
+            if (!window.admits(observation.observedTime)) return DipWatchOutcome.NO_DIP to null
             if (observation.curveComplete) return DipWatchOutcome.MIGRATED_BEFORE_ENTRY to null
             if (ObservationEligibility.issue(observation, config.maxAgeSlots) != null || observation.price > dipPrice) continue
             val rate = checkNotNull(rates.rateAt(observation.observedTime)) {

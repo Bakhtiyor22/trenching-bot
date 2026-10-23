@@ -13,6 +13,7 @@ import com.trenching.bot.walletactivity.domain.WalletTransaction
 import java.io.InputStream
 import java.math.BigDecimal
 import java.math.BigInteger
+import java.time.DateTimeException
 import java.time.Instant
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
@@ -68,7 +69,10 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
         return dataset
     }
 
-    /** A v5 dataset covers every observed pair exactly once; a v3 or v4 one has no coverage, so editing one in cannot change it. */
+    /**
+     * A v5 or v6 dataset covers every observed pair exactly once; a v3 or v4 one has no coverage, and a v5 entry no
+     * `throughTime`, so editing one in cannot change what the file means.
+     */
     private fun coverage(root: JsonNode, version: Int, observations: List<MarketObservation>): List<MarketCoverage> {
         val node = root.path(COVERAGE)
         if (!ReplayDataset.recordsCoverage(version)) {
@@ -77,7 +81,8 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
         }
         require(!node.isMissingNode) { "Missing coverage in a schema v$version dataset (${DatasetCoverage.MISSING})" }
         require(node.isArray && node.size() <= ReplayLimits.MAX_INPUT_RECORDS) { "Expected bounded coverage array (${DatasetCoverage.INVALID})" }
-        val coverage = node.toList().map(::coverageEntry)
+        val recordsTime = ReplayDataset.recordsCoverageTime(version)
+        val coverage = node.toList().map { coverageEntry(it, recordsTime) }
         coverage.groupBy { it.pair }.forEach { (pair, entries) ->
             require(entries.size == 1) { "Repeated coverage baseMint=${pair.base.value} quoteMint=${pair.quote.value} (${DatasetCoverage.INVALID})" }
         }
@@ -88,8 +93,12 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
         return coverage
     }
 
-    private fun coverageEntry(node: JsonNode): MarketCoverage = try {
-        MarketCoverage.of(pair(node), Slot.of(integer(node, "fromSlot")), Slot.of(integer(node, "throughSlot")))
+    private fun coverageEntry(node: JsonNode, recordsTime: Boolean): MarketCoverage = try {
+        require(recordsTime || !node.has(THROUGH_TIME)) { "Unexpected $THROUGH_TIME before schema v6" }
+        val throughTime = if (recordsTime) optionalString(node, THROUGH_TIME)?.let(::instant) else null
+        MarketCoverage.of(pair(node), Slot.of(integer(node, "fromSlot")), Slot.of(integer(node, "throughSlot")), throughTime)
+    } catch (invalid: DateTimeException) {
+        throw IllegalArgumentException("Invalid coverage entry: ${invalid.message} (${DatasetCoverage.INVALID})", invalid)
     } catch (invalid: IllegalArgumentException) {
         throw IllegalArgumentException("Invalid coverage entry: ${invalid.message} (${DatasetCoverage.INVALID})", invalid)
     }
@@ -191,6 +200,7 @@ class ReplayDatasetLoader(private val mapper: ObjectMapper) {
 
     private companion object {
         const val COVERAGE = "coverage"
+        const val THROUGH_TIME = "throughTime"
         const val CURVE_STATE_INVALID = "CURVE_STATE_INVALID"
         val RAW_INTEGER = Regex("[0-9]{1,20}")
     }

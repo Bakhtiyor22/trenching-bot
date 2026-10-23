@@ -22,7 +22,15 @@ object DipSample {
     const val MIGRATED_EARLY = 4
     const val MIGRATED_IN_POSITION = 5
     const val HORIZON = 6
+    /**
+     * A take profit with no later trade: engine dip-paper-v3 left it open as NO_EXIT_FILL. Under v4 it sells against the standing
+     * curve once the recording proves no trade landed within 60 s; this v3 dataset has no coverage end time to prove it, so the
+     * position stays open as HORIZON_REACHED.
+     */
     const val NO_EXIT_FILL = 7
+
+    /** The slot of the [NO_EXIT_FILL] cycle's take profit trigger; without it no exit of the sample can follow its fills. */
+    const val STANDING_CURVE_TRIGGER_SLOT = 8003L
     const val NO_FILL = 8
     const val UNSUPPORTED_SUPPLY = 9
 
@@ -38,6 +46,15 @@ object DipSample {
      * in slot 2004, then a gap sale into slot 2005's curve for 62280246 lamports less 778504 in fees and the transaction cost.
      */
     const val STOP_LOSS_PNL = "-0.041748258000"
+
+    /**
+     * The [NO_EXIT_FILL] cycle under engine dip-paper-v4 with a coverage end time past 00:02:00: 1188191190525 raw tokens bought
+     * from slot 8002's curve (cost basis 0.10225); take profit triggers at slot 8003 and no trade follows within 60 s, so the sale
+     * at slot 8004 is against 8003's post-trade curve for 142256588 lamports less 1778208 in fees and the transaction cost.
+     */
+    const val STANDING_CURVE_PNL = "0.037228380000"
+
+    /** The sample's two closed cycles: [TAKE_PROFIT_PNL] plus [STOP_LOSS_PNL]. */
     const val TOTAL_PNL = "-0.013487824000"
 
     fun mint(cycle: Int): MintAddress = MintAddress.of("1".repeat(31) + "23456789AB"[cycle])

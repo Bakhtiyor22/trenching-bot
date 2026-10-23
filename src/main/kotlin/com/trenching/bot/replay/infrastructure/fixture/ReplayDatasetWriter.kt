@@ -15,8 +15,8 @@ import tools.jackson.databind.node.ObjectNode
 
 /**
  * Writes the canonical form that [ReplayDatasetLoader] reads: deduplicated, ordered, exact decimals. A v3 dataset is written
- * exactly as before schema v4 existed, without trades; a v4 dataset adds each observation's `trade` after its `curve`, and a v5
- * dataset its `coverage` after the rates.
+ * exactly as before schema v4 existed, without trades; a v4 dataset adds each observation's `trade` after its `curve`, a v5
+ * dataset its `coverage` after the rates, and a v6 dataset each coverage entry's `throughTime` when it has one.
  */
 class ReplayDatasetWriter(private val mapper: ObjectMapper) {
     fun write(dataset: ReplayDataset): String {
@@ -38,12 +38,14 @@ class ReplayDatasetWriter(private val mapper: ObjectMapper) {
             })
         }
         if (ReplayDataset.recordsCoverage(dataset.schemaVersion)) {
+            val recordsTime = ReplayDataset.recordsCoverageTime(dataset.schemaVersion)
             val coverage = root.putArray("coverage")
             MarketCoverage.canonical(dataset.coverage).forEach { entry ->
                 coverage.add(mapper.createObjectNode().apply {
                     pair(this, entry.pair)
                     put("fromSlot", entry.fromSlot.value)
                     put("throughSlot", entry.throughSlot.value)
+                    if (recordsTime) entry.throughTime?.let { put("throughTime", it.toString()) }
                 })
             }
         }

@@ -153,6 +153,7 @@ class HttpSolanaReadRpc(
             return when (if (code.isIntegralNumber && code.canConvertToInt()) code.asInt() else null) {
                 -32005 -> CaptureHttpReply.Failed("UNAVAILABLE", true, rateLimited = true)
                 -32015 -> CaptureHttpReply.Failed(CaptureCategory.UNSUPPORTED_VERSION, false)
+                -32007, -32009 -> CaptureHttpReply.Failed(CaptureCategory.SLOT_SKIPPED, false)
                 else -> CaptureHttpReply.Failed("RPC_ERROR", false)
             }
         }

@@ -19,8 +19,8 @@ import org.slf4j.LoggerFactory
 import tools.jackson.databind.ObjectMapper
 
 /**
- * Exports one market case of a recorded wallet capture as a v5 dataset: its anchor buy and the case's observations, with
- * coverage from the window's first slot through its observed end. The case is planned with the lead its market capture
+ * Exports one market case of a recorded wallet capture as a v6 dataset: its anchor buy and the case's observations, with
+ * coverage from the window's first slot through its observed end and the block time recorded for that end, if any. The case is planned with the lead its market capture
  * recorded, so a case captured before the lead exports with its `S + 1` window.
  */
 internal class RecordedCaseReplayExportService(
@@ -58,7 +58,7 @@ internal class RecordedCaseReplayExportService(
             throw CaptureValidationException(DatasetTrades.FIELDS_MISSING)
         }
         val caseRates = rates(request.ratesCaptureDirectory, decoded.observations)
-        val coverage = MarketCoverage.of(window.pair, window.fromSlot, decoded.progress.observedThrough)
+        val coverage = MarketCoverage.of(window.pair, window.fromSlot, decoded.progress.observedThrough, decoded.progress.observedThroughTime)
         val dataset = ReplayDataset(ReplayDataset.CURRENT_SCHEMA_VERSION, planned.history.wallet, listOf(walletTransaction),
             decoded.observations, caseRates, listOf(coverage))
         if (dataset.transactions.size > ReplayLimits.MAX_INPUT_RECORDS || dataset.observations.size > ReplayLimits.MAX_INPUT_RECORDS) {

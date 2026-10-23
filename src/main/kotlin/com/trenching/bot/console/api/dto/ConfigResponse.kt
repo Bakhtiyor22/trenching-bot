@@ -1,5 +1,6 @@
 package com.trenching.bot.console.api.dto
 
+/** The timed clocks are whole milliseconds, null when the run is untimed. */
 data class ConfigResponse(
     val strategyName: String,
     val strategyVersion: String,
@@ -16,6 +17,9 @@ data class ConfigResponse(
     val latencySlots: Long,
     val transactionCostSol: String,
     val quoteMint: String,
+    val dipWindowMs: Long?,
+    val maxHoldMs: Long?,
+    val hardExitStartMs: Long?,
 )
 
 data class ConfigDefaultsResponse(
@@ -26,7 +30,8 @@ data class ConfigDefaultsResponse(
 /**
  * Inclusive ranges; a null `max` is unbounded above. Each level's percent range is its basis point range as exact percent
  * strings. A notional has at most [notionalScale] decimals (whole lamports)
- * and [notionalPrecision] digits; a transaction cost is rounded to [transactionCostScale] decimals.
+ * and [notionalPrecision] digits; a transaction cost is rounded to [transactionCostScale] decimals. The timed clocks' ranges
+ * are milliseconds and bound a value only when it is set.
  */
 data class ConfigLimitsResponse(
     val notionalScale: Int,
@@ -43,6 +48,9 @@ data class ConfigLimitsResponse(
     val latencySlots: RangeResponse,
     val transactionCostScale: Int,
     val transactionCostSol: DecimalRangeResponse,
+    val dipWindowMs: RangeResponse,
+    val maxHoldMs: RangeResponse,
+    val hardExitStartMs: RangeResponse,
 )
 
 data class RangeResponse(

@@ -16,8 +16,17 @@ object ChainCaptureFormat {
     const val GET_ACCOUNT_INFO = "getAccountInfo"
     const val GET_SLOT = "getSlot"
     const val GET_PERFORMANCE_SAMPLES = "getRecentPerformanceSamples"
+    const val GET_BLOCK_TIME = "getBlockTime"
+    const val GET_BLOCKS = "getBlocks"
+
+    /**
+     * How far below a skipped slot a block time read looks for the nearest produced block: about 40 s of slots, far beyond the
+     * few consecutive leader slots mainnet skips, while one `getBlocks` reply stays small.
+     */
+    const val BLOCK_TIME_LOOKBACK_SLOTS = 100L
 
     /** One-minute samples averaged into the recent slot duration: enough to smooth a slow minute, recent enough to matter. */
     const val PERFORMANCE_SAMPLES = 5
-    val READ_METHODS = setOf(GET_GENESIS, GET_SIGNATURES, GET_TRANSACTION, GET_ACCOUNT_INFO, GET_SLOT, GET_PERFORMANCE_SAMPLES)
+    val READ_METHODS = setOf(GET_GENESIS, GET_SIGNATURES, GET_TRANSACTION, GET_ACCOUNT_INFO, GET_SLOT, GET_PERFORMANCE_SAMPLES,
+        GET_BLOCK_TIME, GET_BLOCKS)
 }

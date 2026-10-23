@@ -49,7 +49,7 @@ class RecordedReplayCommandsTest {
         assertTrue(lines.contains("checksum=$CHECKSUM"))
         assertTrue(lines.contains("trackedWallet=$WALLET"))
         assertTrue(lines.contains("sourceBuys=1 windows=1 transactions=1 observations=17 written=true"))
-        assertTrue(lines.contains("replayReady=true schemaVersion=5"))
+        assertTrue(lines.contains("replayReady=true schemaVersion=6"))
         assertTrue(lines.any { it.startsWith("note=") && it.contains("modelled paper") })
         assertFalse(output.toString().contains("{"))
         assertEquals("", errors.toString())

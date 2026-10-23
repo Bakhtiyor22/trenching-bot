@@ -11,7 +11,9 @@ import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV4
 import com.trenching.bot.support.DipSampleV5
+import com.trenching.bot.support.DipSampleV6
 import java.math.BigInteger
+import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotEquals
@@ -54,7 +56,7 @@ class ReplayDatasetLoaderTest {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = [1, 2, 6])
+    @ValueSource(ints = [1, 2, 7])
     fun `unsupported schema versions are refused`(version: Int) {
         val error = refusal { it.put("schemaVersion", version) }
 
@@ -369,6 +371,67 @@ class ReplayDatasetLoaderTest {
         assertTrue(error.startsWith(CHECKSUM_MISMATCH), error)
     }
 
+    @Test
+    fun `the v5 sample keeps the checksum it had before schema v6`() {
+        assertEquals(PINNED_V5_CHECKSUM, DatasetFingerprint.checksum(DipSampleV5.dataset()))
+        assertEquals(PINNED_V5_CHECKSUM, loader.load(DipSampleV5.json().byteInputStream()).let(DatasetFingerprint::checksum))
+    }
+
+    @Test
+    fun `a v6 dataset round-trips each coverage entry's throughTime and omits a missing one`() {
+        val timed = DipSample.pair(DipSample.TAKE_PROFIT)
+        val written = DipSampleV6.dataset(mapOf(timed to THROUGH_TIME))
+
+        val json = DipSampleV6.json(written)
+        val dataset = loader.load(json.byteInputStream())
+
+        assertEquals(ReplayDataset.SCHEMA_V6, dataset.schemaVersion)
+        assertEquals(written.coverage.toSet(), dataset.coverage.toSet())
+        assertEquals(THROUGH_TIME, dataset.coverage.single { it.pair == timed }.throughTime)
+        assertTrue(dataset.coverage.filter { it.pair != timed }.all { it.throughTime == null })
+        val entries = mapper.readTree(json).path("coverage")
+        assertEquals(1, entries.count { it.has("throughTime") })
+        assertEquals(THROUGH_TIME.toString(), entries.single { it.has("throughTime") }.path("throughTime").asString())
+        assertEquals(json, DipSampleV6.json(dataset))
+    }
+
+    @Test
+    fun `a throughTime in a v5 coverage entry is refused, so a v5 file cannot change meaning`() {
+        assertTrue(refusalV5 { coverage(it).put("throughTime", THROUGH_TIME.toString()) }.contains(COVERAGE_INVALID))
+    }
+
+    @Test
+    fun `a malformed v6 throughTime is refused`() {
+        listOf<(ObjectNode) -> Unit>(
+            { it.put("throughTime", "yesterday") },
+            { it.put("throughTime", 1_792_000_000) },
+            { it.put("throughTime", "2026-10-22T16:03:48.0000001Z") },
+        ).forEach { change -> assertTrue(refusalV6 { change(coverage(it)) }.contains(COVERAGE_INVALID)) }
+    }
+
+    @Test
+    fun `the v6 checksum covers throughTime and differs from the v5 checksum`() {
+        val pair = DipSample.pair(DipSample.TAKE_PROFIT)
+        val checksums = listOf(
+            DipSampleV6.dataset(),
+            DipSampleV6.dataset(mapOf(pair to THROUGH_TIME)),
+            DipSampleV6.dataset(mapOf(pair to THROUGH_TIME.plusSeconds(1))),
+        ).map(DatasetFingerprint::checksum)
+
+        assertEquals(checksums.size, checksums.toSet().size)
+        assertTrue(PINNED_V5_CHECKSUM !in checksums)
+    }
+
+    @Test
+    fun `a v6 file whose throughTime was edited without recomputing the checksum is refused`() {
+        val root = mapper.readTree(DipSampleV6.json(DipSampleV6.dataset(mapOf(DipSample.pair(DipSample.TAKE_PROFIT) to THROUGH_TIME)))) as ObjectNode
+        coverage(root).put("throughTime", THROUGH_TIME.plusSeconds(1).toString())
+
+        val error = requireNotNull(assertFailsWith<IllegalArgumentException> { loader.load(mapper.writeValueAsString(root).byteInputStream()) }.message)
+
+        assertTrue(error.startsWith(CHECKSUM_MISMATCH), error)
+    }
+
     /** Loads the sample after [change], with its checksum recomputed so only the change itself can fail the load. */
     private fun load(change: (ObjectNode) -> Unit): ReplayDataset = load(DipSample.json(), change)
 
@@ -397,6 +460,9 @@ class ReplayDatasetLoaderTest {
     private fun refusalV5(change: (ObjectNode) -> Unit): String =
         requireNotNull(assertFailsWith<IllegalArgumentException> { loadV5(change) }.message)
 
+    private fun refusalV6(change: (ObjectNode) -> Unit): String =
+        requireNotNull(assertFailsWith<IllegalArgumentException> { load(DipSampleV6.json(), change) }.message)
+
     /** The take-profit mint's coverage entry. */
     private fun coverage(root: ObjectNode): ObjectNode =
         root.path("coverage").single { it.path("baseMint").asString() == DipSample.mint(DipSample.TAKE_PROFIT).value } as ObjectNode
@@ -420,6 +486,8 @@ class ReplayDatasetLoaderTest {
         const val COVERAGE_BEFORE_V5 = "COVERAGE_BEFORE_V5"
         const val PINNED_V4_CHECKSUM = "a12a9079ba8e992bea3d9b01be8b50ae195f25ac36bcbec588c08cafdca4126f"
         const val PINNED_V3_CHECKSUM = "06103b0faebf5d3e95468fc250232c333a0e6b665612c977fc76441883eac765"
+        const val PINNED_V5_CHECKSUM = "650565f266723d92d6138d64616bf34e0183b89448509a49460dbfc7fd95bac4"
+        val THROUGH_TIME: Instant = Instant.parse("2026-10-22T16:03:48Z")
         const val CHECKSUM_MISMATCH = "Replay checksum mismatch computed="
     }
 }

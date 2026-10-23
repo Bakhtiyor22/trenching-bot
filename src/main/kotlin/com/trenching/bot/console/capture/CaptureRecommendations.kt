@@ -8,7 +8,9 @@ import com.trenching.bot.console.domain.Recommendation
 import com.trenching.bot.console.domain.RecommendationSetting
 import com.trenching.bot.console.domain.RecommendationTarget
 import com.trenching.bot.marketdata.MarketCutoffMode
+import com.trenching.bot.replay.domain.ReplayMarketCaptureRequest
 import com.trenching.bot.strategy.domain.SimulationConfig
+import java.time.Duration
 
 /**
  * Capture-setup recommendations as a pure function of the form's wallet, scope and mint and the capture config: the same
@@ -19,7 +21,7 @@ object CaptureRecommendations {
     const val CUTOFF_DECIDED = "CUTOFF_DECIDED"
     const val ENABLE_RECOVERY = "ENABLE_RECOVERY"
     const val DECU_PUMPFUN_SCOPE = "DECU_PUMPFUN_SCOPE"
-    const val CUTOFF_USES_LEGACY_DEFAULTS = "CUTOFF_USES_LEGACY_DEFAULTS"
+    const val CUTOFF_USES_AGREED_STRATEGY = "CUTOFF_USES_AGREED_STRATEGY"
 
     private const val SCOPE_FIELD = "scope"
     private const val RECOVERY_FIELD = "recovery"
@@ -39,14 +41,23 @@ object CaptureRecommendations {
         return capture(SCOPE_WALLET_TOKEN, RecommendationSetting(SCOPE_FIELD, CaptureWalletScope.WALLET_TOKEN.value), facts)
     }
 
-    /** `DECIDED` windows are cut by the legacy `SimulationConfig.mvp()` outcome, whose levels the facts name. */
+    /**
+     * `DECIDED` windows are cut by the agreed strategy's outcome, whose levels and clocks the facts name, and keep at least
+     * the minimum recording after the buy. A run with other settings may need more of the window than such a capture holds.
+     */
     private fun cutoffDecided(): Recommendation {
-        val legacy = SimulationConfig.mvp()
-        return capture(CUTOFF_DECIDED, RecommendationSetting(CaptureCutoffModes.FIELD, MarketCutoffMode.DECIDED.name), mapOf(
-            "dipPercent" to PercentConversion.toPercent(legacy.dipBps.toLong()),
-            "takeProfitPercent" to PercentConversion.toPercent(legacy.takeProfitBps.toLong()),
-            "stopLossPercent" to PercentConversion.toPercent(legacy.stopLossBps.toLong()),
-        ), CUTOFF_USES_LEGACY_DEFAULTS)
+        val agreed = SimulationConfig.agreed()
+        val facts = buildMap<String, Any> {
+            put("dipPercent", PercentConversion.toPercent(agreed.dipBps.toLong()))
+            put("takeProfitPercent", PercentConversion.toPercent(agreed.takeProfitBps.toLong()))
+            put("stopLossPercent", PercentConversion.toPercent(agreed.stopLossBps.toLong()))
+            agreed.dipWindowMs?.let { put("dipWindowSeconds", Duration.ofMillis(it).toSeconds()) }
+            agreed.maxHoldMs?.let { put("maxHoldSeconds", Duration.ofMillis(it).toSeconds()) }
+            agreed.hardExitStartMs?.let { put("hardExitStartSeconds", Duration.ofMillis(it).toSeconds()) }
+            put("minimumRecordingSeconds", ReplayMarketCaptureRequest.MINIMUM_DECIDED_RECORDING.toSeconds())
+        }
+        return capture(CUTOFF_DECIDED, RecommendationSetting(CaptureCutoffModes.FIELD, MarketCutoffMode.DECIDED.name), facts,
+            CUTOFF_USES_AGREED_STRATEGY)
     }
 
     /** The default recovery gives each of its attempts one full wallet-operation allowance of the chosen scope. */

@@ -10,8 +10,12 @@ import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.papertrading.domain.FillOutcome
 import java.math.BigDecimal
+import java.time.Instant
 
-/** A run's stored fills and closes as chart markers. Nothing is recomputed: prices and quantities are the stored ones. */
+/**
+ * A run's stored fills and closes as chart markers. Nothing is recomputed: prices and quantities are the stored ones. Each is
+ * placed at its fill trade's block time, except a sale against the standing curve, placed per [ScenarioTimelines.saleTime].
+ */
 object ChartPaperFills {
     private val ORDER: Comparator<PaperFillView> = compareBy({ it.time }, { it.slot }, { it.intentId }, { it.phase })
 
@@ -28,14 +32,15 @@ object ChartPaperFills {
             if (fill == null) return@flatMap emptyList()
             val intentId = scenario.intent.id
             val entry = checkNotNull(scenario.selectedObservation) { "Missing fill observation intentId=$intentId" }
-            val close = scenario.position?.close
             listOfNotNull(
-                view(PaperPhase.ENTRY, TradeSide.BUY, intentId, entry, fill.actualSlot.value, fill.executionPrice, fill.quantity, null, rates,
-                    clock),
-                close?.let {
-                    val exit = checkNotNull(byId[it.observationId]) { "Missing close observation intentId=$intentId id=${it.observationId}" }
-                    view(PaperPhase.EXIT, TradeSide.SELL, intentId, exit, it.slot.value, it.executionPrice, fill.quantity, it.reason.name, rates,
-                        clock)
+                view(PaperPhase.ENTRY, TradeSide.BUY, intentId, entry, entry.observedTime, fill.actualSlot.value, fill.executionPrice,
+                    fill.quantity, null, rates, clock),
+                scenario.position?.let { position ->
+                    position.close?.let {
+                        val exit = checkNotNull(byId[it.observationId]) { "Missing close observation intentId=$intentId id=${it.observationId}" }
+                        view(PaperPhase.EXIT, TradeSide.SELL, intentId, exit, ScenarioTimelines.saleTime(position, exit, byId), it.slot.value,
+                            it.executionPrice, fill.quantity, it.reason.name, rates, clock)
+                    }
                 },
             )
         }.sortedWith(ORDER)
@@ -46,12 +51,13 @@ object ChartPaperFills {
         side: TradeSide,
         intentId: String,
         observation: MarketObservation,
+        time: Instant,
         slot: Long,
         price: BigDecimal,
         quantity: BigDecimal,
         reason: String?,
         rates: ReferenceRates?,
         clock: SlotClock,
-    ) = PaperFillView(MarkerKind.PAPER, phase, side, intentId, slot, observation.observedTime,
-        clock.estimate(slot, observation.observedTime), price, ChartValuation.of(observation, rates).mcap, quantity, reason)
+    ) = PaperFillView(MarkerKind.PAPER, phase, side, intentId, slot, time, clock.estimate(slot, time), price,
+        ChartValuation.of(observation, rates).mcap, quantity, reason)
 }

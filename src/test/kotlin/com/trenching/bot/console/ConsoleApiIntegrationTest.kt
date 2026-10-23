@@ -380,8 +380,8 @@ class ConsoleApiIntegrationTest {
 
     @Test
     fun `an open position reports why its exit is unavailable`() {
-        // Up to three slots after each buy: every entry fills, and no exit can follow.
-        val runId = startRun(variant(json, "open") { it.slot.value % 1000 <= 3 }, "open.json")
+        // Up to three slots after each buy, without the standing-curve cycle's take profit: every entry fills, and no exit can follow.
+        val runId = startRun(variant(json, "open") { it.slot.value % 1000 <= 3 && it.slot.value != DipSample.STANDING_CURVE_TRIGGER_SLOT }, "open.json")
         dataSource.connection.use { connection ->
             connection.prepareStatement("update simulation_runs set report_snapshot = replace(report_snapshot, 'HORIZON_REACHED', 'NO_EXIT_FILL') where id = ?").use { statement ->
                 statement.setString(1, runId)
@@ -399,7 +399,7 @@ class ConsoleApiIntegrationTest {
             assertTrue(scenario.path("position").path("close").isNull)
         }
         assertEquals("HORIZON_REACHED", scenario(scenarios, DipSample.TAKE_PROFIT).path("exitUnavailableReason").asString())
-        assertEquals(3, positions.count { it.path("exitUnavailableReason").asString() == "HORIZON_REACHED" })
+        assertEquals(4, positions.count { it.path("exitUnavailableReason").asString() == "HORIZON_REACHED" })
     }
 
     @Test

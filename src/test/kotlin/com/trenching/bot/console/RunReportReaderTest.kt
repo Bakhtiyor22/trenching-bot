@@ -32,6 +32,19 @@ class RunReportReaderTest {
     }
 
     @Test
+    fun `reads a timed configuration back with its clocks`() {
+        val dataset = requireNotNull(javaClass.getResourceAsStream("/replay/samples/dip-sample-v3.json")).use {
+            ReplayDatasetLoader(json).load(it)
+        }
+        val config = SimulationConfig.agreed()
+
+        val facts = reader.read(json.writeValueAsString(ReplayRunner().run(dataset, config)))
+
+        assertEquals(config, facts.config)
+        assertEquals(listOf(30_000L, 180_000L, 240_000L), listOf(facts.config.dipWindowMs, facts.config.maxHoldMs, facts.config.hardExitStartMs))
+    }
+
+    @Test
     fun `reads configuration while ignoring scenario fields it does not need`() {
         val report = """
             {"runId":"run","configuration":{"latencySlots":1,"maxAgeSlots":2,"dipBps":1500,"takeProfitBps":3000,"stopLossBps":1500,

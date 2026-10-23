@@ -69,3 +69,7 @@ Old copy-strategy runs cannot be shown by the new run page. The local database i
 - a post-migration (PumpSwap) price is captured;
 - within-slot order is recorded;
 - a horizon longer than 4,500 slots is needed.
+
+## Amendment 2026-10-24: block-time clocks and the time exit
+
+Engine `dip-paper-v4` adds the spec's optional clocks ([decision](20261024-timed-dip-window-and-exit.md)). `dipWindowMs` lets only a trade at most that long after the buy's block time `t0` trigger, inclusive; the first later trade ends the watch as `NO_DIP`. `maxHoldMs` and `hardExitStartMs` add a third exit, `TIME_EXIT`, at `min(fill time + maxHoldMs, t0 + hardExitStartMs)`: take profit and stop loss are checked only on trades before it, and the position is then sold against the curve standing at that moment. Unset, the triggers above are unchanged. A take profit or stop loss sells into the next trade only when it lands within 60 s of the trigger, and otherwise against the standing curve once the recording proves those 60 s passed; this replaces the outcome `NO_EXIT_FILL`, and a sale the curve cannot pay leaves the position open as `UNRESOLVED`. Each intent now keeps `t0`, and each position its exit start and its exit trigger's time.

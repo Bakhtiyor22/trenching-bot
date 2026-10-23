@@ -15,8 +15,8 @@ import org.springframework.stereotype.Component
 import tools.jackson.databind.JsonNode
 
 /**
- * Checks every field of a run's configuration and reports each bad one; absent fields take the `mvp()` value and a
- * property that is not a configuration field is reported rather than ignored. A level sent as a percent is converted to
+ * Checks every field of a run's configuration and reports each bad one; absent fields take the `mvp()` value (the timed
+ * clocks: unset) and a property that is not a configuration field is reported rather than ignored. A level sent as a percent is converted to
  * exact basis points here, before the run starts, so the stored and hashed configuration never sees the percent.
  */
 @Component
@@ -40,10 +40,21 @@ class ConsoleConfigValidator {
         val latencySlots = integer(LATENCY_SLOTS, request.latencySlots, defaults.latencySlots, limits.latencySlots, errors)
         val transactionCostSol = transactionCost(request.transactionCostSol, defaults.transactionCostSol, errors)
         val quoteMint = quoteMint(request.quoteMint, defaults.quoteMint, errors)
+        val dipWindowMs = integerOrNull(DIP_WINDOW_MS, request.dipWindowMs, limits.dipWindowMs, errors)
+        val maxHoldMs = integerOrNull(MAX_HOLD_MS, request.maxHoldMs, limits.maxHoldMs, errors)
+        val hardExitStartMs = integerOrNull(HARD_EXIT_START_MS, request.hardExitStartMs, limits.hardExitStartMs, errors)
+        requirePair(MAX_HOLD_MS, maxHoldMs, HARD_EXIT_START_MS, request.hardExitStartMs, errors)
+        requirePair(HARD_EXIT_START_MS, hardExitStartMs, MAX_HOLD_MS, request.maxHoldMs, errors)
         request.unknownFields.keys.forEach { errors[it] = UNKNOWN_FIELD_MESSAGE }
         if (errors.isNotEmpty()) return ConfigValidation.Invalid(errors, errorCode(errors.keys, conflicts))
         return ConfigValidation.Valid(SimulationConfig.of(notional, maxAgeSlots, dipBps, takeProfitBps, stopLossBps, minMarketCapUsd,
-            horizonSlots, latencySlots, transactionCostSol, quoteMint = quoteMint))
+            horizonSlots, latencySlots, transactionCostSol, quoteMint = quoteMint, dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs,
+            hardExitStartMs = hardExitStartMs))
+    }
+
+    /** A valid [field] whose pair was not sent reports the pair as missing; an invalid one is already reported on its own. */
+    private fun requirePair(field: String, value: Long?, pairField: String, pairNode: JsonNode?, errors: MutableMap<String, String>) {
+        if (value != null && isAbsent(pairNode)) errors[pairField] = "must be set together with $field"
     }
 
     private fun errorCode(fields: Set<String>, conflicts: Set<String>): ConfigErrorCode = when {
@@ -166,6 +177,9 @@ class ConsoleConfigValidator {
         const val LATENCY_SLOTS = "latencySlots"
         const val TRANSACTION_COST_SOL = "transactionCostSol"
         const val QUOTE_MINT = "quoteMint"
+        const val DIP_WINDOW_MS = "dipWindowMs"
+        const val MAX_HOLD_MS = "maxHoldMs"
+        const val HARD_EXIT_START_MS = "hardExitStartMs"
         const val DECIMAL_FORMAT_MESSAGE = "must be a plain decimal string such as \"100\" or \"0.5\""
         const val UNKNOWN_FIELD_MESSAGE = "is not a configuration field"
         const val PERCENT_FORMAT_MESSAGE = "must be a percent string with at most 2 decimals, such as \"20\" or \"15.5\""

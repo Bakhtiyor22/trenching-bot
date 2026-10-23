@@ -127,7 +127,8 @@ class CaptureControllerTest {
 
         assertEquals(listOf("SCOPE_WALLET_TOKEN", "CUTOFF_DECIDED", "ENABLE_RECOVERY", "DECU_PUMPFUN_SCOPE"), (recommendations as Iterable<JsonNode>).map { it["id"].asString() })
         assertEquals(fixture.json.readTree("""{"id":"CUTOFF_DECIDED","appliesTo":"CAPTURE","setting":{"field":"cutoffMode","value":"DECIDED"},""" +
-            """"facts":{"dipPercent":"15","takeProfitPercent":"30","stopLossPercent":"15"},"caveatCode":"CUTOFF_USES_LEGACY_DEFAULTS"}"""), recommendations[1])
+            """"facts":{"dipPercent":"20","takeProfitPercent":"55","stopLossPercent":"40","dipWindowSeconds":30,"maxHoldSeconds":180,""" +
+            """"hardExitStartSeconds":240,"minimumRecordingSeconds":240},"caveatCode":"CUTOFF_USES_AGREED_STRATEGY"}"""), recommendations[1])
         assertEquals(fixture.json.readTree("""{"requests":1200,"bytes":314572800,"attempts":3}"""), recommendations[2]["facts"])
     }
 

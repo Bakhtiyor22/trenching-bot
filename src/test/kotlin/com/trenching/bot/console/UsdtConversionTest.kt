@@ -54,6 +54,7 @@ class UsdtConversionTest {
         assertEquals(BigDecimal("26.102086800000"), close.netProceedsUsdt)
         assertEquals(BigDecimal("5.652086800000"), close.realizedPnlUsdt)
         assertEquals(BigDecimal("-8.349651600000"), assertNotNull(scenario(view, DipSample.STOP_LOSS).close).realizedPnlUsdt)
+        assertNull(scenario(view, DipSample.NO_EXIT_FILL).close)
         assertEquals(BigDecimal("-2.697564800000"), view.realizedPnlUsdt)
         assertEquals(31, view.observations.size)
         assertEquals(BigDecimal("0.00002000000000000000000000000000000000"), view.observations.first().priceUsdt)

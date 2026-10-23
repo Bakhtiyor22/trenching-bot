@@ -23,13 +23,16 @@ import com.trenching.bot.strategy.domain.DipWatchOutcome
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV5
+import com.trenching.bot.support.DipSampleV6
 import com.trenching.bot.walletactivity.ActualFirstBuy
 import com.trenching.bot.walletactivity.TargetTokenEvidence
 import com.trenching.bot.walletactivity.TokenAccountFirstBuy
 import com.trenching.bot.walletactivity.TokenAccountGap
 import com.trenching.bot.walletactivity.domain.WalletTransaction
+import java.math.BigDecimal
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
@@ -38,17 +41,24 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import tools.jackson.databind.json.JsonMapper
 
+/**
+ * Qualification replays with `SimulationConfig.agreed()`. The sample's cycles are reshaped to its levels (a 20% dip, +55% and
+ * -40% exits) by [AGREED_PRICES], keeping every trigger slot and every curve, so the sample's hand-checked P&L still holds.
+ */
 class TargetTokenQualificationServiceTest {
     @TempDir lateinit var root: Path
     private val mapper = JsonMapper.builder().build()
-    private val sample = DipSample.load()
+    private val original = DipSample.load()
+    private val sample = original.copy(observations = original.observations.map { observation ->
+        AGREED_PRICES[observation.id]?.let { observation.copy(price = BigDecimal(it)) } ?: observation
+    })
     private val paths get() = CapturePaths(root.resolve("wallet"), root.resolve("market"), root.resolve("rates"))
 
     @Test
     fun `a take profit cycle is a qualifying dip with the report's fill, exit and pnl`() {
         val dataset = dataset(DipSample.TAKE_PROFIT)
         val verdict = qualify(DipSample.TAKE_PROFIT, dataset)
-        val report = ReplayRunner().run(load(dataset), SimulationConfig.mvp())
+        val report = ReplayRunner().run(load(dataset), SimulationConfig.agreed())
         val scenario = report.scenarios.single()
         val fill = (scenario.outcome as FillOutcome.Filled).fill
         val close = assertNotNull(assertNotNull(scenario.position).close)
@@ -69,7 +79,7 @@ class TargetTokenQualificationServiceTest {
         ), verdict)
         assertEquals(DipSample.TAKE_PROFIT_PNL, (verdict.exit as ExitVerdict.Closed).realizedPnl.toPlainString())
         assertEquals(Slot.of(1002), (verdict.dip as DipVerdict.Qualified).triggerSlot)
-        assertEquals("16800.000000000000", (verdict.dip as DipVerdict.Qualified).marketCapUsd.toPlainString())
+        assertEquals("16000.000000000000", (verdict.dip as DipVerdict.Qualified).marketCapUsd.toPlainString())
         assertEquals(Slot.of(1000), verdict.provenance.firstBuySlot)
         assertEquals(ReplayRunner.ENGINE_VERSION, verdict.provenance.engineVersion)
     }
@@ -114,14 +124,22 @@ class TargetTokenQualificationServiceTest {
     fun `a position left open qualifies with the reason it stayed open`() {
         mapOf(
             DipSample.HORIZON to RejectionReason.HORIZON_REACHED,
-            DipSample.NO_EXIT_FILL to RejectionReason.NO_EXIT_FILL,
             DipSample.MIGRATED_IN_POSITION to RejectionReason.MIGRATED,
+            DipSample.NO_EXIT_FILL to RejectionReason.HORIZON_REACHED,
         ).forEach { (cycle, reason) ->
             val verdict = qualify(cycle)
             assertEquals(CaseClassification.QUALIFYING_DIP, verdict.classification, "cycle=$cycle")
             assertTrue(verdict.entry is EntryVerdict.Filled)
             assertEquals(ExitVerdict.Open(reason), verdict.exit)
         }
+    }
+
+    @Test
+    fun `a take profit with no trade within 60 s closes against the standing curve once the recording proves it`() {
+        val exit = qualify(DipSample.NO_EXIT_FILL, datasetV6(DipSample.NO_EXIT_FILL, Instant.parse("2026-10-01T00:02:01Z"))).exit as ExitVerdict.Closed
+        assertEquals(CloseReason.TAKE_PROFIT, exit.reason)
+        assertEquals(Slot.of(8004), exit.slot)
+        assertEquals(DipSample.STANDING_CURVE_PNL, exit.realizedPnl.toPlainString())
     }
 
     @Test
@@ -217,6 +235,18 @@ class TargetTokenQualificationServiceTest {
     }
 
     @Test
+    fun `a capture cut at the legacy stop loss is refused for coverage when the agreed outcome needs the window past its cut`() {
+        val buy = firstBuy(DipSample.STOP_LOSS)
+
+        val verdict = qualify(DipSample.STOP_LOSS, datasetV5(DipSample.STOP_LOSS, throughSlot = 2005, shaped = false))
+
+        assertEquals(CaptureVerdict(CaptureVerdictState.INCOMPLETE, CaptureVerdictStage.MARKET, "MARKET_COVERAGE_ENDED"), verdict.capture)
+        assertEquals(CaseClassification.INCOMPLETE_CAPTURE, verdict.classification)
+        assertEquals(ReplayVerdict.NotRun, verdict.replay)
+        assertEquals(VerdictProvenance(firstBuySignature = buy.signature, firstBuySlot = buy.slot), verdict.provenance)
+    }
+
+    @Test
     fun `an exported capture still awaiting qualification says the qualification is pending, never not exported`() {
         val inspection = ready(evidence(DipSample.TAKE_PROFIT))
 
@@ -237,7 +267,7 @@ class TargetTokenQualificationServiceTest {
         val first = qualify(DipSample.TAKE_PROFIT, dataset)
         val second = qualify(DipSample.TAKE_PROFIT, dataset)
         assertEquals(first, second)
-        assertEquals(ReplayRunner().run(load(dataset), SimulationConfig.mvp()).runId, second.provenance.runId)
+        assertEquals(ReplayRunner().run(load(dataset), SimulationConfig.agreed()).runId, second.provenance.runId)
     }
 
     @Test
@@ -320,16 +350,43 @@ class TargetTokenQualificationServiceTest {
             observations = sample.observations.filter { it.pair == pair })))
     }
 
-    /** The cycle's mint alone as schema v5, its window observed through [throughSlot]. */
-    private fun datasetV5(cycle: Int, throughSlot: Long): Path {
+    /** The cycle's mint alone as schema v5, its window observed through [throughSlot], at the agreed levels unless not [shaped]. */
+    private fun datasetV5(cycle: Int, throughSlot: Long, shaped: Boolean = true): Path {
         val pair = DipSample.pair(cycle)
         val v5 = DipSampleV5.dataset(mapOf(pair to throughSlot))
-        return write("cycle-$cycle-v5-$throughSlot", v5.copy(transactions = v5.transactions.filter { it.pair == pair },
-            observations = v5.observations.filter { it.pair == pair }, coverage = v5.coverage.filter { it.pair == pair }))
+        val prices = sample.observations.associate { it.id to it.price }
+        val observations = v5.observations.filter { it.pair == pair }.map { if (shaped) it.copy(price = prices.getValue(it.id)) else it }
+        return write("cycle-$cycle-v5-$throughSlot-$shaped", v5.copy(transactions = v5.transactions.filter { it.pair == pair },
+            observations = observations, coverage = v5.coverage.filter { it.pair == pair }))
+    }
+
+    /** The cycle's mint alone as schema v6 at the agreed levels, its full window recorded through [throughTime]. */
+    private fun datasetV6(cycle: Int, throughTime: Instant): Path {
+        val pair = DipSample.pair(cycle)
+        val v6 = DipSampleV6.dataset(mapOf(pair to throughTime))
+        val prices = sample.observations.associate { it.id to it.price }
+        return write("cycle-$cycle-v6-$throughTime".replace(':', '-'), v6.copy(transactions = v6.transactions.filter { it.pair == pair },
+            observations = v6.observations.filter { it.pair == pair }.map { it.copy(price = prices.getValue(it.id)) },
+            coverage = v6.coverage.filter { it.pair == pair }))
     }
 
     private fun write(name: String, dataset: ReplayDataset): Path =
         root.resolve("$name.json").also { Files.writeString(it, ReplayDatasetWriter(mapper).write(dataset)) }
 
     private fun load(path: Path): ReplayDataset = Files.newInputStream(path).use { ReplayDatasetLoader(mapper).load(it) }
+
+    private companion object {
+        /**
+         * The dips at exactly 20% below P0 (0.00000008) for the take-profit, migrated-in-position, horizon, standing-curve and
+         * no-fill cycles; the take-profit crossings above +55% of each entry's execution price; and the stop-loss trigger below -40%.
+         */
+        val AGREED_PRICES = mapOf(
+            "fixture:TP:1002:0" to "0.00000008", "fixture:TP:1005:0" to "0.00000014",
+            "fixture:SL:2004:0" to "0.00000004",
+            "fixture:MIGRATED_POS:6001:0" to "0.00000008",
+            "fixture:HORIZON:7001:0" to "0.00000008",
+            "fixture:NOEXIT:8001:0" to "0.00000008", "fixture:NOEXIT:8003:0" to "0.00000014",
+            "fixture:NOFILL:9001:0" to "0.00000008",
+        )
+    }
 }

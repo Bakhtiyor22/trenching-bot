@@ -55,6 +55,7 @@ data class DipTriggerResponse(
     val rate: String,
 )
 
+/** [exitStart] is when a timed run's time exit starts; null for an untimed run or a buy without a block time. */
 data class ScenarioPositionResponse(
     val id: String,
     val state: String,
@@ -62,11 +63,17 @@ data class ScenarioPositionResponse(
     val takeProfitPrice: String,
     val stopLossPrice: String,
     val exitTrigger: ExitTriggerResponse?,
+    val exitStart: Instant?,
 )
 
-/** The trade that crossed take profit or stop loss; the exit fills at a later slot's trade, if any. */
+/**
+ * What started the exit. A take profit or stop loss is the trade that crossed its level, at its [slot] and block [time]. A
+ * `TIME_EXIT` starts at [time], the position's exit start; its [observationId] is the trade whose curve stood then and [slot]
+ * the first slot the recording proves at or after it. [time] is null on a trigger stored before engine dip-paper-v4.
+ */
 data class ExitTriggerResponse(
     val observationId: String,
     val slot: Long,
+    val time: Instant?,
     val reason: String,
 )

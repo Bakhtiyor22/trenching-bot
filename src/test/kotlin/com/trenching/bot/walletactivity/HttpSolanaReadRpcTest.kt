@@ -335,6 +335,8 @@ class HttpSolanaReadRpcTest {
             """{"jsonrpc":"2.0","id":1,"error":{}}""" to "RPC_ERROR",
             """{"jsonrpc":"2.0","id":1,"error":"x"}""" to "RPC_ERROR",
             """{"jsonrpc":"2.0","id":1,"error":[]}""" to "RPC_ERROR",
+            """{"jsonrpc":"2.0","id":1,"error":{"code":-32007,"message":"Slot 1 was skipped"}}""" to "SLOT_SKIPPED",
+            """{"jsonrpc":"2.0","id":1,"error":{"code":-32009,"message":"Slot 1 was skipped"}}""" to "SLOT_SKIPPED",
         )
         envelopes.forEach { (body, category) ->
             fakeServer { exchange ->

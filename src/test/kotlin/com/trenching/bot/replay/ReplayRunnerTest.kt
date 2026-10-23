@@ -6,8 +6,10 @@ import com.trenching.bot.common.Slot
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.portfolio.domain.CloseReason
+import com.trenching.bot.portfolio.domain.ExitPriceAssumption
 import com.trenching.bot.portfolio.domain.PositionState
 import com.trenching.bot.replay.application.ReplayRunner
+import com.trenching.bot.replay.domain.DatasetCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.domain.ScenarioResult
 import com.trenching.bot.replay.domain.SimulationReport
@@ -16,6 +18,7 @@ import com.trenching.bot.strategy.domain.DipWatchOutcome
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV4
+import com.trenching.bot.support.DipSampleV6
 import com.trenching.bot.walletactivity.domain.IngestionReason
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
 import java.math.BigDecimal
@@ -118,15 +121,86 @@ class ReplayRunnerTest {
         mapOf(
             DipSample.MIGRATED_IN_POSITION to RejectionReason.MIGRATED,
             DipSample.HORIZON to RejectionReason.HORIZON_REACHED,
-            DipSample.NO_EXIT_FILL to RejectionReason.NO_EXIT_FILL,
+            DipSample.NO_EXIT_FILL to RejectionReason.HORIZON_REACHED,
         ).forEach { (cycle, reason) ->
             val scenario = scenario(cycle)
             assertEquals(PositionState.OPEN, assertNotNull(scenario.position).state)
             assertEquals(reason, scenario.exitUnavailable, "cycle=$cycle")
         }
-        assertEquals("12600.000000000000", assertNotNull(scenario(DipSample.NO_EXIT_FILL).intent.trigger).marketCapUsd.toPlainString())
-        assertEquals(CloseReason.TAKE_PROFIT, assertNotNull(assertNotNull(scenario(DipSample.NO_EXIT_FILL).position).exitTrigger).reason)
         assertNull(assertNotNull(scenario(DipSample.HORIZON).position).exitTrigger)
+        assertTrue(report.scenarios.none { it.exitUnavailable == RejectionReason.NO_EXIT_FILL })
+    }
+
+    @Test
+    fun `a take profit with no later trade stays open in a v3 dataset, which cannot prove that no trade landed within 60 s`() {
+        val scenario = scenario(DipSample.NO_EXIT_FILL)
+        val position = assertNotNull(scenario.position)
+
+        assertEquals(PositionState.OPEN, position.state)
+        assertEquals(RejectionReason.HORIZON_REACHED, scenario.exitUnavailable)
+        assertEquals(CloseReason.TAKE_PROFIT, assertNotNull(position.exitTrigger).reason)
+        assertEquals(Slot.of(DipSample.STANDING_CURVE_TRIGGER_SLOT), assertNotNull(position.exitTrigger).slot)
+    }
+
+    @Test
+    fun `a take profit with no trade within 60 s sells against the curve standing at its sale slot with hand checked pnl`() {
+        // Bought 1188191190525 raw tokens from slot 8002's curve for a 0.10225 cost basis; take profit triggers at slot 8003 (00:01:00)
+        // and the coverage end time 00:02:01 proves no trade followed within 60 s, so the sale at slot 8004 is against 8003's
+        // post-trade curve (virtual SOL 62151427980, virtual tokens 517928566506284): 1188191190525 * 62151427980 /
+        // (517928566506284 + 1188191190525), rounded down, = 142256588 lamports. Fees round up: 1351438 + 426770 = 1778208 lamports.
+        // Net 0.142256588 - 0.001778208 - 0.001 = 0.13947838; P&L 0.03722838.
+        val noExitFill = DipSample.pair(DipSample.NO_EXIT_FILL)
+        val covered = DipSampleV6.dataset(mapOf(noExitFill to Instant.parse("2026-10-01T00:02:01Z")))
+        val scenario = ReplayRunner().run(covered, SimulationConfig.mvp()).scenarios.single { it.intent.pair == noExitFill }
+        val position = assertNotNull(scenario.position)
+        assertEquals("12600.000000000000", assertNotNull(scenario.intent.trigger).marketCapUsd.toPlainString())
+        assertEquals(Slot.of(8003), assertNotNull(position.exitTrigger).slot)
+        assertNull(scenario.exitUnavailable)
+        val close = assertNotNull(position.close)
+        assertEquals(CloseReason.TAKE_PROFIT, close.reason)
+        assertEquals(ExitPriceAssumption.STANDING_CURVE, close.priceAssumption)
+        assertEquals(Slot.of(8004), close.slot)
+        assertEquals("fixture:NOEXIT:8003:0", close.observationId)
+        assertEquals(0, BigDecimal("0.00000011972533472255773859984367266272").compareTo(close.executionPrice))
+        assertEquals("0.142256588000", close.grossProceeds.toPlainString())
+        assertEquals("0.001778208000", close.fee.toPlainString())
+        assertEquals(-23, close.priceImpactBps)
+        assertEquals("0.139478380000", close.netProceeds.toPlainString())
+        assertEquals(DipSample.STANDING_CURVE_PNL, close.realizedPnl.toPlainString())
+        assertEquals(ExitPriceAssumption.NEXT_TRADE, assertNotNull(assertNotNull(scenario(DipSample.TAKE_PROFIT).position).close).priceAssumption)
+    }
+
+    @Test
+    fun `a timed configuration over a v6 dataset times out the dip and the hold`() {
+        val timed = ReplayRunner().run(timedDataset(), TIMED)
+        fun timedScenario(cycle: Int) = timed.scenarios.single { it.intent.pair == DipSample.pair(cycle) }
+
+        assertEquals(scenario(DipSample.TAKE_PROFIT).position?.close, timedScenario(DipSample.TAKE_PROFIT).position?.close)
+        assertEquals(RejectionReason.NO_DIP, (timedScenario(DipSample.STOP_LOSS).outcome as FillOutcome.Rejected).reason)
+        assertEquals(scenario(DipSample.NO_EXIT_FILL).position?.close, timedScenario(DipSample.NO_EXIT_FILL).position?.close)
+
+        // Bought 1188191190525 raw tokens at slot 7002 (00:01:00), so the exit starts at min(00:04:00, 00:05:00). No recorded trade
+        // follows 7003 within the horizon, and the coverage end time 00:05:00 proves the exit start, so the sale is against slot
+        // 7003's curve (virtual SOL 53824715512, virtual tokens 598052394588567): 106725169 lamports gross, fees 1013890 + 320176.
+        // Net 0.106725169 - 0.001334066 - 0.001 = 0.104391103; P&L 0.002141103.
+        val horizon = assertNotNull(timedScenario(DipSample.HORIZON).position)
+        assertEquals(Instant.parse("2026-10-01T00:04:00Z"), horizon.exitStart)
+        val close = assertNotNull(horizon.close)
+        assertEquals(CloseReason.TIME_EXIT, close.reason)
+        assertEquals(ExitPriceAssumption.STANDING_CURVE, close.priceAssumption)
+        assertEquals("fixture:HORIZON:7003:0", close.observationId)
+        assertEquals(Slot.of(11500), close.slot)
+        assertEquals(0, BigDecimal("0.00000008982154543061684260504082481234").compareTo(close.executionPrice))
+        assertEquals("0.106725169000", close.grossProceeds.toPlainString())
+        assertEquals("0.001334066000", close.fee.toPlainString())
+        assertEquals(-20, close.priceImpactBps)
+        assertEquals("0.002141103000", close.realizedPnl.toPlainString())
+        assertEquals(emptyList(), DatasetCoverage.undecided(timed, timedDataset()))
+
+        val withoutTime = ReplayRunner().run(timedDataset(throughTime = null), TIMED).scenarios
+            .single { it.intent.pair == DipSample.pair(DipSample.HORIZON) }
+        assertEquals(RejectionReason.HORIZON_REACHED, withoutTime.exitUnavailable)
+        assertNull(assertNotNull(withoutTime.position).exitTrigger)
     }
 
     @Test
@@ -137,6 +211,15 @@ class ReplayRunnerTest {
             referenceRates = original.referenceRates.reversed() + original.referenceRates)
         assertEquals(report, ReplayRunner().run(original, SimulationConfig.mvp()))
         assertEquals(report, ReplayRunner().run(reordered, SimulationConfig.mvp()))
+
+        val timed = timedDataset()
+        val timedReordered = timed.copy(transactions = timed.transactions.reversed() + timed.transactions,
+            observations = timed.observations.reversed() + timed.observations,
+            referenceRates = timed.referenceRates.reversed() + timed.referenceRates,
+            coverage = timed.coverage.reversed())
+        val timedReport = ReplayRunner().run(timed, TIMED)
+        assertEquals(timedReport, ReplayRunner().run(timed, TIMED))
+        assertEquals(timedReport, ReplayRunner().run(timedReordered, TIMED))
     }
 
     @Test
@@ -170,8 +253,8 @@ class ReplayRunnerTest {
     }
 
     @Test
-    fun `engine dip-paper-v3 hashes latency and transaction cost into the configuration and the run`() {
-        assertEquals("dip-paper-v3", report.engineVersion)
+    fun `engine dip-paper-v4 hashes latency and transaction cost into the configuration and the run`() {
+        assertEquals("dip-paper-v4", report.engineVersion)
         val slower = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 2, BigDecimal("0.001"))
         val dearer = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.002"))
         listOf(slower, dearer).map { ReplayRunner().run(DipSample.load(), it) }.forEach { other ->
@@ -182,7 +265,20 @@ class ReplayRunnerTest {
     }
 
     @Test
-    fun `dip-sample-v3 and its v4 twin keep their pinned dip-paper-v3 run identity and result`() {
+    fun `the configuration hash names a timed field only when it is set, so the default's hash is unchanged`() {
+        fun timed(dipWindowMs: Long? = null, maxHoldMs: Long? = null, hardExitStartMs: Long? = null) =
+            SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"),
+                dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs, hardExitStartMs = hardExitStartMs)
+        val hashes = listOf(timed(), timed(dipWindowMs = 30_000), timed(dipWindowMs = 31_000),
+            timed(maxHoldMs = 180_000, hardExitStartMs = 240_000), timed(maxHoldMs = 181_000, hardExitStartMs = 240_000),
+            timed(maxHoldMs = 180_000, hardExitStartMs = 241_000), SimulationConfig.agreed()).map(ReplayRunner::configurationHash)
+
+        assertEquals(PINNED_CONFIGURATION_HASH, hashes.first())
+        assertEquals(hashes.size, hashes.distinct().size)
+    }
+
+    @Test
+    fun `dip-sample-v3 and its v4 twin keep their pinned dip-paper-v4 run identity and result`() {
         val v4 = ReplayRunner().run(DipSampleV4.dataset(), SimulationConfig.mvp())
 
         assertEquals(listOf(PINNED_V3_RUN_ID, PINNED_CONFIGURATION_HASH, PINNED_V3_RESULT_CHECKSUM),
@@ -236,11 +332,24 @@ class ReplayRunnerTest {
         }
     }
 
+    /**
+     * The v6 twin with the stop-loss cycle's trades moved 31 s after its buy, outside a 30 s dip window, and the horizon cycle's
+     * coverage recorded through [throughTime].
+     */
+    private fun timedDataset(throughTime: Instant? = Instant.parse("2026-10-01T00:05:00Z")): ReplayDataset {
+        val stopLoss = DipSample.pair(DipSample.STOP_LOSS)
+        val v6 = DipSampleV6.dataset(listOfNotNull(throughTime?.let { DipSample.pair(DipSample.HORIZON) to it }).toMap())
+        return v6.copy(observations = v6.observations.map { if (it.pair == stopLoss) it.copy(observedTime = it.observedTime.plusSeconds(31)) else it })
+    }
+
     private companion object {
+        /** The mvp levels with spec P7 and P11's clocks: a 30 s dip window, then three minutes held or four from the buy. */
+        val TIMED: SimulationConfig = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1,
+            BigDecimal("0.001"), dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000)
         const val PINNED_CONFIGURATION_HASH = "be937336820a84b0af7482105efb9334ebb710c0ccf8e4d6bae88f2666a0a329"
-        const val PINNED_V3_RUN_ID = "3ec5984abf7e67dad91089961bfbb247b62d425b1ba77281194cfd581ab9d512"
-        const val PINNED_V3_RESULT_CHECKSUM = "7dde0b61d4f503a7ff6b45e9b024065a893c57d720522d9bc5ecf0d5f3f490ac"
-        const val PINNED_V4_RUN_ID = "f7aaab5afff8776db00c3c02ed95aad40d5cf81c63a1d75147ee8cfe26dbfc3d"
-        const val PINNED_V4_RESULT_CHECKSUM = "2eae1e3abc2bdd8db609e2e14489fa7536d9502a6cbf70069d84dfee7ebbce6a"
+        const val PINNED_V3_RUN_ID = "9f56738063e32b99c8d7b98955704784ad7d9dd83fb9ee7cf6fa95dd8a7fdace"
+        const val PINNED_V3_RESULT_CHECKSUM = "b32af5db493a578784d4eccb299dbd0cd9f17eb838307f19a0583f98eb1d3d22"
+        const val PINNED_V4_RUN_ID = "e4f60e845ef85b4ba50df80f213c126cb994a7701270943d7f8f4b6ecafc7e23"
+        const val PINNED_V4_RESULT_CHECKSUM = "08c7f1dbf9e75d6f47737a8a6154f3819c78123c706c3384e5fea8efc55d2677"
     }
 }

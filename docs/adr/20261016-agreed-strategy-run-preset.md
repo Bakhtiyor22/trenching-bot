@@ -73,3 +73,11 @@ The preset now lists it as the fourth rule, after `MCAP_AT_REFERENCE_BUY`:
 ## Amendment 2026-10-23: the market cap is checked at the reference buy
 
 Engine `dip-paper-v3` checks P5 as the spec states it: the wallet's buy must be valued strictly above `minMarketCapUsd`, and the dip is not checked ([decision](20261023-reference-market-cap.md)). `minMarketCapUsd` is now `AGREED` without a note (it was `AGREED_MEASURED_DIFFERENTLY` with `MEASURED_AT_DIP_INCLUSIVE`), and `MCAP_AT_REFERENCE_BUY` leaves the unsupported list, which keeps 8 rules with `POST_TRADE_PRICE` third. The preset's values and configuration hash are unchanged; its run ids change with the engine version.
+
+## Amendment 2026-10-24: the timed clocks, six rules and the cutoff configuration
+
+Engine `dip-paper-v4` applies spec P7 and P11 ([decision](20261024-timed-dip-window-and-exit.md)), and the preset is now built from the strategy's own `SimulationConfig.agreed()` instead of values listed in the console. Three fields join it, each `AGREED`: `dipWindowMs` 30,000 (P7), `maxHoldMs` 180,000 (P11) and `hardExitStartMs` 240,000 (P11); `AgreedStrategyPresetTest` checks them against the spec's YAML. `horizonSlots` stays 4,500 and becomes `ENGINE_DEFAULT` with note `RECORDING_BOUND_ONLY`: the clocks end each cycle, and the horizon only bounds how far a market is recorded. No field is `MISSING` any more.
+
+`DIP_WINDOW_30_SECONDS` and `TIMED_EXIT` leave the unsupported list, and `EXIT_RETRIES_AND_UNRESOLVED` becomes `EXIT_RETRY_ECONOMICS`, since `UNRESOLVED` is now modelled and only the retry slippage steps, fee escalation and fee cap are not. The list has 6 rules, in this order: `FIRST_EVER_BUY` (P2), `SIGNAL_OVER_1_9_SOL` (P3), `POST_TRADE_PRICE` (Section 5), `ENTRY_SLIPPAGE_15_PERCENT` (P8), `EXIT_RETRY_ECONOMICS` (Section 8), `ONE_POSITION_INCLUDING_IN_FLIGHT` (P13).
+
+Open Question 3 is settled: the `DECIDED` cutoff and wallet + token qualification use `SimulationConfig.agreed()`, so both judge a capture with the same configuration, and the caveat `CUTOFF_USES_LEGACY_DEFAULTS` goes. `mvp()` stays the API and CLI default. The preset's configuration hash changes, since it now names the three clocks.

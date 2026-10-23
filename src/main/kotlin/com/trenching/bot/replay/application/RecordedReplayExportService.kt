@@ -20,11 +20,11 @@ import tools.jackson.databind.ObjectMapper
 
 /**
  * Exports a recorded wallet capture, the market capture planned from it and the rates recorded for that market capture as
- * one canonical v5 dataset. All three are verified offline. The market capture must hold exactly the planned windows, each
+ * one canonical v6 dataset. All three are verified offline. The market capture must hold exactly the planned windows, each
  * complete and free of detail gaps and in-window exclusions through its observed end, so a missing trade can never read as
  * an absence of trades; the dataset's coverage records each window from its first slot (its lead before the first buy, or
- * the slot after it for a capture without one) to that end, the window's last slot or its cutoff. Every trade's minute must
- * have a rate. The JSON is loaded back before it is written.
+ * the slot after it for a capture without one) to that end, the window's last slot or its cutoff, with the block time the
+ * capture recorded for that end, if any. Every trade's minute must have a rate. The JSON is loaded back before it is written.
  */
 class RecordedReplayExportService(
     walletHistory: RecordedWalletHistory,
@@ -45,7 +45,7 @@ class RecordedReplayExportService(
             log.warn("recorded_replay_export refused reason={} observations={}", DatasetTrades.FIELDS_MISSING, market.observations.size)
             throw CaptureValidationException(DatasetTrades.FIELDS_MISSING)
         }
-        val coverage = market.windows.map { MarketCoverage.of(it.window.pair, it.window.fromSlot, it.observedThrough) }
+        val coverage = market.windows.map { MarketCoverage.of(it.window.pair, it.window.fromSlot, it.observedThrough, it.observedThroughTime) }
         val dataset = ReplayDataset(ReplayDataset.CURRENT_SCHEMA_VERSION, planned.history.wallet, planned.history.transactions,
             market.observations, rates(request, market), coverage)
         if (dataset.transactions.size > ReplayLimits.MAX_INPUT_RECORDS || dataset.observations.size > ReplayLimits.MAX_INPUT_RECORDS) {

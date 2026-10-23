@@ -81,15 +81,17 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
     }
 
     /**
-     * A window without a cutoff or a listing tip is written without that field, and a capture without a lead without
-     * `leadSlots`, so a manifest without cutoffs keeps its version 2 bytes and one saved before tips were recorded is read
-     * back unchanged.
+     * A window without a cutoff, a listing tip or a block time is written without that field, and a capture without a lead
+     * without `leadSlots`, so a manifest without cutoffs keeps its version 2 bytes and one saved before tips or block times
+     * were recorded is read back unchanged. A block time is written as its ISO-8601 instant, whatever the mapper's settings.
      */
     fun save(directory: Path, manifest: MarketHistoryManifest) {
         val tree = mapper.valueToTree<ObjectNode>(manifest)
         if (!MarketCaptureFormat.hasLead(manifest.windowParameters)) (tree.path(WINDOW_PARAMETERS_FIELD) as ObjectNode).remove(LEAD_SLOTS_FIELD)
-        tree.path("windows").forEach { window ->
-            OPTIONAL_WINDOW_FIELDS.forEach { field -> if (window.path(field).isNull) (window as ObjectNode).remove(field) }
+        tree.path("windows").zip(manifest.windows).forEach { (node, window) ->
+            val written = node as ObjectNode
+            window.throughBlockTime?.let { written.put(THROUGH_BLOCK_TIME_FIELD, it.toString()) }
+            OPTIONAL_WINDOW_FIELDS.forEach { field -> if (written.path(field).isNull) written.remove(field) }
         }
         files.writeManifest(files.root(directory, create = true), MarketCaptureFormat.MANIFEST, tree)
     }
@@ -112,12 +114,12 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
             string(node, "capturedAt"), parameters, smallInteger(node, "scanPageLimit"), smallInteger(node, "maxTransactions"),
             windows, records, boolean(node, "acquisitionComplete"), boolean(node, "complete"),
             smallInteger(node, "requestsUsed"), integer(node, "bytesUsed"))
-    } catch (_: IllegalArgumentException) { fail("MANIFEST_FIELDS") }
+    } catch (_: IllegalArgumentException) { fail(MANIFEST_FIELDS) }
 
-    /** Only version 4 records a lead, and must; versions 2 and 3 mean the legacy start and may not carry one. */
+    /** Only versions 4 and 5 record a lead, and must; versions 2 and 3 mean the legacy start and may not carry one. */
     private fun leadSlots(manifest: JsonNode, parameters: JsonNode): Long = when {
-        smallInteger(manifest, "schemaVersion") == MarketCaptureFormat.LEAD_VERSION -> integer(parameters, LEAD_SLOTS_FIELD)
-        parameters.has(LEAD_SLOTS_FIELD) -> fail("MANIFEST_FIELDS")
+        MarketCaptureFormat.recordsLead(smallInteger(manifest, "schemaVersion")) -> integer(parameters, LEAD_SLOTS_FIELD)
+        parameters.has(LEAD_SLOTS_FIELD) -> fail(MANIFEST_FIELDS)
         else -> MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS
     }
 
@@ -130,7 +132,15 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         node.path("scanCursor").takeUnless { it.isNull || it.isMissingNode }?.let(::listed),
         node.path(CUTOFF_FIELD).takeUnless { it.isNull || it.isMissingNode }?.let(::cutoff),
         node.path(LISTED_AT_TIP_FIELD).takeUnless { it.isNull || it.isMissingNode }?.let { integer(node, LISTED_AT_TIP_FIELD) },
+        optionalString(node, THROUGH_BLOCK_TIME_FIELD)?.let(::blockTime),
     )
+
+    /** A block time is a whole second, as the chain records it. */
+    private fun blockTime(value: String): Instant {
+        val time = try { Instant.parse(value) } catch (_: DateTimeParseException) { fail(MANIFEST_FIELDS) }
+        if (time.nano != 0) fail(MANIFEST_FIELDS)
+        return time
+    }
 
     private fun cutoff(node: JsonNode): MarketWindowCutoff = MarketWindowCutoff(
         integer(node, "throughSlot"), string(node, "outcome"), string(node, "engineVersion"), string(node, "configurationHash"),
@@ -175,7 +185,8 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         }
         // A tip is recorded only when it let the window open, so it is past the window's end and never on a held window.
         val tip = window.listedAtTip.let { it == null || (it >= window.toSlot && window.coverage != MarketWindowCoverage.HORIZON_NOT_ELAPSED) }
-        return counts && listed && coverage && tip
+        val blockTime = window.throughBlockTime == null || window.coverage == MarketWindowCoverage.COMPLETE
+        return counts && listed && coverage && tip && blockTime
     }
 
     /**
@@ -193,7 +204,9 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
      * selecting window was decided before it.
      */
     private fun validateCutoffs(manifest: MarketHistoryManifest) {
-        if (manifest.schemaVersion != MarketCaptureFormat.versionFor(manifest.windowParameters, manifest.windows)) fail("MANIFEST_VERSION")
+        val recordsBlockTimes = MarketCaptureFormat.recordsBlockTimes(manifest.schemaVersion)
+        if (manifest.schemaVersion != MarketCaptureFormat.versionFor(manifest.windowParameters, manifest.windows, recordsBlockTimes) ||
+            (!recordsBlockTimes && manifest.windows.any { it.throughBlockTime != null })) fail("MANIFEST_VERSION")
         val outcomes = manifest.records.associate { it.signature to it.outcome }
         manifest.windows.forEach { window ->
             val cutoff = window.cutoff ?: return@forEach
@@ -236,7 +249,9 @@ internal class MarketHistoryArtifactStore(private val mapper: ObjectMapper) {
         const val LEAD_SLOTS_FIELD = "leadSlots"
         const val CUTOFF_FIELD = "cutoff"
         const val LISTED_AT_TIP_FIELD = "listedAtTip"
-        val OPTIONAL_WINDOW_FIELDS = listOf(CUTOFF_FIELD, LISTED_AT_TIP_FIELD)
+        const val THROUGH_BLOCK_TIME_FIELD = "throughBlockTime"
+        val OPTIONAL_WINDOW_FIELDS = listOf(CUTOFF_FIELD, LISTED_AT_TIP_FIELD, THROUGH_BLOCK_TIME_FIELD)
+        const val MANIFEST_FIELDS = "MANIFEST_FIELDS"
         const val CUTOFF_INVALID = "CAPTURE_INVALID"
         val SHA256 = Regex("[0-9a-f]{64}")
     }

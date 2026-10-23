@@ -8,21 +8,29 @@ import com.trenching.bot.marketdata.domain.OrderedMarketData
 import com.trenching.bot.papertrading.application.FillModel
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.papertrading.domain.RejectionReason
+import com.trenching.bot.portfolio.domain.CloseReason
+import com.trenching.bot.portfolio.domain.ExitPriceAssumption
+import com.trenching.bot.portfolio.domain.ExitTrigger
+import com.trenching.bot.portfolio.domain.PositionState
 import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.CoverageShortfall
 import com.trenching.bot.replay.domain.DatasetCoverage
 import com.trenching.bot.replay.domain.MarketCoverage
+import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.domain.ScenarioDecision
 import com.trenching.bot.replay.domain.ScenarioResult
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV4
 import com.trenching.bot.support.DipSampleV5
+import com.trenching.bot.support.DipSampleV6
 import java.math.BigDecimal
 import java.math.BigInteger
+import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertNotNull
 import org.junit.jupiter.api.Test
 
 class DatasetCoverageTest {
@@ -35,7 +43,10 @@ class DatasetCoverageTest {
     private val template = sample.observations.single { it.id == "fixture:TP:1003:0" }
 
     private fun decidedAt(cycle: Int): Slot =
-        ScenarioDecision.decidedAt(report.scenarios.single { it.intent.pair == DipSample.pair(cycle) }, source, config)
+        decidedAt(report.scenarios.single { it.intent.pair == DipSample.pair(cycle) }, sample, config)
+
+    private fun decidedAt(scenario: ScenarioResult, dataset: ReplayDataset, config: SimulationConfig): Slot =
+        ScenarioDecision.decidedAt(scenario, OrderedMarketData(dataset.observations), config, DatasetCoverage.recordedThrough(dataset)(scenario.intent))
 
     @Test
     fun `a closed position is decided at its close`() {
@@ -47,8 +58,86 @@ class DatasetCoverageTest {
     fun `outcomes that need the whole window are decided at the horizon end`() {
         assertEquals(Slot.of(7500), decidedAt(DipSample.NO_DIP))
         assertEquals(Slot.of(11500), decidedAt(DipSample.HORIZON))
-        assertEquals(Slot.of(12500), decidedAt(DipSample.NO_EXIT_FILL))
         assertEquals(Slot.of(13500), decidedAt(DipSample.NO_FILL))
+    }
+
+    @Test
+    fun `a take profit with no proof that its 60 s passed needs the whole window`() {
+        assertEquals(Slot.of(12500), decidedAt(DipSample.NO_EXIT_FILL))
+    }
+
+    @Test
+    fun `a take profit sold against the standing curve is decided at the first trade past its 60 s`() {
+        val noExitFill = DipSample.pair(DipSample.NO_EXIT_FILL)
+        val v5 = DipSampleV5.dataset()
+        val later = v5.observations.single { it.id == "fixture:NOEXIT:8003:0" }
+            .copy(id = "test:8100", sourceEventId = "test:8100", slot = Slot.of(8100), priceSlot = Slot.of(8100), observedTime = PAST_DEADLINE)
+        val dataset = v5.copy(observations = v5.observations + later)
+        val scenario = ReplayRunner().run(dataset, config).scenarios.single { it.intent.pair == noExitFill }
+
+        assertEquals(ExitPriceAssumption.STANDING_CURVE, assertNotNull(assertNotNull(scenario.position).close).priceAssumption)
+        assertEquals(Slot.of(8004), assertNotNull(assertNotNull(scenario.position).close).slot)
+        assertEquals(Slot.of(8100), decidedAt(scenario, dataset, config))
+    }
+
+    @Test
+    fun `a standing-curve take profit proven by the coverage end time is decided at the coverage end`() {
+        val noExitFill = DipSample.pair(DipSample.NO_EXIT_FILL)
+        val atSale = DipSampleV6.dataset(mapOf(noExitFill to PAST_DEADLINE), mapOf(noExitFill to 8004))
+        val atDeadline = DipSampleV6.dataset(mapOf(noExitFill to PAST_DEADLINE.minusSeconds(1)), mapOf(noExitFill to 9000))
+        val beforeSale = DipSampleV6.dataset(mapOf(noExitFill to PAST_DEADLINE), mapOf(noExitFill to 8003))
+        val sold = ReplayRunner().run(atSale, config)
+
+        assertEquals(Slot.of(8004), decidedAt(sold.scenarios.single { it.intent.pair == noExitFill }, atSale, config))
+        assertEquals(emptyList(), DatasetCoverage.undecided(sold, atSale))
+        listOf(atDeadline, beforeSale).forEach { unproven ->
+            val shortfall = DatasetCoverage.undecided(ReplayRunner().run(unproven, config), unproven).single()
+            assertEquals(noExitFill, shortfall.pair)
+            assertEquals(Slot.of(12500), shortfall.decidedAt)
+        }
+    }
+
+    @Test
+    fun `a time exit is decided at the first trade at or after its start`() {
+        val horizon = DipSample.pair(DipSample.HORIZON)
+        val v6 = DipSampleV6.dataset()
+        val proven = v6.copy(observations = v6.observations.map {
+            if (it.id == "fixture:HORIZON:7003:0") it.copy(observedTime = Instant.parse("2026-10-01T00:04:00Z")) else it
+        })
+        val scenario = ReplayRunner().run(proven, TIMED).scenarios.single { it.intent.pair == horizon }
+
+        assertEquals(CloseReason.TIME_EXIT, assertNotNull(assertNotNull(scenario.position).close).reason)
+        assertEquals(Slot.of(7003), decidedAt(scenario, proven, TIMED))
+    }
+
+    @Test
+    fun `a time exit proven only by the coverage end time is decided at the coverage end`() {
+        val horizon = DipSample.pair(DipSample.HORIZON)
+        val dataset = DipSampleV6.dataset(mapOf(horizon to Instant.parse("2026-10-01T00:04:00Z")), mapOf(horizon to 9000))
+        val timed = ReplayRunner().run(dataset, TIMED)
+        val scenario = timed.scenarios.single { it.intent.pair == horizon }
+
+        assertEquals(CloseReason.TIME_EXIT, assertNotNull(assertNotNull(scenario.position).close).reason)
+        assertEquals(Slot.of(9000), decidedAt(scenario, dataset, TIMED))
+        assertEquals(emptyList(), DatasetCoverage.undecided(timed, dataset))
+    }
+
+    @Test
+    fun `an unresolved exit is decided where its sale was tried`() {
+        val takeProfit = DipSample.pair(DipSample.TAKE_PROFIT)
+        val sampleTime = Instant.parse("2026-10-01T00:00:00Z")
+        val covered = DipSampleV6.dataset(mapOf(takeProfit to sampleTime.plusSeconds(61)), mapOf(takeProfit to 1100))
+
+        assertEquals(Slot.of(1200), unresolvedAt(ExitTrigger("fixture:TP:1004:0", Slot.of(1200), Instant.EPOCH, CloseReason.TIME_EXIT)))
+        assertEquals(Slot.of(1006), unresolvedAt(ExitTrigger("fixture:TP:1005:0", Slot.of(1005), sampleTime.minusSeconds(61), CloseReason.TAKE_PROFIT)))
+        assertEquals(Slot.of(1100), unresolvedAt(ExitTrigger("fixture:TP:1006:0", Slot.of(1006), sampleTime, CloseReason.TAKE_PROFIT), covered))
+    }
+
+    /** The take-profit position left open as unresolved after [trigger], against [dataset]'s trades and coverage. */
+    private fun unresolvedAt(trigger: ExitTrigger, dataset: ReplayDataset = sample): Slot {
+        val takeProfit = report.scenarios.single { it.intent.pair == DipSample.pair(DipSample.TAKE_PROFIT) }
+        val open = assertNotNull(takeProfit.position).copy(state = PositionState.OPEN, close = null, exitTrigger = trigger)
+        return decidedAt(takeProfit.copy(position = open, exitUnavailable = RejectionReason.UNRESOLVED), dataset, config)
     }
 
     @Test
@@ -73,7 +162,7 @@ class DatasetCoverageTest {
         val scenario = filled(observations, config(latencySlots = 3))
 
         assertEquals(RejectionReason.NO_FILL_AFTER_TRIGGER, assertIs<FillOutcome.Rejected>(scenario.outcome).reason)
-        assertEquals(Slot.of(1003), ScenarioDecision.decidedAt(scenario, OrderedMarketData(observations), config(latencySlots = 3)))
+        assertEquals(Slot.of(1003), decidedAt(scenario, sample.copy(observations = observations), config(latencySlots = 3)))
     }
 
     @Test
@@ -84,7 +173,7 @@ class DatasetCoverageTest {
         val scenario = filled(observations, config)
 
         assertEquals(RejectionReason.EXCEEDS_CURVE, assertIs<FillOutcome.Rejected>(scenario.outcome).reason)
-        assertEquals(Slot.of(1004), ScenarioDecision.decidedAt(scenario, OrderedMarketData(observations), config))
+        assertEquals(Slot.of(1004), decidedAt(scenario, sample.copy(observations = observations), config))
     }
 
     @Test
@@ -93,7 +182,7 @@ class DatasetCoverageTest {
         val scenario = filled(observations, config)
 
         assertEquals(RejectionReason.ZERO_QUANTITY, assertIs<FillOutcome.Rejected>(scenario.outcome).reason)
-        assertEquals(Slot.of(1003), ScenarioDecision.decidedAt(scenario, OrderedMarketData(observations), config))
+        assertEquals(Slot.of(1003), decidedAt(scenario, sample.copy(observations = observations), config))
     }
 
     @Test
@@ -213,6 +302,10 @@ class DatasetCoverageTest {
         SimulationConfig.of(BigDecimal(notional), 2, 1500, takeProfitBps, 1500, BigDecimal("10000"), 4500, latencySlots, BigDecimal("0.001"))
 
     private companion object {
+        /** One second past the 60 s after the sample's take profit at slot 8003, at 00:01:00. */
+        val PAST_DEADLINE: Instant = Instant.parse("2026-10-01T00:02:01Z")
+        val TIMED: SimulationConfig = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1,
+            BigDecimal("0.001"), maxHoldMs = 180_000, hardExitStartMs = 240_000)
         val COMPLETE = curve(52_615_016_868, 611_802_521_716_526, 22_615_016_868, 0)
         val TEN_THOUSAND_DOLLARS = curve(40_000_000_000, 800_000_000_000_000, 10_000_000_000, 520_100_000_000_000)
         val ROOMY = curve(40_000_000_000, 800_000_000_000_000, 10_000_000_000, 800_000_000_000_000)

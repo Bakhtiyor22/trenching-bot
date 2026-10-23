@@ -4,6 +4,7 @@ import com.trenching.bot.common.DecimalPolicy
 import com.trenching.bot.strategy.domain.DipWatchOutcome
 import jakarta.persistence.*
 import java.math.BigDecimal
+import java.time.Instant
 
 @Entity
 @Table(
@@ -37,6 +38,8 @@ class TradeIntentEntity(
     var entryOffset: Int,
     @Column(name = "creation_slot", nullable = false)
     var creationSlot: Long,
+    @Column(name = "t0", nullable = true)
+    var t0: Instant?,
     @Column(name = "target_slot", nullable = false)
     var targetSlot: Long,
     @Column(name = "notional", nullable = false, precision = 38, scale = 12)

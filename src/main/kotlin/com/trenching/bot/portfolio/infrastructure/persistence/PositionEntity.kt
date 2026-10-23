@@ -5,6 +5,7 @@ import com.trenching.bot.portfolio.domain.*
 import com.trenching.bot.papertrading.domain.RejectionReason
 import jakarta.persistence.*
 import java.math.BigDecimal
+import java.time.Instant
 
 @Entity
 @Table(
@@ -57,6 +58,10 @@ class PositionEntity(
     @Enumerated(EnumType.STRING)
     @Column(name = "close_reason", nullable = true, length = 32)
     var closeReason: CloseReason?,
+    // Null while open, and on a close stored before engine dip-paper-v4, which only sold into the next trade.
+    @Enumerated(EnumType.STRING)
+    @Column(name = "close_price_assumption", nullable = true, length = 32)
+    var closePriceAssumption: ExitPriceAssumption?,
     @Enumerated(EnumType.STRING)
     @Column(name = "exit_unavailable", nullable = true, length = 32)
     var exitUnavailable: RejectionReason?,
@@ -69,9 +74,13 @@ class PositionEntity(
     var exitTriggerObservationId: String?,
     @Column(name = "exit_trigger_slot", nullable = true)
     var exitTriggerSlot: Long?,
+    @Column(name = "exit_trigger_time", nullable = true)
+    var exitTriggerTime: Instant?,
     @Enumerated(EnumType.STRING)
     @Column(name = "exit_trigger_reason", nullable = true, length = 32)
     var exitTriggerReason: CloseReason?,
+    @Column(name = "exit_start", nullable = true)
+    var exitStart: Instant?,
     @Version
     @Column(nullable = false)
     var version: Long? = null,

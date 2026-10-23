@@ -11,6 +11,7 @@ import com.trenching.bot.portfolio.domain.CloseReason
 import com.trenching.bot.portfolio.domain.Position
 import com.trenching.bot.portfolio.domain.PositionClose
 import com.trenching.bot.portfolio.domain.PositionState
+import com.trenching.bot.portfolio.domain.RecordedThrough
 import com.trenching.bot.protocol.pumpfun.CurveReserves
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.strategy.domain.SimulationConfig
@@ -44,8 +45,11 @@ class PositionServiceTest {
     private fun config(latencySlots: Long = 1, transactionCostSol: String = "0.001") =
         SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, latencySlots, BigDecimal(transactionCostSol))
 
+    /** The fill trade, whose post-trade curve the position holds against until a later trade. */
+    private val fillTrade = dataset.observations.single { it.id == closed.fill.observationId }
+
     private fun close(vararg observations: MarketObservation, config: SimulationConfig = this.config) =
-        PositionService().close(open, scenario.intent, OrderedMarketData(observations.toList()), config)
+        PositionService().close(open, scenario.intent, OrderedMarketData(listOf(fillTrade) + observations), config, WHOLE_HORIZON)
 
     private fun closed(vararg observations: MarketObservation, config: SimulationConfig = this.config): PositionClose =
         assertNotNull(assertIs<CloseOutcome.Closed>(close(*observations, config = config)).position.close)
@@ -56,7 +60,7 @@ class PositionServiceTest {
 
     @Test
     fun `take profit and stop loss levels come from the curve execution price`() {
-        val opened = PositionService().open(scenario.intent, closed.fill, config)
+        val opened = PositionService().open(scenario.intent, closed.fill, OrderedMarketData(dataset.observations), config)
         assertEquals(0, BigDecimal("0.00000011201248686606967374718216755569").compareTo(opened.takeProfitPrice))
         assertEquals(0, BigDecimal("0.00000007323893372012247898854218647872").compareTo(opened.stopLossPrice))
         assertNull(opened.exitTrigger)
@@ -86,12 +90,13 @@ class PositionServiceTest {
     }
 
     @Test
-    fun `a trade whose curve cannot pay the sale is skipped, and without one the exit cannot fill`() {
+    fun `a trade whose curve cannot pay the sale is skipped, and without one within 60 s the position is unresolved`() {
         val poor = reserves(template.curve, 100_000_000)
         assertEquals(Slot.of(1007), closed(observation(1005, "0.000000113"), observation(1006, "0.000000115", poor),
             observation(1007, "0.000000115")).slot)
-        val unavailable = close(observation(1005, "0.000000113"), observation(1006, "0.000000115", poor))
-        assertEquals(RejectionReason.NO_EXIT_FILL, assertIs<CloseOutcome.Unavailable>(unavailable).reason)
+        val past = observation(1007, "0.000000115").let { it.copy(observedTime = it.observedTime.plusSeconds(61)) }
+        val unavailable = close(observation(1005, "0.000000113"), observation(1006, "0.000000115", poor), past)
+        assertEquals(RejectionReason.UNRESOLVED, assertIs<CloseOutcome.Unavailable>(unavailable).reason)
     }
 
     @Test
@@ -141,18 +146,24 @@ class PositionServiceTest {
     }
 
     @Test
-    fun `without a trigger the horizon ends the position, and without a later trade the trigger cannot fill`() {
+    fun `without a trigger the horizon ends the position, as it does a trigger whose sale slot lies past it`() {
         assertEquals(RejectionReason.HORIZON_REACHED,
             assertIs<CloseOutcome.Unavailable>(close(observation(1004, "0.00000009"), observation(5501, "0.0000003"))).reason)
-        assertEquals(RejectionReason.NO_EXIT_FILL, assertIs<CloseOutcome.Unavailable>(close(observation(5500, "0.0000003"))).reason)
+        val lastSlot = assertIs<CloseOutcome.Unavailable>(close(observation(5500, "0.0000003")))
+        assertEquals(RejectionReason.HORIZON_REACHED, lastSlot.reason)
+        assertEquals(CloseReason.TAKE_PROFIT, assertNotNull(lastSlot.position.exitTrigger).reason)
     }
 
     @Test
     fun `inconsistent recovered position state is rejected and a closed position cannot close again`() {
         assertFailsWith<IllegalArgumentException> {
-            PositionService().close(closed.copy(close = null), scenario.intent, OrderedMarketData(emptyList()), config)
+            PositionService().close(closed.copy(close = null), scenario.intent, OrderedMarketData(emptyList()), config, WHOLE_HORIZON)
         }
-        val again = PositionService().close(closed, scenario.intent, OrderedMarketData(emptyList()), config)
+        val again = PositionService().close(closed, scenario.intent, OrderedMarketData(emptyList()), config, WHOLE_HORIZON)
         assertEquals(closed, assertIs<CloseOutcome.AlreadyClosed>(again).position)
+    }
+
+    private companion object {
+        val WHOLE_HORIZON = RecordedThrough(Slot.of(5500), null)
     }
 }

@@ -164,4 +164,9 @@ class FillModelTest {
     fun `exceeding the curve is an entry rejection`() {
         assertEquals(true, RejectionReason.EXCEEDS_CURVE in RejectionReason.ENTRY)
     }
+
+    @Test
+    fun `an exit that cannot be sold is never an entry rejection`() {
+        assertEquals(false, RejectionReason.UNRESOLVED in RejectionReason.ENTRY)
+    }
 }

@@ -20,7 +20,13 @@ internal object MarketCaptureFormat {
      * cutoff. Only a capture planned with a lead uses it; versions 2 and 3 carry no lead and mean the legacy `S + 1` start.
      */
     const val LEAD_VERSION = 4
-    val SUPPORTED_VERSIONS = setOf(VERSION, CUTOFF_VERSION, LEAD_VERSION)
+
+    /**
+     * Version 5: version 4 plus each settled window's `throughBlockTime`. Every new capture with a lead starts at it; a
+     * version 4 capture resumes as version 4 and never reads a block time, so an old capture is never rewritten to it.
+     */
+    const val BLOCK_TIME_VERSION = 5
+    val SUPPORTED_VERSIONS = setOf(VERSION, CUTOFF_VERSION, LEAD_VERSION, BLOCK_TIME_VERSION)
 
     /** Bounds a cutoff's outcome, engine version and configuration hash. */
     const val MAX_CUTOFF_TEXT = 128
@@ -48,15 +54,24 @@ internal object MarketCaptureFormat {
     fun isAcquired(windows: List<MarketWindowRecord>, records: List<MarketTransactionRecord>): Boolean =
         windows.none { it.coverage in OPEN_COVERAGES } && records.none { it.outcome in UNRESOLVED_OUTCOMES }
 
+    /** The version a new capture starts at: one with a lead records block times; a legacy one keeps the version 2 rules. */
+    fun initialVersion(parameters: MarketCaptureWindowParameters): Int = if (hasLead(parameters)) BLOCK_TIME_VERSION else VERSION
+
     /**
-     * A capture with a lead is version 4. Without one, a manifest without a cutoff keeps version 2, so a full capture, and a
-     * fully extended one, stays readable as before; an old capture is never rewritten to a newer version.
+     * A capture with a lead is version 5 when it [recordsBlockTimes], else version 4. Without one, a manifest without a cutoff
+     * keeps version 2, so a full capture, and a fully extended one, stays readable as before; an old capture is never
+     * rewritten to a newer version.
      */
-    fun versionFor(parameters: MarketCaptureWindowParameters, windows: List<MarketWindowRecord>): Int = when {
+    fun versionFor(parameters: MarketCaptureWindowParameters, windows: List<MarketWindowRecord>, recordsBlockTimes: Boolean): Int = when {
+        hasLead(parameters) && recordsBlockTimes -> BLOCK_TIME_VERSION
         hasLead(parameters) -> LEAD_VERSION
         windows.any { it.cutoff != null } -> CUTOFF_VERSION
         else -> VERSION
     }
+
+    fun recordsLead(schemaVersion: Int): Boolean = schemaVersion >= LEAD_VERSION
+
+    fun recordsBlockTimes(schemaVersion: Int): Boolean = schemaVersion >= BLOCK_TIME_VERSION
 
     /** Whether windows start before their first buy and are therefore listed through it rather than only newer than it. */
     fun hasLead(parameters: MarketCaptureWindowParameters): Boolean = parameters.leadSlots != MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS
