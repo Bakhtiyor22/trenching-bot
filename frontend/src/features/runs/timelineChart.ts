@@ -21,6 +21,7 @@ export const REJECTED_COLOR = terminal.loss;
 export const SOURCE_COLOR = terminal.dimmed;
 /** Legend name shared by the level lines, so one click hides or shows them all. */
 export const LEVELS_SERIES = 'Levels';
+export const EXIT_START_SERIES = 'Exit start';
 export const LEVEL_COLORS = {
   reference: '#C3CDD5',
   dip: terminal.info,
@@ -333,7 +334,41 @@ export function scenarioPairs(scenarios: Scenario[]): string[] {
   return [...new Set(scenarios.map((s) => pairKey(s.pair)))];
 }
 
-/** Recorded market series with SOL strategy levels spanning the visible time domain. */
+/**
+ * A dashed vertical line at each timed position's exit start, also when it closed earlier by take profit or stop loss,
+ * so the chart shows how much time was left; none outside the axis range.
+ */
+function exitStartLines(scenarios: Scenario[], axis: { min: number; max: number }): SeriesOption[] {
+  const times = scenarios.flatMap((s) => {
+    const at = s.position?.exitStart ? Date.parse(s.position.exitStart) : NaN;
+    return Number.isFinite(at) && at >= axis.min && at <= axis.max ? [at] : [];
+  });
+  if (!times.length) return [];
+  return [
+    {
+      type: 'line',
+      name: EXIT_START_SERIES,
+      data: [],
+      silent: true,
+      markLine: {
+        symbol: 'none',
+        silent: true,
+        data: times.map((at) => ({
+          xAxis: at,
+          name: 'Exit start',
+          lineStyle: { color: SOURCE_COLOR, type: 'dashed' as const, width: 1 },
+          label: {
+            formatter: 'Exit start',
+            color: SOURCE_COLOR,
+            position: 'insideEndTop' as const,
+          },
+        })),
+      },
+    },
+  ];
+}
+
+/** Recorded market series with SOL strategy levels spanning the visible time domain, and each exit start. */
 export function chartTimelineOption(
   response: ChartResponse,
   view: ChartView,
@@ -342,12 +377,16 @@ export function chartTimelineOption(
   origin?: number | null,
   config?: MarketChartConfig,
 ): EChartsOption {
-  const option = chartCandleOption(response, view, style, origin, config);
-  if (view === 'mcap' && response.valuationBasis.available) return option;
-  const axis = (Array.isArray(option.xAxis) ? option.xAxis[0] : option.xAxis) as {
+  const base = chartCandleOption(response, view, style, origin, config);
+  const axis = (Array.isArray(base.xAxis) ? base.xAxis[0] : base.xAxis) as {
     min: number;
     max: number;
   };
+  const option: EChartsOption = {
+    ...base,
+    series: [...(base.series as SeriesOption[]), ...exitStartLines(scenarios, axis)],
+  };
+  if (view === 'mcap' && response.valuationBasis.available) return option;
   const levelMarkers = timelineMarkers(scenarios).levels;
   const levels: SeriesOption[] = levelMarkers.flatMap((level) => {
     const price = toChartNumber(level.price);

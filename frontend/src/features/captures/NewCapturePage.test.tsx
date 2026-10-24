@@ -484,4 +484,28 @@ describe('capture design states', () => {
     );
     expect(screen.getByRole('link', { name: 'Cancel' })).toHaveAttribute('href', '/captures');
   });
+
+  it('describes the DECIDED cutoff by the agreed strategy, never as legacy or old defaults', async () => {
+    localStorage.clear();
+    const { user } = renderPage(<NewCapturePage />, {
+      path: '/captures/new',
+      url: '/captures/new',
+    });
+    expect(
+      await screen.findByText('Stop each window once the result is known'),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Advanced limits and recovery' }));
+    const cutoff = await screen.findByRole('combobox', { name: 'Market cutoff' });
+    await user.click(cutoff);
+    await user.click(
+      await screen.findByRole('option', {
+        name: "Stop once the agreed strategy's outcome is decided (at least 4 minutes)",
+      }),
+    );
+    expect(
+      screen.getAllByText(/Windows are cut by the agreed strategy and kept at least 240 s/).length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText(/legacy outcome|old default/i)).not.toBeInTheDocument();
+    localStorage.clear();
+  });
 });

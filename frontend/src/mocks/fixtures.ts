@@ -146,6 +146,9 @@ export const configDefaults: ConfigDefaults = {
     latencySlots: 1,
     transactionCostSol: TRANSACTION_COST,
     quoteMint: SOL_MINT,
+    dipWindowMs: null,
+    maxHoldMs: null,
+    hardExitStartMs: null,
   },
   limits: {
     notionalScale: 9,
@@ -159,6 +162,9 @@ export const configDefaults: ConfigDefaults = {
     latencySlots: { min: 1, max: 150 },
     transactionCostScale: 12,
     transactionCostSol: { min: '0', max: '0.1' },
+    dipWindowMs: { min: 1000, max: 600000 },
+    maxHoldMs: { min: 1000, max: 3600000 },
+    hardExitStartMs: { min: 1000, max: 3600000 },
   },
 };
 
@@ -212,6 +218,7 @@ const takeProfitClose: Close = {
   netProceeds: TAKE_PROFIT_NET_PROCEEDS,
   realizedPnl: SAMPLE_PNL,
   reason: 'TAKE_PROFIT',
+  priceAssumption: 'NEXT_TRADE',
 };
 const stopLossFill = fill(
   'sample-sl',
@@ -233,6 +240,7 @@ const stopLossClose: Close = {
   netProceeds: '0.060501742000',
   realizedPnl: STOP_LOSS_PNL,
   reason: 'STOP_LOSS',
+  priceAssumption: 'NEXT_TRADE',
 };
 
 function cycle(id: string, sourceSlot: number, pair: Pair, overrides: Partial<Scenario>): Scenario {
@@ -280,7 +288,13 @@ export const sampleScenarios: Scenario[] = [
       close: takeProfitClose,
       takeProfitPrice: TAKE_PROFIT_LEVEL,
       stopLossPrice: STOP_LOSS_LEVEL,
-      exitTrigger: { observationId: 'observation-1005', slot: 1005, reason: 'TAKE_PROFIT' },
+      exitTrigger: {
+        observationId: 'observation-1005',
+        slot: 1005,
+        time: OBSERVED_AT,
+        reason: 'TAKE_PROFIT',
+      },
+      exitStart: null,
     },
   }),
   cycle('sample-sl', 2000, STOP_LOSS_PAIR, {
@@ -303,11 +317,60 @@ export const sampleScenarios: Scenario[] = [
       close: stopLossClose,
       takeProfitPrice: '0.00000010420494053220953089525830282903',
       stopLossPrice: '0.00000006813399957875238558536119800360',
-      exitTrigger: { observationId: 'observation-2004', slot: 2004, reason: 'STOP_LOSS' },
+      exitTrigger: {
+        observationId: 'observation-2004',
+        slot: 2004,
+        time: OBSERVED_AT,
+        reason: 'STOP_LOSS',
+      },
+      exitStart: null,
     },
   }),
   cycle('sample-nodip', 3000, NO_DIP_PAIR, {}),
 ];
+
+/**
+ * A timed cycle (agreed clocks) closed by its time exit against the standing curve: the take-profit cycle's entry, with
+ * the exit start 3 minutes after the fill and the sale priced from the last trade before it.
+ */
+export const timeExitScenario: Scenario = {
+  ...(sampleScenarios[0] as Scenario),
+  intentId: 'intent-sample-time',
+  position: {
+    id: 'position-sample-time',
+    state: 'CLOSED',
+    close: {
+      ...takeProfitClose,
+      reason: 'TIME_EXIT',
+      observationId: 'observation-1004',
+      priceAssumption: 'STANDING_CURVE',
+    },
+    takeProfitPrice: TAKE_PROFIT_LEVEL,
+    stopLossPrice: STOP_LOSS_LEVEL,
+    exitTrigger: {
+      observationId: 'observation-1004',
+      slot: 1007,
+      time: '2026-10-01T00:03:00Z',
+      reason: 'TIME_EXIT',
+    },
+    exitStart: '2026-10-01T00:03:00Z',
+  },
+};
+
+/** A take profit whose next trade came more than 60 s after its trigger, sold against the standing curve. */
+export const standingTakeProfitScenario: Scenario = {
+  ...(sampleScenarios[0] as Scenario),
+  intentId: 'intent-sample-standing-tp',
+  position: {
+    ...((sampleScenarios[0] as Scenario).position as NonNullable<Scenario['position']>),
+    id: 'position-sample-standing-tp',
+    close: {
+      ...takeProfitClose,
+      observationId: 'observation-1005',
+      priceAssumption: 'STANDING_CURVE',
+    },
+  },
+};
 
 export const sampleRun: RunSummary = {
   id: SAMPLE_RUN_ID,
@@ -360,6 +423,7 @@ export const edgeScenarios: Scenario[] = [
       takeProfitPrice: '0.00000000001612221',
       stopLossPrice: '0.000000000010541445',
       exitTrigger: null,
+      exitStart: null,
     },
     exitUnavailableReason: 'HORIZON_REACHED',
   }),
@@ -479,6 +543,7 @@ function positionsOf(scenarios: Scenario[]): RunPosition[] {
             takeProfitPrice: s.position.takeProfitPrice,
             stopLossPrice: s.position.stopLossPrice,
             exitTrigger: s.position.exitTrigger,
+            exitStart: s.position.exitStart,
           },
         ]
       : [],
@@ -578,6 +643,7 @@ const realScenarios: Scenario[] = [
       exitTrigger: {
         observationId: tradeId(REAL_EXIT_SIGNATURES[0]!),
         slot: 1005,
+        time: OBSERVED_AT,
         reason: 'TAKE_PROFIT',
       },
       close: { ...takeProfitClose, observationId: tradeId(REAL_EXIT_SIGNATURES[1]!) },

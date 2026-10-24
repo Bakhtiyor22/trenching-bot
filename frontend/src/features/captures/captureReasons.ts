@@ -77,6 +77,7 @@ const REASONS: Record<string, string> = {
   // Strategy outcomes from the qualification replay (dip watch, entry fill and exit).
   NO_DIP: 'No dip: the price never fell far enough below the first buy within the window.',
   DIP_BELOW_MIN_MARKET_CAP: 'The dip happened below the minimum market cap.',
+  REFERENCE_BELOW_MIN_MARKET_CAP: "Decu's buy was valued at or below the minimum market cap.",
   MIGRATED_BEFORE_ENTRY: 'The token migrated off the bonding curve before an entry.',
   UNSUPPORTED_SUPPLY: 'The token’s supply is not one the strategy supports.',
   NO_FILL_AFTER_TRIGGER: 'No eligible observation after the trigger could fill the entry.',
@@ -84,10 +85,12 @@ const REASONS: Record<string, string> = {
   ZERO_QUANTITY: 'The entry would buy zero tokens.',
   INVALID_QUALITY: 'The observation quality is not valid for a fill.',
   HORIZON_REACHED: 'The window ended with the position still open.',
-  NO_EXIT_FILL: 'No observation could fill the exit.',
+  NO_EXIT_FILL: 'No later trade could fill the exit (runs before engine dip-paper-v4).',
+  UNRESOLVED: 'The exit was triggered, but no curve could pay the sale.',
   MIGRATED: 'The token migrated off the bonding curve while the position was open.',
   TAKE_PROFIT: 'Take profit',
   STOP_LOSS: 'Stop loss',
+  TIME_EXIT: 'Time exit',
   // Operation stops: budget limits and provider failures.
   REQUESTS: 'Used all the requests allowed for this run. Evidence so far is kept.',
   BYTES: 'Reached the data allowed for this run. Evidence so far is kept.',

@@ -75,6 +75,7 @@ export const purposeLabels: Record<UsagePurpose, string> = {
     "Measure the chain's recent slot time, to time the retry of a market window that has not ended yet.",
   MINUTE_RATES: 'SOL/USDT price for every minute of a dataset (rates step).',
   LIVE_RATE: 'Live SOL/USDT price in the top bar and the USDT view of runs.',
+  BLOCK_TIME: "Read the block time where a market window's recording ends, to prove a time exit.",
   UNKNOWN: 'Another call to this provider.',
 };
 export const taskLabels: Record<UsageTask, string> = {
@@ -101,7 +102,7 @@ export const recommendationCopy: Record<string, { title: string; why: string }> 
   },
   CUTOFF_DECIDED: {
     title: 'Stop each window once the result is known',
-    why: "Trades after the exit don't change the outcome, so the market step usually needs far fewer requests than a full 30-minute window.",
+    why: "Each token is recorded until the agreed strategy's outcome is decided, and at least 4 minutes after Decu's buy, so the market step usually needs far fewer requests than recording every window in full.",
   },
   ENABLE_RECOVERY: {
     title: 'Resume automatically after a request limit',
@@ -127,11 +128,29 @@ export const recommendationCopy: Record<string, { title: string; why: string }> 
 /** Run start refusal: the dataset's market recording ends before the outcome of these settings is decided. */
 export const MARKET_COVERAGE_ENDED = 'MARKET_COVERAGE_ENDED';
 
+/** The minimum recording a DECIDED capture keeps after Decu's buy when a recommendation carries no number. */
+export const DEFAULT_MINIMUM_RECORDING_SECONDS = 240;
+
+/** The CUTOFF_USES_AGREED_STRATEGY caveat for a capture that keeps [seconds] after Decu's buy. */
+export function cutoffUsesAgreedStrategy(seconds: number): string {
+  return `Windows are cut by the agreed strategy and kept at least ${seconds} s after Decu's buy. A run with other settings may be refused for coverage; use FULL for those.`;
+}
+
+/**
+ * How a sale against the standing curve came about, which depends on the close's reason: a time exit sold at its
+ * exit start; a take profit or stop loss found no trade within 60 s of its trigger.
+ */
+export function standingCurveLabel(reason: string): string {
+  return reason === 'TIME_EXIT'
+    ? 'Sold against the curve at the exit time'
+    : 'No trade within 60 s — sold against the curve at the trigger';
+}
 const explanations: Record<string, string> = {
   STRATEGY_PRESET_UNAVAILABLE:
     'The agreed strategy could not be loaded. Retry, or choose to continue with this simulator’s defaults. Those defaults are not the agreed strategy.',
-  CUTOFF_USES_LEGACY_DEFAULTS:
-    'This cutoff uses the legacy 15% dip, +30% take profit and −15% stop loss. A run with other settings may need a longer window.',
+  CUTOFF_USES_AGREED_STRATEGY: cutoffUsesAgreedStrategy(DEFAULT_MINIMUM_RECORDING_SECONDS),
+  COMPARISON_MAY_NEED_FULL_CAPTURE:
+    'The legacy settings may need a longer recording than a DECIDED capture keeps; capture with FULL to compare.',
   RPC_NOT_CONFIGURED: 'Configure SOLANA_RPC_URL in the backend process to load wallet activity.',
   PROVIDER_RATE_LIMITED: 'The provider asked for a pause. Wait before refreshing.',
   PROVIDER_UNAVAILABLE: 'The provider is unavailable. Your previous results are kept below.',
@@ -143,21 +162,17 @@ const explanations: Record<string, string> = {
     'The dataset’s market recording ends before the outcome of these settings is decided.',
   FIRST_EVER_BUY: 'First-ever buy proof',
   SIGNAL_OVER_1_9_SOL: 'Signal larger than 1.9 SOL',
-  MCAP_AT_REFERENCE_BUY: 'Market cap at the reference buy',
   POST_TRADE_PRICE: 'Post-trade prices for every comparison',
-  DIP_WINDOW_30_SECONDS: 'A 30-second dip window',
   ENTRY_SLIPPAGE_15_PERCENT: 'A 15% entry slippage limit',
-  TIMED_EXIT: 'Timed exit',
-  EXIT_RETRIES_AND_UNRESOLVED: 'Exit retries and unresolved outcomes',
+  EXIT_RETRY_ECONOMICS: 'Exit retries, slippage steps and fee escalation',
   ONE_POSITION_INCLUDING_IN_FLIGHT: 'One position including pending entries',
   CURVE_PAYMENT_FEES_ON_TOP: 'Curve payment, with trading fees added on top.',
   NETWORK_FEE_NOT_ADDED: 'The separate network fee is not added by this preset.',
-  MEASURED_AT_DIP_INCLUSIVE:
-    'Checked at the dip with an inclusive minimum; the spec checks the reference buy with a strict minimum.',
   REPLAY_LATENCY_ASSUMED: 'One slot of replay latency is an assumption.',
-  NO_SINGLE_WINDOW_IN_SPEC:
-    'The spec has separate entry and exit clocks, so it defines no equivalent single observation window.',
+  RECORDING_BOUND_ONLY: 'Only bounds how far the market is recorded; the clocks end each cycle.',
+  NEXT_TRADE: 'Sold into the next trade',
 };
+
 export function codeLabel(code: string): string {
   return (
     (statusLabels as Record<string, string>)[code] ??

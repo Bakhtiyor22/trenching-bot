@@ -33,6 +33,7 @@ export type UsagePurpose =
   | 'SLOT_PACE'
   | 'MINUTE_RATES'
   | 'LIVE_RATE'
+  | 'BLOCK_TIME'
   | 'UNKNOWN';
 export type UsageTask =
   | 'WALLET_STEP'

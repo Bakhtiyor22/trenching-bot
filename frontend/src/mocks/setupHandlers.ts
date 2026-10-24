@@ -24,43 +24,48 @@ export const runPreset: RunPreset = {
     stopLossPercent: '40',
     notional: '0.100000000000',
     minMarketCapUsd: '10000.000000000000',
+    dipWindowMs: 30000,
+    maxHoldMs: 180000,
+    hardExitStartMs: 240000,
   },
   fields: [
-    'dipBps',
-    'takeProfitBps',
-    'stopLossBps',
-    'notional',
-    'transactionCostSol',
-    'quoteMint',
-    'minMarketCapUsd',
-    'latencySlots',
-    'horizonSlots',
-    'maxAgeSlots',
-  ].map((field) => ({
-    field,
-    status:
-      field === 'horizonSlots'
-        ? 'MISSING'
-        : field === 'minMarketCapUsd'
-          ? 'AGREED_MEASURED_DIFFERENTLY'
-          : field === 'latencySlots'
-            ? 'ASSUMPTION'
-            : field === 'maxAgeSlots'
-              ? 'ENGINE_DEFAULT'
-              : 'AGREED',
-    specRef: null,
-    noteCode: field === 'horizonSlots' ? 'NO_SINGLE_WINDOW_IN_SPEC' : null,
-  })),
+    { field: 'dipBps', status: 'AGREED', specRef: 'P6', noteCode: null },
+    { field: 'dipWindowMs', status: 'AGREED', specRef: 'P7', noteCode: null },
+    { field: 'takeProfitBps', status: 'AGREED', specRef: 'P9', noteCode: null },
+    { field: 'stopLossBps', status: 'AGREED', specRef: 'P10', noteCode: null },
+    { field: 'maxHoldMs', status: 'AGREED', specRef: 'P11', noteCode: null },
+    { field: 'hardExitStartMs', status: 'AGREED', specRef: 'P11', noteCode: null },
+    { field: 'notional', status: 'AGREED', specRef: 'P12', noteCode: 'CURVE_PAYMENT_FEES_ON_TOP' },
+    {
+      field: 'transactionCostSol',
+      status: 'AGREED',
+      specRef: 'entryPriorityFeeSol',
+      noteCode: 'NETWORK_FEE_NOT_ADDED',
+    },
+    { field: 'quoteMint', status: 'AGREED', specRef: 'P15', noteCode: null },
+    { field: 'minMarketCapUsd', status: 'AGREED', specRef: 'P5', noteCode: null },
+    {
+      field: 'latencySlots',
+      status: 'ASSUMPTION',
+      specRef: null,
+      noteCode: 'REPLAY_LATENCY_ASSUMED',
+    },
+    {
+      field: 'horizonSlots',
+      status: 'ENGINE_DEFAULT',
+      specRef: null,
+      noteCode: 'RECORDING_BOUND_ONLY',
+    },
+    { field: 'maxAgeSlots', status: 'ENGINE_DEFAULT', specRef: null, noteCode: null },
+  ],
   unsupportedRules: [
-    'FIRST_EVER_BUY',
-    'SIGNAL_OVER_1_9_SOL',
-    'MCAP_AT_REFERENCE_BUY',
-    'DIP_WINDOW_30_SECONDS',
-    'ENTRY_SLIPPAGE_15_PERCENT',
-    'TIMED_EXIT',
-    'EXIT_RETRIES_AND_UNRESOLVED',
-    'ONE_POSITION_INCLUDING_IN_FLIGHT',
-  ].map((code, index) => ({ specRef: `P${index + 1}`, code })),
+    { specRef: 'P2', code: 'FIRST_EVER_BUY' },
+    { specRef: 'P3', code: 'SIGNAL_OVER_1_9_SOL' },
+    { specRef: 'Section 5', code: 'POST_TRADE_PRICE' },
+    { specRef: 'P8', code: 'ENTRY_SLIPPAGE_15_PERCENT' },
+    { specRef: 'Section 8', code: 'EXIT_RETRY_ECONOMICS' },
+    { specRef: 'P13', code: 'ONE_POSITION_INCLUDING_IN_FLIGHT' },
+  ],
 };
 export function withRunSetup(detail: RunDetail): RunDetail {
   const time = (slot: number) =>
@@ -112,7 +117,7 @@ export function createSetupHandlers(wait: () => Promise<void>) {
           id: 'USE_AGREED_STRATEGY',
           appliesTo: 'RUN',
           setting: { field: 'presetId', value: runPreset.id },
-          facts: { unsupportedRuleCount: 8, missingFieldCount: 1 },
+          facts: { unsupportedRuleCount: 6, missingFieldCount: 0 },
           caveatCode: null,
         },
         {
@@ -120,7 +125,7 @@ export function createSetupHandlers(wait: () => Promise<void>) {
           appliesTo: 'RUN',
           setting: null,
           facts: { dipPercent: '15', takeProfitPercent: '30', stopLossPercent: '15' },
-          caveatCode: null,
+          caveatCode: 'COMPARISON_MAY_NEED_FULL_CAPTURE',
         },
       ]);
     }),
@@ -138,8 +143,16 @@ export function createSetupHandlers(wait: () => Promise<void>) {
           id: 'CUTOFF_DECIDED',
           appliesTo: 'CAPTURE',
           setting: { field: 'cutoffMode', value: 'DECIDED' },
-          facts: { dipPercent: '15', takeProfitPercent: '30', stopLossPercent: '15' },
-          caveatCode: 'CUTOFF_USES_LEGACY_DEFAULTS',
+          facts: {
+            dipPercent: '20',
+            takeProfitPercent: '55',
+            stopLossPercent: '40',
+            dipWindowSeconds: 30,
+            maxHoldSeconds: 180,
+            hardExitStartSeconds: 240,
+            minimumRecordingSeconds: 240,
+          },
+          caveatCode: 'CUTOFF_USES_AGREED_STRATEGY',
         },
         {
           id: 'ENABLE_RECOVERY',

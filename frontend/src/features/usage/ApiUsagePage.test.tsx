@@ -91,4 +91,45 @@ describe('API usage page', () => {
     await user.click(screen.getByRole('button', { name: 'Show last 24 hours' }));
     expect(router.state.location.search).toContain('period=LAST_24_HOURS');
   });
+
+  it('labels block time reads', async () => {
+    const at = new Date().toISOString();
+    const totals = {
+      requests: 3,
+      failedRequests: 0,
+      rateLimitedResponses: 0,
+      responseBytes: 300,
+      cacheHits: 0,
+    };
+    server.use(
+      http.get('/api/usage', () =>
+        HttpResponse.json<UsageReport>({
+          from: at,
+          to: at,
+          bucketSeconds: 300,
+          recordingStartedAt: at,
+          totals,
+          byCall: [
+            {
+              provider: 'SOLANA_RPC',
+              operation: 'getBlockTime',
+              purpose: 'BLOCK_TIME',
+              totals,
+              sharePercent: '100',
+              lastCallAt: at,
+            },
+          ],
+          byTask: [{ task: 'MARKET_STEP', totals }],
+          series: [],
+          pacing: [],
+        } as UsageReport),
+      ),
+    );
+    renderPage(<ApiUsagePage />, { path: '/usage', url: '/usage' });
+    expect(
+      await screen.findByText(
+        "Read the block time where a market window's recording ends, to prove a time exit.",
+      ),
+    ).toBeInTheDocument();
+  });
 });

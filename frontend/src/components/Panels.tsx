@@ -1,4 +1,13 @@
-import { Card, Group, Pagination, Stack, Table, Text, Title, type MantineSpacing } from '@mantine/core';
+import {
+  Card,
+  Group,
+  Pagination,
+  Stack,
+  Table,
+  Text,
+  Title,
+  type MantineSpacing,
+} from '@mantine/core';
 import { useState, type ReactNode } from 'react';
 
 /** Page title with optional description and right-aligned actions. */
@@ -64,7 +73,15 @@ export function Section({
 export const KPI_VALUE_SIZE = 'clamp(20px, 2.2vw, 28px)';
 
 /** One cell of a {@link KpiStrip}: an uppercase label, a large mono value and a footnote. */
-export function Kpi({ label, children, hint }: { label: ReactNode; children: ReactNode; hint?: ReactNode }) {
+export function Kpi({
+  label,
+  children,
+  hint,
+}: {
+  label: ReactNode;
+  children: ReactNode;
+  hint?: ReactNode;
+}) {
   return (
     <Stack gap={6} p="md" className="console-kpi">
       <Text size="xs" c="dimmed" tt="uppercase" fw={500} style={{ letterSpacing: '0.08em' }}>
@@ -81,10 +98,21 @@ export function Kpi({ label, children, hint }: { label: ReactNode; children: Rea
 }
 
 /** Key figures in one bordered strip with hairline dividers, wrapping on narrow screens. */
-export function KpiStrip({ children, label, min = 220 }: { children: ReactNode; label: string; min?: number }) {
+export function KpiStrip({
+  children,
+  label,
+  min = 220,
+}: {
+  children: ReactNode;
+  label: string;
+  min?: number;
+}) {
   return (
     <Card padding={0} component="section" aria-label={label}>
-      <div className="console-kpi-strip" style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))` }}>
+      <div
+        className="console-kpi-strip"
+        style={{ gridTemplateColumns: `repeat(auto-fit, minmax(${min}px, 1fr))` }}
+      >
         {children}
       </div>
     </Card>
@@ -120,11 +148,12 @@ export function Stat({
   hint?: ReactNode;
 }) {
   return (
-    <Stack gap={2}>
+    <Stack gap={2} miw={0}>
       <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
         {label}
       </Text>
-      <div>{value}</div>
+      {/* Long exact decimals wrap inside their own grid column instead of overlapping the next one. */}
+      <div style={{ overflowWrap: 'anywhere' }}>{value}</div>
       {hint && (
         <Text size="xs" c="dimmed">
           {hint}

@@ -221,13 +221,17 @@ describe('RunDetailPage', () => {
     const cards = await screen.findAllByRole('article');
     const [open, lowCap, migrated] = cards;
 
-    expect(within(lowCap!).getByText(/Dip below min market cap/)).toBeInTheDocument();
+    expect(
+      within(lowCap!).getByText(/The dip happened below the minimum market cap/),
+    ).toBeInTheDocument();
     expect(within(lowCap!).getByText('DIP_BELOW_MIN_MARKET_CAP')).toBeInTheDocument();
     expect(within(migrated!).getByText('MIGRATED_BEFORE_ENTRY')).toBeInTheDocument();
 
     expect(within(open!).getByText('Open')).toBeInTheDocument();
     expect(within(open!).getByText('Still open')).toBeInTheDocument();
-    expect(within(open!).getByText(/Horizon reached/)).toBeInTheDocument();
+    expect(
+      within(open!).getByText(/The window ended with the position still open/),
+    ).toBeInTheDocument();
     expect(within(open!).getByText('HORIZON_REACHED')).toBeInTheDocument();
     // Tiny prices are displayed exactly, never in exponent form.
     expect(within(open!).getByText('0.0000000000124017')).toBeInTheDocument();

@@ -109,6 +109,16 @@ function RangeInputs({
     </Group>
   );
 }
+/** How each exit trigger reads in the event list; anything but take profit used to read as stop loss. */
+const EXIT_TRIGGER_TEXT: Record<string, { label: string; detail: string }> = {
+  TAKE_PROFIT: { label: 'Take profit crossed', detail: 'Price crossed the take-profit level.' },
+  STOP_LOSS: { label: 'Stop loss crossed', detail: 'Price crossed the stop-loss level.' },
+  TIME_EXIT: {
+    label: 'Time exit started',
+    detail: 'The exit clock ran out: sold against the curve standing then.',
+  },
+};
+
 function scenarioEvents(
   scenario: Scenario | undefined,
   chart: ChartResponse | undefined,
@@ -119,6 +129,9 @@ function scenarioEvents(
     (item) => item.isTrackedWallet && item.slot === scenario.sourceSlot && item.side === 'BUY',
   );
   const outcome = scenarioOutcome(scenario);
+  const position = scenario.position;
+  const triggerReason = position?.exitTrigger?.reason;
+  const standing = position?.close?.priceAssumption === 'STANDING_CURVE';
   const details = {
     firstBuyAt: [
       buy ? `${exact(exactUnits(buy.solLamports, 9))} SOL` : null,
@@ -129,14 +142,10 @@ function scenarioEvents(
       .join(' · '),
     dipAt: `Price reached ${shortPrice(scenario.dipPrice)}${scenario.trigger ? ` · market cap ${marketValue(scenario.trigger.marketCapUsd, 'mcap')}` : ''}`,
     entryAt: `${exact(scenario.notional)} SOL${scenario.fill ? ` · fees ${levelPercent(scenario.fill.feePercent, scenario.fill.feeBps)} · impact ${levelPercent(scenario.fill.priceImpactPercent, scenario.fill.priceImpactBps)}` : ''}`,
-    exitTriggerAt:
-      scenario.position?.exitTrigger?.reason === 'TAKE_PROFIT'
-        ? 'Price crossed the take-profit level.'
-        : 'Price crossed the stop-loss level.',
-    exitAt:
-      outcome.pnl !== null
-        ? `Net result ${exact(outcome.pnl)} SOL`
-        : 'No realized result recorded.',
+    exitTriggerAt: EXIT_TRIGGER_TEXT[triggerReason ?? '']?.detail ?? 'The exit was triggered.',
+    exitAt: `${
+      outcome.pnl !== null ? `Net result ${exact(outcome.pnl)} SOL` : 'No realized result recorded.'
+    }${standing ? ' · sold against the standing curve' : ''}`,
   };
   // The short labels above cut tiny prices; the exact values stay one hover away.
   const exactDetails: Partial<Record<keyof typeof details, string>> = {
@@ -147,10 +156,7 @@ function scenarioEvents(
     firstBuyAt: 'Decu bought',
     dipAt: 'Dip reached',
     entryAt: 'Paper buy filled',
-    exitTriggerAt:
-      scenario.position?.exitTrigger?.reason === 'TAKE_PROFIT'
-        ? 'Take profit crossed'
-        : 'Stop loss crossed',
+    exitTriggerAt: EXIT_TRIGGER_TEXT[triggerReason ?? '']?.label ?? 'Exit triggered',
     exitAt: 'Paper sell filled',
   };
   return (Object.entries(scenario.timeline) as Array<[keyof typeof labels, string | null]>)

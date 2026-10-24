@@ -8,6 +8,19 @@ export const INTEGER_FIELDS = ['horizonSlots', 'latencySlots', 'maxAgeSlots'] as
 export type IntegerField = (typeof INTEGER_FIELDS)[number];
 export const PERCENT_FIELDS = ['dipPercent', 'takeProfitPercent', 'stopLossPercent'] as const;
 export type PercentField = (typeof PERCENT_FIELDS)[number];
+/** The optional block-time clocks, typed in seconds and sent in milliseconds; empty means unset (untimed). */
+export const SECONDS_FIELDS = [
+  'dipWindowSeconds',
+  'maxHoldSeconds',
+  'hardExitStartSeconds',
+] as const;
+export type SecondsField = (typeof SECONDS_FIELDS)[number];
+/** The config field in milliseconds behind each seconds field. */
+export const MILLIS_FIELD: Record<SecondsField, 'dipWindowMs' | 'maxHoldMs' | 'hardExitStartMs'> = {
+  dipWindowSeconds: 'dipWindowMs',
+  maxHoldSeconds: 'maxHoldMs',
+  hardExitStartSeconds: 'hardExitStartMs',
+};
 
 export interface RunFormValues {
   datasetId: string | null;
@@ -24,29 +37,49 @@ export interface RunFormValues {
   horizonSlots: number | string;
   latencySlots: number | string;
   quoteMint: string;
+  /** Typed seconds with at most 3 decimals; empty means unset. */
+  dipWindowSeconds: string;
+  maxHoldSeconds: string;
+  hardExitStartSeconds: string;
 }
 
-export const FIELD_LABELS: Record<IntegerField | PercentField, string> = {
+export const FIELD_LABELS: Record<IntegerField | PercentField | SecondsField, string> = {
   dipPercent: "Dip below Decu's first buy",
   takeProfitPercent: 'Take profit',
   stopLossPercent: 'Stop loss',
+  dipWindowSeconds: 'Dip window',
+  maxHoldSeconds: 'Maximum hold',
+  hardExitStartSeconds: 'Hard exit start',
   horizonSlots: 'Observation window',
   latencySlots: 'Fill delay',
   maxAgeSlots: 'Max price age',
 };
 
 export const FIELD_HINTS: Record<
-  IntegerField | PercentField | 'notional' | 'minMarketCapUsd' | 'transactionCostSol' | 'quoteMint',
+  | IntegerField
+  | PercentField
+  | SecondsField
+  | 'notional'
+  | 'minMarketCapUsd'
+  | 'transactionCostSol'
+  | 'quoteMint',
   string
 > = {
   notional: 'Quote units spent per entry, as a plain decimal.',
   transactionCostSol:
     'SOL charged per transaction (network + priority fee or tip), on entry and on exit.',
-  minMarketCapUsd: 'Minimum market cap in US dollars at the dip, from the dataset’s SOL/USDT rate.',
+  minMarketCapUsd:
+    'Minimum market cap in US dollars at Decu’s buy (strictly above), from the dataset’s SOL/USDT rate.',
   dipPercent: 'Buy once a trade is this percent below the wallet’s first price.',
   takeProfitPercent: 'Sell once a trade is this percent above the entry price.',
   stopLossPercent: 'Sell once a trade is this percent below the entry price.',
-  horizonSlots: 'Slots after the wallet’s first buy that are watched; 4,500 is about 30 minutes.',
+  dipWindowSeconds:
+    'Only a dip within this many seconds of Decu’s buy triggers an entry; empty for no limit.',
+  maxHoldSeconds: 'Sell this many seconds after the entry fill at the latest.',
+  hardExitStartSeconds:
+    'Sell this many seconds after Decu’s buy at the latest; the earlier of the two clocks wins.',
+  horizonSlots:
+    'Slots after the wallet’s first buy that are read; 4,500 is about 16 minutes at today’s slot pace.',
   latencySlots: 'Slots between a trigger and the trade that fills it (1 = next slot).',
   maxAgeSlots: 'How old (by price slot) an observation may be when used.',
   quoteMint: 'Only swaps against this mint create signals. Wrapped SOL by default.',
@@ -67,7 +100,44 @@ export function formValuesFrom(config: Config, datasetId: string | null): RunFor
     horizonSlots: config.horizonSlots,
     latencySlots: config.latencySlots,
     quoteMint: config.quoteMint,
+    dipWindowSeconds: secondsText(config.dipWindowMs),
+    maxHoldSeconds: secondsText(config.maxHoldMs),
+    hardExitStartSeconds: secondsText(config.hardExitStartMs),
   };
+}
+
+/** Milliseconds as typed seconds without trailing zeros (30000 → "30", 500 → "0.5"); null → "". */
+export function secondsText(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return '';
+  const whole = Math.trunc(ms / 1000);
+  const fraction = String(ms % 1000)
+    .padStart(3, '0')
+    .replace(/0+$/, '');
+  return fraction === '' ? String(whole) : `${whole}.${fraction}`;
+}
+
+const SECONDS_PATTERN = /^[0-9]+(\.[0-9]{1,3})?$/;
+
+/** Typed seconds as whole milliseconds, exactly with string math ("1.234" → 1234); "" → null; invalid → undefined. */
+export function secondsToMs(input: string): number | null | undefined {
+  const value = input.trim();
+  if (value === '') return null;
+  if (!SECONDS_PATTERN.test(value)) return undefined;
+  const [whole = '0', fraction = ''] = value.split('.');
+  return Number(whole) * 1000 + Number(fraction.padEnd(3, '0'));
+}
+
+function secondsError(input: string, range: Range): string | null {
+  const ms = secondsToMs(input);
+  if (ms === null) return null;
+  if (ms === undefined) return 'Use whole seconds or up to 3 decimals';
+  if (ms < range.min || (range.max !== null && ms > range.max)) {
+    const min = secondsText(range.min);
+    return range.max === null
+      ? `Must be at least ${min} s`
+      : `Must be between ${min} and ${secondsText(range.max)} s`;
+  }
+  return null;
 }
 
 export function rangeText(range: Range): string {
@@ -146,11 +216,24 @@ export function validateRunForm(
     const error = integerError(values[field], limits[field]);
     if (error) errors[field] = error;
   }
+  for (const field of SECONDS_FIELDS) {
+    const error = secondsError(values[field], limits[MILLIS_FIELD[field]]);
+    if (error) errors[field] = error;
+  }
+  const holdSet = values.maxHoldSeconds.trim() !== '';
+  const hardSet = values.hardExitStartSeconds.trim() !== '';
+  if (holdSet && !hardSet && !errors.maxHoldSeconds)
+    errors.hardExitStartSeconds = 'Set together with the maximum hold';
+  if (hardSet && !holdSet && !errors.hardExitStartSeconds)
+    errors.maxHoldSeconds = 'Set together with the hard exit start';
   if (!isSolanaAddress(values.quoteMint)) errors.quoteMint = 'Must be a 32-byte base58 address';
   return errors;
 }
 
-/** The `POST /api/runs` body. Notional, minimum market cap and transaction cost stay strings; integers are JSON numbers. */
+/**
+ * The `POST /api/runs` body. Notional, minimum market cap and transaction cost stay strings; integers are JSON numbers;
+ * the clocks are whole milliseconds, or null when empty.
+ */
 export function toRunStartRequest(values: RunFormValues): RunStartRequest {
   return {
     datasetId: values.datasetId ?? '',
@@ -165,6 +248,9 @@ export function toRunStartRequest(values: RunFormValues): RunStartRequest {
       horizonSlots: Number(values.horizonSlots),
       latencySlots: Number(values.latencySlots),
       quoteMint: values.quoteMint.trim(),
+      dipWindowMs: secondsToMs(values.dipWindowSeconds) ?? null,
+      maxHoldMs: secondsToMs(values.maxHoldSeconds) ?? null,
+      hardExitStartMs: secondsToMs(values.hardExitStartSeconds) ?? null,
     },
   };
 }

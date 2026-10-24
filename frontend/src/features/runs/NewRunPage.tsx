@@ -44,8 +44,12 @@ import {
   FIELD_HINTS,
   formValuesFrom,
   INTEGER_FIELDS,
+  MILLIS_FIELD,
   PERCENT_FIELDS,
   rangeText,
+  SECONDS_FIELDS,
+  secondsText,
+  type SecondsField,
   toRunStartRequest,
   validateRunForm,
   type RunFormValues,
@@ -64,6 +68,7 @@ function datasetOptions(datasets: Dataset[]) {
 
 const SETTING_FIELDS: SettingField[] = [
   ...PERCENT_FIELDS,
+  ...SECONDS_FIELDS,
   'notional',
   'minMarketCapUsd',
   'transactionCostSol',
@@ -76,6 +81,9 @@ const UNITS: Partial<Record<SettingField, string>> = {
   dipPercent: '%',
   takeProfitPercent: '%',
   stopLossPercent: '%',
+  dipWindowSeconds: 's',
+  maxHoldSeconds: 's',
+  hardExitStartSeconds: 's',
   notional: 'SOL',
   minMarketCapUsd: 'USD',
   transactionCostSol: 'SOL',
@@ -83,6 +91,14 @@ const UNITS: Partial<Record<SettingField, string>> = {
   horizonSlots: 'slots',
   maxAgeSlots: 'slots',
 };
+/** The form label of a preset field, which the preset names by its config field (dipBps, dipWindowMs, …). */
+function fieldLabel(field: string): string {
+  const seconds = (Object.keys(MILLIS_FIELD) as SecondsField[]).find(
+    (key) => MILLIS_FIELD[key] === field,
+  );
+  const formField = seconds ?? field.replace('Bps', 'Percent');
+  return SETTING_LABELS[formField as SettingField] ?? formField;
+}
 function specDate(value: string) {
   return new Date(value).toLocaleDateString('en-GB', {
     day: 'numeric',
@@ -130,6 +146,7 @@ function RunConfigForm({
   const undoValues = useRef<RunFormValues | null>(null);
   const agreed = formValuesFrom(defaults, form.values.datasetId);
   const changed = changedSettings(form.values, defaults);
+  const missingFields = preset?.fields.filter((field) => field.status === 'MISSING') ?? [];
   const isAgreed = preset !== undefined && changed.length === 0;
   async function applyRecommendation(item: Recommendation) {
     if (item.id === 'USE_AGREED_STRATEGY' && preset) {
@@ -182,7 +199,11 @@ function RunConfigForm({
     serverError instanceof ApiError && Object.keys(serverError.fields).length > 0;
 
   function settingCard(field: SettingField) {
-    const metadata = preset?.fields.find((item) => item.field === field.replace('Percent', 'Bps'));
+    const isClock = (SECONDS_FIELDS as readonly string[]).includes(field);
+    const presetField = isClock
+      ? MILLIS_FIELD[field as SecondsField]
+      : field.replace('Percent', 'Bps');
+    const metadata = preset?.fields.find((item) => item.field === presetField);
     const edited = changed.includes(field);
     const missing = metadata?.status === 'MISSING';
     const status = !preset
@@ -205,7 +226,7 @@ function RunConfigForm({
             : undefined;
     const inputProps = {
       label: SETTING_LABELS[field],
-      withAsterisk: true,
+      withAsterisk: !isClock,
       leftSection: prefix,
       rightSection: unit ? (
         <Text size="xs" c="dimmed">
@@ -264,6 +285,8 @@ function RunConfigForm({
             {FIELD_HINTS[field]}
             {bps !== null && ` ${formatPercent(String(form.values[field]))} = ${bps} bps.`}
             {isInteger && ` Range ${rangeText(limits[field as (typeof INTEGER_FIELDS)[number]])}.`}
+            {isClock &&
+              ` Range ${secondsText(limits[MILLIS_FIELD[field as SecondsField]].min)} – ${secondsText(limits[MILLIS_FIELD[field as SecondsField]].max)} s.`}
             {field === 'quoteMint' && ` ${mintLabel(form.values.quoteMint.trim())}.`}
           </Text>
           {metadata?.noteCode && (
@@ -334,11 +357,16 @@ function RunConfigForm({
                     {preset.unsupportedRules.map((rule) => codeLabel(rule.code)).join(', ')}.
                   </Text>
                 )}
-                <Text size="sm">
-                  {preset.fields.filter((field) => field.status === 'MISSING').length} setting has
-                  no agreed value for this simulator: the observation window. It is flagged below
-                  rather than guessed.
-                </Text>
+                {missingFields.length > 0 && (
+                  <Text size="sm">
+                    {missingFields.length}{' '}
+                    {missingFields.length === 1 ? 'setting has' : 'settings have'} no agreed value
+                    for this simulator:{' '}
+                    {missingFields.map((field) => fieldLabel(field.field).toLowerCase()).join(', ')}
+                    . {missingFields.length === 1 ? 'It is' : 'They are'} flagged below rather than
+                    guessed.
+                  </Text>
+                )}
               </Stack>
             </Alert>
           </Section>
@@ -406,6 +434,23 @@ function RunConfigForm({
                     buy <strong>{trimFractionZeros(form.values.notional)} SOL</strong>, and sell at{' '}
                     <strong>+{formatPercent(form.values.takeProfitPercent)}</strong> or{' '}
                     <strong>−{formatPercent(form.values.stopLossPercent)}</strong> from our fill.
+                    {form.values.dipWindowSeconds.trim() !== '' && (
+                      <>
+                        {' '}
+                        Only a dip within <strong>{form.values.dipWindowSeconds} s</strong> of his
+                        buy counts.
+                      </>
+                    )}
+                    {form.values.maxHoldSeconds.trim() !== '' &&
+                      form.values.hardExitStartSeconds.trim() !== '' && (
+                        <>
+                          {' '}
+                          Otherwise sell at the latest{' '}
+                          <strong>{form.values.maxHoldSeconds} s</strong> after our fill or{' '}
+                          <strong>{form.values.hardExitStartSeconds} s</strong> after his buy,
+                          whichever comes first.
+                        </>
+                      )}
                   </Text>
                   <Text size="sm">
                     Settings you changed: <strong>{changed.length}</strong>

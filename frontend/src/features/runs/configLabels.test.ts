@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatSettingValue, horizonLabel } from './configLabels';
+import { clockLabel, formatSettingValue, horizonLabel } from './configLabels';
 
 describe('horizon label', () => {
   it('converts slots to time at the recorded pace, else at the nominal one and says so', () => {
@@ -24,5 +24,15 @@ describe('agreed setting values', () => {
     expect(formatSettingValue('quoteMint', 'So11111111111111111111111111111111111111112')).toBe(
       'SOL',
     );
+  });
+});
+
+describe('clock labels', () => {
+  it('shows a clock in seconds, or Off when the run is untimed', () => {
+    expect(formatSettingValue('dipWindowSeconds', '30')).toBe('30 s');
+    expect(formatSettingValue('maxHoldSeconds', '')).toBe('Off');
+    expect(clockLabel(240000)).toBe('240 s');
+    expect(clockLabel(null)).toBe('Off');
+    expect(clockLabel(undefined)).toBe('Off');
   });
 });

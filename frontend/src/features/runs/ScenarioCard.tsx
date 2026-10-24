@@ -1,19 +1,21 @@
 import { Alert, Badge, Card, Code, Divider, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
 import type { Scenario, UsdtScenario } from '../../api/types';
-import { Decimal, Pnl } from '../../components/DisplayValues';
+import { Decimal, Pnl, Timestamp } from '../../components/DisplayValues';
 import { MarketLinks } from '../../components/MarketLinks';
 import { Stat } from '../../components/Panels';
+import { standingCurveLabel } from '../../lib/codes';
 import { formatDecimal } from '../../lib/decimal';
 import { levelPercent } from '../../lib/percent';
 import { formatSlot, humanizeCode, shortId, signedBps, usdtRateNote } from '../../lib/format';
 import { recordedTradeSignature, transactionLinks } from '../../lib/marketLinks';
+import { knownReasonText } from '../captures/captureReasons';
 import { scenarioOutcome } from './scenarioOutcome';
 
 function Reason({ code }: { code: string | null }) {
   return (
     <>
-      {humanizeCode(code)} {code && <Code fz="xs">{code}</Code>}
+      {knownReasonText(code) ?? humanizeCode(code)} {code && <Code fz="xs">{code}</Code>}
     </>
   );
 }
@@ -236,14 +238,24 @@ export function ScenarioCard({
                   label={`Stop loss at (${unit})`}
                   value={<Decimal value={position.stopLossPrice} />}
                 />
+                {position.exitStart && (
+                  <Stat label="Exit start" value={<Timestamp iso={position.exitStart} />} />
+                )}
                 {position.exitTrigger && (
                   <Stat
                     label="Exit triggered"
                     value={
-                      <Text size="sm">
-                        {humanizeCode(position.exitTrigger.reason)} at slot{' '}
-                        {formatSlot(position.exitTrigger.slot)}
-                      </Text>
+                      position.exitTrigger.reason === 'TIME_EXIT' ? (
+                        <Text size="sm">
+                          Time exit at{' '}
+                          <Timestamp iso={position.exitTrigger.time ?? position.exitStart} />
+                        </Text>
+                      ) : (
+                        <Text size="sm">
+                          {humanizeCode(position.exitTrigger.reason)} at slot{' '}
+                          {formatSlot(position.exitTrigger.slot)}
+                        </Text>
+                      )
                     }
                   />
                 )}
@@ -315,7 +327,17 @@ export function ScenarioCard({
                   />
                 </SimpleGrid>
                 {usdt && <RateNote rate={usdtClose?.rate} minute={usdtClose?.minute} />}
-                <TradeLinks label="Exit trade" observationId={close.observationId} />
+                {close.priceAssumption === 'STANDING_CURVE' && (
+                  <Text size="xs" c="dimmed">
+                    {standingCurveLabel(close.reason)}
+                  </Text>
+                )}
+                <TradeLinks
+                  label={
+                    close.priceAssumption === 'STANDING_CURVE' ? 'Curve from trade' : 'Exit trade'
+                  }
+                  observationId={close.observationId}
+                />
               </>
             ) : (
               <Alert color="yellow" variant="light" p="xs" title="Still open">

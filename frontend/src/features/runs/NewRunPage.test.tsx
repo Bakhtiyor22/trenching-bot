@@ -323,4 +323,36 @@ describe('NewRunPage', () => {
     });
     expect(body?.config).not.toHaveProperty('dipBps');
   });
+  it('prefills the preset clocks in seconds, counts a changed clock and sends cleared clocks as null', async () => {
+    let body: RunStartRequest | undefined;
+    server.use(
+      http.post('/api/runs', async ({ request }) => {
+        body = (await request.json()) as RunStartRequest;
+        return HttpResponse.json({ run: sampleRun, created: true });
+      }),
+    );
+    const { user } = renderNewRun();
+    const window = await screen.findByLabelText(/Dip window/);
+    const hold = screen.getByLabelText(/Maximum hold/);
+    const hard = screen.getByLabelText(/Hard exit start/);
+    expect([window, hold, hard].map((input) => (input as HTMLInputElement).value)).toEqual([
+      '30',
+      '180',
+      '240',
+    ]);
+    expect(screen.getByText(/6 rules need the new decu-dip v2 engine/)).toHaveTextContent(
+      'Exit retries, slippage steps and fee escalation',
+    );
+    await user.clear(window);
+    expect(screen.getByText('Changed by you · agreed 30 s')).toBeInTheDocument();
+    await user.clear(hold);
+    await user.clear(hard);
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+    await screen.findByText('Run detail page');
+    expect(body?.config).toMatchObject({
+      dipWindowMs: null,
+      maxHoldMs: null,
+      hardExitStartMs: null,
+    });
+  });
 });

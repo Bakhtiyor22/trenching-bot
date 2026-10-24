@@ -7,7 +7,7 @@ import {
 } from '../../lib/decimal';
 import { formatSlot, mintLabel } from '../../lib/format';
 import { formatPercent, levelPercent } from '../../lib/percent';
-import { FIELD_LABELS, formValuesFrom, type RunFormValues } from './runForm';
+import { FIELD_LABELS, formValuesFrom, secondsText, type RunFormValues } from './runForm';
 
 export type SettingField = Exclude<keyof RunFormValues, 'datasetId'>;
 export const SETTING_LABELS: Record<SettingField, string> = {
@@ -19,6 +19,7 @@ export const SETTING_LABELS: Record<SettingField, string> = {
 };
 
 export function formatSettingValue(field: SettingField, value: string | number): string {
+  if (field.endsWith('Seconds')) return value === '' ? 'Off' : `${String(value)} s`;
   const text = trimFractionZeros(String(value));
   if (field.endsWith('Percent')) return formatPercent(text);
   if (field === 'notional' || field === 'transactionCostSol') return `${formatDecimal(text)} SOL`;
@@ -75,6 +76,11 @@ export function transactionCostLabel(sol: string): string {
   return `${formatDecimal(sol)} SOL per transaction`;
 }
 
+/** A clock in milliseconds as seconds, e.g. "30 s", or "Off" when the run is untimed. */
+export function clockLabel(ms: number | null | undefined): string {
+  return ms === null || ms === undefined ? 'Off' : `${secondsText(ms)} s`;
+}
+
 /** Everything that decides a run's result, as display strings, in the order the run detail lists it. */
 export const RUN_INPUTS: Array<{ label: string; value: (detail: RunDetail) => string }> = [
   { label: 'Dataset', value: (d) => d.run.datasetId },
@@ -89,6 +95,9 @@ export const RUN_INPUTS: Array<{ label: string; value: (detail: RunDetail) => st
     value: (d) => bpsLabel(d.config.takeProfitBps, d.config.takeProfitPercent),
   },
   { label: 'Stop loss', value: (d) => bpsLabel(d.config.stopLossBps, d.config.stopLossPercent) },
+  { label: 'Dip window', value: (d) => clockLabel(d.config.dipWindowMs) },
+  { label: 'Maximum hold', value: (d) => clockLabel(d.config.maxHoldMs) },
+  { label: 'Hard exit start', value: (d) => clockLabel(d.config.hardExitStartMs) },
   { label: 'Horizon', value: (d) => `${formatSlot(d.config.horizonSlots)} slots` },
   { label: 'Latency', value: (d) => latencyLabel(d.config.latencySlots) },
   { label: 'Transaction cost', value: (d) => transactionCostLabel(d.config.transactionCostSol) },

@@ -3,7 +3,9 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { renderPage } from '../../test/render';
 import { server } from '../../mocks/server';
-import { SAMPLE_RUN_ID, v4Chart } from '../../mocks/fixtures';
+import type { Scenario } from '../../api/types';
+import { SAMPLE_RUN_ID, sampleRunDetail, timeExitScenario, v4Chart } from '../../mocks/fixtures';
+import { withRunSetup } from '../../mocks/setupHandlers';
 import { RunChartPage } from './RunChartPage';
 
 describe('results chart page', () => {
@@ -93,5 +95,32 @@ describe('results chart page', () => {
     expect(back.searchParams.get('view')).toBe('price');
     expect(back.searchParams.get('layers')).toBe('decu,paper');
     expect(back.searchParams.get('action')).toBe('missing-action');
+  });
+  it('labels a time exit trigger as a time exit, never as a stop loss', async () => {
+    const detail = withRunSetup(sampleRunDetail);
+    const [first, ...rest] = detail.scenarios as [Scenario, ...Scenario[]];
+    server.use(
+      http.get('/api/runs/:id', () =>
+        HttpResponse.json({
+          ...detail,
+          scenarios: [{ ...first, position: timeExitScenario.position }, ...rest],
+        }),
+      ),
+      http.get('/api/runs/:id/chart', () =>
+        HttpResponse.json({
+          ...v4Chart,
+          extent: {
+            firstTime: v4Chart.range.from,
+            lastTime: v4Chart.range.to,
+            firstSlot: 1000,
+            lastSlot: 5500,
+          },
+        }),
+      ),
+    );
+    renderPage(<RunChartPage />, { path: '/runs/:id/chart', url: `/runs/${SAMPLE_RUN_ID}/chart` });
+    expect(await screen.findByText('Time exit started')).toBeInTheDocument();
+    expect(screen.queryByText('Stop loss crossed')).not.toBeInTheDocument();
+    expect(screen.getByText(/sold against the standing curve/)).toBeInTheDocument();
   });
 });

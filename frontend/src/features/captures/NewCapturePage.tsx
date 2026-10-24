@@ -771,11 +771,15 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
                       onChange={(value) => setCutoffMode(value as 'FULL' | 'DECIDED')}
                       data={[
                         { value: 'FULL', label: 'Record the whole window' },
-                        { value: 'DECIDED', label: 'Stop at a decided legacy outcome' },
+                        {
+                          value: 'DECIDED',
+                          label:
+                            "Stop once the agreed strategy's outcome is decided (at least 4 minutes)",
+                        },
                       ]}
                     />
                     {cutoffMode === 'DECIDED' && (
-                      <Alert color="yellow">{codeLabel('CUTOFF_USES_LEGACY_DEFAULTS')}</Alert>
+                      <Alert color="yellow">{codeLabel('CUTOFF_USES_AGREED_STRATEGY')}</Alert>
                     )}
                     <Checkbox
                       id="capture-recovery"

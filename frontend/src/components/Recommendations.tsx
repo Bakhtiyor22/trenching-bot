@@ -3,7 +3,12 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router';
 import type { Recommendation } from '../api/setup';
 import { errorMessage } from '../api/client';
-import { codeLabel, recommendationCopy } from '../lib/codes';
+import {
+  codeLabel,
+  cutoffUsesAgreedStrategy,
+  DEFAULT_MINIMUM_RECORDING_SECONDS,
+  recommendationCopy,
+} from '../lib/codes';
 import { paths } from '../paths';
 import { Section } from './Panels';
 
@@ -34,6 +39,13 @@ function itemCopy(item: Recommendation) {
   return base;
 }
 
+/** The agreed levels and clocks a DECIDED cutoff judges by, e.g. "20% dip within 30 s, +55% / −40%, time exit at 3 / 4 min". */
+function cutoffLevels(facts: Recommendation['facts']): string {
+  const minutes = (seconds: string | number | undefined) =>
+    seconds === undefined ? '?' : String(Number(seconds) / 60);
+  return `${facts.dipPercent}% dip within ${facts.dipWindowSeconds} s, +${facts.takeProfitPercent}% / −${facts.stopLossPercent}%, time exit at ${minutes(facts.maxHoldSeconds)} / ${minutes(facts.hardExitStartSeconds)} min`;
+}
+
 function settingLabel(item: Recommendation): string {
   switch (item.id) {
     case 'SCOPE_WALLET_TOKEN':
@@ -41,7 +53,7 @@ function settingLabel(item: Recommendation): string {
     case 'ENABLE_RECOVERY':
       return `Recovery: ${item.facts.requests} requests, ${item.facts.attempts} attempts`;
     case 'CUTOFF_DECIDED':
-      return 'Market cutoff: once the result is known (old defaults)';
+      return `Market cutoff: once the agreed strategy's result is known (${cutoffLevels(item.facts)})`;
     case 'DECU_PUMPFUN_SCOPE':
       return 'Scope: Pump.fun buys';
     case 'USE_AGREED_STRATEGY':
@@ -144,8 +156,12 @@ export function Recommendations({
               {!action && item.setting && <Text size="sm">Sets {settingLabel(item)}</Text>}
               {item.caveatCode && (
                 <Alert color="yellow">
-                  {item.id === 'CUTOFF_DECIDED'
-                    ? `Today the cutoff is decided with the old default rules (${item.facts.dipPercent}% dip, +${item.facts.takeProfitPercent}% / −${item.facts.stopLossPercent}%), not the agreed strategy.`
+                  {item.caveatCode === 'CUTOFF_USES_AGREED_STRATEGY'
+                    ? cutoffUsesAgreedStrategy(
+                        Number(
+                          item.facts.minimumRecordingSeconds ?? DEFAULT_MINIMUM_RECORDING_SECONDS,
+                        ),
+                      )
                     : codeLabel(item.caveatCode)}
                 </Alert>
               )}

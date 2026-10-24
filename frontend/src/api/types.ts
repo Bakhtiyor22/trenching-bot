@@ -230,6 +230,10 @@ export interface Config {
   /** SOL charged per transaction (network plus priority fee or tip), on entry and on exit. */
   transactionCostSol: DecimalString;
   quoteMint: string;
+  /** Optional block-time clocks in milliseconds; null when the run is untimed. */
+  dipWindowMs: number | null;
+  maxHoldMs: number | null;
+  hardExitStartMs: number | null;
 }
 
 /** Inclusive range; a null `max` is unbounded above. */
@@ -263,6 +267,10 @@ export interface ConfigLimits {
   latencySlots: Range;
   transactionCostScale: number;
   transactionCostSol: DecimalRange;
+  /** Milliseconds. */
+  dipWindowMs: Range;
+  maxHoldMs: Range;
+  hardExitStartMs: Range;
 }
 
 export interface ConfigDefaults {
@@ -291,6 +299,10 @@ export interface RunStartRequest {
     /** Plain decimal string, like notional. */
     transactionCostSol?: DecimalString;
     quoteMint?: string;
+    /** Whole milliseconds as JSON integers; null means untimed. */
+    dipWindowMs?: number | null;
+    maxHoldMs?: number | null;
+    hardExitStartMs?: number | null;
   };
 }
 
@@ -355,15 +367,24 @@ export interface Close {
   netProceeds: DecimalString;
   realizedPnl: DecimalString;
   reason: string;
+  /**
+   * NEXT_TRADE: sold into a later trade's curve. STANDING_CURVE: sold against the curve as it stood (at the exit start
+   * for a time exit; for a take profit or stop loss, no trade landed within 60 s of the trigger).
+   */
+  priceAssumption: 'NEXT_TRADE' | 'STANDING_CURVE';
 }
 
 export type ScenarioStatus = 'FILLED' | 'REJECTED';
 export type PositionState = 'OPEN' | 'CLOSED';
 
-/** The trade that crossed take profit or stop loss; the exit fills at a later slot's trade, if any. */
+/**
+ * What started the exit: the trade that crossed take profit or stop loss, or, for a TIME_EXIT, the exit start (then
+ * `observationId` is the trade whose curve stood at that moment). `time` is null on runs stored before dip-paper-v4.
+ */
 export interface ExitTrigger {
   observationId: string;
   slot: number;
+  time: IsoInstant | null;
   reason: string;
 }
 
@@ -374,6 +395,8 @@ export interface ScenarioPosition {
   takeProfitPrice: DecimalString;
   stopLossPrice: DecimalString;
   exitTrigger: ExitTrigger | null;
+  /** When the time exit starts; null for an untimed run. */
+  exitStart: IsoInstant | null;
 }
 
 /** The trade that reached the dip level, with the market cap and SOL/USDT rate it was judged at. */
@@ -532,6 +555,7 @@ export interface RunPosition {
   takeProfitPrice: DecimalString;
   stopLossPrice: DecimalString;
   exitTrigger: ExitTrigger | null;
+  exitStart: IsoInstant | null;
 }
 
 export interface RecentRun {

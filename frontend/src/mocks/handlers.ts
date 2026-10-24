@@ -377,6 +377,9 @@ const CONFIG_FIELDS = new Set([
   'latencySlots',
   'transactionCostSol',
   'quoteMint',
+  'dipWindowMs',
+  'maxHoldMs',
+  'hardExitStartMs',
 ]);
 
 function validateConfig(config: RunStartRequest['config']): Record<string, string> {
@@ -440,6 +443,27 @@ function validateConfig(config: RunStartRequest['config']): Record<string, strin
   if (config.quoteMint !== undefined && !isSolanaAddress(String(config.quoteMint))) {
     fields.quoteMint = 'must be a 32-byte base58 address';
   }
+  // The optional clocks: whole milliseconds or null; the exit pair is set together, and an invalid clock is
+  // reported alone, never also as a missing pair (the backend's messages).
+  const clocks = ['dipWindowMs', 'maxHoldMs', 'hardExitStartMs'] as const;
+  for (const field of clocks) {
+    const value = config[field];
+    if (value === undefined || value === null) continue;
+    const range = limits[field];
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < range.min ||
+      (range.max !== null && value > range.max)
+    )
+      fields[field] = `must be an integer between ${range.min} and ${range.max}`;
+  }
+  const holdSet = config.maxHoldMs !== undefined && config.maxHoldMs !== null;
+  const hardSet = config.hardExitStartMs !== undefined && config.hardExitStartMs !== null;
+  if (holdSet && !hardSet && !fields.maxHoldMs)
+    fields.hardExitStartMs = 'must be set together with maxHoldMs';
+  if (hardSet && !holdSet && !fields.hardExitStartMs)
+    fields.maxHoldMs = 'must be set together with hardExitStartMs';
   for (const field of Object.keys(config)) {
     if (!CONFIG_FIELDS.has(field)) fields[field] = 'is not a configuration field';
   }
@@ -504,11 +528,11 @@ export function createHandlers(options: MockOptions = {}) {
       } catch {
         return error(400, 'DATASET_INVALID', 'Replay dataset is not valid JSON');
       }
-      if (parsed.schemaVersion !== 3 && parsed.schemaVersion !== 4) {
+      if (![3, 4, 5, 6].includes(parsed.schemaVersion as number)) {
         return error(
           400,
           'DATASET_INVALID',
-          `Unsupported replay schemaVersion ${String(parsed.schemaVersion)}; expected 3 or 4`,
+          `Unsupported replay schemaVersion ${String(parsed.schemaVersion)}; expected 3, 4, 5 or 6`,
         );
       }
       const checksum = String(parsed.checksum ?? '');
@@ -526,7 +550,7 @@ export function createHandlers(options: MockOptions = {}) {
         ...sampleDataset,
         id: checksum,
         name,
-        schemaVersion: parsed.schemaVersion,
+        schemaVersion: parsed.schemaVersion as number,
         createdAt: new Date().toISOString(),
       };
       db.datasets.unshift(dataset);

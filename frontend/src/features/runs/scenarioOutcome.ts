@@ -15,7 +15,7 @@ export interface ScenarioOutcome {
   pnl: string | null;
 }
 
-/** A cycle's end state: closed by take profit or stop loss (or another reason), still open, or never entered. */
+/** A cycle's end state: closed by take profit, stop loss or time exit (or another reason), still open, or never entered. */
 export function scenarioOutcome(scenario: Scenario): ScenarioOutcome {
   const close = scenario.position?.close;
   if (close) {
@@ -33,6 +33,14 @@ export function scenarioOutcome(scenario: Scenario): ScenarioOutcome {
         label: 'Stop loss',
         color: 'red',
         hex: terminal.loss,
+        pnl: close.realizedPnl,
+      };
+    if (close.reason === 'TIME_EXIT')
+      return {
+        tag: 'TIME',
+        label: 'Time exit',
+        color: 'orange',
+        hex: terminal.rejected,
         pnl: close.realizedPnl,
       };
     return {

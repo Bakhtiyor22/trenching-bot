@@ -8,11 +8,13 @@ import {
   TAKE_PROFIT_ENTRY_PRICE,
   TAKE_PROFIT_EXIT_PRICE,
   TAKE_PROFIT_LEVEL,
+  timeExitScenario,
 } from '../../mocks/fixtures';
 import type { ChartResponse } from '../../api/types';
 import {
   chartTimelineOption,
   LEVEL_COLORS,
+  EXIT_START_SERIES,
   LEVELS_SERIES,
   timelineMarkers,
   timelineOption,
@@ -68,37 +70,42 @@ describe('timelineMarkers', () => {
   });
 });
 
+/** An empty chart of 2026-10-15 00:00–00:05 with a recorded valuation basis. */
+function emptyChartResponse(): ChartResponse {
+  return {
+    millisPerSlot: null,
+    coverage: [],
+    ticks: { included: false, total: 0, items: [] },
+    bucketSeconds: 60,
+    range: { from: '2026-10-15T00:00:00Z', to: '2026-10-15T00:05:00Z' },
+    trackedWallet: null,
+    valuationBasis: {
+      label: 'Recorded supply',
+      available: true,
+      supply: '1000',
+      supplySource: 'recorded',
+      quoteCurrency: 'USDT',
+      rateSource: 'recorded',
+      rateGranularity: 'MINUTE',
+      unavailableReason: null,
+    },
+    candles: [],
+    markers: {
+      available: false,
+      unavailableReason: 'NOT_RECORDED_BEFORE_SCHEMA_V4',
+      mode: 'ITEMS',
+      total: 0,
+      items: [],
+      clusters: [],
+      nextCursor: null,
+    },
+    paperFills: [],
+  };
+}
+
 describe('timelineOption', () => {
   it('preserves strategy levels across the time domain only in the SOL price view', () => {
-    const response: ChartResponse = {
-      millisPerSlot: null,
-      coverage: [],
-      ticks: { included: false, total: 0, items: [] },
-      bucketSeconds: 60,
-      range: { from: '2026-10-15T00:00:00Z', to: '2026-10-15T00:05:00Z' },
-      trackedWallet: null,
-      valuationBasis: {
-        label: 'Recorded supply',
-        available: true,
-        supply: '1000',
-        supplySource: 'recorded',
-        quoteCurrency: 'USDT',
-        rateSource: 'recorded',
-        rateGranularity: 'MINUTE',
-        unavailableReason: null,
-      },
-      candles: [],
-      markers: {
-        available: false,
-        unavailableReason: 'NOT_RECORDED_BEFORE_SCHEMA_V4',
-        mode: 'ITEMS',
-        total: 0,
-        items: [],
-        clusters: [],
-        nextCursor: null,
-      },
-      paperFills: [],
-    };
+    const response = emptyChartResponse();
     const option = chartTimelineOption(response, 'price', sampleScenarios.slice(0, 1));
     expect(option.grid).toMatchObject({ right: 68 });
     expect(option.legend).toBeUndefined();
@@ -139,5 +146,35 @@ describe('timelineOption', () => {
       'Take profit 0.0₆11201248686606967374718216755569',
       'Stop loss 0.0₇7323893372012247898854218647872',
     ]);
+  });
+});
+
+describe('exit start marker', () => {
+  type Marked = { name: string; markLine?: { data: Array<{ xAxis: number; name: string }> } };
+  const timed = (exitStart: string) => ({
+    ...timeExitScenario,
+    position: { ...timeExitScenario.position!, exitStart },
+  });
+
+  it('draws a dashed exit start line at the position exit start in both views', () => {
+    const at = '2026-10-15T00:03:00Z';
+    for (const view of ['price', 'mcap'] as const) {
+      const series = chartTimelineOption(emptyChartResponse(), view, [timed(at)])
+        .series as Marked[];
+      const line = series.find((s) => s.name === EXIT_START_SERIES);
+      expect(line?.markLine?.data).toEqual([
+        expect.objectContaining({ xAxis: Date.parse(at), name: 'Exit start' }),
+      ]);
+    }
+  });
+
+  it('skips an exit start outside the chart range and an untimed position', () => {
+    const outside = chartTimelineOption(emptyChartResponse(), 'price', [
+      timed('2026-10-15T01:00:00Z'),
+    ]).series as Marked[];
+    expect(outside.some((s) => s.name === EXIT_START_SERIES)).toBe(false);
+    const untimed = chartTimelineOption(emptyChartResponse(), 'price', sampleScenarios)
+      .series as Marked[];
+    expect(untimed.some((s) => s.name === EXIT_START_SERIES)).toBe(false);
   });
 });
