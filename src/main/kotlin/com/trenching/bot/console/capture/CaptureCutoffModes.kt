@@ -8,7 +8,9 @@ import com.trenching.bot.marketdata.MarketCutoffMode
  * `SimulationConfig.agreed()` is decided and the recording reaches four minutes after the buy; it prices triggers with the
  * reference rate source, so it is refused up front when that source is disabled. A run whose settings differ from the agreed
  * ones may need more of a window than a decided capture holds and is then refused `MARKET_COVERAGE_ENDED`; `FULL` records the
- * whole window for such runs.
+ * whole window for such runs. The agreed outcome measures prices after each trade from the wallet's own recorded buy and ends
+ * on the wallet's sell (no entry after it, a full exit while holding), so a window that does not hold that buy, planned before
+ * the market-window lead, is decided `REFERENCE_UNAVAILABLE` and must be captured again to qualify.
  */
 object CaptureCutoffModes {
     const val FIELD = "cutoffMode"

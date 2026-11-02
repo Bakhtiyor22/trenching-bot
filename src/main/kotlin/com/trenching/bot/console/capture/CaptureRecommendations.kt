@@ -43,7 +43,9 @@ object CaptureRecommendations {
 
     /**
      * `DECIDED` windows are cut by the agreed strategy's outcome, whose levels and clocks the facts name, and keep at least
-     * the minimum recording after the buy. A run with other settings may need more of the window than such a capture holds.
+     * the minimum recording after the buy. That outcome compares post-trade prices from the wallet's recorded buy and ends on
+     * the wallet's sell, so a run with other settings, the average-price measure or no wallet-sell rule among them, may need
+     * more of the window than such a capture holds.
      */
     private fun cutoffDecided(): Recommendation {
         val agreed = SimulationConfig.agreed()

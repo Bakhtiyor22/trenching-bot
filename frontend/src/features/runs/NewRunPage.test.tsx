@@ -340,7 +340,7 @@ describe('NewRunPage', () => {
       '180',
       '240',
     ]);
-    expect(screen.getByText(/6 rules need the new decu-dip v2 engine/)).toHaveTextContent(
+    expect(screen.getByText(/5 rules need the new decu-dip v2 engine/)).toHaveTextContent(
       'Exit retries, slippage steps and fee escalation',
     );
     await user.clear(window);
@@ -354,5 +354,80 @@ describe('NewRunPage', () => {
       maxHoldMs: null,
       hardExitStartMs: null,
     });
+  });
+
+  it('prefills the post-trade measure and the sell rule from the preset and counts a change to either', async () => {
+    const { user } = renderNewRun();
+    const measure = await screen.findByRole('combobox', { name: 'Price measure' });
+    expect(measure).toHaveValue('Price after each trade (spec)');
+    const sells = screen.getByRole('checkbox', {
+      name: "Follow Decu's sells (no entry, and exit if holding)",
+    });
+    expect(sells).toBeChecked();
+    expect(screen.getByText('Applied')).toBeInTheDocument();
+    await user.click(sells);
+    expect(screen.getByText('Changed by you · agreed On')).toBeInTheDocument();
+    expect(screen.getByText('Changed · 1 settings')).toBeInTheDocument();
+    await user.click(measure);
+    await user.click(await screen.findByRole('option', { name: "Each trade's average price" }));
+    expect(screen.getByText('Changed by you · agreed Post-trade price')).toBeInTheDocument();
+    expect(screen.getByText('Changed · 2 settings')).toBeInTheDocument();
+  });
+
+  it('says 5 unsupported rules, without post-trade prices', async () => {
+    renderNewRun();
+    const rules = await screen.findByText(/rules need the new decu-dip v2 engine/);
+    expect(rules).toHaveTextContent(/^5 rules/);
+    expect(rules).not.toHaveTextContent(/post-trade/i);
+    expect(screen.getByText(/applies 12 of the agreed rules exactly/)).toBeInTheDocument();
+  });
+
+  it("explains a dataset that cannot show Decu's sells and reruns it with the sell rule off", async () => {
+    const bodies: RunStartRequest[] = [];
+    server.use(
+      http.post('/api/runs', async ({ request }) => {
+        const body = (await request.json()) as RunStartRequest;
+        bodies.push(body);
+        return body.config?.followWalletSells
+          ? HttpResponse.json(
+              {
+                code: 'SELL_CHECK_NEEDS_TRADES',
+                message:
+                  'The wallet-sell rule needs a dataset whose observations record trades schemaVersion=3 minimumSchemaVersion=4 (SELL_CHECK_NEEDS_TRADES)',
+                fields: {},
+              },
+              { status: 409 },
+            )
+          : HttpResponse.json({ run: sampleRun, created: true }, { status: 201 });
+      }),
+    );
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Fill delay/);
+    await user.click(screen.getByRole('button', { name: /Start run/ }));
+    expect(await screen.findByText("This dataset cannot show Decu's sells")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Its market recording is schema 3, which does not record who traded. Turn off "Follow Decu\'s sells" to run it, or re-export the capture as a newer dataset.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/minimumSchemaVersion/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Run without following sells' }));
+    expect(await screen.findByText('Run detail page')).toBeInTheDocument();
+    expect(bodies).toHaveLength(2);
+    const [refused, rerun] = bodies;
+    expect(rerun).toEqual({
+      ...refused,
+      config: { ...refused?.config, followWalletSells: false },
+    });
+    expect(refused?.config?.priceMeasure).toBe('POST_TRADE');
+  });
+
+  it('refuses the bundled schema-3 sample with the sell rule on, as the backend does', async () => {
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Fill delay/);
+    await user.click(screen.getByRole('button', { name: /Start run/ }));
+    expect(await screen.findByText("This dataset cannot show Decu's sells")).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Run without following sells' }));
+    expect(await screen.findByText('Run detail page')).toBeInTheDocument();
   });
 });

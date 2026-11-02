@@ -7,14 +7,18 @@ import com.trenching.bot.console.domain.DatasetSource
 import com.trenching.bot.console.domain.RunScenario
 import com.trenching.bot.console.domain.SourcedRunDetail
 import com.trenching.bot.console.domain.TimedRunScenario
+import com.trenching.bot.marketdata.domain.ObservedTrade
+import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.strategy.domain.SimulationConfig
+import com.trenching.bot.support.AgreedDipSample
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV6
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -94,6 +98,32 @@ class RunResponseMapperTest {
         assertEquals("NEXT_TRADE", scenario(body(DatasetSource("dataset-1", null, null)), DipSample.TAKE_PROFIT)["position"]["close"]["priceAssumption"].asString())
     }
 
+    @Test
+    fun `a post-trade cycle names its reference observation and a cycle the wallet's sell ended names that sell`() {
+        val agreed = AgreedDipSample.dataset()
+        val sold = agreed.copy(observations = agreed.observations.map {
+            if (it.id == WALLET_SELL) it.copy(trade = ObservedTrade.of(agreed.trackedWallet.value, TradeSide.SELL, BigInteger.ONE, BigInteger.ONE)) else it
+        })
+        val postTrade = ReplayRunner().run(sold, SimulationConfig.agreed())
+        val body = body(DatasetSource("dataset-1", null, null), postTrade)
+        val takeProfit = scenario(body, DipSample.TAKE_PROFIT)
+        val stopLoss = scenario(body, DipSample.STOP_LOSS)
+
+        assertEquals("WALLET_SOLD", takeProfit["watch"].asString())
+        assertEquals("""{"eventId":"$WALLET_SELL","slot":1001}""", takeProfit["walletSell"].toString())
+        assertEquals(postTrade.scenarios.single { it.intent.pair == DipSample.pair(DipSample.STOP_LOSS) }.intent.referenceObservationId,
+            stopLoss["referenceObservationId"].asString())
+        assertTrue(stopLoss.has("walletSell") && stopLoss["walletSell"].isNull)
+    }
+
+    @Test
+    fun `an average-price cycle carries a null reference observation and no wallet sell`() {
+        val takeProfit = scenario(body(DatasetSource("dataset-1", null, null)), DipSample.TAKE_PROFIT)
+
+        assertTrue(takeProfit.has("referenceObservationId") && takeProfit["referenceObservationId"].isNull)
+        assertTrue(takeProfit.has("walletSell") && takeProfit["walletSell"].isNull)
+    }
+
     private fun body(source: DatasetSource, report: SimulationReport = this.report): JsonNode =
         json.readTree(json.writeValueAsString(mapper.toResponse(detail(source, report))))
 
@@ -114,5 +144,6 @@ class RunResponseMapperTest {
 
     private companion object {
         val MIDNIGHT: Instant = Instant.parse("2026-10-01T00:00:00Z")
+        const val WALLET_SELL = "fixture:TP:1001:0"
     }
 }

@@ -4,9 +4,13 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.console.report.RunReportReader
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
+import com.trenching.bot.strategy.domain.PriceMeasure
 import com.trenching.bot.strategy.domain.SimulationConfig
+import com.trenching.bot.support.AgreedDipSample
 import java.math.BigDecimal
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.module.kotlin.kotlinModule
@@ -32,20 +36,19 @@ class RunReportReaderTest {
     }
 
     @Test
-    fun `reads a timed configuration back with its clocks`() {
-        val dataset = requireNotNull(javaClass.getResourceAsStream("/replay/samples/dip-sample-v3.json")).use {
-            ReplayDatasetLoader(json).load(it)
-        }
+    fun `reads the agreed configuration back with its clocks, its price measure and its wallet-sell rule`() {
         val config = SimulationConfig.agreed()
 
-        val facts = reader.read(json.writeValueAsString(ReplayRunner().run(dataset, config)))
+        val facts = reader.read(json.writeValueAsString(ReplayRunner().run(AgreedDipSample.dataset(), config)))
 
         assertEquals(config, facts.config)
         assertEquals(listOf(30_000L, 180_000L, 240_000L), listOf(facts.config.dipWindowMs, facts.config.maxHoldMs, facts.config.hardExitStartMs))
+        assertEquals(PriceMeasure.POST_TRADE, facts.config.priceMeasure)
+        assertTrue(facts.config.followWalletSells)
     }
 
     @Test
-    fun `reads configuration while ignoring scenario fields it does not need`() {
+    fun `reads a snapshot stored before engine dip-paper-v5, without the price measure or the wallet-sell rule, with their defaults, ignoring scenario fields`() {
         val report = """
             {"runId":"run","configuration":{"latencySlots":1,"maxAgeSlots":2,"dipBps":1500,"takeProfitBps":3000,"stopLossBps":1500,
               "minMarketCapUsd":10000.000000000000,"horizonSlots":4500,
@@ -59,5 +62,7 @@ class RunReportReaderTest {
         val facts = reader.read(report)
 
         assertEquals(SimulationConfig.mvp(), facts.config)
+        assertEquals(PriceMeasure.TRADE_AVERAGE, facts.config.priceMeasure)
+        assertFalse(facts.config.followWalletSells)
     }
 }

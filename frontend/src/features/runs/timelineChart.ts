@@ -29,6 +29,14 @@ export const LEVEL_COLORS = {
   stopLoss: terminal.loss,
 } as const;
 
+/** The short label of an exit marker, by close reason. */
+const EXIT_LABELS: Record<string, string> = {
+  TAKE_PROFIT: 'TP',
+  STOP_LOSS: 'SL',
+  TIME_EXIT: 'TIME',
+  WALLET_SOLD: 'Decu sold',
+};
+
 export interface PriceMarker {
   slot: number;
   /** Exact price string (shown in tooltips); plotted via `toChartNumber`. */
@@ -130,17 +138,21 @@ export function timelineMarkers(
     if (converted != null) levels.push({ price: converted, label, color });
   };
   for (const s of scenarios) {
-    addLevel(s.referencePrice, 'P0', LEVEL_COLORS.reference);
-    addLevel(s.dipPrice, 'Dip', LEVEL_COLORS.dip);
+    // REFERENCE_UNAVAILABLE carries Decu's average as a placeholder: there is no reference or dip level to draw.
+    if (s.watch !== 'REFERENCE_UNAVAILABLE') {
+      addLevel(s.referencePrice, 'P0', LEVEL_COLORS.reference);
+      addLevel(s.dipPrice, 'Dip', LEVEL_COLORS.dip);
+    }
     if (s.position) {
       addLevel(s.position.takeProfitPrice, 'Take profit', LEVEL_COLORS.takeProfit);
       addLevel(s.position.stopLossPrice, 'Stop loss', LEVEL_COLORS.stopLoss);
     }
     if (s.status === 'REJECTED' || !s.fill) {
-      rejections.push({
-        slot: s.targetSlot,
-        label: `No entry: ${humanizeCode(s.rejectionReason)}`,
-      });
+      rejections.push(
+        s.walletSell
+          ? { slot: s.walletSell.slot, label: 'Decu sold before the dip' }
+          : { slot: s.targetSlot, label: `No entry: ${humanizeCode(s.rejectionReason)}` },
+      );
       continue;
     }
     const entryPrice = values.entryPrice(s);
@@ -165,7 +177,7 @@ export function timelineMarkers(
       exits.push({
         slot: close.slot,
         price: exitPrice,
-        label: close.reason === 'TAKE_PROFIT' ? 'TP' : 'SL',
+        label: EXIT_LABELS[close.reason] ?? humanizeCode(close.reason),
         tooltip: [
           `<b>Exit</b> at slot ${formatSlot(close.slot)} (${humanizeCode(close.reason)})`,
           `Execution price <b>${formatDecimal(exitPrice)}</b>${unit}`,

@@ -8,12 +8,18 @@ import java.time.Instant
  * The dip-entry decision for one mint, made from the tracked wallet's first buy of it at [creationSlot].
  * [referencePrice] is that buy's price (P0) and [dipPrice] the level a trade must reach. [trigger] is set exactly when
  * [watch] is [DipWatchOutcome.TRIGGERED]; [targetSlot] is the trigger's slot, or the first watched slot without one. [t0] is
- * that buy's block time, which the timed clocks count from; null when the buy recorded none.
+ * that buy's block time, which the timed clocks count from; null when the buy recorded none. [wallet] is the buy's wallet.
+ *
+ * Under [PriceMeasure.POST_TRADE], [referencePrice] is the spot price after the buy, read from the market observation
+ * [referenceObservationId] that records it; without exactly one such observation [watch] is
+ * [DipWatchOutcome.REFERENCE_UNAVAILABLE], no observation is named, and [referencePrice] keeps the buy's average for the record
+ * only. [walletSell] is set exactly when [watch] is [DipWatchOutcome.WALLET_SOLD].
  */
 data class TradeIntent(
     val id: String,
     val runId: String,
     val sourceEventId: String,
+    val wallet: WalletAddress,
     val pair: MarketPair,
     val strategyName: String,
     val strategyVersion: String,
@@ -28,7 +34,12 @@ data class TradeIntent(
     val horizonEndSlot: Slot,
     val watch: DipWatchOutcome,
     val trigger: DipTrigger?,
+    val referenceObservationId: String?,
+    val walletSell: WalletSellSignal?,
 )
+
+/** The tracked wallet's sell that ended a dip watch: [eventId] is the sell's market observation id. */
+data class WalletSellSignal(val eventId: String, val slot: Slot)
 
 /** The trade that met the dip, with the market cap and the SOL/USDT rate it was judged at. */
 data class DipTrigger(
@@ -47,6 +58,8 @@ enum class DipWatchOutcome {
     REFERENCE_BELOW_MIN_MARKET_CAP,
     MIGRATED_BEFORE_ENTRY,
     UNSUPPORTED_SUPPLY,
+    WALLET_SOLD,
+    REFERENCE_UNAVAILABLE,
 }
 
 /** The intents of a run, plus the source events of buys that started no cycle because an earlier buy of the mint did. */

@@ -1,10 +1,12 @@
 package com.trenching.bot.strategy
 
 import com.trenching.bot.common.MintAddress
+import com.trenching.bot.strategy.domain.PriceMeasure
 import com.trenching.bot.strategy.domain.SimulationConfig
 import java.math.BigDecimal
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import org.junit.jupiter.api.Test
 
@@ -13,9 +15,10 @@ class SimulationConfigTest {
         notional: String = "0.1", maxAgeSlots: Long = 2, dipBps: Int = 1500, takeProfitBps: Int = 3000, stopLossBps: Int = 1500,
         minMarketCapUsd: String = "10000", horizonSlots: Long = 4500, latencySlots: Long = 1, transactionCostSol: String = "0.001",
         dipWindowMs: Long? = null, maxHoldMs: Long? = null, hardExitStartMs: Long? = null,
+        priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE, followWalletSells: Boolean = false,
     ) = SimulationConfig.of(BigDecimal(notional), maxAgeSlots, dipBps, takeProfitBps, stopLossBps, BigDecimal(minMarketCapUsd),
         horizonSlots, latencySlots, BigDecimal(transactionCostSol), dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs,
-        hardExitStartMs = hardExitStartMs)
+        hardExitStartMs = hardExitStartMs, priceMeasure = priceMeasure, followWalletSells = followWalletSells)
 
     @Test
     fun `the default is the user's dip strategy with one slot of latency and a 0,001 SOL transaction cost`() {
@@ -32,14 +35,16 @@ class SimulationConfigTest {
         assertNull(mvp.dipWindowMs)
         assertNull(mvp.maxHoldMs)
         assertNull(mvp.hardExitStartMs)
+        assertEquals(PriceMeasure.TRADE_AVERAGE, mvp.priceMeasure)
+        assertFalse(mvp.followWalletSells)
     }
 
     @Test
-    fun `the agreed configuration holds the spec's values with its 30 second dip window and timed exit`() {
+    fun `the agreed configuration holds the spec's values with its dip window, timed exit, post-trade prices and wallet sells`() {
         val agreed = SimulationConfig.agreed()
 
         assertEquals(config(dipBps = 2000, takeProfitBps = 5500, stopLossBps = 4000, dipWindowMs = 30_000, maxHoldMs = 180_000,
-            hardExitStartMs = 240_000), agreed)
+            hardExitStartMs = 240_000, priceMeasure = PriceMeasure.POST_TRADE, followWalletSells = true), agreed)
         assertEquals(SimulationConfig.mvp().maxAgeSlots, agreed.maxAgeSlots)
         assertEquals(MintAddress.WRAPPED_SOL, agreed.quoteMint)
     }

@@ -1,6 +1,7 @@
 package com.trenching.bot.console.report.dto
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
+import com.trenching.bot.strategy.domain.PriceMeasure
 import java.math.BigDecimal
 
 /** The parts of replay's stored `SimulationReport` JSON that no store port returns. */
@@ -9,7 +10,10 @@ data class StoredRunReport(
     val configuration: StoredConfiguration,
 )
 
-/** The timed fields are absent from a snapshot stored before engine dip-paper-v4, so they default to null (untimed). */
+/**
+ * The timed fields are absent from a snapshot stored before engine dip-paper-v4, so they default to null (untimed); the price
+ * measure and the wallet-sell rule are absent before dip-paper-v5, so they default to the behaviour of dip-paper-v4.
+ */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class StoredConfiguration(
     val strategyName: String,
@@ -27,6 +31,8 @@ data class StoredConfiguration(
     val dipWindowMs: Long? = null,
     val maxHoldMs: Long? = null,
     val hardExitStartMs: Long? = null,
+    val priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE,
+    val followWalletSells: Boolean = false,
 )
 
 data class StoredAddress(val value: String)

@@ -179,6 +179,24 @@ describe('Token verdict', () => {
     expect(panel.queryByText(/negative case/i)).not.toBeInTheDocument();
   });
 
+  it('explains the replay failures of a missing Decu buy and of a dataset without traders', async () => {
+    const session = walletTokenSessions.replayFailed;
+    if (!session.qualification) throw new Error('Replay failure fixture must include a verdict');
+    const verdict = session.qualification;
+    const { unmount } = renderPage(<TokenVerdict target={session.inspection?.targetToken} verdict={{ ...verdict, replay: { state: 'FAILED', category: 'REFERENCE_UNAVAILABLE' } }} canQualify={true} disabled={false} onQualify={() => {}} />);
+    let replay = row(await verdictPanel(), /^Replay/);
+    expect(replay.getByText('REFERENCE_UNAVAILABLE')).toBeInTheDocument();
+    expect(replay.getByText('Replay failed — this is not a strategy outcome')).toBeInTheDocument();
+    expect(replay.getByText("Decu's buy is not in the recorded market, so the reference is unknown.")).toBeInTheDocument();
+    expect(replay.getByText("Capture the token again so its window includes Decu's buy.")).toBeInTheDocument();
+    unmount();
+    renderPage(<TokenVerdict target={session.inspection?.targetToken} verdict={{ ...verdict, replay: { state: 'FAILED', category: 'SELL_CHECK_NEEDS_TRADES' } }} canQualify={true} disabled={false} onQualify={() => {}} />);
+    replay = row(await verdictPanel(), /^Replay/);
+    expect(replay.getByText('SELL_CHECK_NEEDS_TRADES')).toBeInTheDocument();
+    expect(replay.getByText("The dataset does not record who traded (schema 3), so Decu's sells cannot be followed.")).toBeInTheDocument();
+    expect(replay.queryByText(/Capture the token again/)).not.toBeInTheDocument();
+  });
+
   it('stays hidden for sessions of the other scopes', async () => {
     renderPage(<CaptureDetailPage />, { path: '/captures/:id', url: `/captures/${captureSession.id}` });
     expect(await screen.findByRole('button', { name: 'Re-check saved files' })).toBeInTheDocument();

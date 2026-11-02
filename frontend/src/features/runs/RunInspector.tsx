@@ -9,7 +9,7 @@ import {
   Text,
   UnstyledButton,
 } from '@mantine/core';
-import type { Scenario } from '../../api/types';
+import type { Config, Scenario } from '../../api/types';
 import { Section } from '../../components/Panels';
 import { formatDecimal, pnlColor } from '../../lib/decimal';
 import { formatSlot, shortId } from '../../lib/format';
@@ -205,18 +205,24 @@ export function RunLanes({
   selected,
   onSelect,
   unit,
+  config,
+  millisPerSlot,
 }: {
   scenarios: Scenario[];
   selected: number;
   onSelect: (index: number) => void;
   unit: string;
+  config?: Pick<Config, 'dipWindowMs'>;
+  millisPerSlot?: number | null;
 }) {
-  const { lanes, span } = runLanes(scenarios);
+  const { lanes, span } = runLanes(scenarios, config, millisPerSlot);
   const pct = (offset: number) => `${(offset / span) * 100}%`;
+  /** A width that stays visible however long the span. */
+  const width = (offset: number) => pct(Math.max(offset, span * 0.01));
   return (
     <Section
       title="Run timeline"
-      hint="Every cycle aligned on its own first buy. Grey: waiting for the dip; colored: holding the position; dashed: no entry. Click a lane to inspect it."
+      hint="Every cycle aligned on its own first buy. Grey: waiting for the dip; colored: holding the position; dashed: watched without an entry. Click a lane to inspect it."
     >
       <Stack gap={4}>
         {lanes.map((lane, index) => {
@@ -260,7 +266,7 @@ export function RunLanes({
                       top={8}
                       h={2}
                       left={0}
-                      right={0}
+                      w={lane.watchEnd > 0 ? width(lane.watchEnd) : 0}
                       style={{
                         background: `repeating-linear-gradient(90deg, ${terminal.dimmed} 0 4px, transparent 4px 8px)`,
                       }}
@@ -271,7 +277,7 @@ export function RunLanes({
                       top={5}
                       h={8}
                       left={0}
-                      w={pct(lane.fill ?? lane.dip)}
+                      w={width(lane.fill ?? lane.dip)}
                       style={{ background: terminal.neutral, borderRadius: 2 }}
                     />
                   )}
@@ -281,7 +287,7 @@ export function RunLanes({
                       top={4}
                       h={10}
                       left={pct(lane.fill)}
-                      w={pct(Math.max(holdEnd - lane.fill, span * 0.01))}
+                      w={width(holdEnd - lane.fill)}
                       style={{ background: lane.outcome.hex, borderRadius: 2 }}
                     />
                   )}

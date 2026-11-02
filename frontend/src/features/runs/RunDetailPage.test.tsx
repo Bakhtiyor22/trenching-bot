@@ -27,6 +27,8 @@ import {
   USDT_TOTAL_PNL,
   USDT_TRANSACTION_COST,
   WALLET,
+  WALLET_SELL_RUN_ID,
+  WALLET_SOLD_PNL,
   WATCHED_WALLET,
   v4Chart,
   v3Chart,
@@ -470,5 +472,26 @@ describe('RunDetailPage', () => {
     expect(
       await screen.findByText(/Dataset deleted — this run keeps its own copy/),
     ).toBeInTheDocument();
+  });
+
+  it("labels Decu's sells in the orders and positions of a post-trade run", async () => {
+    const { user } = renderRun(WALLET_SELL_RUN_ID);
+    expect(await screen.findAllByText("Reference price (after Decu's buy) (SOL)")).toHaveLength(4);
+    expect(screen.getByText('Post-trade price')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Orders & fills' }));
+    const orders = screen.getByRole('tabpanel');
+    expect(
+      await within(orders).findByText(/Decu sold the token before the dip\./),
+    ).toBeInTheDocument();
+    expect(
+      within(orders).getByText(
+        /Decu's buy is not in the recorded market, so the reference is unknown\./,
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Positions' }));
+    const positions = screen.getByRole('tabpanel');
+    expect(await within(positions).findByText(WALLET_SOLD_PNL)).toBeInTheDocument();
+    expect(within(positions).getByText(/Sold because Decu sold/)).toBeInTheDocument();
+    expect(within(positions).getByText('WALLET_SOLD')).toBeInTheDocument();
   });
 });

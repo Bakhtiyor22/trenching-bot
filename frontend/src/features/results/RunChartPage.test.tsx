@@ -4,7 +4,18 @@ import { describe, expect, it } from 'vitest';
 import { renderPage } from '../../test/render';
 import { server } from '../../mocks/server';
 import type { Scenario } from '../../api/types';
-import { SAMPLE_RUN_ID, sampleRunDetail, timeExitScenario, v4Chart } from '../../mocks/fixtures';
+import {
+  HOLDING_SELL_TIME,
+  NO_DIP_MINT,
+  SAMPLE_RUN_ID,
+  sampleRunDetail,
+  SOL_MINT,
+  STOP_LOSS_MINT,
+  timeExitScenario,
+  v4Chart,
+  WALLET_SELL_RUN_ID,
+  walletSoldScenario,
+} from '../../mocks/fixtures';
 import { withRunSetup } from '../../mocks/setupHandlers';
 import { RunChartPage } from './RunChartPage';
 
@@ -122,5 +133,31 @@ describe('results chart page', () => {
     expect(await screen.findByText('Time exit started')).toBeInTheDocument();
     expect(screen.queryByText('Stop loss crossed')).not.toBeInTheDocument();
     expect(screen.getByText(/sold against the standing curve/)).toBeInTheDocument();
+  });
+
+  it("places a Decu-sold exit at his sell, not at the exit trigger's slot", async () => {
+    const clock = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour12: false });
+    const { user, router } = renderPage(<RunChartPage />, {
+      path: '/runs/:id/chart',
+      url: `/runs/${WALLET_SELL_RUN_ID}/chart?pair=${STOP_LOSS_MINT}/${SOL_MINT}`,
+    });
+    const sold = await screen.findByRole('button', { name: /^\S+ Decu sold/ });
+    expect(sold).toHaveTextContent(clock(HOLDING_SELL_TIME));
+    expect(sold).toHaveTextContent('Decu sold the token: our whole position is sold.');
+    // The trigger is dated at our fill (slot 2003), a minute after his sell in this fixture.
+    const triggerAt = walletSoldScenario.position?.exitTrigger?.time ?? '';
+    expect(Date.parse(triggerAt)).toBeGreaterThan(Date.parse(HOLDING_SELL_TIME));
+    expect(sold).not.toHaveTextContent(clock(triggerAt));
+    await user.click(sold);
+    const jumped = new URLSearchParams(router.state.location.search);
+    expect(Date.parse(jumped.get('from') ?? '') + 15_000).toBe(Date.parse(HOLDING_SELL_TIME));
+  });
+
+  it('marks a cycle Decu sold before the dip at his sell', async () => {
+    renderPage(<RunChartPage />, {
+      path: '/runs/:id/chart',
+      url: `/runs/${WALLET_SELL_RUN_ID}/chart?pair=${NO_DIP_MINT}/${SOL_MINT}`,
+    });
+    expect(await screen.findByText('Decu sold before the dip')).toBeInTheDocument();
   });
 });

@@ -11,7 +11,7 @@ export const runPreset: RunPreset = {
     document: 'docs/strategy/decu-dip-v2-spec.md',
     strategy: 'decu-dip',
     version: 2,
-    updated: '2026-10-11',
+    updated: '2026-10-24',
   },
   engine: 'dip-entry v1',
   config: {
@@ -27,6 +27,8 @@ export const runPreset: RunPreset = {
     dipWindowMs: 30000,
     maxHoldMs: 180000,
     hardExitStartMs: 240000,
+    priceMeasure: 'POST_TRADE',
+    followWalletSells: true,
   },
   fields: [
     { field: 'dipBps', status: 'AGREED', specRef: 'P6', noteCode: null },
@@ -44,6 +46,13 @@ export const runPreset: RunPreset = {
     },
     { field: 'quoteMint', status: 'AGREED', specRef: 'P15', noteCode: null },
     { field: 'minMarketCapUsd', status: 'AGREED', specRef: 'P5', noteCode: null },
+    { field: 'priceMeasure', status: 'AGREED', specRef: 'P4 / Section 5', noteCode: null },
+    {
+      field: 'followWalletSells',
+      status: 'AGREED',
+      specRef: 'Section 6 / Section 8',
+      noteCode: null,
+    },
     {
       field: 'latencySlots',
       status: 'ASSUMPTION',
@@ -61,7 +70,6 @@ export const runPreset: RunPreset = {
   unsupportedRules: [
     { specRef: 'P2', code: 'FIRST_EVER_BUY' },
     { specRef: 'P3', code: 'SIGNAL_OVER_1_9_SOL' },
-    { specRef: 'Section 5', code: 'POST_TRADE_PRICE' },
     { specRef: 'P8', code: 'ENTRY_SLIPPAGE_15_PERCENT' },
     { specRef: 'Section 8', code: 'EXIT_RETRY_ECONOMICS' },
     { specRef: 'P13', code: 'ONE_POSITION_INCLUDING_IN_FLIGHT' },
@@ -117,7 +125,7 @@ export function createSetupHandlers(wait: () => Promise<void>) {
           id: 'USE_AGREED_STRATEGY',
           appliesTo: 'RUN',
           setting: { field: 'presetId', value: runPreset.id },
-          facts: { unsupportedRuleCount: 6, missingFieldCount: 0 },
+          facts: { unsupportedRuleCount: 5, missingFieldCount: 0 },
           caveatCode: null,
         },
         {

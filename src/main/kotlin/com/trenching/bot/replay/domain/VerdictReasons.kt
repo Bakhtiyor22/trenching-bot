@@ -27,5 +27,11 @@ object VerdictReasons {
 
     /** The replayed cycle started from another buy than the proven actual first buy. */
     const val FIRST_BUY_MISMATCH = "FIRST_BUY_MISMATCH"
+
+    /** The market data does not record the wallet's buy, so the agreed post-trade reference is unknown. */
+    const val REFERENCE_UNAVAILABLE = "REFERENCE_UNAVAILABLE"
+
+    /** The dataset's observations record no trades, so the agreed wallet-sell rule cannot run on it. */
+    const val SELL_CHECK_NEEDS_TRADES = SellCheckNeedsTradesException.CODE
     const val REPLAY_ERROR = "REPLAY_ERROR"
 }

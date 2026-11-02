@@ -3,7 +3,7 @@ import { humanizeCode } from '../../lib/format';
 import { terminal } from '../../theme';
 
 export interface ScenarioOutcome {
-  /** Short tag for dense lists: TP, SL, OPEN, or a dash for no entry. */
+  /** Short tag for dense lists: TP, SL, TIME, SOLD, OPEN, or a dash for no entry. */
   tag: string;
   /** Full label, e.g. "Take profit" or "No entry". */
   label: string;
@@ -39,6 +39,14 @@ export function scenarioOutcome(scenario: Scenario): ScenarioOutcome {
       return {
         tag: 'TIME',
         label: 'Time exit',
+        color: 'orange',
+        hex: terminal.rejected,
+        pnl: close.realizedPnl,
+      };
+    if (close.reason === 'WALLET_SOLD')
+      return {
+        tag: 'SOLD',
+        label: 'Sold because Decu sold',
         color: 'orange',
         hex: terminal.rejected,
         pnl: close.realizedPnl,

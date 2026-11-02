@@ -8,7 +8,8 @@ import tools.jackson.databind.JsonNode
  * number into a String notional, or truncate 10.5 into an Int. [unknownFields] collects every other
  * property, such as the removed `feeBps` and `slippageBps`, so each is reported instead of ignored. Each level may be sent
  * as basis points or as a percent string; when both are sent they must agree. The timed clocks are whole milliseconds, absent
- * or null for an untimed run; `maxHoldMs` and `hardExitStartMs` are sent together.
+ * or null for an untimed run; `maxHoldMs` and `hardExitStartMs` are sent together. `priceMeasure` is a `PriceMeasure` name and
+ * `followWalletSells` a JSON boolean; absent or null, each keeps its `mvp()` value.
  */
 data class ConsoleConfigRequest(
     val notional: JsonNode? = null,
@@ -27,6 +28,8 @@ data class ConsoleConfigRequest(
     val dipWindowMs: JsonNode? = null,
     val maxHoldMs: JsonNode? = null,
     val hardExitStartMs: JsonNode? = null,
+    val priceMeasure: JsonNode? = null,
+    val followWalletSells: JsonNode? = null,
     @param:JsonAnySetter
     val unknownFields: Map<String, JsonNode> = emptyMap(),
 )

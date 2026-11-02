@@ -1,4 +1,4 @@
-import type { Config, RunDetail } from '../../api/types';
+import type { Config, PriceMeasure, RunDetail } from '../../api/types';
 import {
   compareDecimals,
   formatDecimal,
@@ -18,7 +18,15 @@ export const SETTING_LABELS: Record<SettingField, string> = {
   quoteMint: 'Quote currency',
 };
 
-export function formatSettingValue(field: SettingField, value: string | number): string {
+/** How a run's price measure reads in settings and the run detail. */
+export const PRICE_MEASURE_VALUES: Record<PriceMeasure, string> = {
+  TRADE_AVERAGE: 'Average price',
+  POST_TRADE: 'Post-trade price',
+};
+
+export function formatSettingValue(field: SettingField, value: string | number | boolean): string {
+  if (field === 'followWalletSells') return onOff(value === true);
+  if (field === 'priceMeasure') return PRICE_MEASURE_VALUES[value as PriceMeasure] ?? String(value);
   if (field.endsWith('Seconds')) return value === '' ? 'Off' : `${String(value)} s`;
   const text = trimFractionZeros(String(value));
   if (field.endsWith('Percent')) return formatPercent(text);
@@ -28,7 +36,14 @@ export function formatSettingValue(field: SettingField, value: string | number):
   return `${formatDecimal(text)} slots`;
 }
 
-export function settingEquals(current: string | number, agreed: string | number): boolean {
+function onOff(on: boolean): string {
+  return on ? 'On' : 'Off';
+}
+
+export function settingEquals(
+  current: string | number | boolean,
+  agreed: string | number | boolean,
+): boolean {
   return isDecimalString(String(current)) && isDecimalString(String(agreed))
     ? compareDecimals(String(current), String(agreed)) === 0
     : current === agreed;
@@ -98,6 +113,8 @@ export const RUN_INPUTS: Array<{ label: string; value: (detail: RunDetail) => st
   { label: 'Dip window', value: (d) => clockLabel(d.config.dipWindowMs) },
   { label: 'Maximum hold', value: (d) => clockLabel(d.config.maxHoldMs) },
   { label: 'Hard exit start', value: (d) => clockLabel(d.config.hardExitStartMs) },
+  { label: 'Price measure', value: (d) => PRICE_MEASURE_VALUES[d.config.priceMeasure] },
+  { label: "Follow Decu's sells", value: (d) => onOff(d.config.followWalletSells) },
   { label: 'Horizon', value: (d) => `${formatSlot(d.config.horizonSlots)} slots` },
   { label: 'Latency', value: (d) => latencyLabel(d.config.latencySlots) },
   { label: 'Transaction cost', value: (d) => transactionCostLabel(d.config.transactionCostSol) },

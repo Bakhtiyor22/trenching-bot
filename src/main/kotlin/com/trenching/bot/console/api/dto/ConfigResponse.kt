@@ -1,6 +1,10 @@
 package com.trenching.bot.console.api.dto
 
-/** The timed clocks are whole milliseconds, null when the run is untimed. */
+/**
+ * The timed clocks are whole milliseconds, null when the run is untimed. [priceMeasure] is the trade price the rules compare,
+ * `TRADE_AVERAGE` or `POST_TRADE`; [followWalletSells] ends a cycle with no entry, or exits a position, when the tracked wallet
+ * sells the mint.
+ */
 data class ConfigResponse(
     val strategyName: String,
     val strategyVersion: String,
@@ -20,6 +24,8 @@ data class ConfigResponse(
     val dipWindowMs: Long?,
     val maxHoldMs: Long?,
     val hardExitStartMs: Long?,
+    val priceMeasure: String,
+    val followWalletSells: Boolean,
 )
 
 data class ConfigDefaultsResponse(
@@ -31,7 +37,7 @@ data class ConfigDefaultsResponse(
  * Inclusive ranges; a null `max` is unbounded above. Each level's percent range is its basis point range as exact percent
  * strings. A notional has at most [notionalScale] decimals (whole lamports)
  * and [notionalPrecision] digits; a transaction cost is rounded to [transactionCostScale] decimals. The timed clocks' ranges
- * are milliseconds and bound a value only when it is set.
+ * are milliseconds and bound a value only when it is set. [priceMeasure] lists every accepted price measure name.
  */
 data class ConfigLimitsResponse(
     val notionalScale: Int,
@@ -51,6 +57,7 @@ data class ConfigLimitsResponse(
     val dipWindowMs: RangeResponse,
     val maxHoldMs: RangeResponse,
     val hardExitStartMs: RangeResponse,
+    val priceMeasure: List<String>,
 )
 
 data class RangeResponse(

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { clockLabel, formatSettingValue, horizonLabel } from './configLabels';
+import { walletSellRunDetail } from '../../mocks/fixtures';
+import { clockLabel, formatSettingValue, horizonLabel, RUN_INPUTS } from './configLabels';
 
 describe('horizon label', () => {
   it('converts slots to time at the recorded pace, else at the nominal one and says so', () => {
@@ -34,5 +35,22 @@ describe('clock labels', () => {
     expect(clockLabel(240000)).toBe('240 s');
     expect(clockLabel(null)).toBe('Off');
     expect(clockLabel(undefined)).toBe('Off');
+  });
+});
+
+describe('price measure and sell rule labels', () => {
+  it('names the measure and shows the sell rule as On or Off', () => {
+    expect(formatSettingValue('priceMeasure', 'POST_TRADE')).toBe('Post-trade price');
+    expect(formatSettingValue('priceMeasure', 'TRADE_AVERAGE')).toBe('Average price');
+    expect(formatSettingValue('followWalletSells', true)).toBe('On');
+    expect(formatSettingValue('followWalletSells', false)).toBe('Off');
+  });
+
+  it('lists both in the run inputs', () => {
+    const inputs = Object.fromEntries(
+      RUN_INPUTS.map(({ label, value }) => [label, value(walletSellRunDetail)]),
+    );
+    expect(inputs['Price measure']).toBe('Post-trade price');
+    expect(inputs["Follow Decu's sells"]).toBe('On');
   });
 });

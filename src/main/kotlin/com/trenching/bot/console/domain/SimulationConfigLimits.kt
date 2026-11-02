@@ -1,6 +1,7 @@
 package com.trenching.bot.console.domain
 
 import com.trenching.bot.common.DecimalPolicy
+import com.trenching.bot.strategy.domain.PriceMeasure
 import com.trenching.bot.strategy.domain.SimulationConfigBounds
 import java.math.BigDecimal
 
@@ -18,7 +19,7 @@ data class DecimalRange(val min: BigDecimal, val max: BigDecimal) {
  * Editable ranges sourced from strategy so each field can be reported separately. A notional has at most
  * [notionalScale] decimals (whole lamports) and [notionalPrecision] digits at that scale; a transaction cost is
  * rounded to [transactionCostScale] decimals. The timed clocks are optional; their ranges, in milliseconds, bound a value
- * only when it is set.
+ * only when it is set. [priceMeasure] is every measure a run may use.
  */
 data class SimulationConfigLimits(
     val notionalScale: Int,
@@ -35,6 +36,7 @@ data class SimulationConfigLimits(
     val dipWindowMs: NumberRange,
     val maxHoldMs: NumberRange,
     val hardExitStartMs: NumberRange,
+    val priceMeasure: List<PriceMeasure>,
 ) {
     companion object {
         private val LEVELS = range(SimulationConfigBounds.LEVEL_BASIS_POINTS)
@@ -54,6 +56,7 @@ data class SimulationConfigLimits(
             dipWindowMs = range(SimulationConfigBounds.DIP_WINDOW_MS),
             maxHoldMs = range(SimulationConfigBounds.EXIT_CLOCK_MS),
             hardExitStartMs = range(SimulationConfigBounds.EXIT_CLOCK_MS),
+            priceMeasure = PriceMeasure.entries,
         )
 
         private fun range(values: IntRange) = NumberRange(values.first.toLong(), values.last.toLong())

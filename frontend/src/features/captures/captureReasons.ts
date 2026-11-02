@@ -79,6 +79,10 @@ const REASONS: Record<string, string> = {
   DIP_BELOW_MIN_MARKET_CAP: 'The dip happened below the minimum market cap.',
   REFERENCE_BELOW_MIN_MARKET_CAP: "Decu's buy was valued at or below the minimum market cap.",
   MIGRATED_BEFORE_ENTRY: 'The token migrated off the bonding curve before an entry.',
+  WALLET_SOLD: 'Decu sold the token before the dip.',
+  REFERENCE_UNAVAILABLE: "Decu's buy is not in the recorded market, so the reference is unknown.",
+  SELL_CHECK_NEEDS_TRADES:
+    "The dataset does not record who traded (schema 3), so Decu's sells cannot be followed.",
   UNSUPPORTED_SUPPLY: 'The token’s supply is not one the strategy supports.',
   NO_FILL_AFTER_TRIGGER: 'No eligible observation after the trigger could fill the entry.',
   EXCEEDS_CURVE: 'The entry would take more tokens than the bonding curve holds.',
@@ -118,6 +122,11 @@ const REASONS: Record<string, string> = {
     'These files belong to a capture that has not finished. Resume it or wait until it ends.',
 };
 
+/** Close reasons whose text differs from the same code as an entry reason. */
+const CLOSE_REASONS: Record<string, string> = {
+  WALLET_SOLD: 'Sold because Decu sold',
+};
+
 export function reasonText(reason: string | null | undefined): string | null {
   if (!reason) return null;
   return REASONS[reason] ?? reason.replaceAll('_', ' ').toLowerCase();
@@ -126,4 +135,9 @@ export function reasonText(reason: string | null | undefined): string | null {
 /** The plain explanation for a reason code, or null when this version has none (no humanized fallback). */
 export function knownReasonText(reason: string | null | undefined): string | null {
   return reason ? (REASONS[reason] ?? null) : null;
+}
+
+/** The plain label for why a position closed, e.g. "Take profit" or "Sold because Decu sold"; null for an unknown code. */
+export function closeReasonText(reason: string | null | undefined): string | null {
+  return reason ? (CLOSE_REASONS[reason] ?? knownReasonText(reason)) : null;
 }

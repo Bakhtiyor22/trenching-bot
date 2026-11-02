@@ -14,6 +14,7 @@ import type {
   Dataset,
   Fill,
   Observation,
+  ObservationTrade,
   Pair,
   RunDetail,
   RunEvent,
@@ -40,6 +41,7 @@ const NO_DIP_PAIR: Pair = { base: NO_DIP_MINT, quote: SOL_MINT };
 export const SAMPLE_DATASET_ID = '06103b0faebf5d3e95468fc250232c333a0e6b665612c977fc76441883eac765';
 export const EDGE_DATASET_ID = 'b3f1c2d4e5a6978812ab34cd56ef7890a1b2c3d4e5f60718293a4b5c6d7e8f90';
 export const SAMPLE_RUN_ID = '4f0c9a7e2b1d3c5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6';
+export const V4_DATASET_ID = 'cafef00d1234567890abcdef1234567890abcdef1234567890abcdef12345678';
 export const EDGE_RUN_ID = '9a8b7c6d5e4f30211203f4e5d6c7b8a9f0e1d2c3b4a5968778695a4b3c2d1e0f';
 /** The take-profit cycle's P&L. */
 export const SAMPLE_PNL = '0.028260434000';
@@ -149,6 +151,8 @@ export const configDefaults: ConfigDefaults = {
     dipWindowMs: null,
     maxHoldMs: null,
     hardExitStartMs: null,
+    priceMeasure: 'TRADE_AVERAGE',
+    followWalletSells: false,
   },
   limits: {
     notionalScale: 9,
@@ -165,6 +169,7 @@ export const configDefaults: ConfigDefaults = {
     dipWindowMs: { min: 1000, max: 600000 },
     maxHoldMs: { min: 1000, max: 3600000 },
     hardExitStartMs: { min: 1000, max: 3600000 },
+    priceMeasure: ['TRADE_AVERAGE', 'POST_TRADE'],
   },
 };
 
@@ -257,6 +262,8 @@ function cycle(id: string, sourceSlot: number, pair: Pair, overrides: Partial<Sc
     horizonEndSlot: sourceSlot + 4500,
     watch: 'NO_DIP',
     trigger: null,
+    referenceObservationId: null,
+    walletSell: null,
     status: 'REJECTED',
     rejectionReason: 'NO_DIP',
     fill: null,
@@ -666,8 +673,185 @@ export const realRunDetail: RunDetail = {
   scenarios: realScenarios,
 };
 
+/**
+ * A run of the agreed strategy (post-trade prices, Decu's sells followed) on a schema-4 capture: a take profit, an exit
+ * because Decu sold after we decided to buy but before our buy landed (so the trigger is dated at our fill, slot 2003,
+ * while his sell is at slot 2002), a cycle Decu sold before the dip, and one whose market lacks Decu's buy.
+ */
+export const WALLET_SELL_RUN_ID =
+  '5e11dec05e11dec05e11dec05e11dec05e11dec05e11dec05e11dec05e11dec0';
+export const REFERENCE_UNAVAILABLE_MINT = '11111111111111111111111111111116';
+/** Decu's buys of the take-profit, sold-while-holding and sold-before-dip tokens, then his two sells. */
+export const WALLET_SELL_SIGNATURES = [
+  '2kRoaxuB1wKqseT2zFJpQFixtYEXP3FMqcqXwtEcj6pHTsXfDxW7G97A4yu7NT16skS3tXdt8fVtx8GgRXpyuDo1',
+  'aJU1zSpRbhXCRMd7RFoGZV7oaYvFyzbsDDGDsqiEVQA3TEdnLWdm8n31ktEe9Vhve8PKc5ZuAz69YhoLAQ6yvWx',
+  'i2AsxWzNrpbpreKRbvrbmqA8WLpa4X4FkfQ24uZy73oSpDq4EKk8yVK6sa1mBnK5hVJYa4DE1qMF2SqWfB8qdFt',
+  '2JH6QsrW3QZqF15u2NeLoQzm5K9MLy9sncKBckFwhwFBXGfRAujUNNjCSdnZDZhqtStsWe3BNSmTab1BrEnFsuRp',
+  '5PxdW6c8RDHmYLSg6r5tD86nMf8Gkxc32SErm36eAzJXgGRq4Lvs4cDKTwQpnwF3Tw7VTHZWmmJsCcU8vHV8Fzjg',
+] as const;
+/** The P0 placeholder of the REFERENCE_UNAVAILABLE cycle: Decu's average, never shown as the reference. */
+export const REFERENCE_PLACEHOLDER = '0.00000007940000000000000000000000000000';
+
+function recordedTradeId(signature: string, mint: string): string {
+  return `pumpfun-bonding-curve-trade/v1:${signature}:0:-:${mint}`;
+}
+/** One minute per slot from slot 1000, as `withRunSetup` dates the cycle stages. */
+function slotTime(slot: number): string {
+  return new Date(Date.parse(OBSERVED_AT) + (slot - 1000) * 60_000).toISOString();
+}
+
+const [tpBuy, soldBuy, beforeDipBuy, holdingSell, beforeDipSell] = WALLET_SELL_SIGNATURES;
+export const HOLDING_SELL_ID = recordedTradeId(holdingSell, STOP_LOSS_MINT);
+export const BEFORE_DIP_SELL_ID = recordedTradeId(beforeDipSell, NO_DIP_MINT);
+export const HOLDING_SELL_TIME = slotTime(2002);
+const REFERENCE_UNAVAILABLE_PAIR: Pair = { base: REFERENCE_UNAVAILABLE_MINT, quote: SOL_MINT };
+const DECU_SELL: ObservationTrade = {
+  trader: WALLET,
+  side: 'SELL',
+  solLamports: '50000000',
+  tokenRaw: '600000000000',
+};
+
+const walletSellObservations: Observation[] = [
+  ...sampleObservations
+    .filter((o) => o.pair.base === BASE_MINT)
+    .map((o) => ({ ...o, observedTime: slotTime(o.slot) })),
+  ...[2001, 2003, 2004].map((slot) => ({
+    ...observation(slot, '0.00000008', 'LAST_TRADE', STOP_LOSS_PAIR),
+    observedTime: slotTime(slot),
+  })),
+  {
+    ...observation(2002, '0.000000079', 'LAST_TRADE', STOP_LOSS_PAIR),
+    id: HOLDING_SELL_ID,
+    observedTime: HOLDING_SELL_TIME,
+    trade: DECU_SELL,
+  },
+  ...[3001, 3008].map((slot) => ({
+    ...observation(slot, '0.000000095', 'LAST_TRADE', NO_DIP_PAIR),
+    observedTime: slotTime(slot),
+  })),
+  {
+    ...observation(3005, '0.000000093', 'LAST_TRADE', NO_DIP_PAIR),
+    id: BEFORE_DIP_SELL_ID,
+    observedTime: slotTime(3005),
+    trade: DECU_SELL,
+  },
+];
+
+export const WALLET_SOLD_PNL = '-0.002248500000';
+const walletSellScenarios: Scenario[] = [
+  {
+    ...sampleTakeProfit,
+    intentId: 'intent-sell-tp',
+    referenceObservationId: recordedTradeId(tpBuy, BASE_MINT),
+  },
+  cycle('sell-holding', 2000, STOP_LOSS_PAIR, {
+    targetSlot: 2001,
+    watch: 'TRIGGERED',
+    trigger: {
+      observationId: 'observation-2001',
+      slot: 2001,
+      price: '0.00000008',
+      marketCapUsd: '16000.000000000000',
+      rate: '200',
+    },
+    referenceObservationId: recordedTradeId(soldBuy, STOP_LOSS_MINT),
+    status: 'FILLED',
+    rejectionReason: null,
+    fill: fill(
+      'sell-holding',
+      2001,
+      2003,
+      '0.00000008015764656323810068866023294541',
+      '1247541.616895000000',
+      20,
+    ),
+    selectedObservation: walletSellObservations.find((o) => o.slot === 2003) ?? null,
+    position: {
+      id: 'position-sell-holding',
+      state: 'CLOSED',
+      close: {
+        slot: 2004,
+        observationId: 'observation-2004',
+        executionPrice: '0.00000008198000000000000000000000000000',
+        grossProceeds: '0.102280000000',
+        fee: '0.001278500000',
+        feeBps: 125,
+        transactionCost: TRANSACTION_COST,
+        priceImpactBps: -18,
+        netProceeds: '0.100001500000',
+        realizedPnl: WALLET_SOLD_PNL,
+        reason: 'WALLET_SOLD',
+        priceAssumption: 'NEXT_TRADE',
+      },
+      takeProfitPrice: '0.00000012424435217301905606742336106539',
+      stopLossPrice: '0.00000004809458793794286041319613976725',
+      // Decu sold at slot 2002, before our buy landed at 2003: the trigger is dated at the fill.
+      exitTrigger: {
+        observationId: HOLDING_SELL_ID,
+        slot: 2003,
+        time: slotTime(2003),
+        reason: 'WALLET_SOLD',
+      },
+      exitStart: slotTime(2006),
+    },
+  }),
+  cycle('sell-before-dip', 3000, NO_DIP_PAIR, {
+    targetSlot: 3001,
+    watch: 'WALLET_SOLD',
+    rejectionReason: 'WALLET_SOLD',
+    referenceObservationId: recordedTradeId(beforeDipBuy, NO_DIP_MINT),
+    walletSell: { eventId: BEFORE_DIP_SELL_ID, slot: 3005 },
+  }),
+  cycle('reference-unavailable', 4000, REFERENCE_UNAVAILABLE_PAIR, {
+    watch: 'REFERENCE_UNAVAILABLE',
+    rejectionReason: 'REFERENCE_UNAVAILABLE',
+    referencePrice: REFERENCE_PLACEHOLDER,
+    dipPrice: '0.00000006352000000000000000000000000000',
+  }),
+];
+export const [, walletSoldScenario, soldBeforeDipScenario, referenceUnavailableScenario] =
+  walletSellScenarios as [Scenario, Scenario, Scenario, Scenario];
+
+export const walletSellRunDetail: RunDetail = {
+  run: {
+    ...sampleRun,
+    id: WALLET_SELL_RUN_ID,
+    datasetId: V4_DATASET_ID,
+    engineVersion: 'dip-paper-v5',
+    scenarioCount: 4,
+    filledCount: 2,
+    rejectedCount: 2,
+    closedCount: 2,
+    realizedPnl: '0.026011934000',
+  },
+  config: {
+    ...mvpConfig,
+    dipBps: 2000,
+    takeProfitBps: 5500,
+    stopLossBps: 4000,
+    dipWindowMs: 30000,
+    maxHoldMs: 180000,
+    hardExitStartMs: 240000,
+    priceMeasure: 'POST_TRADE',
+    followWalletSells: true,
+  },
+  scenarios: walletSellScenarios,
+  millisPerSlot: 400,
+};
+
 /** Not listed by `/api/runs`; served only by id. */
 export const recordedRunRecords: Record<string, MockRunRecords> = {
+  [WALLET_SELL_RUN_ID]: {
+    detail: walletSellRunDetail,
+    events: walletSellScenarios.map((s) => ({
+      ...event(s.sourceSlot, 0, 'BUY', null, { pair: s.pair }),
+      eventId: s.sourceEventId,
+    })),
+    observations: walletSellObservations,
+    orders: ordersOf(walletSellScenarios),
+    positions: positionsOf(walletSellScenarios),
+  },
   [REAL_RUN_ID]: {
     detail: realRunDetail,
     events: [
@@ -729,7 +913,6 @@ export const realRunUsdt: RunUsdtView = {
   realizedPnlUnavailableReason: null,
 };
 
-export const V4_DATASET_ID = 'cafef00d1234567890abcdef1234567890abcdef1234567890abcdef12345678';
 export const v4Dataset: Dataset = {
   ...edgeDataset,
   id: V4_DATASET_ID,

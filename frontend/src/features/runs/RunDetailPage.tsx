@@ -28,6 +28,7 @@ import {
   useSolUsdtPrice,
 } from '../../api/queries';
 import type {
+  Config,
   ObservedChartMarker,
   PaperChartFill,
   RunDetail,
@@ -64,7 +65,13 @@ import { recordedEventSignature, tokenLinks, transactionLinks } from '../../lib/
 import { paths } from '../../paths';
 import type { RunStartNavigationState } from './NewRunPage';
 import { EventsTable, OrdersTable, PositionsTable } from './RunTables';
-import { bpsLabel, horizonLabel, latencyLabel, transactionCostLabel } from './configLabels';
+import {
+  bpsLabel,
+  formatSettingValue,
+  horizonLabel,
+  latencyLabel,
+  transactionCostLabel,
+} from './configLabels';
 import { CycleList, CycleStory, OutcomeBar, RunLanes } from './RunInspector';
 import { ScenarioCard } from './ScenarioCard';
 
@@ -107,6 +114,11 @@ function RunHeader({ detail }: { detail: RunDetail }) {
             ['Minimum market cap', `$${formatDecimal(config.minMarketCapUsd)}`],
             ['Take profit', bpsLabel(config.takeProfitBps, config.takeProfitPercent)],
             ['Stop loss', bpsLabel(config.stopLossBps, config.stopLossPercent)],
+            ['Price measure', formatSettingValue('priceMeasure', config.priceMeasure)],
+            [
+              "Follow Decu's sells",
+              formatSettingValue('followWalletSells', config.followWalletSells),
+            ],
             ['Horizon', horizonLabel(config.horizonSlots, detail.millisPerSlot)],
             ['Latency', latencyLabel(config.latencySlots)],
             ['Transaction cost', transactionCostLabel(config.transactionCostSol)],
@@ -248,12 +260,14 @@ function Scenarios({
   selectedId,
   unit,
   usdt,
+  config,
 }: {
   runId: string;
   scenarios: Scenario[];
   selectedId: string | null;
   unit: string;
   usdt: RunUsdtView | null;
+  config: Config;
 }) {
   const events = useRunEvents(runId, scenarios.length > 0);
   if (scenarios.length === 0) return null;
@@ -280,6 +294,7 @@ function Scenarios({
             <ScenarioCard
               scenario={s}
               unit={unit}
+              config={config}
               usdt={usdt ? usdtById.get(s.intentId) : undefined}
               selected={s.intentId === selectedId}
             />
@@ -617,7 +632,14 @@ export function RunDetailPage() {
               <CycleStory scenario={current} unit={unit} />
             </Stack>
           </Box>
-          <RunLanes scenarios={cycles} selected={selected} onSelect={setSelected} unit={unit} />
+          <RunLanes
+            scenarios={cycles}
+            selected={selected}
+            onSelect={setSelected}
+            unit={unit}
+            config={detail.config}
+            millisPerSlot={detail.millisPerSlot}
+          />
         </>
       ) : (
         <Section title="Price path">
@@ -633,6 +655,7 @@ export function RunDetailPage() {
         selectedId={current?.intentId ?? null}
         unit={unit}
         usdt={usdt}
+        config={detail.config}
       />
       <RunHeader detail={detail} />
       <RecordTabs

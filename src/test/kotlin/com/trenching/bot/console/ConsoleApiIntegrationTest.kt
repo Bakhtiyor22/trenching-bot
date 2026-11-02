@@ -11,6 +11,7 @@ import com.trenching.bot.console.application.ConsoleMetrics
 import com.trenching.bot.console.application.RunLaunchService
 import com.trenching.bot.console.domain.PercentConversion
 import com.trenching.bot.papertrading.domain.RejectionReason
+import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV5
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
@@ -130,6 +131,33 @@ class ConsoleApiIntegrationTest {
         val (loggedDataset, mint, decidedAt, throughSlot) = refusal.argumentArray.map(Any::toString)
         assertEquals(listOf(datasetId, takeProfit.base.value, "1006"), listOf(loggedDataset, mint, throughSlot))
         assertTrue(decidedAt.toLong() > 1006, decidedAt)
+    }
+
+    @Test
+    fun `the wallet-sell rule on a dataset whose observations record no trades is refused with 409 and stores nothing`() {
+        val datasetId = upload(variant(json, "no-trades"), "no-trades.json").path("dataset").path("id").asString()
+        val runsBefore = count("select count(*) from simulation_runs")
+        val failedBefore = counter(ConsoleMetrics.RUNS, ConsoleMetrics.FAILED)
+        val refusedBefore = counter(ConsoleMetrics.RUNS, ConsoleMetrics.SELL_CHECK_NEEDS_TRADES)
+        val logs = ListAppender<ILoggingEvent>().apply { start() }
+        val logger = LoggerFactory.getLogger(RunLaunchService::class.java) as Logger
+        logger.addAppender(logs)
+
+        val refused = try {
+            http.post("/api/runs", """{"datasetId":"$datasetId","config":{"followWalletSells":true}}""")
+        } finally {
+            logger.detachAppender(logs)
+        }
+
+        assertError(409, SellCheckNeedsTradesException.CODE, refused)
+        assertTrue(refused.body.path("message").asString().contains("schemaVersion=3"), refused.raw)
+        assertEquals(runsBefore, count("select count(*) from simulation_runs"))
+        assertEquals(failedBefore, counter(ConsoleMetrics.RUNS, ConsoleMetrics.FAILED))
+        assertEquals(refusedBefore + 1, counter(ConsoleMetrics.RUNS, ConsoleMetrics.SELL_CHECK_NEEDS_TRADES))
+        val refusal = logs.list.single()
+        assertEquals(Level.WARN, refusal.level)
+        assertEquals(listOf(datasetId, "3", SellCheckNeedsTradesException.CODE), refusal.argumentArray.map(Any::toString))
+        assertEquals(201, http.post("/api/runs", """{"datasetId":"$datasetId","config":{"followWalletSells":false}}""").status)
     }
 
     @Test
@@ -510,6 +538,10 @@ class ConsoleApiIntegrationTest {
         assertEquals(1000000000, defaults.path("limits").path("minMarketCapUsd").path("max").asLong())
         assertEquals(9, defaults.path("limits").path("notionalScale").asInt())
         assertEquals(35, defaults.path("limits").path("notionalPrecision").asInt())
+        assertEquals("TRADE_AVERAGE", defaults.path("defaults").path("priceMeasure").asString())
+        assertTrue(defaults.path("defaults").path("followWalletSells").isBoolean)
+        assertFalse(defaults.path("defaults").path("followWalletSells").asBoolean())
+        assertEquals(listOf("TRADE_AVERAGE", "POST_TRADE"), defaults.path("limits").path("priceMeasure").items().map { it.asString() })
     }
 
     @Test

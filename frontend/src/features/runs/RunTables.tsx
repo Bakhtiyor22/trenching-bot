@@ -9,6 +9,7 @@ import { EmptyState } from '../../components/StateViews';
 import { formatSlot, humanizeCode, signedBps } from '../../lib/format';
 import { levelPercent } from '../../lib/percent';
 import { recordedEventSignature, transactionLinks } from '../../lib/marketLinks';
+import { closeReasonText, knownReasonText } from '../captures/captureReasons';
 
 function Flag({ value, label }: { value: boolean; label: string }) {
   return (
@@ -28,7 +29,14 @@ function Wrap({ children, minWidth }: { children: ReactNode; minWidth: number })
   );
 }
 
-function ReasonText({ code }: { code: string | null }) {
+/** A reason code with its plain text, from [describe] when it knows the code, else the humanized code. */
+function ReasonText({
+  code,
+  describe,
+}: {
+  code: string | null;
+  describe?: (code: string) => string | null;
+}) {
   if (!code)
     return (
       <Text span c="dimmed" size="sm">
@@ -37,7 +45,7 @@ function ReasonText({ code }: { code: string | null }) {
     );
   return (
     <Text span size="sm">
-      {humanizeCode(code)} <Code fz="xs">{code}</Code>
+      {describe?.(code) ?? humanizeCode(code)} <Code fz="xs">{code}</Code>
     </Text>
   );
 }
@@ -267,7 +275,7 @@ export function OrdersTable({
                 </Badge>
               </Table.Td>
               <Table.Td>
-                <ReasonText code={o.rejectionReason} />
+                <ReasonText code={o.rejectionReason} describe={knownReasonText} />
               </Table.Td>
               <FillCells fill={o.fill} />
             </Table.Tr>
@@ -299,7 +307,7 @@ export function PositionsTable({
     );
   return (
     <>
-      <Wrap minWidth={1500}>
+      <Wrap minWidth={1660}>
         <Table.Thead>
           <Table.Tr>
             <Table.Th>Position</Table.Th>
@@ -311,6 +319,7 @@ export function PositionsTable({
             <Table.Th ta="right">Entry costs</Table.Th>
             <Table.Th ta="right">Take profit</Table.Th>
             <Table.Th ta="right">Stop loss</Table.Th>
+            <Table.Th>Exit reason</Table.Th>
             <Table.Th ta="right">Exit slot</Table.Th>
             <Table.Th ta="right">Exit price</Table.Th>
             <Table.Th ta="right">Exit costs</Table.Th>
@@ -352,6 +361,9 @@ export function PositionsTable({
               </Table.Td>
               <Table.Td ta="right">
                 <Decimal value={p.stopLossPrice} />
+              </Table.Td>
+              <Table.Td>
+                <ReasonText code={p.close?.reason ?? null} describe={closeReasonText} />
               </Table.Td>
               <Table.Td ta="right">{p.close ? formatSlot(p.close.slot) : '—'}</Table.Td>
               <Table.Td ta="right">

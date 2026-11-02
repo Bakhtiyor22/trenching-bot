@@ -9,5 +9,6 @@ object ConsoleMetrics {
     const val EXISTING = "existing"
     const val FAILED = "failed"
     const val COVERAGE_ENDED = "coverage_ended"
+    const val SELL_CHECK_NEEDS_TRADES = "sell_check_needs_trades"
     const val INVALID = "invalid"
 }

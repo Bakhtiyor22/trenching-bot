@@ -14,15 +14,18 @@ import com.trenching.bot.marketdata.RateUnavailableReason
 import com.trenching.bot.marketdata.ReferenceRate
 import com.trenching.bot.marketdata.SolUsdtRateSource
 import com.trenching.bot.marketdata.domain.MarketObservation
+import com.trenching.bot.marketdata.domain.ObservedTrade
 import com.trenching.bot.marketdata.domain.OrderedMarketData
+import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.replay.application.DipOutcomeCutoff
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.ReplayMarketCaptureRequest
 import com.trenching.bot.strategy.domain.SimulationConfig
+import com.trenching.bot.support.AgreedDipSample
 import com.trenching.bot.support.DipSample
-import com.trenching.bot.support.DipSampleV4
 import com.trenching.bot.walletactivity.domain.WalletTransaction
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Duration
 import java.time.Instant
 import kotlin.test.assertEquals
@@ -33,12 +36,13 @@ import org.junit.jupiter.api.Test
 import org.slf4j.LoggerFactory
 
 /**
- * The cutoff under `SimulationConfig.agreed()` on the sample's cycles. Every sample trade lands at its buy's block time; the
- * take-profit cycle is reshaped to the agreed levels: its dip trigger at slot 1002 is at the 20% level, the fill is slot 1003's
+ * The cutoff under `SimulationConfig.agreed()` on the sample's cycles, shaped by [AgreedDipSample] and captured in windows
+ * from 50 slots before each buy, so they hold the wallet's own buy and its post-trade reference P0. Every sample trade lands at
+ * its buy's block time; in the take-profit cycle the dip trigger at slot 1002 is at the 20% level, the fill is slot 1003's
  * curve, and slot 1005 crosses +55%, so the sale is into slot 1006. Trades placed later are copies at a chosen time.
  */
 class DipOutcomeCutoffTest {
-    private val sample = DipSampleV4.dataset().let { it.copy(observations = it.observations.map(::agreedLevels)) }
+    private val sample = AgreedDipSample.dataset()
     private val logs = ListAppender<ILoggingEvent>()
     private val logger = LoggerFactory.getLogger(DipOutcomeCutoff::class.java) as Logger
     private val timeReads = mutableListOf<Slot>()
@@ -98,10 +102,11 @@ class DipOutcomeCutoffTest {
     @Test
     fun `an unsupported supply at the buy with an empty prefix stays undecided without asking for a rate`() {
         val rates = FakeRates()
-        val window = window(DipSample.UNSUPPORTED_SUPPLY)
+        val window = legacyWindow(DipSample.UNSUPPORTED_SUPPLY)
         val buyTime = buy(DipSample.UNSUPPORTED_SUPPLY).blockTime
+        val cutoff = DipOutcomeCutoff(sample.trackedWallet, mapOf(window to listOf(buy(DipSample.UNSUPPORTED_SUPPLY))), rates)
 
-        val decision = cutoff(DipSample.UNSUPPORTED_SUPPLY, rates).evaluate(window, emptyList(), Slot.of(window.fromSlot.value - 1)) {
+        val decision = cutoff.evaluate(window, emptyList(), Slot.of(window.fromSlot.value - 1)) {
             timeReads += Slot.of(window.fromSlot.value - 1)
             buyTime
         }
@@ -155,7 +160,7 @@ class DipOutcomeCutoffTest {
 
     @Test
     fun `a lead window holding the buy's own slot and dip-priced lead trades is decided as without its lead`() {
-        val window = leadWindow(DipSample.TAKE_PROFIT)
+        val window = window(DipSample.TAKE_PROFIT)
         val cutoff = DipOutcomeCutoff(sample.trackedWallet, mapOf(window to listOf(buy(DipSample.TAKE_PROFIT))), FakeRates())
         val lead = leadTrades(DipSample.TAKE_PROFIT)
 
@@ -166,13 +171,44 @@ class DipOutcomeCutoffTest {
 
     @Test
     fun `a lead window skipped at its buy records coverage through the slot proving four minutes`() {
-        val window = leadWindow(DipSample.UNSUPPORTED_SUPPLY)
+        val window = window(DipSample.UNSUPPORTED_SUPPLY)
         val cutoff = DipOutcomeCutoff(sample.trackedWallet, mapOf(window to listOf(buy(DipSample.UNSUPPORTED_SUPPLY))), FakeRates())
         val buySlot = buy(DipSample.UNSUPPORTED_SUPPLY).slot.value
 
         assertEquals(CutoffDecision.Undecided, cutoff.evaluate(window, canonical(leadTrades(DipSample.UNSUPPORTED_SUPPLY)), Slot.of(buySlot)) { null })
         assertEquals(CutoffDecision.Decided(Slot.of(buySlot + 700), "UNSUPPORTED_SUPPLY"),
             cutoff.evaluate(window, canonical(leadTrades(DipSample.UNSUPPORTED_SUPPLY)), Slot.of(buySlot + 700)) { LATE })
+    }
+
+    @Test
+    fun `a window planned before the lead holds no buy to take the post-trade reference from and is decided as such`() {
+        val window = legacyWindow(DipSample.TAKE_PROFIT)
+        val cutoff = DipOutcomeCutoff(sample.trackedWallet, mapOf(window to listOf(buy(DipSample.TAKE_PROFIT))), FakeRates())
+        val observations = canonical(prefix(DipSample.TAKE_PROFIT, 1006).filter { it.slot >= window.fromSlot })
+
+        assertEquals(CutoffDecision.Undecided, cutoff.evaluate(window, observations, Slot.of(1400)) { T0.plusSeconds(239) })
+        assertEquals(CutoffDecision.Decided(Slot.of(1400), "REFERENCE_UNAVAILABLE"),
+            cutoff.evaluate(window, observations, Slot.of(1400)) { T0.plusSeconds(240) })
+    }
+
+    @Test
+    fun `a wallet sell before the dip decides the window at the sell`() {
+        val cutoff = cutoff(DipSample.TAKE_PROFIT)
+        val sold = soldBy(prefix(DipSample.TAKE_PROFIT, 1006), "fixture:TP:1001:0")
+
+        assertEquals(CutoffDecision.Undecided, evaluate(cutoff, DipSample.TAKE_PROFIT, sold.filter { it.slot.value <= 1000 }, 1000, LATE))
+        assertEquals(CutoffDecision.Decided(Slot.of(1001), "WALLET_SOLD"),
+            evaluate(cutoff, DipSample.TAKE_PROFIT, sold.filter { it.slot.value <= 1001 }, 1001, LATE))
+    }
+
+    @Test
+    fun `a wallet sell while holding is decided like a take profit, at its sale`() {
+        val cutoff = cutoff(DipSample.TAKE_PROFIT)
+        val sold = soldBy(prefix(DipSample.TAKE_PROFIT, 1006), "fixture:TP:1004:0")
+
+        assertEquals(CutoffDecision.Undecided, evaluate(cutoff, DipSample.TAKE_PROFIT, sold.filter { it.slot.value <= 1004 }, 1004, LATE))
+        assertEquals(CutoffDecision.Decided(Slot.of(1005), "WALLET_SOLD"),
+            evaluate(cutoff, DipSample.TAKE_PROFIT, sold.filter { it.slot.value <= 1005 }, 1005, LATE))
     }
 
     @Test
@@ -238,10 +274,10 @@ class DipOutcomeCutoffTest {
     }
 
     @Test
-    fun `its identity is engine dip-paper-v4 and the configuration hash of the agreed replay`() {
+    fun `its identity is engine dip-paper-v5 and the configuration hash of the agreed replay`() {
         val report = ReplayRunner().run(sample, SimulationConfig.agreed())
 
-        assertEquals(CutoffIdentity("dip-paper-v4", report.configurationHash), DipOutcomeCutoff.IDENTITY)
+        assertEquals(CutoffIdentity("dip-paper-v5", report.configurationHash), DipOutcomeCutoff.IDENTITY)
         assertEquals(Duration.ofMinutes(4), ReplayMarketCaptureRequest.MINIMUM_DECIDED_RECORDING)
     }
 
@@ -256,13 +292,20 @@ class DipOutcomeCutoffTest {
 
     private fun buy(cycle: Int): WalletTransaction = sample.transactions.filter { it.pair == DipSample.pair(cycle) }.minBy { it.slot.value }
 
+    /** The window as planned since the market-window lead: from 50 slots before the buy. */
     private fun window(cycle: Int): MarketCaptureWindow = buy(cycle).let {
+        MarketCaptureWindow.forFirstBuy(DipSample.mint(cycle), it.slot, it.signature,
+            MarketCaptureWindowParameters(HORIZON, 2, MarketCaptureWindowParameters.DEFAULT_LEAD_SLOTS))
+    }
+
+    /** A window as planned before the market-window lead: from the slot after the buy. */
+    private fun legacyWindow(cycle: Int): MarketCaptureWindow = buy(cycle).let {
         MarketCaptureWindow.of(DipSample.mint(cycle), it.slot.plus(1), it.slot.plus(HORIZON), it.signature)
     }
 
-    private fun leadWindow(cycle: Int): MarketCaptureWindow = buy(cycle).let {
-        MarketCaptureWindow.forFirstBuy(DipSample.mint(cycle), it.slot, it.signature,
-            MarketCaptureWindowParameters(HORIZON, 2, MarketCaptureWindowParameters.DEFAULT_LEAD_SLOTS))
+    /** [observations] with the trade [observationId] recorded as a sell by the tracked wallet. */
+    private fun soldBy(observations: List<MarketObservation>, observationId: String): List<MarketObservation> = observations.map {
+        if (it.id == observationId) it.copy(trade = ObservedTrade.of(sample.trackedWallet.value, TradeSide.SELL, BigInteger.ONE, BigInteger.ONE)) else it
     }
 
     /** Copies of the take-profit cycle's agreed dip trigger in the lead `S - 50`, `S - 1` and twice in the buy's slot S. */
@@ -295,9 +338,6 @@ class DipOutcomeCutoffTest {
         return canonical(sample.observations.filter { it.pair == window.pair && it.slot >= window.fromSlot && it.slot.value <= through })
     }
 
-    private fun agreedLevels(observation: MarketObservation): MarketObservation =
-        AGREED_PRICES[observation.id]?.let { observation.copy(price = BigDecimal(it)) } ?: observation
-
     /** Answers each minute from [available], recording every request; [failure] makes the next requests throw. */
     private inner class FakeRates(var available: Map<Instant, BigDecimal> = RATES) : SolUsdtRateSource {
         val requests = mutableListOf<Set<Instant>>()
@@ -326,8 +366,5 @@ class DipOutcomeCutoffTest {
         /** The sample's 200 and 150 USDT minutes, and 151 for each later minute through the sixth. */
         val RATES: Map<Instant, BigDecimal> = DipSample.load().referenceRates.associate { it.minute to it.rate } +
             (3L..5L).associate { T0.plus(Duration.ofMinutes(it)) to BigDecimal("151") }
-
-        /** The take-profit cycle's dip at exactly 20% below P0 and its take profit above +55% of the entry's execution price. */
-        val AGREED_PRICES = mapOf("fixture:TP:1002:0" to "0.00000008", "fixture:TP:1005:0" to "0.00000014")
     }
 }

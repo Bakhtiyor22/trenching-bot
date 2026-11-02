@@ -15,12 +15,16 @@ import java.math.BigDecimal
 import java.time.Instant
 
 /**
- * IN_POSITION of the dip-entry strategy. Take profit and stop loss trigger on the first eligible trade after the fill that
- * crosses their level before the exit start. Per the bonding-curve-execution ADR such an exit sells the whole position into
- * the first eligible trade at least `latencySlots` after the trigger whose post-trade curve can pay it, but only one landing
- * within spec Section 8's 60 s of the trigger ([ExitSaleWindow]); without one it sells against the curve standing at its sale
- * slot. A timed configuration (spec P11) also triggers at the exit start when neither came first, selling against the curve
- * standing then.
+ * IN_POSITION of the dip-entry strategy. Take profit and stop loss trigger on the first eligible trade after the fill whose
+ * price by [SimulationConfig.priceMeasure] crosses their level before the exit start. Under
+ * [SimulationConfig.followWalletSells] a sell of the mint by the buy's wallet before the exit start triggers too, whatever its
+ * amount or eligibility. Within a slot, a wallet sell is read first, so it wins over any crossing in its slot, the same trade's
+ * included, whatever their observation ids; an earlier slot's crossing still wins. A sell after our dip trigger but no later
+ * than our fill's slot triggers as soon as we hold, at the fill. Per the bonding-curve-execution ADR such an exit sells the whole
+ * position into the first eligible trade at least `latencySlots` after the trigger whose post-trade curve can pay it, but only
+ * one landing within spec Section 8's 60 s of the trigger ([ExitSaleWindow]); without one it sells against the curve standing
+ * at its sale slot. A timed configuration (spec P11) also triggers at the exit start when none came first, selling against the
+ * curve standing then.
  *
  * A sale against the standing curve is made only when the recording proves it covers the sale's moment, since no recorded
  * trade then shows nothing otherwise. Nothing after the bonding curve completes, or after the horizon, is used.
@@ -44,17 +48,26 @@ class PositionService {
         var standing = standingAfterFillSlot(position, source, config)
             ?: return CloseOutcome.Unavailable(position, RejectionReason.MIGRATED)
         val exitStart = position.exitStart
-        if (exitStart != null && !fillTrade(position.fill, position.pair, source).observedTime.isBefore(exitStart)) {
+        val fillTrade = fillTrade(position.fill, position.pair, source)
+        if (exitStart != null && !fillTrade.observedTime.isBefore(exitStart)) {
             return timeExit(position, standing, position.fill.actualSlot, exitStart, config)
         }
         val held = source.observations(position.pair, position.fill.actualSlot.plus(1), intent.horizonEndSlot)
+        soldBeforeHolding(position, intent, fillTrade, source, config)?.let { trigger ->
+            return sell(position.copy(exitTrigger = trigger), standing, held, recorded, config)
+        }
         for ((index, observation) in held.withIndex()) {
             if (exitStart != null && !observation.observedTime.isBefore(exitStart)) return timeExit(position, standing, observation.slot, exitStart, config)
+            if (index == 0 || held[index - 1].slot != observation.slot) {
+                walletSoldInSlot(held, index, exitStart, intent, config)?.let { trigger ->
+                    return sell(position.copy(exitTrigger = trigger), standing, held.subList(index, held.size), recorded, config)
+                }
+            }
             if (observation.curveComplete) return CloseOutcome.Unavailable(position, RejectionReason.MIGRATED)
-            if (!eligible(observation, config)) continue
-            standing = observation
-            val trigger = crossing(position, observation) ?: continue
-            return sell(position.copy(exitTrigger = trigger), observation, held.subList(index + 1, held.size), recorded, config)
+            val tradeable = eligible(observation, config)
+            if (tradeable) standing = observation
+            val trigger = crossing(position, observation, config)?.takeIf { tradeable } ?: continue
+            return sell(position.copy(exitTrigger = trigger), standing, held.subList(index + 1, held.size), recorded, config)
         }
         val reached = recorded.time
         return if (exitStart != null && reached != null && !reached.isBefore(exitStart)) {
@@ -63,19 +76,19 @@ class PositionService {
     }
 
     /**
-     * Sells [triggered] after its take profit or stop loss at [crossing]: into the first eligible trade of [later] within its
-     * [ExitSaleWindow] whose curve can pay, or else, once the recording proves no trade can land within it, against the curve
-     * standing at the sale slot.
+     * Sells [triggered] after its take profit, stop loss or wallet sell, [standingAtTrigger] being the curve standing then: into
+     * the first eligible trade of [later] within its [ExitSaleWindow] whose curve can pay, or else, once the recording proves no
+     * trade can land within it, against the curve standing at the sale slot.
      */
     private fun sell(
         triggered: Position,
-        crossing: MarketObservation,
+        standingAtTrigger: MarketObservation,
         later: List<MarketObservation>,
         recorded: RecordedThrough,
         config: SimulationConfig,
     ): CloseOutcome {
         val window = ExitSaleWindow.of(checkNotNull(triggered.exitTrigger) { "Sale without a trigger id=${triggered.id}" }, config)
-        var standing = crossing
+        var standing = standingAtTrigger
         var saleAttempted = false
         for (observation in later) {
             if (window.passedBy(observation)) return deadlinePassed(triggered, standing, window, saleAttempted, config)
@@ -126,10 +139,55 @@ class PositionService {
     private fun eligible(observation: MarketObservation, config: SimulationConfig): Boolean =
         ObservationEligibility.issue(observation, config.maxAgeSlots) == null
 
-    private fun crossing(position: Position, observation: MarketObservation): ExitTrigger? = when {
-        observation.price >= position.takeProfitPrice -> ExitTrigger(observation.id, observation.slot, observation.observedTime, CloseReason.TAKE_PROFIT)
-        observation.price <= position.stopLossPrice -> ExitTrigger(observation.id, observation.slot, observation.observedTime, CloseReason.STOP_LOSS)
-        else -> null
+    private fun crossing(position: Position, observation: MarketObservation, config: SimulationConfig): ExitTrigger? {
+        val price = config.priceMeasure.of(observation)
+        return when {
+            price >= position.takeProfitPrice -> ExitTrigger(observation.id, observation.slot, observation.observedTime, CloseReason.TAKE_PROFIT)
+            price <= position.stopLossPrice -> ExitTrigger(observation.id, observation.slot, observation.observedTime, CloseReason.STOP_LOSS)
+            else -> null
+        }
+    }
+
+    /** A wallet-sold trigger at [slot] and [time] when [observation] is a sell by the buy's wallet and [config] follows those. */
+    private fun walletSold(observation: MarketObservation, slot: Slot, time: Instant, intent: TradeIntent, config: SimulationConfig): ExitTrigger? =
+        ExitTrigger(observation.id, slot, time, CloseReason.WALLET_SOLD)
+            .takeIf { config.followWalletSells && WalletObservations.isSellBy(observation, intent.wallet) }
+
+    /**
+     * The wallet's first sell before [exitStart] in the slot of [held]`[start]`, its first observation. A slot is read for it
+     * before any crossing in that slot, since the canonical order inside a slot is not chain order.
+     */
+    private fun walletSoldInSlot(
+        held: List<MarketObservation>,
+        start: Int,
+        exitStart: Instant?,
+        intent: TradeIntent,
+        config: SimulationConfig,
+    ): ExitTrigger? {
+        if (!config.followWalletSells) return null
+        val slot = held[start].slot
+        return held.subList(start, held.size).asSequence()
+            .takeWhile { it.slot == slot }
+            .filter { exitStart == null || it.observedTime.isBefore(exitStart) }
+            .firstNotNullOfOrNull { walletSold(it, it.slot, it.observedTime, intent, config) }
+    }
+
+    /**
+     * The wallet's first sell after our dip trigger, through our fill's slot. The entry was decided before it, so the exit
+     * starts once we hold: at the fill's slot and [fillTrade]'s time. A sell up to the dip trigger's slot ended the watch instead.
+     */
+    private fun soldBeforeHolding(
+        position: Position,
+        intent: TradeIntent,
+        fillTrade: MarketObservation,
+        source: MarketDataSource,
+        config: SimulationConfig,
+    ): ExitTrigger? {
+        if (!config.followWalletSells) return null
+        val dipSlot = checkNotNull(intent.trigger) { "Position without a dip trigger intentId=${intent.id}" }.slot
+        return source.observations(position.pair, dipSlot.plus(1), position.fill.actualSlot).firstNotNullOfOrNull {
+            walletSold(it, position.fill.actualSlot, fillTrade.observedTime, intent, config)
+        }
     }
 
     /** [provenAt] is the first slot the recording proves at or after [exitStart]; [standing] is the curve standing at it. */

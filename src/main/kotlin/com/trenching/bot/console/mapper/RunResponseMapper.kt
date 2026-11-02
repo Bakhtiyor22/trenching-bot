@@ -68,6 +68,8 @@ abstract class RunResponseMapper {
         Mapping(target = "timeline", source = "timeline"),
         Mapping(target = "watch", source = "scenario.intent.watch"),
         Mapping(target = "trigger", source = "scenario.intent.trigger"),
+        Mapping(target = "referenceObservationId", source = "scenario.intent.referenceObservationId"),
+        Mapping(target = "walletSell", source = "scenario.intent.walletSell"),
         Mapping(target = "status", expression = "java(status(scenario.getOutcome()))"),
         Mapping(target = "rejectionReason", source = "rejected.reason"),
         Mapping(target = "fill", source = "fill"),

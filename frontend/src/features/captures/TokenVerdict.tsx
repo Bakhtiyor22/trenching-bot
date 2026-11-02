@@ -88,9 +88,12 @@ function DipRow({dip}: {dip: Verdict['dip']}) {
   if (dip.state !== 'QUALIFIED') return <Cell state={dip.state}><Text size="sm">{reasonText(dip.reason) ?? '—'}</Text></Cell>;
   return <Cell state={dip.state}><Exact label="Trigger slot" value={slotText(dip.triggerSlot)}/><Exact label="Trigger price" value={dip.triggerPrice}/><Exact label="Market cap (USD)" value={dip.marketCapUsd}/><Exact label="SOL/USDT rate" value={dip.rate}/></Cell>;
 }
+/** Replay failures that a dataset gap explains, shown under the plain replay-failure line. */
+const DATASET_GAP_FAILURES = new Set(['REFERENCE_UNAVAILABLE', 'SELL_CHECK_NEEDS_TRADES']);
 function ReplayRow({replay}: {replay: Verdict['replay']}) {
+  const category = replay.category ?? '';
   return <Cell state={replay.state}>
-    {replay.state === 'FAILED' && <><Exact label="Category" value={replay.category}/><Text size="sm">{replay.category === 'FIRST_BUY_MISMATCH' ? reasonText(replay.category) : 'Replay failed — this is not a strategy outcome'}</Text></>}
+    {replay.state === 'FAILED' && <><Exact label="Category" value={replay.category}/><Text size="sm">{category === 'FIRST_BUY_MISMATCH' ? reasonText(category) : 'Replay failed — this is not a strategy outcome'}</Text>{DATASET_GAP_FAILURES.has(category) && <Text size="sm">{reasonText(category)}</Text>}{category === 'REFERENCE_UNAVAILABLE' && <Text size="sm">Capture the token again so its window includes Decu's buy.</Text>}</>}
     {replay.state === 'NOT_RUN' && <Text size="sm">Runs automatically after export</Text>}
   </Cell>;
 }

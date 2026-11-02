@@ -9,6 +9,7 @@ import com.trenching.bot.console.domain.NumberRange
 import com.trenching.bot.console.domain.PercentConversion
 import com.trenching.bot.console.domain.PercentToBps
 import com.trenching.bot.console.domain.SimulationConfigLimits
+import com.trenching.bot.strategy.domain.PriceMeasure
 import com.trenching.bot.strategy.domain.SimulationConfig
 import java.math.BigDecimal
 import org.springframework.stereotype.Component
@@ -17,7 +18,8 @@ import tools.jackson.databind.JsonNode
 /**
  * Checks every field of a run's configuration and reports each bad one; absent fields take the `mvp()` value (the timed
  * clocks: unset) and a property that is not a configuration field is reported rather than ignored. A level sent as a percent is converted to
- * exact basis points here, before the run starts, so the stored and hashed configuration never sees the percent.
+ * exact basis points here, before the run starts, so the stored and hashed configuration never sees the percent. The price
+ * measure is one of its names and the wallet-sell rule a JSON boolean, never a string or a number coerced into one.
  */
 @Component
 class ConsoleConfigValidator {
@@ -45,11 +47,13 @@ class ConsoleConfigValidator {
         val hardExitStartMs = integerOrNull(HARD_EXIT_START_MS, request.hardExitStartMs, limits.hardExitStartMs, errors)
         requirePair(MAX_HOLD_MS, maxHoldMs, HARD_EXIT_START_MS, request.hardExitStartMs, errors)
         requirePair(HARD_EXIT_START_MS, hardExitStartMs, MAX_HOLD_MS, request.maxHoldMs, errors)
+        val priceMeasure = priceMeasure(request.priceMeasure, defaults.priceMeasure, errors)
+        val followWalletSells = boolean(FOLLOW_WALLET_SELLS, request.followWalletSells, defaults.followWalletSells, errors)
         request.unknownFields.keys.forEach { errors[it] = UNKNOWN_FIELD_MESSAGE }
         if (errors.isNotEmpty()) return ConfigValidation.Invalid(errors, errorCode(errors.keys, conflicts))
         return ConfigValidation.Valid(SimulationConfig.of(notional, maxAgeSlots, dipBps, takeProfitBps, stopLossBps, minMarketCapUsd,
             horizonSlots, latencySlots, transactionCostSol, quoteMint = quoteMint, dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs,
-            hardExitStartMs = hardExitStartMs))
+            hardExitStartMs = hardExitStartMs, priceMeasure = priceMeasure, followWalletSells = followWalletSells))
     }
 
     /** A valid [field] whose pair was not sent reports the pair as missing; an invalid one is already reported on its own. */
@@ -161,6 +165,27 @@ class ConsoleConfigValidator {
         return mint
     }
 
+    private fun priceMeasure(node: JsonNode?, default: PriceMeasure, errors: MutableMap<String, String>): PriceMeasure {
+        if (isAbsent(node)) return default
+        val name = node?.takeIf { it.isString }?.stringValue()
+        val measure = limits.priceMeasure.firstOrNull { it.name == name }
+        if (measure == null) {
+            errors[PRICE_MEASURE] = "must be one of ${limits.priceMeasure.joinToString()}"
+            return default
+        }
+        return measure
+    }
+
+    private fun boolean(field: String, node: JsonNode?, default: Boolean, errors: MutableMap<String, String>): Boolean {
+        if (isAbsent(node)) return default
+        val value = node?.takeIf { it.isBoolean }?.booleanValue()
+        if (value == null) {
+            errors[field] = "must be true or false"
+            return default
+        }
+        return value
+    }
+
     private fun isAbsent(node: JsonNode?): Boolean = node == null || node.isNull || node.isMissingNode
 
     private companion object {
@@ -180,6 +205,8 @@ class ConsoleConfigValidator {
         const val DIP_WINDOW_MS = "dipWindowMs"
         const val MAX_HOLD_MS = "maxHoldMs"
         const val HARD_EXIT_START_MS = "hardExitStartMs"
+        const val PRICE_MEASURE = "priceMeasure"
+        const val FOLLOW_WALLET_SELLS = "followWalletSells"
         const val DECIMAL_FORMAT_MESSAGE = "must be a plain decimal string such as \"100\" or \"0.5\""
         const val UNKNOWN_FIELD_MESSAGE = "is not a configuration field"
         const val PERCENT_FORMAT_MESSAGE = "must be a percent string with at most 2 decimals, such as \"20\" or \"15.5\""

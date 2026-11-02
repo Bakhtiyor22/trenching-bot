@@ -28,7 +28,8 @@ data class Position(
 enum class PositionState { OPEN, CLOSED }
 
 /**
- * A take profit or stop loss trigger is the trade that crossed its level, at that trade's [slot] and block [time]. A time exit
+ * A take profit or stop loss trigger is the trade that crossed its level, at that trade's [slot] and block [time]; a wallet-sold
+ * trigger is the tracked wallet's sell, at its own slot and time, or at the fill's when it came before we held. A time exit
  * starts at [time] = the position's exit start; its [observationId] is the trade whose post-trade curve stood then, and its
  * [slot] the first slot the recording proves at or after that moment: the first trade at or after it, or else the coverage end.
  * [time] is null only on a trigger stored before engine dip-paper-v4.
@@ -56,12 +57,13 @@ data class PositionClose(
     val priceAssumption: ExitPriceAssumption,
 )
 
-enum class CloseReason { TAKE_PROFIT, STOP_LOSS, TIME_EXIT }
+/** [WALLET_SOLD]: the tracked wallet sold the mint while we held, so the whole position was sold, whatever amount it sold. */
+enum class CloseReason { TAKE_PROFIT, STOP_LOSS, TIME_EXIT, WALLET_SOLD }
 
 /**
  * [NEXT_TRADE]: sold into the first eligible trade at least `latencySlots` after the trigger and within its [ExitSaleWindow],
  * against its post-trade curve. [STANDING_CURVE]: no such trade was recorded, so sold against the curve standing at the sale's
- * moment, the post-trade curve of the last eligible trade before it: `trigger.slot + latencySlots` for take profit and stop
- * loss, the exit start for a time exit.
+ * moment, the post-trade curve of the last eligible trade before it: `trigger.slot + latencySlots` for take profit, stop loss
+ * and wallet sold, the exit start for a time exit.
  */
 enum class ExitPriceAssumption { NEXT_TRADE, STANDING_CURVE }

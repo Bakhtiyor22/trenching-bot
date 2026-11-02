@@ -67,10 +67,12 @@ import tools.jackson.databind.node.ArrayNode
 import tools.jackson.databind.node.ObjectNode
 
 /**
- * A decided capture of Decu's real buy against a synthetic tape of 340 same-mint trades, one per slot and one second apart
- * from the buy's block time t0: no dip until S+10, a fill at S+11, a take-profit crossing at S+39 and its sale at S+40, then
- * 300 more trades the outcome does not depend on. Under `SimulationConfig.agreed()` the window is still recorded until the
- * first trade four minutes after t0, at S+240.
+ * A decided capture of Decu's real buy at slot S, recorded in the market window's lead, followed by a synthetic tape of 340
+ * same-mint trades, one per slot and one second apart from the buy's block time t0: no dip until S+10, a fill at S+11, a
+ * take-profit crossing at S+39 and its sale at S+40, then 300 more trades the outcome does not depend on. Each tape trade is a
+ * copy of Decu's buy whose SOL amount and post-trade virtual SOL reserve are scaled by the same factor, so its average and its
+ * post-trade price both move with it from Decu's own (the post-trade reference P0). Under `SimulationConfig.agreed()` the
+ * window is still recorded until the first trade four minutes after t0, at S+240.
  */
 class OutcomeBoundedCaptureTest {
     @TempDir lateinit var directory: Path
@@ -86,17 +88,17 @@ class OutcomeBoundedCaptureTest {
         val decided = capture(decidedChain, "decided", MarketCutoffMode.DECIDED, rates).manifest
         val full = capture(Chain(::takeProfitTape), "full", MarketCutoffMode.FULL).manifest
 
-        assertEquals((SLOT + 1..SLOT + 300).toList(), decidedChain.fetchedSlots)
+        assertEquals((SLOT..SLOT + 299).toList(), decidedChain.fetchedSlots)
         assertEquals(MarketWindowCutoff(SLOT + 240, "TAKE_PROFIT", DipOutcomeCutoff.IDENTITY.engineVersion,
             DipOutcomeCutoff.IDENTITY.configurationHash), decided.windows.single().cutoff)
         val later = decided.records.filter { it.slot > SLOT + 240 }
         assertEquals(100, later.size)
         assertTrue(later.all { it.outcome == MarketTransactionOutcome.NOT_NEEDED && it.artifact == null })
         assertEquals(3, rates.requests)
-        assertEquals(listOf(SLOT + 100, SLOT + 200, SLOT + 240), decidedChain.blockTimeReads)
+        assertEquals(listOf(SLOT + 99, SLOT + 199, SLOT + 240), decidedChain.blockTimeReads)
         assertEquals(blockTime(SLOT + 240), decided.windows.single().throughBlockTime)
         assertNull(full.windows.single().cutoff)
-        assertEquals(TRADES.toInt(), full.records.count { it.outcome == MarketTransactionOutcome.CAPTURED })
+        assertEquals(TRADES.toInt() + 1, full.records.count { it.outcome == MarketTransactionOutcome.CAPTURED })
 
         val decidedDataset = export("decided")
         val fullDataset = export("full")
@@ -104,7 +106,7 @@ class OutcomeBoundedCaptureTest {
         assertEquals(Slot.of(SLOT + 240), decidedDataset.coverage.single().throughSlot)
         assertEquals(blockTime(SLOT + 240), decidedDataset.coverage.single().throughTime)
         assertEquals(Slot.of(SLOT + 4500), fullDataset.coverage.single().throughSlot)
-        assertEquals(240, decidedDataset.observations.size)
+        assertEquals(241, decidedDataset.observations.size)
         assertEquals(RATES.take(5), decidedDataset.referenceRates)
 
         val decidedVerdict = qualify("decided")
@@ -143,7 +145,7 @@ class OutcomeBoundedCaptureTest {
 
         val manifest = capture(chain, "no-dip", MarketCutoffMode.DECIDED, FixedRates()).manifest
 
-        assertEquals((SLOT + 1..SLOT + 300).toList(), chain.fetchedSlots)
+        assertEquals((SLOT..SLOT + 299).toList(), chain.fetchedSlots)
         assertEquals(SLOT + 240, manifest.windows.single().cutoff?.throughSlot)
         assertEquals("NO_DIP", manifest.windows.single().cutoff?.outcome)
         assertEquals(Slot.of(SLOT + 240), export("no-dip").coverage.single().throughSlot)
@@ -156,7 +158,7 @@ class OutcomeBoundedCaptureTest {
         val decided = capture(Chain(::quietAfterTakeProfit, QUIET_TAPE), "decided", MarketCutoffMode.DECIDED, FixedRates()).manifest
         capture(Chain(::quietAfterTakeProfit, QUIET_TAPE), "full", MarketCutoffMode.FULL)
 
-        assertEquals(MarketWindowCutoff(SLOT + 1299, "TAKE_PROFIT", DipOutcomeCutoff.IDENTITY.engineVersion,
+        assertEquals(MarketWindowCutoff(SLOT + 1300, "TAKE_PROFIT", DipOutcomeCutoff.IDENTITY.engineVersion,
             DipOutcomeCutoff.IDENTITY.configurationHash), decided.windows.single().cutoff)
         val decidedClose = agreedClose(export("decided"))
         assertEquals(ExitPriceAssumption.STANDING_CURVE, decidedClose.priceAssumption)
@@ -182,7 +184,7 @@ class OutcomeBoundedCaptureTest {
         assertNull(manifest.windows.single().throughBlockTime)
         assertTrue(manifest.complete)
         assertTrue(logs.list.none { it.level == Level.ERROR })
-        assertEquals(listOf(SLOT + 100, SLOT + 200).map { "market_capture cutoff block_time_unavailable mint=$MINT slot=$it category=BLOCK_TIME_RESPONSE" },
+        assertEquals(listOf(SLOT + 99, SLOT + 199).map { "market_capture cutoff block_time_unavailable mint=$MINT slot=$it category=BLOCK_TIME_RESPONSE" },
             logs.list.filter { it.level == Level.WARN }.map { it.formattedMessage })
     }
 
@@ -200,20 +202,21 @@ class OutcomeBoundedCaptureTest {
     fun `a decided capture saved before the lead resumes with its legacy window and stays version three`() {
         RecordedWalletFixtures.save(mapper, wallet())
         val rates = FixedRates()
-        val beforeLead = Chain(::takeProfitTape)
+        val beforeLead = Chain(::takeProfitTape, LEGACY_TAPE)
         val stopped = capture(beforeLead, "legacy", MarketCutoffMode.DECIDED, rates, requestBudget = 40, markets = plannedBeforeLead())
         assertEquals(2, stopped.manifest.schemaVersion)
         assertNull(stopped.manifest.windows.single().cutoff)
 
-        val resumed = Chain(::takeProfitTape)
+        val resumed = Chain(::takeProfitTape, LEGACY_TAPE)
         val decided = capture(resumed, "legacy", MarketCutoffMode.DECIDED, rates).manifest
-        val again = Chain(::takeProfitTape)
+        val again = Chain(::takeProfitTape, LEGACY_TAPE)
         val rerun = capture(again, "legacy", MarketCutoffMode.DECIDED, rates).manifest
 
         assertEquals(SLOT + 1, decided.windows.single().fromSlot)
         assertEquals(MarketCaptureWindowParameters.LEGACY_LEAD_SLOTS, decided.windowParameters.leadSlots)
         assertEquals(3, decided.schemaVersion)
         assertEquals(SLOT + 240, decided.windows.single().cutoff?.throughSlot)
+        assertEquals("REFERENCE_UNAVAILABLE", decided.windows.single().cutoff?.outcome)
         assertEquals(emptyList(), beforeLead.blockTimeReads + resumed.blockTimeReads + again.blockTimeReads)
         assertTrue((beforeLead.listings + resumed.listings).all { it["until"] == SIGNATURE })
         assertTrue(Files.readString(directory.resolve("legacy").resolve("market-manifest.json")).contains("\"schemaVersion\":3"))
@@ -275,12 +278,13 @@ class OutcomeBoundedCaptureTest {
     private fun wallet(): Path = directory.resolve("wallet")
 
     /**
-     * One successful Pump.fun trade of [MINT] per slot of [slots], by default S+1..S+340, its trade event paying [solAmount]
-     * lamports for the slot offset, and a block for every slot at [blockTime], answered with text when [malformedBlockTime].
+     * One successful Pump.fun trade of [MINT] per slot of [slots], by default Decu's buy at S and the tape S+1..S+340, its trade
+     * event paying [solAmount] lamports for the slot offset, and a block for every slot at [blockTime], answered with text when
+     * [malformedBlockTime].
      */
     private inner class Chain(
         private val solAmount: (Long) -> BigInteger,
-        private val slots: List<Long> = (SLOT + 1..SLOT + TRADES).toList(),
+        private val slots: List<Long> = TAPE,
         private val malformedBlockTime: Boolean = false,
     ) {
         private val slotOf = slots.associateBy(::signature)
@@ -315,6 +319,7 @@ class OutcomeBoundedCaptureTest {
     /** The buy's block time plus one second per slot after it. */
     private fun blockTime(slot: Long): Instant = T0.plusSeconds(slot - SLOT)
 
+    /** Decu's buy with [signature], [slot] and [solAmount], its post-trade virtual SOL reserve scaled by `solAmount / NORMAL`. */
     private fun trade(signature: String, slot: Long, solAmount: BigInteger): JsonNode = fixture.deepCopy().apply {
         (path("transaction").path("signatures") as ArrayNode).set(0, mapper.nodeFactory.stringNode(signature))
         put("slot", slot)
@@ -324,13 +329,25 @@ class OutcomeBoundedCaptureTest {
                 requireNotNull(Base58.decode(it.path("data").asString())).take(PumpFunLayout.TRADE_EVENT_PREFIX.size) ==
                 PumpFunLayout.TRADE_EVENT_PREFIX.toList() } as ObjectNode
         val bytes = requireNotNull(Base58.decode(event.path("data").asString()))
-        (0 until PumpFunLayout.U64_BYTES).forEach { index ->
-            bytes[PumpFunLayout.EVENT_SOL_AMOUNT_OFFSET + index] = solAmount.shiftRight(index * Byte.SIZE_BITS).toByte()
-        }
+        val virtualSol = u64(bytes, PumpFunLayout.EVENT_VIRTUAL_SOL_RESERVES_OFFSET)
+        val scaledSol = virtualSol.multiply(solAmount).divide(NORMAL)
+        putU64(bytes, PumpFunLayout.EVENT_SOL_AMOUNT_OFFSET, solAmount)
+        putU64(bytes, PumpFunLayout.EVENT_VIRTUAL_SOL_RESERVES_OFFSET, scaledSol)
+        putU64(bytes, PumpFunLayout.EVENT_REAL_SOL_RESERVES_OFFSET,
+            u64(bytes, PumpFunLayout.EVENT_REAL_SOL_RESERVES_OFFSET).add(scaledSol).subtract(virtualSol))
         event.put("data", Base58.encode(bytes))
     }
 
+    private fun u64(bytes: ByteArray, offset: Int): BigInteger =
+        BigInteger(1, bytes.copyOfRange(offset, offset + PumpFunLayout.U64_BYTES).reversedArray())
+
+    private fun putU64(bytes: ByteArray, offset: Int, value: BigInteger) {
+        (0 until PumpFunLayout.U64_BYTES).forEach { index -> bytes[offset + index] = value.shiftRight(index * Byte.SIZE_BITS).toByte() }
+    }
+
+    /** Decu's buy keeps its own signature, so the market data records it as the buy the cycle starts from. */
     private fun signature(slot: Long): String {
+        if (slot == SLOT) return SIGNATURE
         val digest = MessageDigest.getInstance("SHA-256")
         return Base58.encode(digest.digest("a$slot".toByteArray()) + digest.digest("b$slot".toByteArray()))
     }
@@ -356,10 +373,15 @@ class OutcomeBoundedCaptureTest {
     private companion object {
         const val GENESIS = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
         const val TRADES = 340L
-        /** A trade per slot through S+100, then none until S+1300, 1,200 s after the take profit, and 40 more after it. */
-        val QUIET_TAPE: List<Long> = (SLOT + 1..SLOT + 100) + (SLOT + 1300..SLOT + 1340)
+        val TAPE: List<Long> = (SLOT..SLOT + TRADES).toList()
 
-        /** The tracked wallet's own buy paid 244444444 lamports for these tokens, so this is P0. */
+        /** The tape as a listing until Decu's buy returns it, without the buy. */
+        val LEGACY_TAPE: List<Long> = (SLOT + 1..SLOT + TRADES).toList()
+
+        /** Decu's buy and a trade per slot through S+100, then none until S+1300, 1,200 s after the take profit, and 40 more after it. */
+        val QUIET_TAPE: List<Long> = (SLOT..SLOT + 100) + (SLOT + 1300..SLOT + 1340)
+
+        /** The tracked wallet's own buy paid 244444444 lamports for these tokens, so this keeps its average and post-trade price. */
         val NORMAL: BigInteger = BigInteger.valueOf(244_444_444)
         val DIP: BigInteger = BigInteger.valueOf(195_555_555)
         /** About 1.8 times the entry cost per token: above the agreed +55% take profit, below a +90% one. */

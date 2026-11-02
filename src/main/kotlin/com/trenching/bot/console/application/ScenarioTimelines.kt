@@ -28,14 +28,14 @@ object ScenarioTimelines {
 
     /**
      * When [position]'s sale against [curve] was made: a time exit's at its exit start, since the curve it sold against stood
-     * from an earlier trade; a take profit or stop loss sold against the standing curve at its trigger's time, or the standing
-     * trade's when that came later, since no trade followed within 60 s; any other at that trade's block time.
+     * from an earlier trade; a take profit, stop loss or wallet-sold exit sold against the standing curve at its trigger's time,
+     * or the standing trade's when that came later, since no trade followed within 60 s; any other at that trade's block time.
      */
     fun saleTime(position: Position, curve: MarketObservation, observationsById: Map<String, MarketObservation>): Instant {
         val trigger = position.exitTrigger ?: return curve.observedTime
         return when (trigger.reason) {
             CloseReason.TIME_EXIT -> trigger.time ?: curve.observedTime
-            CloseReason.TAKE_PROFIT, CloseReason.STOP_LOSS -> when (position.close?.priceAssumption) {
+            CloseReason.TAKE_PROFIT, CloseReason.STOP_LOSS, CloseReason.WALLET_SOLD -> when (position.close?.priceAssumption) {
                 ExitPriceAssumption.STANDING_CURVE -> triggerTime(trigger, observationsById)?.let { maxOf(it, curve.observedTime) } ?: curve.observedTime
                 ExitPriceAssumption.NEXT_TRADE, null -> curve.observedTime
             }

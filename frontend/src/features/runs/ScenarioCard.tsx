@@ -1,6 +1,6 @@
 import { Alert, Badge, Card, Code, Divider, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import type { ReactNode } from 'react';
-import type { Scenario, UsdtScenario } from '../../api/types';
+import type { Config, Scenario, UsdtScenario } from '../../api/types';
 import { Decimal, Pnl, Timestamp } from '../../components/DisplayValues';
 import { MarketLinks } from '../../components/MarketLinks';
 import { Stat } from '../../components/Panels';
@@ -9,8 +9,9 @@ import { formatDecimal } from '../../lib/decimal';
 import { levelPercent } from '../../lib/percent';
 import { formatSlot, humanizeCode, shortId, signedBps, usdtRateNote } from '../../lib/format';
 import { recordedTradeSignature, transactionLinks } from '../../lib/marketLinks';
-import { knownReasonText } from '../captures/captureReasons';
+import { closeReasonText, knownReasonText } from '../captures/captureReasons';
 import { scenarioOutcome } from './scenarioOutcome';
+import { watchEnd, watchEndText } from './watchEnd';
 
 function Reason({ code }: { code: string | null }) {
   return (
@@ -48,8 +49,8 @@ function Bps({ value, percent }: { value: number; percent?: string }) {
   );
 }
 
-function TradeLinks({ label, observationId }: { label: string; observationId: string }) {
-  const signature = recordedTradeSignature(observationId);
+function TradeLinks({ label, observationId }: { label: string; observationId: string | null }) {
+  const signature = observationId ? recordedTradeSignature(observationId) : null;
   if (!signature) return null;
   return (
     <Group gap={6}>
@@ -86,23 +87,83 @@ function OutcomeBadge({ scenario }: { scenario: Scenario }) {
   );
 }
 
+/** Why the cycle never entered, with Decu's sell when that was the reason. */
+function NoEntry({ scenario }: { scenario: Scenario }) {
+  const sell = scenario.walletSell;
+  if (scenario.rejectionReason === 'WALLET_SOLD' && sell)
+    return (
+      <Stack gap={4}>
+        <Text size="sm">
+          Decu sold before the dip <Code fz="xs">WALLET_SOLD</Code>
+        </Text>
+        <Text size="xs" c="dimmed">
+          Sold at slot {formatSlot(sell.slot)}
+        </Text>
+        <TradeLinks label="Decu's sell" observationId={sell.eventId} />
+      </Stack>
+    );
+  return (
+    <Text size="sm">
+      <Reason code={scenario.rejectionReason} />
+    </Text>
+  );
+}
+
+function ExitTriggered({ position }: { position: NonNullable<Scenario['position']> }) {
+  const trigger = position.exitTrigger;
+  if (!trigger) return null;
+  if (trigger.reason === 'TIME_EXIT')
+    return (
+      <Text size="sm">
+        Time exit at <Timestamp iso={trigger.time ?? position.exitStart} />
+      </Text>
+    );
+  // The trigger's slot is our fill's when Decu sold before our buy landed, so it is never called his sell's slot.
+  if (trigger.reason === 'WALLET_SOLD')
+    return (
+      <Stack gap={0}>
+        <Text size="sm">{closeReasonText(trigger.reason)}</Text>
+        <Text size="xs" c="dimmed">
+          Exit started at slot {formatSlot(trigger.slot)}
+        </Text>
+      </Stack>
+    );
+  return (
+    <Text size="sm">
+      {humanizeCode(trigger.reason)} at slot {formatSlot(trigger.slot)}
+    </Text>
+  );
+}
+
 /**
  * One dip-entry cycle: the tracked wallet's first buy of a token (P0), the dip that triggered the entry, the fill, the
  * take-profit and stop-loss levels and the exit. With [usdt], entry and exit amounts show the backend's USDT
- * conversion; P0 and the levels stay in the quote unit, since the strategy compares them there.
+ * conversion; P0 and the levels stay in the quote unit, since the strategy compares them there. [config] names the
+ * run's price measure and dip window; without it the card reads as an untimed average-price run.
  */
 export function ScenarioCard({
   scenario,
   usdt,
   unit,
+  config,
   selected = false,
 }: {
   scenario: Scenario;
   usdt?: UsdtScenario;
   unit: string;
+  config?: Pick<Config, 'priceMeasure' | 'dipWindowMs'>;
   selected?: boolean;
 }) {
   const { fill, position, trigger } = scenario;
+  // The backend fills both prices with Decu's average as a placeholder; the real reference is unknown.
+  const referenceUnknown = scenario.watch === 'REFERENCE_UNAVAILABLE';
+  const postTrade = config?.priceMeasure === 'POST_TRADE';
+  const watched = watchEndText(watchEnd(scenario, config));
+  const unknown = (
+    <Text size="sm" c="dimmed">
+      Unknown
+    </Text>
+  );
   const close = position?.close ?? null;
   const filled = scenario.status === 'FILLED' && fill;
   const usdtFill = usdt?.fill;
@@ -131,8 +192,8 @@ export function ScenarioCard({
             </Text>
           </Text>
           <Text size="xs" c="dimmed">
-            First buy at slot {formatSlot(scenario.sourceSlot)} · watched through slot{' '}
-            {formatSlot(scenario.horizonEndSlot)}
+            First buy at slot {formatSlot(scenario.sourceSlot)}
+            {watched && ` · ${watched}`}
           </Text>
         </Stack>
         <OutcomeBadge scenario={scenario} />
@@ -142,10 +203,17 @@ export function ScenarioCard({
         <Divider label="Waiting for the dip" labelPosition="left" />
         <SimpleGrid cols={2} spacing="xs" verticalSpacing="xs">
           <Stat
-            label={`First buy price, P0 (${unit})`}
-            value={<Decimal value={scenario.referencePrice} />}
+            label={
+              postTrade
+                ? `Reference price (after Decu's buy) (${unit})`
+                : `First buy price, P0 (${unit})`
+            }
+            value={referenceUnknown ? unknown : <Decimal value={scenario.referencePrice} />}
           />
-          <Stat label={`Dip level (${unit})`} value={<Decimal value={scenario.dipPrice} />} />
+          <Stat
+            label={`Dip level (${unit})`}
+            value={referenceUnknown ? unknown : <Decimal value={scenario.dipPrice} />}
+          />
           {trigger && (
             <>
               <Stat label="Dip at slot" value={<Text size="sm">{formatSlot(trigger.slot)}</Text>} />
@@ -158,13 +226,12 @@ export function ScenarioCard({
             </>
           )}
         </SimpleGrid>
+        <TradeLinks label="Decu's buy" observationId={scenario.referenceObservationId} />
         {trigger && <TradeLinks label="Dip trade" observationId={trigger.observationId} />}
 
         {!filled ? (
           <Alert color="gray" variant="light" p="xs" title="No entry">
-            <Text size="sm">
-              <Reason code={scenario.rejectionReason} />
-            </Text>
+            <NoEntry scenario={scenario} />
           </Alert>
         ) : (
           <>
@@ -242,28 +309,17 @@ export function ScenarioCard({
                   <Stat label="Exit start" value={<Timestamp iso={position.exitStart} />} />
                 )}
                 {position.exitTrigger && (
-                  <Stat
-                    label="Exit triggered"
-                    value={
-                      position.exitTrigger.reason === 'TIME_EXIT' ? (
-                        <Text size="sm">
-                          Time exit at{' '}
-                          <Timestamp iso={position.exitTrigger.time ?? position.exitStart} />
-                        </Text>
-                      ) : (
-                        <Text size="sm">
-                          {humanizeCode(position.exitTrigger.reason)} at slot{' '}
-                          {formatSlot(position.exitTrigger.slot)}
-                        </Text>
-                      )
-                    }
-                  />
+                  <Stat label="Exit triggered" value={<ExitTriggered position={position} />} />
                 )}
               </SimpleGrid>
             )}
             {position?.exitTrigger && (
               <TradeLinks
-                label="Exit trigger trade"
+                label={
+                  position.exitTrigger.reason === 'WALLET_SOLD'
+                    ? "Decu's sell"
+                    : 'Exit trigger trade'
+                }
                 observationId={position.exitTrigger.observationId}
               />
             )}

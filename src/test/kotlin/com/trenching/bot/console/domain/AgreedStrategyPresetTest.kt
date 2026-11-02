@@ -1,6 +1,7 @@
 package com.trenching.bot.console.domain
 
 import com.trenching.bot.common.MintAddress
+import com.trenching.bot.strategy.domain.PriceMeasure
 import com.trenching.bot.strategy.domain.SimulationConfig
 import java.io.StringReader
 import java.math.BigDecimal
@@ -51,7 +52,8 @@ class AgreedStrategyPresetTest {
         val mvp = SimulationConfig.mvp()
         assertEquals(SimulationConfig.agreed(), preset.config)
         assertEquals(SimulationConfig.of(BigDecimal("0.1"), mvp.maxAgeSlots, 2000, 5500, 4000, BigDecimal("10000"), mvp.horizonSlots, 1,
-            BigDecimal("0.001"), quoteMint = MintAddress.WRAPPED_SOL, dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000),
+            BigDecimal("0.001"), quoteMint = MintAddress.WRAPPED_SOL, dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000,
+            priceMeasure = PriceMeasure.POST_TRADE, followWalletSells = true),
             preset.config)
         assertEquals(4500L, preset.config.horizonSlots)
     }
@@ -69,6 +71,8 @@ class AgreedStrategyPresetTest {
             PresetField("transactionCostSol", PresetFieldStatus.AGREED, "entryPriorityFeeSol", "NETWORK_FEE_NOT_ADDED"),
             PresetField("quoteMint", PresetFieldStatus.AGREED, "P15", null),
             PresetField("minMarketCapUsd", PresetFieldStatus.AGREED, "P5", null),
+            PresetField("priceMeasure", PresetFieldStatus.AGREED, "P4 / Section 5", null),
+            PresetField("followWalletSells", PresetFieldStatus.AGREED, "Section 6 / Section 8", null),
             PresetField("latencySlots", PresetFieldStatus.ASSUMPTION, null, "REPLAY_LATENCY_ASSUMED"),
             PresetField("horizonSlots", PresetFieldStatus.ENGINE_DEFAULT, null, "RECORDING_BOUND_ONLY"),
             PresetField("maxAgeSlots", PresetFieldStatus.ENGINE_DEFAULT, null, null),
@@ -76,20 +80,32 @@ class AgreedStrategyPresetTest {
     }
 
     @Test
-    fun `the six spec rules dip-entry v1 cannot apply are listed`() {
-        assertEquals(listOf("P2", "P3", "Section 5", "P8", "Section 8", "P13"), preset.unsupportedRules.map { it.specRef })
-        assertEquals(listOf("FIRST_EVER_BUY", "SIGNAL_OVER_1_9_SOL", "POST_TRADE_PRICE", "ENTRY_SLIPPAGE_15_PERCENT", "EXIT_RETRY_ECONOMICS",
+    fun `the five spec rules dip-entry v1 cannot apply are listed, and the post-trade price measure is no longer one of them`() {
+        assertEquals(listOf("P2", "P3", "P8", "Section 8", "P13"), preset.unsupportedRules.map { it.specRef })
+        assertEquals(listOf("FIRST_EVER_BUY", "SIGNAL_OVER_1_9_SOL", "ENTRY_SLIPPAGE_15_PERCENT", "EXIT_RETRY_ECONOMICS",
             "ONE_POSITION_INCLUDING_IN_FLIGHT"), preset.unsupportedRules.map { it.code })
     }
 
     @Test
-    fun `the spec's post-trade price measure is listed, since dip-entry v1 compares average execution prices`() {
-        assertEquals(UnsupportedSpecRule("Section 5", "POST_TRADE_PRICE"), preset.unsupportedRules.single { it.code == "POST_TRADE_PRICE" })
-        val section = requireNotNull(Regex("## 5\\. Price measure\\s+(.*?)\\n## ", RegexOption.DOT_MATCHES_ALL)
-            .find(specText.replace("\r\n", "\n"))) { "spec Section 5 not found" }.groupValues[1]
+    fun `the spec's post-trade price measure is the preset's price measure`() {
+        val section = section("## 5\\. Price measure")
         assertTrue("**one measure: the post-trade price, in SOL per token**" in section)
         assertTrue("The average fill price of a trade is never used as a trigger." in section)
+        assertEquals(PriceMeasure.POST_TRADE, preset.config.priceMeasure)
     }
+
+    @Test
+    fun `the spec's rule on Decu's sells is the preset's wallet-sell rule, at entry and while holding`() {
+        val window = section("## 6\\. Dip window and timing")
+        assertTrue("A Decu sell in the same slot as the dip blocks the entry." in window)
+        assertTrue("| Decu sells any amount of the token | `WALLET_SOLD` |" in section("## 8\\. Exits"))
+        assertTrue(preset.config.followWalletSells)
+    }
+
+    private fun section(heading: String): String =
+        requireNotNull(Regex("$heading\\s+(.*?)\\n## ", RegexOption.DOT_MATCHES_ALL).find(specText.replace("\r\n", "\n"))) {
+            "spec section $heading not found"
+        }.groupValues[1]
 
     private fun assertSameDecimal(expected: String, actual: BigDecimal) =
         assertEquals(0, BigDecimal(expected).compareTo(actual), "expected $expected but was ${actual.toPlainString()}")

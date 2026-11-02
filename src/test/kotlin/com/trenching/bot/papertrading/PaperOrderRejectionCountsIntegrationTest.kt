@@ -3,6 +3,7 @@ package com.trenching.bot.papertrading
 import com.trenching.bot.common.MarketPair
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
+import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.marketdata.domain.ObservationQuality
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.papertrading.domain.PaperFill
@@ -27,11 +28,12 @@ class PaperOrderRejectionCountsIntegrationTest {
     @Autowired private lateinit var orders: PaperOrderStore
 
     private val pair = MarketPair.of(MintAddress.of("11111111111111111111111111111112"), MintAddress.WRAPPED_SOL)
+    private val wallet = WalletAddress.of("11111111111111111111111111111111")
 
     private fun intent(runId: String, offset: Int): TradeIntent =
-        TradeIntent("$runId:event:$offset", runId, "event:$offset", pair, "dip-entry", "1", "config-hash", 0,
+        TradeIntent("$runId:event:$offset", runId, "event:$offset", wallet, pair, "dip-entry", "1", "config-hash", 0,
             Slot.of(100), null, Slot.of(100L + offset), BigDecimal("100.000000000000"), BigDecimal("0.0000001"), BigDecimal("0.000000085"),
-            Slot.of(4600), DipWatchOutcome.NO_DIP, null)
+            Slot.of(4600), DipWatchOutcome.NO_DIP, null, null, null)
 
     private fun fill(intent: TradeIntent): PaperFill =
         PaperFill(intent.id, intent.targetSlot, intent.targetSlot, "observation-${intent.targetSlot.value}",

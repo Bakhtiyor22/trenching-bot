@@ -117,7 +117,19 @@ const EXIT_TRIGGER_TEXT: Record<string, { label: string; detail: string }> = {
     label: 'Time exit started',
     detail: 'The exit clock ran out: sold against the curve standing then.',
   },
+  WALLET_SOLD: { label: 'Decu sold', detail: 'Decu sold the token: our whole position is sold.' },
 };
+
+/** The block time of a recorded trade, from the chart's trades or wallet markers; undefined when not loaded. */
+function observationTime(observationId: string, charts: Array<ChartResponse | undefined>) {
+  for (const chart of charts) {
+    const found =
+      chart?.markers.items.find((item) => item.observationId === observationId) ??
+      chart?.ticks.items.find((item) => item.observationId === observationId);
+    if (found) return found.time;
+  }
+  return undefined;
+}
 
 function scenarioEvents(
   scenario: Scenario | undefined,
@@ -125,6 +137,7 @@ function scenarioEvents(
   fullChart: ChartResponse | undefined,
 ) {
   if (!scenario?.timeline) return [];
+  const charts = [chart, fullChart];
   const buy = [...(chart?.markers.items ?? []), ...(fullChart?.markers.items ?? [])].find(
     (item) => item.isTrackedWallet && item.slot === scenario.sourceSlot && item.side === 'BUY',
   );
@@ -159,7 +172,22 @@ function scenarioEvents(
     exitTriggerAt: EXIT_TRIGGER_TEXT[triggerReason ?? '']?.label ?? 'Exit triggered',
     exitAt: 'Paper sell filled',
   };
-  return (Object.entries(scenario.timeline) as Array<[keyof typeof labels, string | null]>)
+  // A Decu-sold exit is placed at his sell: its trigger slot and time are our fill's when he sold before our buy landed.
+  const times: Record<keyof typeof labels, string | null> = {
+    ...scenario.timeline,
+    exitTriggerAt:
+      triggerReason === 'WALLET_SOLD' && position?.exitTrigger
+        ? (observationTime(position.exitTrigger.observationId, charts) ??
+          scenario.timeline.exitTriggerAt)
+        : scenario.timeline.exitTriggerAt,
+  };
+  const events: Array<{
+    name: string;
+    at: string;
+    label: string;
+    detail: string;
+    exactDetail?: string;
+  }> = (Object.entries(times) as Array<[keyof typeof labels, string | null]>)
     .filter((entry): entry is [keyof typeof labels, string] => entry[1] !== null)
     .map(([name, at]) => ({
       name,
@@ -168,6 +196,16 @@ function scenarioEvents(
       detail: details[name],
       exactDetail: exactDetails[name],
     }));
+  const sellAt = scenario.walletSell && observationTime(scenario.walletSell.eventId, charts);
+  if (sellAt)
+    events.push({
+      name: 'walletSellAt',
+      at: sellAt,
+      label: 'Decu sold before the dip',
+      detail: 'No entry: Decu sold the token before its price reached the dip level.',
+    });
+  // In time order: Decu's sell can come before our fill landed.
+  return events.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
 }
 
 export function RunChartPage() {

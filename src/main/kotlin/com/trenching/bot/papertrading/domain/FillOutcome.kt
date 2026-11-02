@@ -32,6 +32,10 @@ enum class RejectionReason {
     NO_EXIT_FILL,
     /** The exit was triggered, but no curve it could sell against could pay the sale. */
     UNRESOLVED,
+    /** The tracked wallet sold the mint before the dip triggered. */
+    WALLET_SOLD,
+    /** The post-trade reference needs the wallet's buy in the market data, and exactly one observation did not record it. */
+    REFERENCE_UNAVAILABLE,
     ;
 
     companion object {

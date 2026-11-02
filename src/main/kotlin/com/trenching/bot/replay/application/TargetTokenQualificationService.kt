@@ -17,6 +17,7 @@ import com.trenching.bot.replay.domain.ExitVerdict
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.domain.ReplayVerdict
 import com.trenching.bot.replay.domain.ScenarioResult
+import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
 import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.replay.domain.TargetBuyRefusal
 import com.trenching.bot.replay.domain.TargetFirstBuyAssessment
@@ -43,7 +44,9 @@ import tools.jackson.core.JacksonException
  * the same dataset always gives the same run and verdict. A replay failure is its own classification, never a negative case;
  * a capture that is not export ready is classified from inspection alone. For a wallet + token capture, a cycle that starts
  * from another buy than the proven actual first buy is a replay failure, since its P0 would not be the buy the strategy requires.
- * A replay decided beyond the dataset's market coverage is an incomplete market capture and is not interpreted.
+ * A replay decided beyond the dataset's market coverage is an incomplete market capture and is not interpreted. A cycle whose
+ * post-trade reference is unavailable, because the dataset does not record the wallet's buy, is a replay failure too: the data
+ * cannot tell whether the token qualified, so the capture must be made again with the market-window lead.
  */
 class TargetTokenQualificationService(
     private val loader: ReplayDatasetLoader,
@@ -60,6 +63,10 @@ class TargetTokenQualificationService(
             val loaded = load(dataset)
             val report = runner.run(loaded, SimulationConfig.agreed())
             DatasetCoverage.undecided(report, loaded).firstOrNull()?.let { coverageEnded(it, evidence) } ?: replayed(report, evidence)
+        } catch (exception: SellCheckNeedsTradesException) {
+            log.warn("target_token_qualification refused reason={} dataset={} schemaVersion={}", VerdictReasons.SELL_CHECK_NEEDS_TRADES,
+                dataset.fileName, exception.schemaVersion)
+            failed(VerdictReasons.SELL_CHECK_NEEDS_TRADES, VerdictProvenance(), evidence)
         } catch (exception: Exception) {
             val category = failureCategory(exception)
             log.error("target_token_qualification replay_failed category={} dataset={}", category, dataset.fileName, exception)
@@ -139,8 +146,13 @@ class TargetTokenQualificationService(
                     entry(scenario.outcome), exit(scenario), cycleProvenance, evidence)
             }
             DipWatchOutcome.NO_DIP, DipWatchOutcome.DIP_BELOW_MIN_MARKET_CAP, DipWatchOutcome.MIGRATED_BEFORE_ENTRY,
-            DipWatchOutcome.UNSUPPORTED_SUPPLY, DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP ->
+            DipWatchOutcome.UNSUPPORTED_SUPPLY, DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP, DipWatchOutcome.WALLET_SOLD ->
                 ran(CaseClassification.NEGATIVE_CASE, DipVerdict.NotQualified(intent.watch), null, null, cycleProvenance, evidence)
+            DipWatchOutcome.REFERENCE_UNAVAILABLE -> {
+                log.warn("target_token_qualification replay_failed category={} runId={} cycleBuy={}",
+                    VerdictReasons.REFERENCE_UNAVAILABLE, report.runId, buy.signature.value)
+                failed(VerdictReasons.REFERENCE_UNAVAILABLE, cycleProvenance.copy(referencePrice = null), evidence)
+            }
         }
     }
 

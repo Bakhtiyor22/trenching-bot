@@ -12,6 +12,7 @@ import com.trenching.bot.console.mapper.ConsoleErrorMapper
 import com.trenching.bot.replay.domain.DatasetInvalidException
 import com.trenching.bot.replay.domain.DatasetNotFoundException
 import com.trenching.bot.replay.domain.MarketCoverageEndedException
+import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
 import com.trenching.bot.replay.domain.SimulationRunConflictException
 import com.trenching.bot.replay.domain.SimulationRunNotFoundException
 import com.trenching.bot.walletactivity.WalletActivityUnavailable
@@ -61,6 +62,10 @@ class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper
     @ExceptionHandler
     @ResponseStatus(HttpStatus.CONFLICT)
     fun coverageEnded(e: MarketCoverageEndedException): ConsoleErrorResponse = error(MARKET_COVERAGE_ENDED, e.message)
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun sellCheckNeedsTrades(e: SellCheckNeedsTradesException): ConsoleErrorResponse = error(SellCheckNeedsTradesException.CODE, e.message)
 
     @ExceptionHandler
     @ResponseStatus(HttpStatus.BAD_REQUEST)

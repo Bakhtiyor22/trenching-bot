@@ -3,6 +3,8 @@ package com.trenching.bot.replay
 import com.trenching.bot.common.MarketPair
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
+import com.trenching.bot.marketdata.domain.ObservedTrade
+import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.portfolio.domain.CloseReason
@@ -12,16 +14,21 @@ import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.DatasetCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.domain.ScenarioResult
+import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
 import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.strategy.domain.DipWatchOutcome
+import com.trenching.bot.strategy.domain.PriceMeasure
 import com.trenching.bot.strategy.domain.SimulationConfig
+import com.trenching.bot.strategy.domain.TradeIntent
+import com.trenching.bot.strategy.domain.WalletSellSignal
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV4
 import com.trenching.bot.support.DipSampleV6
 import com.trenching.bot.walletactivity.domain.IngestionReason
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -223,6 +230,60 @@ class ReplayRunnerTest {
     }
 
     @Test
+    fun `a post-trade run with the wallet-sell rule is identical on a rerun and a reordered repeated delivery`() {
+        val dataset = postTradeDataset()
+        val reordered = dataset.copy(transactions = dataset.transactions.reversed() + dataset.transactions,
+            observations = dataset.observations.reversed() + dataset.observations,
+            referenceRates = dataset.referenceRates.reversed() + dataset.referenceRates, coverage = dataset.coverage.reversed())
+
+        val postTradeReport = ReplayRunner().run(dataset, POST_TRADE_SELLS)
+
+        assertTrue(postTradeReport.scenarios.any { it.intent.referenceObservationId != null })
+        assertEquals(Slot.of(1001), postTradeReport.scenarios.single { it.intent.pair == DipSample.pair(DipSample.TAKE_PROFIT) }
+            .intent.walletSell?.slot)
+        assertEquals(postTradeReport, ReplayRunner().run(dataset, POST_TRADE_SELLS))
+        assertEquals(postTradeReport, ReplayRunner().run(reordered, POST_TRADE_SELLS))
+    }
+
+    @Test
+    fun `the wallet-sell rule is refused on a dataset whose observations record no trades`() {
+        val refused = assertFailsWith<SellCheckNeedsTradesException> { ReplayRunner().run(DipSample.load(), POST_TRADE_SELLS) }
+
+        assertTrue(refused.message.orEmpty().contains("schemaVersion=3"), refused.message)
+        assertTrue(refused.message.orEmpty().contains(SellCheckNeedsTradesException.CODE), refused.message)
+        assertEquals("SELL_CHECK_NEEDS_TRADES", SellCheckNeedsTradesException.CODE)
+    }
+
+    @Test
+    fun `a post-trade run on a dataset without the wallet's buy observations has no reference for any supported cycle`() {
+        val postTrade = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"),
+            priceMeasure = PriceMeasure.POST_TRADE)
+
+        val scenarios = ReplayRunner().run(DipSample.load(), postTrade).scenarios
+
+        assertEquals(setOf(DipWatchOutcome.REFERENCE_UNAVAILABLE, DipWatchOutcome.UNSUPPORTED_SUPPLY), scenarios.map { it.intent.watch }.toSet())
+        assertTrue(scenarios.all { it.intent.referenceObservationId == null && it.position == null })
+    }
+
+    @Test
+    fun `the result checksum covers the reference observation and the wallet's sell`() {
+        fun checksum(change: (TradeIntent) -> TradeIntent) =
+            ReplayRunner.resultChecksum(report.runId, report.scenarios.map { it.copy(intent = change(it.intent)) })
+
+        val checksums = listOf(
+            checksum { it },
+            checksum { it.copy(walletSell = WalletSellSignal("sell:a", Slot.of(1001))) },
+            checksum { it.copy(walletSell = WalletSellSignal("sell:a", Slot.of(1002))) },
+            checksum { it.copy(walletSell = WalletSellSignal("sell:b", Slot.of(1001))) },
+            checksum { it.copy(referenceObservationId = "buy:a") },
+            checksum { it.copy(referenceObservationId = "buy:b") },
+        )
+
+        assertEquals(report.resultChecksum, checksums.first())
+        assertEquals(checksums.size, checksums.distinct().size)
+    }
+
+    @Test
     fun `a lower minimum market cap lets the low cap token enter`() {
         val config = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("1000"), 4500, 1, BigDecimal("0.001"))
         val scenario = ReplayRunner().run(DipSample.load(), config).scenarios.single { it.intent.pair == DipSample.pair(DipSample.LOW_CAP) }
@@ -253,8 +314,8 @@ class ReplayRunnerTest {
     }
 
     @Test
-    fun `engine dip-paper-v4 hashes latency and transaction cost into the configuration and the run`() {
-        assertEquals("dip-paper-v4", report.engineVersion)
+    fun `engine dip-paper-v5 hashes latency and transaction cost into the configuration and the run`() {
+        assertEquals("dip-paper-v5", report.engineVersion)
         val slower = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 2, BigDecimal("0.001"))
         val dearer = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.002"))
         listOf(slower, dearer).map { ReplayRunner().run(DipSample.load(), it) }.forEach { other ->
@@ -265,26 +326,51 @@ class ReplayRunnerTest {
     }
 
     @Test
-    fun `the configuration hash names a timed field only when it is set, so the default's hash is unchanged`() {
-        fun timed(dipWindowMs: Long? = null, maxHoldMs: Long? = null, hardExitStartMs: Long? = null) =
-            SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"),
-                dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs, hardExitStartMs = hardExitStartMs)
+    fun `the configuration hash names a timed or rule field only when it is not the default, so the default's hash is unchanged`() {
+        fun timed(
+            dipWindowMs: Long? = null, maxHoldMs: Long? = null, hardExitStartMs: Long? = null,
+            priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE, followWalletSells: Boolean = false,
+        ) = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"),
+            dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs, hardExitStartMs = hardExitStartMs, priceMeasure = priceMeasure,
+            followWalletSells = followWalletSells)
         val hashes = listOf(timed(), timed(dipWindowMs = 30_000), timed(dipWindowMs = 31_000),
             timed(maxHoldMs = 180_000, hardExitStartMs = 240_000), timed(maxHoldMs = 181_000, hardExitStartMs = 240_000),
-            timed(maxHoldMs = 180_000, hardExitStartMs = 241_000), SimulationConfig.agreed()).map(ReplayRunner::configurationHash)
+            timed(maxHoldMs = 180_000, hardExitStartMs = 241_000), timed(priceMeasure = PriceMeasure.POST_TRADE),
+            timed(followWalletSells = true), timed(priceMeasure = PriceMeasure.POST_TRADE, followWalletSells = true),
+            SimulationConfig.agreed()).map(ReplayRunner::configurationHash)
 
         assertEquals(PINNED_CONFIGURATION_HASH, hashes.first())
+        assertEquals(PINNED_CONFIGURATION_HASH, ReplayRunner.configurationHash(SimulationConfig.mvp()))
         assertEquals(hashes.size, hashes.distinct().size)
     }
 
     @Test
-    fun `dip-sample-v3 and its v4 twin keep their pinned dip-paper-v4 run identity and result`() {
+    fun `dip-sample-v3 and its v4 twin keep their pinned dip-paper-v5 run identity and result`() {
         val v4 = ReplayRunner().run(DipSampleV4.dataset(), SimulationConfig.mvp())
 
         assertEquals(listOf(PINNED_V3_RUN_ID, PINNED_CONFIGURATION_HASH, PINNED_V3_RESULT_CHECKSUM),
             listOf(report.runId, report.configurationHash, report.resultChecksum))
         assertEquals(listOf(PINNED_V4_RUN_ID, PINNED_CONFIGURATION_HASH, PINNED_V4_RESULT_CHECKSUM),
             listOf(v4.runId, v4.configurationHash, v4.resultChecksum))
+    }
+
+    @Test
+    fun `with the default rules every result equals dip-paper-v4's and only the run id differs`() {
+        val v4 = ReplayRunner().run(DipSampleV4.dataset(), SimulationConfig.mvp())
+
+        assertEquals(DIP_PAPER_V4_V3_RESULT_CHECKSUM, underRunId(report, DIP_PAPER_V4_V3_RUN_ID))
+        assertEquals(DIP_PAPER_V4_V4_RESULT_CHECKSUM, underRunId(v4, DIP_PAPER_V4_V4_RUN_ID))
+    }
+
+    @Test
+    fun `with the default rules a timed run's results equal dip-paper-v4's and only the run id differs`() {
+        val timed = ReplayRunner().run(timedDataset(), TIMED)
+        val withoutTime = ReplayRunner().run(timedDataset(throughTime = null), TIMED)
+
+        assertEquals(DIP_PAPER_V4_TIMED_CONFIGURATION_HASH, timed.configurationHash)
+        assertEquals(DIP_PAPER_V4_TIMED_RESULT_CHECKSUM, underRunId(timed, DIP_PAPER_V4_TIMED_RUN_ID))
+        assertEquals(DIP_PAPER_V4_TIMED_NO_THROUGH_TIME_RESULT_CHECKSUM,
+            underRunId(withoutTime, DIP_PAPER_V4_TIMED_NO_THROUGH_TIME_RUN_ID))
     }
 
     @Test
@@ -332,6 +418,10 @@ class ReplayRunnerTest {
         }
     }
 
+    /** [report]'s result checksum recomputed under another engine's [runId], which the intent ids embed. */
+    private fun underRunId(report: SimulationReport, runId: String): String = ReplayRunner.resultChecksum(runId,
+        report.scenarios.map { it.copy(intent = it.intent.copy(id = it.intent.id.replace(report.runId, runId))) })
+
     /**
      * The v6 twin with the stop-loss cycle's trades moved 31 s after its buy, outside a 30 s dip window, and the horizon cycle's
      * coverage recorded through [throughTime].
@@ -342,14 +432,53 @@ class ReplayRunnerTest {
         return v6.copy(observations = v6.observations.map { if (it.pair == stopLoss) it.copy(observedTime = it.observedTime.plusSeconds(31)) else it })
     }
 
+    /**
+     * [timedDataset] with each wallet buy's first same-slot observation recorded as that buy (its signature, instruction index and
+     * the tracked wallet as the buyer), and the take-profit cycle's slot 1001 trade recorded as the tracked wallet's sell.
+     */
+    private fun postTradeDataset(): ReplayDataset {
+        val timed = timedDataset()
+        val wallet = timed.trackedWallet.value
+        val buyObservations = timed.transactions.mapNotNull { buy ->
+            timed.observations.filter { it.pair == buy.pair && it.slot == buy.slot }.minByOrNull { it.id }
+                ?.let { it.id to "${buy.signature.value}:${buy.instructionIndex}:-" }
+        }.toMap()
+        val sell = "fixture:TP:1001:0"
+        return timed.copy(observations = timed.observations.map { observation ->
+            when (observation.id) {
+                in buyObservations -> observation.copy(sourceEventId = buyObservations.getValue(observation.id),
+                    trade = ObservedTrade.of(wallet, TradeSide.BUY, BigInteger.valueOf(100_000_000), BigInteger.valueOf(1_000_000_000_000)))
+                sell -> observation.copy(trade = ObservedTrade.of(wallet, TradeSide.SELL, BigInteger.ONE, BigInteger.ONE))
+                else -> observation
+            }
+        })
+    }
+
     private companion object {
+        /** [TIMED] with spec Section 5's post-trade prices and the wallet-sell rule. */
+        val POST_TRADE_SELLS: SimulationConfig = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1,
+            BigDecimal("0.001"), dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000,
+            priceMeasure = PriceMeasure.POST_TRADE, followWalletSells = true)
         /** The mvp levels with spec P7 and P11's clocks: a 30 s dip window, then three minutes held or four from the buy. */
         val TIMED: SimulationConfig = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1,
             BigDecimal("0.001"), dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000)
         const val PINNED_CONFIGURATION_HASH = "be937336820a84b0af7482105efb9334ebb710c0ccf8e4d6bae88f2666a0a329"
-        const val PINNED_V3_RUN_ID = "9f56738063e32b99c8d7b98955704784ad7d9dd83fb9ee7cf6fa95dd8a7fdace"
-        const val PINNED_V3_RESULT_CHECKSUM = "b32af5db493a578784d4eccb299dbd0cd9f17eb838307f19a0583f98eb1d3d22"
-        const val PINNED_V4_RUN_ID = "e4f60e845ef85b4ba50df80f213c126cb994a7701270943d7f8f4b6ecafc7e23"
-        const val PINNED_V4_RESULT_CHECKSUM = "08c7f1dbf9e75d6f47737a8a6154f3819c78123c706c3384e5fea8efc55d2677"
+        const val PINNED_V3_RUN_ID = "63ecd15009948a7c7aaf00c81cc8d21894615998432ba0e63a46c731e8e4ea8a"
+        const val PINNED_V3_RESULT_CHECKSUM = "c314299e0a7ffb30c355723d3c171457c515c689a8062a0c1d5b29e097ff352a"
+        const val PINNED_V4_RUN_ID = "1ca8c24060beeaf0a348bf6785b45dca35692ef02a7a79ff7266ad12603bd3e5"
+        const val PINNED_V4_RESULT_CHECKSUM = "879135d003a42d6741837f40f02c3dca758e88effe8b5ceee7dd167a2bca52ea"
+
+        /** The same runs' identity and result under engine dip-paper-v4. */
+        const val DIP_PAPER_V4_V3_RUN_ID = "9f56738063e32b99c8d7b98955704784ad7d9dd83fb9ee7cf6fa95dd8a7fdace"
+        const val DIP_PAPER_V4_V3_RESULT_CHECKSUM = "b32af5db493a578784d4eccb299dbd0cd9f17eb838307f19a0583f98eb1d3d22"
+        const val DIP_PAPER_V4_V4_RUN_ID = "e4f60e845ef85b4ba50df80f213c126cb994a7701270943d7f8f4b6ecafc7e23"
+        const val DIP_PAPER_V4_V4_RESULT_CHECKSUM = "08c7f1dbf9e75d6f47737a8a6154f3819c78123c706c3384e5fea8efc55d2677"
+
+        /** [TIMED] over the timed dataset, with and without the coverage end time, under engine dip-paper-v4. */
+        const val DIP_PAPER_V4_TIMED_CONFIGURATION_HASH = "aef905a73b79968f1c760abcf6b5d96095e1acb2d65ab91af6694625b182b360"
+        const val DIP_PAPER_V4_TIMED_RUN_ID = "752903a8ce4a47c4fb0de2f72bcfa2445d17f979bed33d2228be78beb6a70672"
+        const val DIP_PAPER_V4_TIMED_RESULT_CHECKSUM = "f9c36c60b62eabf9cf23e7a967624f49120329a8f59ba070de8b7970626b6b8b"
+        const val DIP_PAPER_V4_TIMED_NO_THROUGH_TIME_RUN_ID = "3389a302e0e7c957edfe6c639721472eaaa032abcf21b1090fa48018e1ef0df6"
+        const val DIP_PAPER_V4_TIMED_NO_THROUGH_TIME_RESULT_CHECKSUM = "e0ebd8054443a4a95ac3b5be5e205dace9290493bc10873500f03469924559ca"
     }
 }

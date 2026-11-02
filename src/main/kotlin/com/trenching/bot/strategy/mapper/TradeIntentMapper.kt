@@ -3,6 +3,7 @@ package com.trenching.bot.strategy.mapper
 import com.trenching.bot.common.*
 import com.trenching.bot.strategy.domain.DipTrigger
 import com.trenching.bot.strategy.domain.TradeIntent
+import com.trenching.bot.strategy.domain.WalletSellSignal
 import com.trenching.bot.strategy.infrastructure.persistence.TradeIntentEntity
 import org.mapstruct.*
 
@@ -20,6 +21,9 @@ abstract class TradeIntentMapper {
         Mapping(target = "triggerPrice", source = "trigger.price"),
         Mapping(target = "triggerMarketCapUsd", source = "trigger.marketCapUsd"),
         Mapping(target = "triggerRate", source = "trigger.rate"),
+        Mapping(target = "wallet", source = "wallet.value"),
+        Mapping(target = "walletSellEventId", source = "walletSell.eventId"),
+        Mapping(target = "walletSellSlot", source = "walletSell.slot.value"),
         Mapping(target = "version", ignore = true),
     ])
     abstract fun toEntity(intent: TradeIntent): TradeIntentEntity
@@ -31,13 +35,18 @@ abstract class TradeIntentMapper {
         Mapping(target = "horizonEndSlot", expression = "java(Slot.Companion.of(required(entity.getHorizonEndSlot(), entity)))"),
         Mapping(target = "watch", expression = "java(required(entity.getWatch(), entity))"),
         Mapping(target = "trigger", expression = "java(trigger(entity))"),
+        Mapping(target = "wallet", source = "buyWallet"),
+        Mapping(target = "walletSell", expression = "java(walletSell(entity))"),
     ])
-    abstract fun toIntent(entity: TradeIntentEntity): TradeIntent
+    abstract fun toIntent(entity: TradeIntentEntity, buyWallet: WalletAddress): TradeIntent
 
     fun pair(entity: TradeIntentEntity): MarketPair = ChainValueMapper.pair(entity.baseMint, entity.quoteMint)
     fun <T : Any> required(value: T?, entity: TradeIntentEntity): T = requireNotNull(value) { "Intent without dip fields id=${entity.id}" }
     fun trigger(entity: TradeIntentEntity): DipTrigger? = entity.triggerObservationId?.let { observationId ->
         DipTrigger(observationId, Slot.of(required(entity.triggerSlot, entity)), required(entity.triggerPrice, entity),
             required(entity.triggerMarketCapUsd, entity), required(entity.triggerRate, entity))
+    }
+    fun walletSell(entity: TradeIntentEntity): WalletSellSignal? = entity.walletSellEventId?.let { eventId ->
+        WalletSellSignal(eventId, Slot.of(required(entity.walletSellSlot, entity)))
     }
 }

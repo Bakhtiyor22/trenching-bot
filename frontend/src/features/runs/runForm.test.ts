@@ -81,3 +81,25 @@ describe('run form clocks', () => {
     expect(hardOnly.maxHoldSeconds).toBe('Set together with the hard exit start');
   });
 });
+
+describe('run form price measure and sell rule', () => {
+  it('fills the preset POST_TRADE and on, the engine defaults TRADE_AVERAGE and off', () => {
+    const preset = formValuesFrom(runPreset.config, 'dataset');
+    expect([preset.priceMeasure, preset.followWalletSells]).toEqual(['POST_TRADE', true]);
+    const defaults = formValuesFrom(configDefaults.defaults, 'dataset');
+    expect([defaults.priceMeasure, defaults.followWalletSells]).toEqual(['TRADE_AVERAGE', false]);
+  });
+
+  it('always sends the measure as a JSON string and the sell rule as a JSON boolean', () => {
+    const preset = JSON.parse(
+      JSON.stringify(toRunStartRequest(formValuesFrom(runPreset.config, 'dataset'))),
+    ) as { config: Record<string, unknown> };
+    expect(preset.config.priceMeasure).toBe('POST_TRADE');
+    expect(preset.config.followWalletSells).toBe(true);
+    const defaults = toRunStartRequest(formValuesFrom(configDefaults.defaults, 'dataset'));
+    expect(defaults.config).toMatchObject({
+      priceMeasure: 'TRADE_AVERAGE',
+      followWalletSells: false,
+    });
+  });
+});

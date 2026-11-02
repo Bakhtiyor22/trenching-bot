@@ -6,9 +6,9 @@ import com.trenching.bot.strategy.domain.SimulationConfig
 import java.time.Instant
 
 /**
- * When a take profit or stop loss may sell into a later trade: one at or after [saleSlot] whose block time is at most
- * [deadline], the trigger's time plus spec Section 8's active phase. With no such trade the sale is against the curve standing
- * at [saleSlot], which the recording proves only once it shows that no unseen trade can land within the deadline.
+ * When a take profit, stop loss or wallet-sold exit may sell into a later trade: one at or after [saleSlot] whose block time
+ * is at most [deadline], the trigger's time plus spec Section 8's active phase. With no such trade the sale is against the
+ * curve standing at [saleSlot], which the recording proves only once it shows that no unseen trade can land within the deadline.
  */
 data class ExitSaleWindow(val saleSlot: Slot, val deadline: Instant) {
     /** A recorded trade of the pair, eligible or not, at or after the sale slot and later than the deadline. */

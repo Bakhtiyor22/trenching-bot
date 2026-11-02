@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Card,
+  Checkbox,
   Grid,
   Group,
   NumberInput,
@@ -24,7 +25,12 @@ import { useConfigDefaults, useDataset, useDatasets, useStartRun } from '../../a
 import type { ConfigDefaults, Dataset } from '../../api/types';
 import { setupApi, type Recommendation, type RunPreset } from '../../api/setup';
 import { Recommendations } from '../../components/Recommendations';
-import { codeLabel, MARKET_COVERAGE_ENDED, presetStatusLabels } from '../../lib/codes';
+import {
+  codeLabel,
+  MARKET_COVERAGE_ENDED,
+  presetStatusLabels,
+  SELL_CHECK_NEEDS_TRADES,
+} from '../../lib/codes';
 import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
 import { formatPercent } from '../../lib/percent';
 import { IconAlert, IconPlay } from '../../components/Icons';
@@ -46,6 +52,7 @@ import {
   INTEGER_FIELDS,
   MILLIS_FIELD,
   PERCENT_FIELDS,
+  PRICE_MEASURE_LABELS,
   rangeText,
   SECONDS_FIELDS,
   secondsText,
@@ -69,6 +76,8 @@ function datasetOptions(datasets: Dataset[]) {
 const SETTING_FIELDS: SettingField[] = [
   ...PERCENT_FIELDS,
   ...SECONDS_FIELDS,
+  'priceMeasure',
+  'followWalletSells',
   'notional',
   'minMarketCapUsd',
   'transactionCostSol',
@@ -174,7 +183,7 @@ function RunConfigForm({
       { onSuccess: ({ run }) => void navigate(paths.run(run.id)) },
     );
   }
-  const submit = form.onSubmit((values) => {
+  function start(values: RunFormValues) {
     startRun.mutate(
       { ...toRunStartRequest(values), ...(preset ? { presetId: preset.id } : {}) },
       {
@@ -193,7 +202,13 @@ function RunConfigForm({
         },
       },
     );
-  });
+  }
+  const submit = form.onSubmit(start);
+  /** After a SELL_CHECK_NEEDS_TRADES refusal: the same settings with the sell rule off, shown in the form too. */
+  function startWithoutSells() {
+    form.setFieldValue('followWalletSells', false);
+    start({ ...form.values, followWalletSells: false });
+  }
   const serverError = startRun.error;
   const fieldErrorsShown =
     serverError instanceof ApiError && Object.keys(serverError.fields).length > 0;
@@ -214,6 +229,7 @@ function RunConfigForm({
           ? presetStatusLabels[metadata.status]
           : 'Engine default';
     const isInteger = (INTEGER_FIELDS as readonly string[]).includes(field);
+    const isRule = field === 'priceMeasure' || field === 'followWalletSells';
     const bps = field.endsWith('Percent') ? percentBps(String(form.values[field])) : null;
     const unit = UNITS[field];
     const prefix =
@@ -226,7 +242,7 @@ function RunConfigForm({
             : undefined;
     const inputProps = {
       label: SETTING_LABELS[field],
-      withAsterisk: !isClock,
+      withAsterisk: !isClock && !isRule,
       leftSection: prefix,
       rightSection: unit ? (
         <Text size="xs" c="dimmed">
@@ -263,7 +279,21 @@ function RunConfigForm({
           >
             {status}
           </Badge>
-          {isInteger ? (
+          {field === 'followWalletSells' ? (
+            <Checkbox
+              label={SETTING_LABELS[field]}
+              {...form.getInputProps(field, { type: 'checkbox' })}
+            />
+          ) : field === 'priceMeasure' ? (
+            <Select
+              {...inputProps}
+              data={limits.priceMeasure.map((value) => ({
+                value,
+                label: PRICE_MEASURE_LABELS[value],
+              }))}
+              allowDeselect={false}
+            />
+          ) : isInteger ? (
             <NumberInput
               {...inputProps}
               allowDecimal={false}
@@ -451,6 +481,13 @@ function RunConfigForm({
                           whichever comes first.
                         </>
                       )}
+                    {form.values.followWalletSells && (
+                      <>
+                        {' '}
+                        If Decu sells the token before the dip, skip it; if he sells while we hold,
+                        sell everything.
+                      </>
+                    )}
                   </Text>
                   <Text size="sm">
                     Settings you changed: <strong>{changed.length}</strong>
@@ -473,6 +510,8 @@ function RunConfigForm({
                       fieldErrorsShown={fieldErrorsShown}
                       onRunLegacy={startLegacyRun}
                       legacyPending={legacy.isPending}
+                      onRunWithoutSells={startWithoutSells}
+                      pending={startRun.isPending}
                     />
                   )}
                   {legacy.error && (
@@ -501,19 +540,28 @@ function RunConfigForm({
   );
 }
 
-/** Why the run was refused, beside Start run. A dataset cut short by the old cutoff gets a way forward. */
+/**
+ * Why the run was refused, beside Start run. A dataset cut short by the old cutoff, or too old to show Decu's sells, gets
+ * a way forward.
+ */
 function RunStartError({
   error,
   fieldErrorsShown,
   onRunLegacy,
   legacyPending,
+  onRunWithoutSells,
+  pending,
 }: {
   error: Error;
   fieldErrorsShown: boolean;
   onRunLegacy: () => void;
   legacyPending: boolean;
+  onRunWithoutSells: () => void;
+  pending: boolean;
 }) {
-  const coverageEnded = error instanceof ApiError && error.code === MARKET_COVERAGE_ENDED;
+  const code = error instanceof ApiError ? error.code : null;
+  const coverageEnded = code === MARKET_COVERAGE_ENDED;
+  const sellsHidden = code === SELL_CHECK_NEEDS_TRADES;
   return (
     <Alert
       color="red"
@@ -522,7 +570,9 @@ function RunStartError({
       title={
         coverageEnded
           ? 'This dataset ends before these settings can finish'
-          : 'The run was not started'
+          : sellsHidden
+            ? "This dataset cannot show Decu's sells"
+            : 'The run was not started'
       }
       role="alert"
     >
@@ -530,11 +580,18 @@ function RunStartError({
         <Text size="sm">
           {coverageEnded
             ? 'Its capture stopped recording the token once the outcome under the old default rules was decided, so a run with these settings would be cut short. Run the old defaults on it, or capture the token again with the market cutoff set to the whole window.'
-            : `${errorMessage(error)}${fieldErrorsShown ? ' See the highlighted fields.' : ''}`}
+            : sellsHidden
+              ? 'Its market recording is schema 3, which does not record who traded. Turn off "Follow Decu\'s sells" to run it, or re-export the capture as a newer dataset.'
+              : `${errorMessage(error)}${fieldErrorsShown ? ' See the highlighted fields.' : ''}`}
         </Text>
         {coverageEnded && (
           <Button size="xs" variant="light" onClick={onRunLegacy} loading={legacyPending}>
             Run the old defaults instead
+          </Button>
+        )}
+        {sellsHidden && (
+          <Button size="xs" variant="light" onClick={onRunWithoutSells} loading={pending}>
+            Run without following sells
           </Button>
         )}
         {error instanceof ApiError && <CodeText code={error.code} />}

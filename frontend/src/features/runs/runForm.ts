@@ -1,4 +1,4 @@
-import type { Config, ConfigLimits, Range, RunStartRequest } from '../../api/types';
+import type { Config, ConfigLimits, PriceMeasure, Range, RunStartRequest } from '../../api/types';
 import { isSolanaAddress } from '../../lib/base58';
 import { trimFractionZeros, validateDecimal } from '../../lib/decimal';
 import { bpsToPercent } from '../../lib/percent';
@@ -21,6 +21,8 @@ export const MILLIS_FIELD: Record<SecondsField, 'dipWindowMs' | 'maxHoldMs' | 'h
   maxHoldSeconds: 'maxHoldMs',
   hardExitStartSeconds: 'hardExitStartMs',
 };
+/** The two entry and exit rules that are a choice, not a number. */
+export type RuleField = 'priceMeasure' | 'followWalletSells';
 
 export interface RunFormValues {
   datasetId: string | null;
@@ -41,24 +43,36 @@ export interface RunFormValues {
   dipWindowSeconds: string;
   maxHoldSeconds: string;
   hardExitStartSeconds: string;
+  priceMeasure: PriceMeasure;
+  followWalletSells: boolean;
 }
 
-export const FIELD_LABELS: Record<IntegerField | PercentField | SecondsField, string> = {
-  dipPercent: "Dip below Decu's first buy",
-  takeProfitPercent: 'Take profit',
-  stopLossPercent: 'Stop loss',
-  dipWindowSeconds: 'Dip window',
-  maxHoldSeconds: 'Maximum hold',
-  hardExitStartSeconds: 'Hard exit start',
-  horizonSlots: 'Observation window',
-  latencySlots: 'Fill delay',
-  maxAgeSlots: 'Max price age',
+export const FIELD_LABELS: Record<IntegerField | PercentField | SecondsField | RuleField, string> =
+  {
+    dipPercent: "Dip below Decu's first buy",
+    takeProfitPercent: 'Take profit',
+    stopLossPercent: 'Stop loss',
+    dipWindowSeconds: 'Dip window',
+    maxHoldSeconds: 'Maximum hold',
+    hardExitStartSeconds: 'Hard exit start',
+    horizonSlots: 'Observation window',
+    latencySlots: 'Fill delay',
+    maxAgeSlots: 'Max price age',
+    priceMeasure: 'Price measure',
+    followWalletSells: "Follow Decu's sells (no entry, and exit if holding)",
+  };
+
+/** How each price measure reads in the run form. */
+export const PRICE_MEASURE_LABELS: Record<PriceMeasure, string> = {
+  TRADE_AVERAGE: "Each trade's average price",
+  POST_TRADE: 'Price after each trade (spec)',
 };
 
 export const FIELD_HINTS: Record<
   | IntegerField
   | PercentField
   | SecondsField
+  | RuleField
   | 'notional'
   | 'minMarketCapUsd'
   | 'transactionCostSol'
@@ -83,6 +97,10 @@ export const FIELD_HINTS: Record<
   latencySlots: 'Slots between a trigger and the trade that fills it (1 = next slot).',
   maxAgeSlots: 'How old (by price slot) an observation may be when used.',
   quoteMint: 'Only swaps against this mint create signals. Wrapped SOL by default.',
+  priceMeasure:
+    'Which price the reference, the dip and take profit / stop loss compare. The exit levels still come from our own fill.',
+  followWalletSells:
+    "No entry once Decu sells the token before the dip, including a sell in the dip's own slot; sell everything if he sells while we hold. Needs a dataset of schema 4 or later.",
 };
 
 export function formValuesFrom(config: Config, datasetId: string | null): RunFormValues {
@@ -103,6 +121,8 @@ export function formValuesFrom(config: Config, datasetId: string | null): RunFor
     dipWindowSeconds: secondsText(config.dipWindowMs),
     maxHoldSeconds: secondsText(config.maxHoldMs),
     hardExitStartSeconds: secondsText(config.hardExitStartMs),
+    priceMeasure: config.priceMeasure,
+    followWalletSells: config.followWalletSells,
   };
 }
 
@@ -232,7 +252,7 @@ export function validateRunForm(
 
 /**
  * The `POST /api/runs` body. Notional, minimum market cap and transaction cost stay strings; integers are JSON numbers;
- * the clocks are whole milliseconds, or null when empty.
+ * the clocks are whole milliseconds, or null when empty; the price measure is a string and the sell rule a boolean.
  */
 export function toRunStartRequest(values: RunFormValues): RunStartRequest {
   return {
@@ -251,6 +271,8 @@ export function toRunStartRequest(values: RunFormValues): RunStartRequest {
       dipWindowMs: secondsToMs(values.dipWindowSeconds) ?? null,
       maxHoldMs: secondsToMs(values.maxHoldSeconds) ?? null,
       hardExitStartMs: secondsToMs(values.hardExitStartSeconds) ?? null,
+      priceMeasure: values.priceMeasure,
+      followWalletSells: values.followWalletSells,
     },
   };
 }

@@ -380,6 +380,8 @@ const CONFIG_FIELDS = new Set([
   'dipWindowMs',
   'maxHoldMs',
   'hardExitStartMs',
+  'priceMeasure',
+  'followWalletSells',
 ]);
 
 function validateConfig(config: RunStartRequest['config']): Record<string, string> {
@@ -464,6 +466,13 @@ function validateConfig(config: RunStartRequest['config']): Record<string, strin
     fields.hardExitStartMs = 'must be set together with maxHoldMs';
   if (hardSet && !holdSet && !fields.hardExitStartMs)
     fields.maxHoldMs = 'must be set together with hardExitStartMs';
+  if (
+    config.priceMeasure != null &&
+    !(limits.priceMeasure as unknown[]).includes(config.priceMeasure)
+  )
+    fields.priceMeasure = `must be one of ${limits.priceMeasure.join(', ')}`;
+  if (config.followWalletSells != null && typeof config.followWalletSells !== 'boolean')
+    fields.followWalletSells = 'must be true or false';
   for (const field of Object.keys(config)) {
     if (!CONFIG_FIELDS.has(field)) fields[field] = 'is not a configuration field';
   }
@@ -633,8 +642,16 @@ export function createHandlers(options: MockOptions = {}) {
       if (Object.keys(fields).length > 0) {
         return error(400, 'CONFIG_INVALID', 'Simulation configuration is invalid', fields);
       }
-      if (!db.datasets.some((d) => d.id === body.datasetId)) {
+      const dataset = db.datasets.find((d) => d.id === body.datasetId);
+      if (!dataset) {
         return error(404, 'DATASET_NOT_FOUND', `Dataset ${body.datasetId} not found`);
+      }
+      if (body.config?.followWalletSells === true && dataset.schemaVersion < 4) {
+        return error(
+          409,
+          'SELL_CHECK_NEEDS_TRADES',
+          `The wallet-sell rule needs a dataset whose observations record trades schemaVersion=${dataset.schemaVersion} minimumSchemaVersion=4 (SELL_CHECK_NEEDS_TRADES)`,
+        );
       }
       const runId = runForDataset[body.datasetId] ?? Object.keys(runRecords)[0]!;
       const records = runRecords[runId]!;

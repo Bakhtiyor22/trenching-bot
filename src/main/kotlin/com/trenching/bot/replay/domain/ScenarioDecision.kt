@@ -17,12 +17,13 @@ import com.trenching.bot.strategy.domain.TradeIntent
 
 /**
  * The last slot whose trades a scenario's outcome depends on (Key Decision 2 of the outcome-bounded market capture plan):
- * the close, the fill trade, the first completed curve, the buy itself, the first trade after a dip window, a failed sale's
- * attempt, or the horizon end for outcomes that need the whole window. A time exit against the standing curve is decided at
- * its close slot, the slot proving its start is covered. A take profit or stop loss sold against the standing curve, or left
- * unresolved, is decided at the slot proving no trade can land within its 60 s ([ExitSaleWindow]): the first recorded trade
- * past them, or else the end of [RecordedThrough], which proved them. Every decision of the dip-entry replay reads only trades
- * up to its own slot, so the outcome over the trades through this slot is the outcome over the whole window.
+ * the close, the fill trade, the first completed curve, the buy itself, the wallet's sell that ended a dip watch, the first trade
+ * after a dip window, a failed sale's attempt, or the horizon end for outcomes that need the whole window. A time exit against
+ * the standing curve is decided at its close slot, the slot proving its start is covered. A take profit, stop loss or
+ * wallet-sold exit sold against the standing curve, or left unresolved, is decided at the slot proving no trade can land
+ * within its 60 s ([ExitSaleWindow]): the first recorded trade past them, or else the end of [RecordedThrough], which proved
+ * them. Every decision of the dip-entry replay reads only trades up to its own slot, so the outcome over the trades through
+ * this slot is the outcome over the whole window.
  */
 internal object ScenarioDecision {
     /** [recorded] is how far the scenario's dataset proves its pair recorded, as the replay judged its exit. */
@@ -51,7 +52,7 @@ internal object ScenarioDecision {
         ExitPriceAssumption.NEXT_TRADE -> close.slot
         ExitPriceAssumption.STANDING_CURVE -> when (close.reason) {
             CloseReason.TIME_EXIT -> close.slot
-            CloseReason.TAKE_PROFIT, CloseReason.STOP_LOSS -> deadlinePassedAt(position, intent, source, config, recorded)
+            CloseReason.TAKE_PROFIT, CloseReason.STOP_LOSS, CloseReason.WALLET_SOLD -> deadlinePassedAt(position, intent, source, config, recorded)
         }
     }
 
@@ -70,7 +71,9 @@ internal object ScenarioDecision {
         recorded: RecordedThrough,
     ): Slot =
         when (reason) {
-            RejectionReason.UNSUPPORTED_SUPPLY, RejectionReason.REFERENCE_BELOW_MIN_MARKET_CAP -> intent.creationSlot
+            RejectionReason.UNSUPPORTED_SUPPLY, RejectionReason.REFERENCE_BELOW_MIN_MARKET_CAP, RejectionReason.REFERENCE_UNAVAILABLE ->
+                intent.creationSlot
+            RejectionReason.WALLET_SOLD -> checkNotNull(intent.walletSell) { "Wallet sold without its sell intentId=${intent.id}" }.slot
             RejectionReason.MIGRATED_BEFORE_ENTRY, RejectionReason.MIGRATED -> checkNotNull(firstCompletion(intent, watchedFrom, source)) {
                 "Migration without a completed curve intentId=${intent.id} reason=$reason"
             }
@@ -94,14 +97,14 @@ internal object ScenarioDecision {
         }
 
     /**
-     * Where the failed sale was decided: a time exit tried only the curve standing at its trigger's slot. A take profit or stop
-     * loss tried the trades within its 60 s, or the standing curve without one, and is decided once they are proven over.
+     * Where the failed sale was decided: a time exit tried only the curve standing at its trigger's slot. A take profit, stop
+     * loss or wallet-sold exit tried the trades within its 60 s, or the standing curve without one, and is decided once they are proven over.
      */
     private fun unresolved(position: Position, intent: TradeIntent, source: MarketDataSource, config: SimulationConfig, recorded: RecordedThrough): Slot {
         val trigger = checkNotNull(position.exitTrigger) { "Unresolved exit without a trigger positionId=${position.id}" }
         return when (trigger.reason) {
             CloseReason.TIME_EXIT -> trigger.slot
-            CloseReason.TAKE_PROFIT, CloseReason.STOP_LOSS -> deadlinePassedAt(position, intent, source, config, recorded)
+            CloseReason.TAKE_PROFIT, CloseReason.STOP_LOSS, CloseReason.WALLET_SOLD -> deadlinePassedAt(position, intent, source, config, recorded)
         }
     }
 

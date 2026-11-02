@@ -17,6 +17,7 @@ import com.trenching.bot.walletactivity.domain.*
 /**
  * Replays a v3 to v6 dataset under the dip-entry strategy: one cycle per mint, from the tracked wallet's first buy of it. Each
  * position's exit is judged against how far the dataset proves its market recorded, per [DatasetCoverage.recordedThrough].
+ * The wallet-sell rule is refused on a dataset whose observations record no trades.
  */
 class ReplayRunner(
     private val normalizer: WalletNormalizer = WalletNormalizer(),
@@ -26,6 +27,9 @@ class ReplayRunner(
 ) {
     fun run(dataset: ReplayDataset, config: SimulationConfig): SimulationReport {
         require(dataset.schemaVersion in ReplayDataset.SUPPORTED_SCHEMA_VERSIONS) { "Unsupported replay schema" }
+        if (config.followWalletSells && !ReplayDataset.recordsTrades(dataset.schemaVersion)) {
+            throw SellCheckNeedsTradesException(dataset.schemaVersion)
+        }
         val transactions = OrderedWalletTransactions.canonical(dataset.transactions)
         val source = OrderedMarketData(dataset.observations)
         val rates = OrderedReferenceRates(dataset.referenceRates)
@@ -56,58 +60,27 @@ class ReplayRunner(
             }
         }
         return SimulationReport(runId, ENGINE_VERSION, datasetHash, configHash, config, ingestion, scenarios,
-            StableHash.of(resultParts(runId, scenarios)))
-    }
-
-    private fun resultParts(runId: String, scenarios: List<ScenarioResult>): List<String> {
-        val parts = mutableListOf(runId)
-        scenarios.forEach { scenario ->
-            val intent = scenario.intent
-            parts.addAll(listOf(intent.id, intent.referencePrice.toPlainString(), intent.dipPrice.toPlainString(), intent.watch.name))
-            intent.trigger?.let { parts.addAll(listOf(it.observationId, it.slot.value.toString(), it.marketCapUsd.toPlainString(), it.rate.toPlainString())) }
-            when (val outcome = scenario.outcome) {
-                is FillOutcome.Rejected -> parts.add(outcome.reason.name)
-                is FillOutcome.Filled -> {
-                    val fill = outcome.fill
-                    parts.addAll(listOf(fill.observationId, fill.actualSlot.value.toString(),
-                        fill.executionPrice.toPlainString(), fill.quantity.toPlainString(), fill.fee.toPlainString(),
-                        fill.feeBps.toString(), fill.priorityFee.toPlainString(), fill.priceImpactBps.toString(),
-                        fill.costBasis.toPlainString(), scenario.position?.state?.name ?: "",
-                        scenario.exitUnavailable?.name ?: ""))
-                    scenario.position?.let { position ->
-                        parts.addAll(listOf(position.takeProfitPrice.toPlainString(), position.stopLossPrice.toPlainString(),
-                            position.exitStart?.toString() ?: ""))
-                        position.exitTrigger?.let {
-                            parts.addAll(listOf(it.observationId, it.slot.value.toString(), it.time?.toString() ?: "", it.reason.name))
-                        }
-                        position.close?.let { close ->
-                            parts.addAll(listOf(close.observationId, close.slot.value.toString(),
-                                close.executionPrice.toPlainString(), close.grossProceeds.toPlainString(), close.fee.toPlainString(),
-                                close.feeBps.toString(), close.transactionCost.toPlainString(), close.priceImpactBps.toString(),
-                                close.netProceeds.toPlainString(), close.realizedPnl.toPlainString(), close.reason.name,
-                                close.priceAssumption.name))
-                        }
-                    }
-                }
-            }
-        }
-        return parts
+            resultChecksum(runId, scenarios))
     }
 
     companion object {
         /**
-         * dip-paper-v4: dip-paper-v3 with the optional block-time clocks (a dip window and a timed exit) and exits sold against
-         * the standing curve when no later trade lands. dip-paper-v3 checked the minimum market cap at the wallet's buy (strictly
-         * above) instead of at the dip; dip-paper-v2 was dip-paper-v1's triggers with bonding-curve execution on schema v3 datasets.
+         * dip-paper-v5: dip-paper-v4 with the optional post-trade price measure (spec Section 5: the reference is the price after
+         * the wallet's buy, read from its own market observation) and the optional wallet-sell rule, which reads the tracked
+         * wallet's sells from the market data. With both off its outcomes equal dip-paper-v4's. dip-paper-v4 added the optional
+         * block-time clocks (a dip window and a timed exit) and exits sold against the standing curve when no later trade lands.
+         * dip-paper-v3 checked the minimum market cap at the wallet's buy (strictly above) instead of at the dip; dip-paper-v2 was
+         * dip-paper-v1's triggers with bonding-curve execution on schema v3 datasets.
          */
-        const val ENGINE_VERSION = "dip-paper-v4"
+        const val ENGINE_VERSION = "dip-paper-v5"
 
         /** Fills trade against the fill trade's post-trade curve, outputs rounded down and fees rounded up. */
         private const val CURVE_RULE = "curve-post-trade-floor-fees-ceil"
 
         /**
          * The hash a report of [config] carries; it depends on the configuration and the engine's rules only, never on a dataset.
-         * A timed field is named only when set, so an untimed configuration keeps its dip-paper-v3 hash.
+         * A timed field is named only when set, and a rule field only when not its default, so an untimed configuration with the
+         * default rules keeps its dip-paper-v3 hash.
          */
         fun configurationHash(config: SimulationConfig): String =
             StableHash.of(listOf(config.strategyName, config.strategyVersion, config.notional.toPlainString(),
@@ -115,12 +88,58 @@ class ReplayRunner(
                 config.minMarketCapUsd.toPlainString(), config.horizonSlots.toString(), "latencySlots=${config.latencySlots}",
                 "transactionCostSol=${config.transactionCostSol.toPlainString()}", config.quoteMint.value,
                 "scale=${DecimalPolicy.SCALE}", "priceScale=${DecimalPolicy.PRICE_SCALE}", DecimalPolicy.ROUNDING.name,
-                "supply=${PumpFunLayout.TOKEN_SUPPLY}", "fills=first-eligible-after-latency", CURVE_RULE, "confirmed-signer-buys") + timedParts(config))
+                "supply=${PumpFunLayout.TOKEN_SUPPLY}", "fills=first-eligible-after-latency", CURVE_RULE, "confirmed-signer-buys") + timedParts(config) +
+                ruleParts(config))
 
         private fun timedParts(config: SimulationConfig): List<String> = listOfNotNull(
             config.dipWindowMs?.let { "dipWindowMs=$it" },
             config.maxHoldMs?.let { "maxHoldMs=$it" },
             config.hardExitStartMs?.let { "hardExitStartMs=$it" },
         )
+
+        private fun ruleParts(config: SimulationConfig): List<String> = listOfNotNull(
+            config.priceMeasure.takeUnless { it == PriceMeasure.TRADE_AVERAGE }?.let { "priceMeasure=${it.name}" },
+            "followWalletSells=true".takeIf { config.followWalletSells },
+        )
+
+        /** The checksum a report of [scenarios] carries: every decision, price and provenance id, in scenario order. */
+        internal fun resultChecksum(runId: String, scenarios: List<ScenarioResult>): String = StableHash.of(resultParts(runId, scenarios))
+
+        private fun resultParts(runId: String, scenarios: List<ScenarioResult>): List<String> {
+            val parts = mutableListOf(runId)
+            scenarios.forEach { scenario ->
+                val intent = scenario.intent
+                parts.addAll(listOf(intent.id, intent.referencePrice.toPlainString(), intent.dipPrice.toPlainString(), intent.watch.name))
+                intent.trigger?.let { parts.addAll(listOf(it.observationId, it.slot.value.toString(), it.marketCapUsd.toPlainString(), it.rate.toPlainString())) }
+                intent.referenceObservationId?.let(parts::add)
+                intent.walletSell?.let { parts.addAll(listOf(it.eventId, it.slot.value.toString())) }
+                when (val outcome = scenario.outcome) {
+                    is FillOutcome.Rejected -> parts.add(outcome.reason.name)
+                    is FillOutcome.Filled -> {
+                        val fill = outcome.fill
+                        parts.addAll(listOf(fill.observationId, fill.actualSlot.value.toString(),
+                            fill.executionPrice.toPlainString(), fill.quantity.toPlainString(), fill.fee.toPlainString(),
+                            fill.feeBps.toString(), fill.priorityFee.toPlainString(), fill.priceImpactBps.toString(),
+                            fill.costBasis.toPlainString(), scenario.position?.state?.name ?: "",
+                            scenario.exitUnavailable?.name ?: ""))
+                        scenario.position?.let { position ->
+                            parts.addAll(listOf(position.takeProfitPrice.toPlainString(), position.stopLossPrice.toPlainString(),
+                                position.exitStart?.toString() ?: ""))
+                            position.exitTrigger?.let {
+                                parts.addAll(listOf(it.observationId, it.slot.value.toString(), it.time?.toString() ?: "", it.reason.name))
+                            }
+                            position.close?.let { close ->
+                                parts.addAll(listOf(close.observationId, close.slot.value.toString(),
+                                    close.executionPrice.toPlainString(), close.grossProceeds.toPlainString(), close.fee.toPlainString(),
+                                    close.feeBps.toString(), close.transactionCost.toPlainString(), close.priceImpactBps.toString(),
+                                    close.netProceeds.toPlainString(), close.realizedPnl.toPlainString(), close.reason.name,
+                                    close.priceAssumption.name))
+                            }
+                        }
+                    }
+                }
+            }
+            return parts
+        }
     }
 }

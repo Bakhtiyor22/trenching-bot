@@ -6,6 +6,9 @@ import com.trenching.bot.common.Slot
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.marketdata.*
+import com.trenching.bot.marketdata.domain.MarketObservation
+import com.trenching.bot.marketdata.domain.ObservedTrade
+import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.replay.application.CaptureWorkflowService
 import com.trenching.bot.replay.application.ExecutionCalibrationService
 import com.trenching.bot.replay.application.RecordedReplayExportService
@@ -19,6 +22,7 @@ import com.trenching.bot.walletactivity.RecordedWalletHistory
 import com.trenching.bot.walletactivity.WalletHistoryCaptureConfiguration
 import com.trenching.bot.walletactivity.WalletHistoryDecodeResult
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
@@ -38,6 +42,8 @@ class CaptureWorkflowTest {
     private fun window() = MarketCaptureWindow.of(MintAddress.of(RecordedWalletFixtures.MINT),
         Slot.of(RecordedWalletFixtures.SLOT + 1), Slot.of(RecordedWalletFixtures.SLOT + 4500),
         TransactionSignature.of(RecordedWalletFixtures.SIGNATURE))
+    private fun leadWindow() = MarketCaptureWindow.of(window().baseMint, Slot.of(RecordedWalletFixtures.SLOT - 50), window().toSlot,
+        window().untilSignature)
     private fun manifest() = ReplayMarketFixtures.manifest(listOf(window()))
     private fun decoded() = ReplayMarketFixtures.decoded(market, manifest(), 1)
     private fun rateResult(complete: Boolean = true) = ReferenceRateCaptureResult(rates,
@@ -146,7 +152,9 @@ class CaptureWorkflowTest {
     @Test
     fun `qualify replays the exported dataset offline`() {
         RecordedWalletFixtures.save(mapper, wallet)
-        val workflow = workflow()
+        val lead = ReplayMarketFixtures.decoded(market,
+            ReplayMarketFixtures.manifest(listOf(leadWindow()), parameters = ReplayMarketFixtures.LEAD_PARAMETERS), 1)
+        val workflow = workflow(lead.copy(observations = lead.observations + decusBuy(lead.observations.single())))
         val exported = workflow.execute(CaptureStepCommand.Export(
             RecordedReplayExportRequest(wallet, market, rates, root.resolve("dataset.json")))) as CaptureStepResult.Exported
         val qualified = workflow.execute(CaptureStepCommand.Qualify(exported.export.output, CapturePaths(wallet, market, rates)))
@@ -186,15 +194,24 @@ class CaptureWorkflowTest {
     @Test
     fun `a market capture with the lead is matched against the wallet's lead windows and unlocks rates`() {
         RecordedWalletFixtures.save(mapper, wallet)
-        val leadWindow = MarketCaptureWindow.of(window().baseMint, Slot.of(RecordedWalletFixtures.SLOT - 50), window().toSlot,
-            window().untilSignature)
         val lead = ReplayMarketFixtures.decoded(market,
-            ReplayMarketFixtures.manifest(listOf(leadWindow), parameters = ReplayMarketFixtures.LEAD_PARAMETERS), 1)
+            ReplayMarketFixtures.manifest(listOf(leadWindow()), parameters = ReplayMarketFixtures.LEAD_PARAMETERS), 1)
         val leadWindowsLegacyParameters = lead.copy(windowParameters = ReplayMarketFixtures.PARAMETERS)
 
         assertEquals(CaptureStageState.READY, workflow(lead).inspect(CapturePaths(wallet, market)).market.state)
         assertTrue((workflow(lead).execute(CaptureStepCommand.Rates(wallet, market, rates)) as CaptureStepResult.Rates).capture.manifest.complete)
         assertEquals("MARKET_CAPTURE_MISMATCH", workflow(leadWindowsLegacyParameters).inspect(CapturePaths(wallet, market)).market.reason)
+    }
+
+    /**
+     * Decu's buy as a capture with the lead records it in its own slot: [template] moved there, naming the buy's transaction and
+     * top-level instruction and signed by Decu, so the agreed post-trade reference can be read from it.
+     */
+    private fun decusBuy(template: MarketObservation): MarketObservation {
+        val sourceEventId = "${RecordedWalletFixtures.SIGNATURE}:$BUY_INSTRUCTION_INDEX:-"
+        return template.copy(id = "pumpfun-bonding-curve-trade/v1:$sourceEventId", sourceEventId = sourceEventId,
+            slot = Slot.of(RecordedWalletFixtures.SLOT), priceSlot = Slot.of(RecordedWalletFixtures.SLOT),
+            trade = ObservedTrade.of(RecordedWalletFixtures.WALLET, TradeSide.BUY, BigInteger.valueOf(244_444_444), BigInteger.valueOf(1_238_520_682_656)))
     }
 
     @Test
@@ -232,5 +249,10 @@ class CaptureWorkflowTest {
                 RecordedReplayExportRequest(wallet, market, rates, root.resolve("missing.json"))))
         }
         assertFalse(Files.exists(root.resolve("missing.json")))
+    }
+
+    private companion object {
+        /** The top-level instruction of Decu's buy in the `pumpfun-buy.json` fixture, as its wallet decoder reads it. */
+        const val BUY_INSTRUCTION_INDEX = 1
     }
 }

@@ -4,6 +4,7 @@ import com.trenching.bot.common.DecimalPolicy
 import com.trenching.bot.common.Slot
 import com.trenching.bot.marketdata.MarketDataSource
 import com.trenching.bot.marketdata.ReferenceRates
+import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.ObservationEligibility
 import com.trenching.bot.protocol.pumpfun.PumpFunLayout
 import com.trenching.bot.strategy.domain.*
@@ -14,7 +15,10 @@ import java.math.BigDecimal
 /**
  * WAIT_FIRST_BUY and WAIT_DIP of the dip-entry strategy. The tracked wallet's first buy of a mint sets P0 and must be
  * valued above the minimum market cap. The first eligible trade in a later slot within the horizon and the [DipWindow], at
- * or below the dip level and before the bonding curve completes, triggers the entry, whatever the market cap there.
+ * or below the dip level and before the bonding curve completes, triggers the entry, whatever the market cap there. Prices are
+ * compared by [SimulationConfig.priceMeasure]. Under [SimulationConfig.followWalletSells] a sell of the mint by the buy's
+ * wallet in the watched slots, from the buy's own through the trigger's, ends the cycle with no entry; inside a slot it is
+ * read before any trigger, since the order of a slot's trades is not known.
  */
 class DipEntryStrategy {
     fun plan(
@@ -42,20 +46,34 @@ class DipEntryStrategy {
         source: MarketDataSource,
         rates: ReferenceRates,
     ): TradeIntent {
-        val referencePrice = DecimalPolicy.swapPrice(buy.quoteAmount, buy.baseAmount)
+        val referenceObservation = when (config.priceMeasure) {
+            PriceMeasure.TRADE_AVERAGE -> null
+            PriceMeasure.POST_TRADE -> buyObservation(buy, source, config)
+        }
+        val referencePrice = referenceObservation?.let(config.priceMeasure::of) ?: DecimalPolicy.swapPrice(buy.quoteAmount, buy.baseAmount)
         val dipPrice = DecimalPolicy.price(referencePrice.multiply(BigDecimal.ONE.subtract(DecimalPolicy.fraction(config.dipBps))))
         val horizonEnd = buy.slot.plus(config.horizonSlots)
         val window = DipWindow.of(config, buy.blockTime)
-        val (watch, trigger) = when {
-            !supported(buy) -> DipWatchOutcome.UNSUPPORTED_SUPPLY to null
-            belowMinMarketCap(buy, referencePrice, horizonEnd, config, source, rates) -> DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP to null
-            window is DipWindow.Closed -> DipWatchOutcome.NO_DIP to null
+        val result = when {
+            !supported(buy) -> DipWatchResult(DipWatchOutcome.UNSUPPORTED_SUPPLY)
+            config.priceMeasure == PriceMeasure.POST_TRADE && referenceObservation == null -> DipWatchResult(DipWatchOutcome.REFERENCE_UNAVAILABLE)
+            belowMinMarketCap(buy, referencePrice, horizonEnd, config, source, rates) -> DipWatchResult(DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP)
+            window is DipWindow.Closed -> DipWatchResult(DipWatchOutcome.NO_DIP)
             else -> watch(buy, dipPrice, horizonEnd, window, config, source, rates)
         }
-        return TradeIntent("$runId:${buy.id}", runId, buy.id, buy.pair, config.strategyName, config.strategyVersion, configHash,
-            ENTRY_OFFSET, buy.slot, buy.blockTime, trigger?.slot ?: buy.slot.plus(1), config.notional, referencePrice, dipPrice,
-            horizonEnd, watch, trigger)
+        val trigger = result.trigger
+        return TradeIntent("$runId:${buy.id}", runId, buy.id, buy.wallet, buy.pair, config.strategyName, config.strategyVersion,
+            configHash, ENTRY_OFFSET, buy.slot, buy.blockTime, trigger?.slot ?: buy.slot.plus(1), config.notional, referencePrice,
+            dipPrice, horizonEnd, result.outcome, trigger, referenceObservation?.id, result.walletSell)
     }
+
+    /**
+     * Exactly one observation of the buy's slot records the buy, and as a price it must be eligible; otherwise none is used
+     * (`docs/adr/20261025-post-trade-price-and-wallet-sell.md`, Decision 2).
+     */
+    private fun buyObservation(buy: WalletTradeObserved, source: MarketDataSource, config: SimulationConfig): MarketObservation? =
+        source.observations(buy.pair, buy.slot, buy.slot).filter { WalletObservations.recordsBuy(it, buy) }.singleOrNull()
+            ?.takeIf { ObservationEligibility.issue(it, config.maxAgeSlots) == null }
 
     /** Market cap assumes the fixed bonding-curve supply, so only Pump.fun buys with its decimals qualify. */
     private fun supported(buy: WalletTradeObserved): Boolean =
@@ -88,18 +106,35 @@ class DipEntryStrategy {
         config: SimulationConfig,
         source: MarketDataSource,
         rates: ReferenceRates,
-    ): Pair<DipWatchOutcome, DipTrigger?> {
-        for (observation in source.observations(buy.pair, buy.slot.plus(1), horizonEnd)) {
-            if (!window.admits(observation.observedTime)) return DipWatchOutcome.NO_DIP to null
-            if (observation.curveComplete) return DipWatchOutcome.MIGRATED_BEFORE_ENTRY to null
-            if (ObservationEligibility.issue(observation, config.maxAgeSlots) != null || observation.price > dipPrice) continue
-            val rate = checkNotNull(rates.rateAt(observation.observedTime)) {
-                "Dataset has no reference rate for observation id=${observation.id}"
+    ): DipWatchResult {
+        for ((slot, slotObservations) in source.observations(buy.pair, buy.slot, horizonEnd).groupBy { it.slot }) {
+            walletSell(slotObservations, buy, window, config)?.let { return DipWatchResult(DipWatchOutcome.WALLET_SOLD, walletSell = it) }
+            if (slot == buy.slot) continue
+            for (observation in slotObservations) {
+                if (!window.admits(observation.observedTime)) return DipWatchResult(DipWatchOutcome.NO_DIP)
+                if (observation.curveComplete) return DipWatchResult(DipWatchOutcome.MIGRATED_BEFORE_ENTRY)
+                val price = config.priceMeasure.of(observation)
+                if (ObservationEligibility.issue(observation, config.maxAgeSlots) != null || price > dipPrice) continue
+                val rate = checkNotNull(rates.rateAt(observation.observedTime)) {
+                    "Dataset has no reference rate for observation id=${observation.id}"
+                }
+                return DipWatchResult(DipWatchOutcome.TRIGGERED,
+                    DipTrigger(observation.id, observation.slot, DecimalPolicy.price(price), marketCap(price, rate), DecimalPolicy.price(rate)))
             }
-            return DipWatchOutcome.TRIGGERED to DipTrigger(observation.id, observation.slot, DecimalPolicy.price(observation.price),
-                marketCap(observation.price, rate), DecimalPolicy.price(rate))
         }
-        return DipWatchOutcome.NO_DIP to null
+        return DipWatchResult(DipWatchOutcome.NO_DIP)
+    }
+
+    /** The first sell of [slotObservations] by the buy's wallet that the dip window still admits, when [config] follows them. */
+    private fun walletSell(
+        slotObservations: List<MarketObservation>,
+        buy: WalletTradeObserved,
+        window: DipWindow,
+        config: SimulationConfig,
+    ): WalletSellSignal? {
+        if (!config.followWalletSells) return null
+        return slotObservations.firstOrNull { WalletObservations.isSellBy(it, buy.wallet) && window.admits(it.observedTime) }
+            ?.let { WalletSellSignal(it.id, it.slot) }
     }
 
     private fun marketCap(price: BigDecimal, rate: BigDecimal): BigDecimal = DecimalPolicy.scale(price.multiply(SUPPLY).multiply(rate))

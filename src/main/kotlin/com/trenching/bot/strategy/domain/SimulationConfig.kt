@@ -13,6 +13,14 @@ import java.math.BigDecimal
  * The timed fields are spec P7 and P11's block-time clocks; null keeps the slot-only behaviour. [dipWindowMs] bounds the dip
  * watch from the buy's block time; [maxHoldMs] (from the fill) and [hardExitStartMs] (from the buy) bound a position and are
  * set together.
+ *
+ * [priceMeasure] is the trade price the reference, the minimum market cap at it, the dip and the take-profit and stop-loss
+ * triggers compare (spec Section 5); the exit levels themselves still come from our own average fill. Under
+ * [PriceMeasure.POST_TRADE] the reference is read from the market observation of the wallet's buy, with no fallback.
+ * [followWalletSells] reads the tracked wallet's sells of the mint from the market data: a sell from the buy's slot through the
+ * dip trigger's slot ends the cycle with no entry, and a later sell while we hold, before a take profit, stop loss or time exit
+ * starts, exits 100% of the position as `WALLET_SOLD`, whatever amount the wallet sold. It needs a dataset whose observations
+ * record trades (schema v4 or later). Their defaults keep the behaviour of engine dip-paper-v4.
  */
 data class SimulationConfig private constructor(
     val strategyName: String,
@@ -30,6 +38,8 @@ data class SimulationConfig private constructor(
     val dipWindowMs: Long?,
     val maxHoldMs: Long?,
     val hardExitStartMs: Long?,
+    val priceMeasure: PriceMeasure,
+    val followWalletSells: Boolean,
 ) {
     companion object {
         const val STRATEGY_NAME = "dip-entry"
@@ -41,6 +51,7 @@ data class SimulationConfig private constructor(
             strategyName: String = STRATEGY_NAME, strategyVersion: String = STRATEGY_VERSION,
             quoteMint: MintAddress = MintAddress.WRAPPED_SOL,
             dipWindowMs: Long? = null, maxHoldMs: Long? = null, hardExitStartMs: Long? = null,
+            priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE, followWalletSells: Boolean = false,
         ): SimulationConfig {
             require(notional.signum() > 0 && notional.stripTrailingZeros().scale() <= SimulationConfigBounds.NOTIONAL_DECIMALS) {
                 "Notional must be a positive whole number of lamports notional=$notional"
@@ -67,7 +78,7 @@ data class SimulationConfig private constructor(
             require(strategyName.isNotBlank() && strategyVersion.isNotBlank()) { "Missing strategy identity" }
             return SimulationConfig(strategyName, strategyVersion, DecimalPolicy.scale(notional), maxAgeSlots, dipBps, takeProfitBps,
                 stopLossBps, normalizedMarketCap, horizonSlots, latencySlots, normalizedTransactionCost, quoteMint, dipWindowMs, maxHoldMs,
-                hardExitStartMs)
+                hardExitStartMs, priceMeasure, followWalletSells)
         }
 
         /**
@@ -80,11 +91,14 @@ data class SimulationConfig private constructor(
         /**
          * The agreed `decu-dip` v2 spec (`docs/strategy/decu-dip-v2-spec.md`): 0.1 SOL per entry, a 20% dip within 30 s of the
          * wallet's buy (P6, P7), $10k minimum market cap (P5), +55% take profit, -40% stop loss (P9, P10), and a time exit after
-         * 3 minutes held or 4 minutes from the buy, whichever is first (P11). The horizon only bounds the recording.
+         * 3 minutes held or 4 minutes from the buy, whichever is first (P11). Prices are compared after each trade, the reference
+         * being the price after the wallet's buy (P4, Section 5), and no entry follows the wallet's own sell. The horizon only
+         * bounds the recording.
          */
         fun agreed(): SimulationConfig =
             of(BigDecimal("0.1"), MAX_AGE_SLOTS, 2000, 5500, 4000, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"),
-                dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000)
+                dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000, priceMeasure = PriceMeasure.POST_TRADE,
+                followWalletSells = true)
 
         /** The engine's own choice: the spec sets no observation age. */
         private const val MAX_AGE_SLOTS = 2L

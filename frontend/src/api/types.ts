@@ -234,7 +234,14 @@ export interface Config {
   dipWindowMs: number | null;
   maxHoldMs: number | null;
   hardExitStartMs: number | null;
+  /** Which price the reference, the minimum market cap, the dip and take profit / stop loss compare. */
+  priceMeasure: PriceMeasure;
+  /** No entry once Decu sells before the dip, and a 100% exit when he sells while we hold. */
+  followWalletSells: boolean;
 }
+
+/** TRADE_AVERAGE: each trade's own average price. POST_TRADE: the curve's price right after each trade (spec Section 5). */
+export type PriceMeasure = 'TRADE_AVERAGE' | 'POST_TRADE';
 
 /** Inclusive range; a null `max` is unbounded above. */
 export interface Range {
@@ -271,6 +278,8 @@ export interface ConfigLimits {
   dipWindowMs: Range;
   maxHoldMs: Range;
   hardExitStartMs: Range;
+  /** The accepted price measures, in display order. */
+  priceMeasure: PriceMeasure[];
 }
 
 export interface ConfigDefaults {
@@ -303,6 +312,10 @@ export interface RunStartRequest {
     dipWindowMs?: number | null;
     maxHoldMs?: number | null;
     hardExitStartMs?: number | null;
+    /** A JSON string; absent or null for TRADE_AVERAGE. */
+    priceMeasure?: PriceMeasure | null;
+    /** A JSON boolean; absent or null for false. */
+    followWalletSells?: boolean | null;
   };
 }
 
@@ -379,7 +392,9 @@ export type PositionState = 'OPEN' | 'CLOSED';
 
 /**
  * What started the exit: the trade that crossed take profit or stop loss, or, for a TIME_EXIT, the exit start (then
- * `observationId` is the trade whose curve stood at that moment). `time` is null on runs stored before dip-paper-v4.
+ * `observationId` is the trade whose curve stood at that moment). For WALLET_SOLD, `observationId` is Decu's sell, but
+ * `slot` and `time` may be our fill's: a sell that landed before our buy is dated at the fill. `time` is null on runs
+ * stored before dip-paper-v4.
  */
 export interface ExitTrigger {
   observationId: string;
@@ -408,6 +423,12 @@ export interface DipTrigger {
   rate: DecimalString;
 }
 
+/** Decu's sell of the token that ended the dip watch; `eventId` is the sell's market observation id. */
+export interface WalletSell {
+  eventId: string;
+  slot: number;
+}
+
 /** One dip-entry cycle: the tracked wallet's first buy of a token, then the dip entry, if any, and its exit. */
 export interface Scenario {
   timeline?: {
@@ -424,13 +445,23 @@ export interface Scenario {
   targetSlot: number;
   pair: Pair;
   notional: DecimalString;
-  /** P0: the wallet's own price on its first buy. */
+  /**
+   * P0: Decu's average price on his first buy, or under POST_TRADE the price right after it; a placeholder when watch is
+   * REFERENCE_UNAVAILABLE.
+   */
   referencePrice: DecimalString;
   dipPrice: DecimalString;
   horizonEndSlot: number;
-  /** TRIGGERED, NO_DIP, DIP_BELOW_MIN_MARKET_CAP, MIGRATED_BEFORE_ENTRY or UNSUPPORTED_SUPPLY. */
+  /**
+   * TRIGGERED, NO_DIP, DIP_BELOW_MIN_MARKET_CAP, REFERENCE_BELOW_MIN_MARKET_CAP, MIGRATED_BEFORE_ENTRY,
+   * UNSUPPORTED_SUPPLY, WALLET_SOLD or REFERENCE_UNAVAILABLE.
+   */
   watch: string;
   trigger: DipTrigger | null;
+  /** Under POST_TRADE, the observation of Decu's buy that the reference was read from; else null. */
+  referenceObservationId: string | null;
+  /** Set exactly when watch is WALLET_SOLD. */
+  walletSell: WalletSell | null;
   status: ScenarioStatus;
   rejectionReason: string | null;
   fill: Fill | null;

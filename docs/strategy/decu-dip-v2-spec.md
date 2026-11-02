@@ -3,7 +3,7 @@
 This file is the single source of truth for the bot. It answers both question rounds: *"A Few Things to Clarify"* and *"A Few Remaining Details"*. If the code and this file disagree, this file wins.
 
 - Strategy name: `decu-dip`, version **2**. It runs as its own strategy with its own config and results. Existing capture modes stay unchanged.
-- Last updated: 2026-10-11
+- Last updated: 2026-10-24
 
 ### Changes from v1
 
@@ -16,6 +16,10 @@ This file is the single source of truth for the bot. It answers both question ro
 | Exits | "Sell 100% at deadline" | Exit **starts** at the deadline; retry policy; `UNRESOLVED` state (Section 8) |
 | Price measure | Mixed (trade prints vs. post-trade) | **Post-trade price** everywhere, in SOL per token (Section 5) |
 | Recording | Starts at detection | Backfills the missed beginning; coverage marked (Section 11) |
+
+### Changes on 2026-10-24
+
+- **Decu sells:** no entry once Decu sells the token while we watch for the dip, including a sell in the dip's own slot (Section 6), and a full `WALLET_SOLD` exit when he sells while we hold (Section 8). Any sell amount counts.
 
 ---
 
@@ -77,11 +81,12 @@ recordingWindowMs: 240000     # from t0, extended while a position is unresolved
 Decu tx detected
   └─ Signal checks (Sec. 3, 4) ── fail → SKIP_* (token dead forever)
        └─ WATCHING (dip window, Sec. 6) ── no dip / too late → SKIP_NO_DIP
+            ├─ Decu sells → SKIP_WALLET_SOLD
             └─ slot acquired → ENTERING (Sec. 7, 9)
                  ├─ failed / expired → ENTRY_* (slot released)
                  └─ confirmed → OPEN (Sec. 8)
-                      └─ TP / SL / time → EXITING
-                           ├─ sold → CLOSED (TAKE_PROFIT / STOP_LOSS / TIME_EXIT)
+                      └─ TP / SL / time / Decu sells → EXITING
+                           ├─ sold → CLOSED (TAKE_PROFIT / STOP_LOSS / TIME_EXIT / WALLET_SOLD)
                            └─ can't sell → UNRESOLVED (alert, no new entries)
 ```
 
@@ -253,6 +258,16 @@ Time fields logged for every event:
 | Our buy | slot, block time | built at, submitted at, confirmation received at |
 | Our sell (each attempt) | slot, block time | submitted at, confirmation received at |
 
+### Decu sells
+
+If Decu sells the token while we are still watching for the dip, we never buy it: the signal ends as `SKIP_WALLET_SOLD`.
+
+- Any sell amount counts, even 1% of his tokens. There is no threshold.
+- The check covers every trade from Decu's buy up to and including the dip trade's slot. A Decu sell in the same slot as the dip blocks the entry. We see a slot's transactions together, so we would already know about that sell when deciding to buy.
+- A Decu sell after the dip's slot doesn't stop the entry: the decision was already made. If we then hold, it triggers the `WALLET_SOLD` exit (Section 8).
+- Only Decu's sells count. Another trader's sell, or Decu's own buy, never does.
+- Decu's sells are read from the recorded market trades of the token, so a recording must include each trade's trader and side.
+
 ---
 
 ## 7. Entry execution
@@ -296,7 +311,9 @@ exit_start = min(entry_confirmation_received + 3 min, t0 + 4 min)
 | Post-trade price ≥ `tp_price` | `TAKE_PROFIT` |
 | Post-trade price ≤ `sl_price` | `STOP_LOSS` |
 | `exit_start` reached | `TIME_EXIT` |
+| Decu sells any amount of the token | `WALLET_SOLD` |
 
+- `WALLET_SOLD` sells **100%** of our position (P14), however little Decu sold. A Decu sell that lands after we decided to buy, up to the slot our buy landed in, triggers it as soon as we hold. When one trade is both Decu's sell and a TP or SL crossing, the reason is `WALLET_SOLD`. A sell at or after `exit_start` changes nothing, since the time exit has already started.
 - The **first** trigger wins and fixes the reason. The position moves to `EXITING`, and later triggers are ignored.
 - Only **one exit** runs at a time.
 - The deadlines are when the exit **starts**. The position stays open until a sell is confirmed.

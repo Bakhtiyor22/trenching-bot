@@ -1,6 +1,8 @@
 package com.trenching.bot.replay
 
 import com.trenching.bot.common.Slot
+import com.trenching.bot.marketdata.domain.ObservedTrade
+import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.portfolio.domain.CloseReason
@@ -21,6 +23,7 @@ import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetWriter
 import com.trenching.bot.strategy.domain.DipWatchOutcome
 import com.trenching.bot.strategy.domain.SimulationConfig
+import com.trenching.bot.support.AgreedDipSample
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV5
 import com.trenching.bot.support.DipSampleV6
@@ -29,7 +32,7 @@ import com.trenching.bot.walletactivity.TargetTokenEvidence
 import com.trenching.bot.walletactivity.TokenAccountFirstBuy
 import com.trenching.bot.walletactivity.TokenAccountGap
 import com.trenching.bot.walletactivity.domain.WalletTransaction
-import java.math.BigDecimal
+import java.math.BigInteger
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
@@ -42,16 +45,14 @@ import org.junit.jupiter.api.io.TempDir
 import tools.jackson.databind.json.JsonMapper
 
 /**
- * Qualification replays with `SimulationConfig.agreed()`. The sample's cycles are reshaped to its levels (a 20% dip, +55% and
- * -40% exits) by [AGREED_PRICES], keeping every trigger slot and every curve, so the sample's hand-checked P&L still holds.
+ * Qualification replays with `SimulationConfig.agreed()` on the sample's v4 twin shaped by [AgreedDipSample]: its levels (a 20%
+ * dip, +55% and -40% exits) met on post-trade prices, with each first buy recorded as the tracked wallet's trade so the
+ * post-trade reference is the buy's P0, keeping every trigger slot.
  */
 class TargetTokenQualificationServiceTest {
     @TempDir lateinit var root: Path
     private val mapper = JsonMapper.builder().build()
-    private val original = DipSample.load()
-    private val sample = original.copy(observations = original.observations.map { observation ->
-        AGREED_PRICES[observation.id]?.let { observation.copy(price = BigDecimal(it)) } ?: observation
-    })
+    private val sample = AgreedDipSample.dataset()
     private val paths get() = CapturePaths(root.resolve("wallet"), root.resolve("market"), root.resolve("rates"))
 
     @Test
@@ -139,7 +140,63 @@ class TargetTokenQualificationServiceTest {
         val exit = qualify(DipSample.NO_EXIT_FILL, datasetV6(DipSample.NO_EXIT_FILL, Instant.parse("2026-10-01T00:02:01Z"))).exit as ExitVerdict.Closed
         assertEquals(CloseReason.TAKE_PROFIT, exit.reason)
         assertEquals(Slot.of(8004), exit.slot)
-        assertEquals(DipSample.STANDING_CURVE_PNL, exit.realizedPnl.toPlainString())
+        assertEquals(AgreedDipSample.STANDING_CURVE_PNL, exit.realizedPnl.toPlainString())
+    }
+
+    @Test
+    fun `a wallet sell before the dip is a negative case`() {
+        val verdict = qualify(DipSample.TAKE_PROFIT, dataset(DipSample.TAKE_PROFIT) { soldBy(it, "fixture:TP:1001:0") })
+
+        assertEquals(CaseClassification.NEGATIVE_CASE, verdict.classification)
+        assertEquals(DipVerdict.NotQualified(DipWatchOutcome.WALLET_SOLD), verdict.dip)
+        assertNull(verdict.entry)
+        assertNull(verdict.exit)
+        assertEquals(ReplayVerdict.Ran, verdict.replay)
+    }
+
+    @Test
+    fun `a wallet sell while holding is a qualifying dip closed as wallet sold`() {
+        val verdict = qualify(DipSample.TAKE_PROFIT, dataset(DipSample.TAKE_PROFIT) { soldBy(it, "fixture:TP:1004:0") })
+
+        assertEquals(CaseClassification.QUALIFYING_DIP, verdict.classification)
+        val exit = verdict.exit as ExitVerdict.Closed
+        assertEquals(CloseReason.WALLET_SOLD, exit.reason)
+        assertEquals(Slot.of(1005), exit.slot)
+    }
+
+    @Test
+    fun `a cycle whose buy the market data does not record is a replay failure, never a negative case`() {
+        val buy = firstBuy(DipSample.TAKE_PROFIT)
+        val dataset = dataset(DipSample.TAKE_PROFIT) { shaped ->
+            shaped.copy(observations = shaped.observations.filterNot { it.trade?.trader == shaped.trackedWallet.value })
+        }
+
+        val verdict = qualify(DipSample.TAKE_PROFIT, dataset)
+
+        assertEquals(CaseClassification.REPLAY_FAILED, verdict.classification)
+        assertEquals(ReplayVerdict.Failed("REFERENCE_UNAVAILABLE"), verdict.replay)
+        assertEquals(DipVerdict.NotEvaluated("REPLAY_FAILED"), verdict.dip)
+        assertNull(verdict.entry)
+        assertNull(verdict.exit)
+        assertNotNull(verdict.provenance.runId)
+        assertNull(verdict.provenance.referencePrice)
+        assertEquals(buy.signature, verdict.provenance.firstBuySignature)
+        assertEquals(buy.slot, verdict.provenance.firstBuySlot)
+    }
+
+    @Test
+    fun `a dataset whose observations record no trades is refused by the wallet-sell rule as its own failure`() {
+        val pair = DipSample.pair(DipSample.TAKE_PROFIT)
+        val v3 = DipSample.load()
+        val dataset = write("cycle-v3", v3.copy(transactions = v3.transactions.filter { it.pair == pair },
+            observations = v3.observations.filter { it.pair == pair }))
+
+        val verdict = qualify(DipSample.TAKE_PROFIT, dataset)
+
+        assertEquals(CaseClassification.REPLAY_FAILED, verdict.classification)
+        assertEquals(ReplayVerdict.Failed("SELL_CHECK_NEEDS_TRADES"), verdict.replay)
+        assertEquals(CaptureVerdict(CaptureVerdictState.COMPLETE), verdict.capture)
+        assertEquals(VerdictProvenance(), verdict.provenance)
     }
 
     @Test
@@ -350,43 +407,32 @@ class TargetTokenQualificationServiceTest {
             observations = sample.observations.filter { it.pair == pair })))
     }
 
-    /** The cycle's mint alone as schema v5, its window observed through [throughSlot], at the agreed levels unless not [shaped]. */
+    /**
+     * The cycle's mint alone as schema v5, its window observed through [throughSlot], with its buy recorded and at the agreed
+     * levels unless not [shaped].
+     */
     private fun datasetV5(cycle: Int, throughSlot: Long, shaped: Boolean = true): Path {
         val pair = DipSample.pair(cycle)
-        val v5 = DipSampleV5.dataset(mapOf(pair to throughSlot))
-        val prices = sample.observations.associate { it.id to it.price }
-        val observations = v5.observations.filter { it.pair == pair }.map { if (shaped) it.copy(price = prices.getValue(it.id)) else it }
+        val v5 = AgreedDipSample.shape(DipSampleV5.dataset(mapOf(pair to throughSlot)), if (shaped) AgreedDipSample.PRICES else emptyMap())
         return write("cycle-$cycle-v5-$throughSlot-$shaped", v5.copy(transactions = v5.transactions.filter { it.pair == pair },
-            observations = observations, coverage = v5.coverage.filter { it.pair == pair }))
+            observations = v5.observations.filter { it.pair == pair }, coverage = v5.coverage.filter { it.pair == pair }))
     }
 
     /** The cycle's mint alone as schema v6 at the agreed levels, its full window recorded through [throughTime]. */
     private fun datasetV6(cycle: Int, throughTime: Instant): Path {
         val pair = DipSample.pair(cycle)
-        val v6 = DipSampleV6.dataset(mapOf(pair to throughTime))
-        val prices = sample.observations.associate { it.id to it.price }
+        val v6 = AgreedDipSample.shape(DipSampleV6.dataset(mapOf(pair to throughTime)))
         return write("cycle-$cycle-v6-$throughTime".replace(':', '-'), v6.copy(transactions = v6.transactions.filter { it.pair == pair },
-            observations = v6.observations.filter { it.pair == pair }.map { it.copy(price = prices.getValue(it.id)) },
-            coverage = v6.coverage.filter { it.pair == pair }))
+            observations = v6.observations.filter { it.pair == pair }, coverage = v6.coverage.filter { it.pair == pair }))
     }
+
+    /** [dataset] with the trade [observationId] recorded as a sell by the tracked wallet. */
+    private fun soldBy(dataset: ReplayDataset, observationId: String): ReplayDataset = dataset.copy(observations = dataset.observations.map {
+        if (it.id == observationId) it.copy(trade = ObservedTrade.of(dataset.trackedWallet.value, TradeSide.SELL, BigInteger.ONE, BigInteger.ONE)) else it
+    })
 
     private fun write(name: String, dataset: ReplayDataset): Path =
         root.resolve("$name.json").also { Files.writeString(it, ReplayDatasetWriter(mapper).write(dataset)) }
 
     private fun load(path: Path): ReplayDataset = Files.newInputStream(path).use { ReplayDatasetLoader(mapper).load(it) }
-
-    private companion object {
-        /**
-         * The dips at exactly 20% below P0 (0.00000008) for the take-profit, migrated-in-position, horizon, standing-curve and
-         * no-fill cycles; the take-profit crossings above +55% of each entry's execution price; and the stop-loss trigger below -40%.
-         */
-        val AGREED_PRICES = mapOf(
-            "fixture:TP:1002:0" to "0.00000008", "fixture:TP:1005:0" to "0.00000014",
-            "fixture:SL:2004:0" to "0.00000004",
-            "fixture:MIGRATED_POS:6001:0" to "0.00000008",
-            "fixture:HORIZON:7001:0" to "0.00000008",
-            "fixture:NOEXIT:8001:0" to "0.00000008", "fixture:NOEXIT:8003:0" to "0.00000014",
-            "fixture:NOFILL:9001:0" to "0.00000008",
-        )
-    }
 }

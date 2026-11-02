@@ -12,6 +12,7 @@ import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.domain.DatasetNotFoundException
 import com.trenching.bot.replay.domain.MarketCoverageEndedException
 import com.trenching.bot.replay.domain.RunStart
+import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
 import com.trenching.bot.strategy.domain.SimulationConfig
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
@@ -60,6 +61,11 @@ class RunLaunchService(
         val shortfall = exception.shortfall
         log.warn("console run refused datasetId={} mint={} decidedAt={} throughSlot={} reason=MARKET_COVERAGE_ENDED",
             datasetId, shortfall.pair.base.value, shortfall.decidedAt.value, shortfall.throughSlot?.value)
+        throw exception
+    } catch (exception: SellCheckNeedsTradesException) {
+        meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, ConsoleMetrics.SELL_CHECK_NEEDS_TRADES).increment()
+        log.warn("console run refused datasetId={} schemaVersion={} reason={}", datasetId, exception.schemaVersion,
+            SellCheckNeedsTradesException.CODE)
         throw exception
     } catch (exception: RuntimeException) {
         meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, ConsoleMetrics.FAILED).increment()

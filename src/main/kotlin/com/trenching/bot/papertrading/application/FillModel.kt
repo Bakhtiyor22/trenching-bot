@@ -23,6 +23,8 @@ class FillModel {
             DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP -> return FillOutcome.Rejected(intent.id, RejectionReason.REFERENCE_BELOW_MIN_MARKET_CAP)
             DipWatchOutcome.MIGRATED_BEFORE_ENTRY -> return FillOutcome.Rejected(intent.id, RejectionReason.MIGRATED_BEFORE_ENTRY)
             DipWatchOutcome.UNSUPPORTED_SUPPLY -> return FillOutcome.Rejected(intent.id, RejectionReason.UNSUPPORTED_SUPPLY)
+            DipWatchOutcome.WALLET_SOLD -> return FillOutcome.Rejected(intent.id, RejectionReason.WALLET_SOLD)
+            DipWatchOutcome.REFERENCE_UNAVAILABLE -> return FillOutcome.Rejected(intent.id, RejectionReason.REFERENCE_UNAVAILABLE)
         }
         val earliestFillSlot = trigger.slot.plus(config.latencySlots)
         val observation = source.observations(intent.pair, trigger.slot, intent.horizonEndSlot).asSequence()

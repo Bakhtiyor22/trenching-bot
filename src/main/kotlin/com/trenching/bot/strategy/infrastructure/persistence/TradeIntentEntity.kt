@@ -1,6 +1,8 @@
 package com.trenching.bot.strategy.infrastructure.persistence
 
 import com.trenching.bot.common.DecimalPolicy
+import com.trenching.bot.common.ReplayLimits
+import com.trenching.bot.marketdata.domain.ObservedTrade
 import com.trenching.bot.strategy.domain.DipWatchOutcome
 import jakarta.persistence.*
 import java.math.BigDecimal
@@ -65,6 +67,15 @@ class TradeIntentEntity(
     var triggerMarketCapUsd: BigDecimal?,
     @Column(name = "trigger_rate", nullable = true, precision = DecimalPolicy.PRICE_PRECISION, scale = DecimalPolicy.PRICE_SCALE)
     var triggerRate: BigDecimal?,
+    // Null on a row stored before engine dip-paper-v5; such a row reads the wallet of its source event.
+    @Column(name = "wallet", nullable = true, length = ObservedTrade.MAX_TRADER_LENGTH)
+    var wallet: String?,
+    @Column(name = "reference_observation_id", nullable = true, length = ReplayLimits.MAX_OBSERVATION_ID_LENGTH)
+    var referenceObservationId: String?,
+    @Column(name = "wallet_sell_event_id", nullable = true, length = ReplayLimits.MAX_OBSERVATION_ID_LENGTH)
+    var walletSellEventId: String?,
+    @Column(name = "wallet_sell_slot", nullable = true)
+    var walletSellSlot: Long?,
     @Version
     @Column(nullable = false)
     var version: Long? = null,

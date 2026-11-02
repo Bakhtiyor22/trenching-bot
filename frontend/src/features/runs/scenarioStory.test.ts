@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { edgeScenarios, sampleScenarios } from '../../mocks/fixtures';
+import {
+  edgeScenarios,
+  referenceUnavailableScenario,
+  sampleScenarios,
+  soldBeforeDipScenario,
+  walletSoldScenario,
+} from '../../mocks/fixtures';
 import { runLanes, scenarioEvents } from './scenarioStory';
 
 const [takeProfit, stopLoss, noDip] = sampleScenarios;
@@ -42,5 +48,39 @@ describe('runLanes', () => {
       ['—', null, null, null],
     ]);
     expect(span).toBeGreaterThan(6);
+  });
+});
+
+describe('scenarioEvents with Decu sells', () => {
+  it('ends a cycle Decu sold before the dip at his sell, and a Decu-sold exit at its start', () => {
+    expect(scenarioEvents(soldBeforeDipScenario, 'SOL').at(-1)).toMatchObject({
+      slot: 3005,
+      title: 'Decu sold before the dip',
+    });
+    expect(scenarioEvents(walletSoldScenario, 'SOL').map((e) => e.title)).toContain(
+      'Exit started: Decu sold',
+    );
+    expect(scenarioEvents(referenceUnavailableScenario, 'SOL')[0]?.detail).toBe(
+      'P0 unknown · dip level unknown',
+    );
+  });
+});
+
+describe('runLanes span', () => {
+  it('spans a no-entry cycle to the end of its dip window, not just the few slots of a dip', () => {
+    // 30 s at 207 ms per slot is about 145 slots, inside the 4,500-slot horizon.
+    const noDip = sampleScenarios[2]!;
+    const { lanes, span } = runLanes([noDip], { dipWindowMs: 30000 }, 207);
+    expect(lanes[0]?.watchEnd).toBe(145);
+    expect(span).toBeGreaterThan(145);
+    expect(span).toBeLessThan(200);
+  });
+
+  it('spans an untimed no-entry cycle to its horizon and a cycle Decu sold to his sell', () => {
+    expect(runLanes([sampleScenarios[2]!]).span).toBeGreaterThan(4500);
+    expect(runLanes([soldBeforeDipScenario], { dipWindowMs: 30000 }, 207).lanes[0]?.watchEnd).toBe(
+      5,
+    );
+    expect(runLanes([referenceUnavailableScenario]).lanes[0]?.watchEnd).toBe(0);
   });
 });

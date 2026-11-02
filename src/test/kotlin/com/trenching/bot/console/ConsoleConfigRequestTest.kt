@@ -8,11 +8,14 @@ import com.trenching.bot.console.domain.ConfigErrorCode
 import com.trenching.bot.console.domain.ConfigValidation
 import com.trenching.bot.console.domain.NumberRange
 import com.trenching.bot.console.domain.SimulationConfigLimits
+import com.trenching.bot.strategy.domain.PriceMeasure
 import com.trenching.bot.strategy.domain.SimulationConfig
 import java.math.BigDecimal
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
@@ -216,12 +219,46 @@ class ConsoleConfigRequestTest {
     }
 
     @Test
+    fun `the price measure and the wallet-sell rule are read from their JSON values`() {
+        val config = config("""{"priceMeasure":"POST_TRADE","followWalletSells":true}""")
+
+        assertEquals(PriceMeasure.POST_TRADE, config.priceMeasure)
+        assertTrue(config.followWalletSells)
+        assertEquals(SimulationConfig.mvp(), config("""{"priceMeasure":"TRADE_AVERAGE","followWalletSells":false}"""))
+    }
+
+    @Test
+    fun `an absent or null price measure and wallet-sell rule keep the mvp defaults`() {
+        assertEquals(SimulationConfig.mvp(), config("""{"priceMeasure":null,"followWalletSells":null}"""))
+        assertEquals(PriceMeasure.TRADE_AVERAGE, config("{}").priceMeasure)
+        assertFalse(config("{}").followWalletSells)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["\"post_trade\"", "\"AVERAGE\"", "\"\"", "1", "true"])
+    fun `a price measure that is not one of the measure names is rejected on its field only`(value: String) {
+        assertEquals(mapOf("priceMeasure" to "must be one of TRADE_AVERAGE, POST_TRADE"), fields("""{"priceMeasure":$value}"""))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["\"true\"", "1", "0", "\"yes\""])
+    fun `a wallet-sell rule that is not a JSON boolean is rejected on its field only`(value: String) {
+        assertEquals(mapOf("followWalletSells" to "must be true or false"), fields("""{"followWalletSells":$value}"""))
+    }
+
+    @Test
+    fun `the price measures offered are every measure the strategy has`() {
+        assertEquals(PriceMeasure.entries, SimulationConfigLimits.CURRENT.priceMeasure)
+    }
+
+    @Test
     fun `levels sent as percents build the same configuration as the same levels in basis points`() {
         val shared = """"notional":"0.1","minMarketCapUsd":"10000","latencySlots":1,"transactionCostSol":"0.001""""
         val clocks = """"dipWindowMs":30000,"maxHoldMs":180000,"hardExitStartMs":240000"""
-        val percents = config("""{$shared,$clocks,"dipPercent":"20","takeProfitPercent":"55","stopLossPercent":"40"}""")
+        val rules = """"priceMeasure":"POST_TRADE","followWalletSells":true"""
+        val percents = config("""{$shared,$clocks,$rules,"dipPercent":"20","takeProfitPercent":"55","stopLossPercent":"40"}""")
 
-        assertEquals(config("""{$shared,$clocks,"dipBps":2000,"takeProfitBps":5500,"stopLossBps":4000}"""), percents)
+        assertEquals(config("""{$shared,$clocks,$rules,"dipBps":2000,"takeProfitBps":5500,"stopLossBps":4000}"""), percents)
         assertEquals(AgreedStrategyPreset.CONFIG, percents)
         assertEquals(1550, config("""{"dipPercent":"15.5"}""").dipBps)
         assertEquals(1, config("""{"stopLossPercent":"0.01"}""").stopLossBps)

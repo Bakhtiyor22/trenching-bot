@@ -36,6 +36,10 @@ import org.slf4j.LoggerFactory
  * early. The recording's end is proven by the first trade at or after that moment, or by the block time of the prefix's end,
  * read only when a decision waits on it.
  *
+ * The agreed configuration compares post-trade prices and follows the wallet's sells, so a window planned before the
+ * market-window lead, which cannot hold the wallet's own buy, is decided `REFERENCE_UNAVAILABLE` at that buy, and a wallet sell
+ * decides the window at the sell, before an entry, or like a take profit or stop loss, while holding.
+ *
  * The prefix is cut before the first trade of a minute without a SOL/USDT rate, so a trigger is never replayed without its
  * rate. Rates are looked up once per minute for one capture invocation and never stored: export and qualification replay
  * with the recorded rates, which re-checks every decision.
@@ -130,7 +134,7 @@ internal class DipOutcomeCutoff(
 
     /**
      * An open position whose exit only the coverage end time can still prove: a time exit whose start no recorded trade
-     * reaches, or a take profit or stop loss whose 60 s no recorded trade passes.
+     * reaches, or a take profit, stop loss or wallet-sold exit whose 60 s no recorded trade passes.
      */
     private fun awaitsTime(scenario: ScenarioResult, observations: List<MarketObservation>): Boolean {
         val position = scenario.position?.takeIf { it.close == null } ?: return false
@@ -141,7 +145,7 @@ internal class DipOutcomeCutoff(
         }
         return when (trigger.reason) {
             CloseReason.TIME_EXIT -> false
-            CloseReason.TAKE_PROFIT, CloseReason.STOP_LOSS -> observations.none(ExitSaleWindow.of(trigger, CONFIG)::passedBy)
+            CloseReason.TAKE_PROFIT, CloseReason.STOP_LOSS, CloseReason.WALLET_SOLD -> observations.none(ExitSaleWindow.of(trigger, CONFIG)::passedBy)
         }
     }
 
