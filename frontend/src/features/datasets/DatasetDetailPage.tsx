@@ -7,6 +7,7 @@ import type { ObservedChartMarker, PaperChartFill } from '../../api/types';
 import { TradeChart } from '../../components/TradeChart';
 import { SourceLinks } from '../../components/SourceLinks';
 import { ConfirmDelete } from '../../components/ConfirmDelete';
+import { DatasetInUse, DeleteDatasetText } from './DatasetDelete';
 import { Mint, ShortId, Timestamp } from '../../components/DisplayValues';
 import { ObservationTable } from '../../components/ObservationTable';
 import { IconPlay } from '../../components/Icons';
@@ -98,9 +99,9 @@ export function DatasetDetailPage() {
                 await deleteDataset.mutateAsync(data.id);
                 await navigate(paths.datasets);
               }}
+              explainError={(error) => <DatasetInUse error={error} datasetId={data.id} />}
             >
-              Removes “{data.name}” from Datasets. Runs made with it are kept, each with its own
-              copy of the dataset. Uploading the same file again restores it under the same id.
+              <DeleteDatasetText name={data.name} />
             </ConfirmDelete>
           </>
         }

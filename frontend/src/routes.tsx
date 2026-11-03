@@ -69,6 +69,36 @@ export const routes: RouteObject[] = [
         }),
       },
       {
+        path: 'automation',
+        lazy: async () => ({
+          Component: (await import('./features/automation/AutomationOverviewPage')).AutomationOverviewPage,
+        }),
+      },
+      {
+        path: 'automation/nights',
+        lazy: async () => ({
+          Component: (await import('./features/automation/AutomationNightsPage')).AutomationNightsPage,
+        }),
+      },
+      {
+        path: 'automation/nights/:id',
+        lazy: async () => ({
+          Component: (await import('./features/automation/AutomationNightPage')).AutomationNightPage,
+        }),
+      },
+      {
+        path: 'automation/items/:id',
+        lazy: async () => ({
+          Component: (await import('./features/automation/AutomationItemRedirect')).AutomationItemRedirect,
+        }),
+      },
+      {
+        path: 'automation/sweep-runs',
+        lazy: async () => ({
+          Component: (await import('./features/automation/AutomationSweepRunsPage')).AutomationSweepRunsPage,
+        }),
+      },
+      {
         path: 'captures/:id',
         lazy: async () => ({
           Component: (await import('./features/captures/CaptureDetailPage')).CaptureDetailPage,

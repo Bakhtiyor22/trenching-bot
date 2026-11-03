@@ -16,6 +16,7 @@ export const SETTING_LABELS: Record<SettingField, string> = {
   minMarketCapUsd: 'Minimum market cap',
   transactionCostSol: 'Cost per transaction',
   quoteMint: 'Quote currency',
+  minSignalSol: 'Minimum signal size',
 };
 
 /** How a run's price measure reads in settings and the run detail. */
@@ -28,12 +29,25 @@ export function formatSettingValue(field: SettingField, value: string | number |
   if (field === 'followWalletSells') return onOff(value === true);
   if (field === 'priceMeasure') return PRICE_MEASURE_VALUES[value as PriceMeasure] ?? String(value);
   if (field.endsWith('Seconds')) return value === '' ? 'Off' : `${String(value)} s`;
+  if (field === 'minSignalSol') return minSignalLabel(value === '' ? null : String(value));
   const text = trimFractionZeros(String(value));
   if (field.endsWith('Percent')) return formatPercent(text);
   if (field === 'notional' || field === 'transactionCostSol') return `${formatDecimal(text)} SOL`;
   if (field === 'minMarketCapUsd') return `$${formatDecimal(text)}`;
   if (field === 'quoteMint') return mintLabel(text);
   return `${formatDecimal(text)} slots`;
+}
+
+/** "More than 1.9 SOL, fees included", or "Off" without a minimum. */
+export function minSignalLabel(sol: string | null | undefined): string {
+  return sol ? `More than ${formatDecimal(trimFractionZeros(sol))} SOL, fees included` : 'Off';
+}
+
+/** Where a run reads its dataset from; undefined for a backend that predates dataset references. */
+export function storageLabel(storage: RunDetail['run']['storage']): string | null {
+  if (storage === 'DATASET_REFERENCE') return 'Reads the catalog dataset (automation sweep run)';
+  if (storage === 'COPY') return 'Keeps its own copy of the dataset';
+  return null;
 }
 
 function onOff(on: boolean): string {
@@ -115,6 +129,7 @@ export const RUN_INPUTS: Array<{ label: string; value: (detail: RunDetail) => st
   { label: 'Hard exit start', value: (d) => clockLabel(d.config.hardExitStartMs) },
   { label: 'Price measure', value: (d) => PRICE_MEASURE_VALUES[d.config.priceMeasure] },
   { label: "Follow Decu's sells", value: (d) => onOff(d.config.followWalletSells) },
+  { label: 'Minimum signal size', value: (d) => minSignalLabel(d.config.minSignalSol) },
   { label: 'Horizon', value: (d) => `${formatSlot(d.config.horizonSlots)} slots` },
   { label: 'Latency', value: (d) => latencyLabel(d.config.latencySlots) },
   { label: 'Transaction cost', value: (d) => transactionCostLabel(d.config.transactionCostSol) },

@@ -16,6 +16,7 @@ import { SAMPLE_DATASET } from '../api/endpoints';
 import { isSolanaAddress } from '../lib/base58';
 import { compareDecimals } from '../lib/decimal';
 import { createCaptureHandlers, resetCaptureMocks } from './captureHandlers';
+import { createAutomationHandlers, resetAutomationMocks } from './automationHandlers';
 import {
   configDefaults,
   dashboardFixture,
@@ -68,6 +69,7 @@ let db = freshDb();
 export function resetMockDb(): void {
   db = freshDb();
   resetCaptureMocks();
+  resetAutomationMocks();
 }
 
 function error(status: number, code: string, message: string, fields: Record<string, string> = {}) {
@@ -382,6 +384,7 @@ const CONFIG_FIELDS = new Set([
   'hardExitStartMs',
   'priceMeasure',
   'followWalletSells',
+  'minSignalSol',
 ]);
 
 function validateConfig(config: RunStartRequest['config']): Record<string, string> {
@@ -835,6 +838,7 @@ export function createHandlers(options: MockOptions = {}) {
     }),
 
     ...createCaptureHandlers(wait),
+    ...createAutomationHandlers(wait),
   ];
 }
 

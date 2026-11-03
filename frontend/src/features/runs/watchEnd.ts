@@ -20,6 +20,8 @@ const DECIDED_AT_BUY = new Set([
   'REFERENCE_UNAVAILABLE',
   'REFERENCE_BELOW_MIN_MARKET_CAP',
   'UNSUPPORTED_SUPPLY',
+  'SIGNAL_BELOW_MIN_SIZE',
+  'SIGNAL_SIZE_UNAVAILABLE',
 ]);
 
 export type WatchConfig = Pick<Config, 'dipWindowMs'>;

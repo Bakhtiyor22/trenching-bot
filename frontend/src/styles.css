@@ -98,3 +98,76 @@ body {
   color: var(--mantine-color-text);
   box-shadow: inset 3px 0 0 var(--mantine-primary-color-filled);
 }
+
+/* Automation buy-state colours, validated with the dataviz palette script in each scheme. The order replayed,
+   in progress, not a first buy, failed keeps red away from amber. "Not a first buy" is a deliberate neutral. */
+:root {
+  --automation-replayed: #1c7ed6;
+  --automation-progress: #b9841f;
+  --automation-skipped: #adb5bd;
+  --automation-issues: #e03131;
+  --automation-cell-empty: #f1f3f5;
+  --automation-sticky-bg: var(--mantine-color-body);
+}
+
+[data-mantine-color-scheme='dark'] {
+  --automation-replayed: #3f8fe8;
+  --automation-progress: #bf8720;
+  --automation-skipped: #6b7885;
+  --automation-issues: #e5534b;
+  --automation-cell-empty: #151b21;
+  --automation-sticky-bg: var(--mantine-color-dark-6);
+}
+
+/* Status-by-night cells: a link per cell, at least 32 px tall for touch, with a visible focus ring. */
+.automation-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 32px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.automation-cell:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: 1px;
+}
+
+.automation-cell[data-status='SUCCESS'] {
+  background: var(--mantine-color-teal-light);
+  color: var(--mantine-color-teal-light-color);
+}
+
+.automation-cell[data-status='NO_SUCCESS'] {
+  background: var(--mantine-color-red-light);
+  color: var(--mantine-color-red-light-color);
+}
+
+.automation-cell[data-status='NO_RESULT'] {
+  background: var(--automation-cell-empty);
+  color: var(--mantine-color-dimmed);
+}
+
+.automation-cell[data-status='NONE'] {
+  border: 1px dashed var(--mantine-color-default-border);
+  color: var(--mantine-color-dimmed);
+}
+
+.automation-cell[data-selected='true'] {
+  box-shadow: inset 0 0 0 2px var(--mantine-primary-color-filled);
+}
+
+/* Sticky row labels for the sideways-scrolling grid. */
+.automation-sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--automation-sticky-bg);
+  /* Covers the 2 px cell spacing on its left, so scrolled cells never peek out beside the label. */
+  box-shadow: -2px 0 0 0 var(--automation-sticky-bg);
+}

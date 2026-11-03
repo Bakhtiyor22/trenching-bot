@@ -8,6 +8,7 @@ import { formatDecimal, pnlColor } from '../lib/decimal';
 import { formatLocalTime, mintLabel, shortId } from '../lib/format';
 import { paths } from '../paths';
 import {
+  IconAutomation,
   IconCapture,
   IconCompare,
   IconDashboard,
@@ -107,6 +108,12 @@ export function CommandPalette() {
           label: 'Captures',
           leftSection: <IconCapture size={16} />,
           onClick: () => open(paths.captures),
+        },
+        {
+          id: 'go-automation',
+          label: 'Automation: nightly sweep scoreboard',
+          leftSection: <IconAutomation size={16} />,
+          onClick: () => open(paths.automation),
         },
         {
           id: 'go-solana',

@@ -238,6 +238,11 @@ export interface Config {
   priceMeasure: PriceMeasure;
   /** No entry once Decu sells before the dip, and a 100% exit when he sells while we hold. */
   followWalletSells: boolean;
+  /**
+   * The SOL Decu's buy must pay more than, curve payment plus protocol and creator fees (engine dip-paper-v6); null
+   * applies no minimum. Absent from a backend before v6.
+   */
+  minSignalSol?: DecimalString | null;
 }
 
 /** TRADE_AVERAGE: each trade's own average price. POST_TRADE: the curve's price right after each trade (spec Section 5). */
@@ -280,6 +285,9 @@ export interface ConfigLimits {
   hardExitStartMs: Range;
   /** The accepted price measures, in display order. */
   priceMeasure: PriceMeasure[];
+  /** A minimum signal size has at most this many decimals (whole lamports); absent before engine dip-paper-v6. */
+  minSignalSolScale?: number;
+  minSignalSol?: DecimalRange;
 }
 
 export interface ConfigDefaults {
@@ -316,6 +324,8 @@ export interface RunStartRequest {
     priceMeasure?: PriceMeasure | null;
     /** A JSON boolean; absent or null for false. */
     followWalletSells?: boolean | null;
+    /** Plain decimal string of whole lamports; absent or null applies no minimum signal size. */
+    minSignalSol?: DecimalString | null;
   };
 }
 
@@ -334,7 +344,14 @@ export interface RunSummary {
   /** Exact sum over closed positions, in units of `quoteMint`. */
   realizedPnl: DecimalString;
   createdAt: IsoInstant;
+  /**
+   * COPY: the run keeps its own copy of the dataset. DATASET_REFERENCE: it reads the catalog dataset (automation sweep
+   * runs), which therefore cannot be deleted. Absent from an older backend, which only copies.
+   */
+  storage?: RunStorage;
 }
+
+export type RunStorage = 'COPY' | 'DATASET_REFERENCE';
 
 export interface RunStart {
   run: RunSummary;

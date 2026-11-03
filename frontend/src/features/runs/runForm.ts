@@ -3,6 +3,9 @@ import { isSolanaAddress } from '../../lib/base58';
 import { trimFractionZeros, validateDecimal } from '../../lib/decimal';
 import { bpsToPercent } from '../../lib/percent';
 
+/** SOL has 9 decimals: one lamport. */
+const LAMPORT_SCALE = 9;
+
 /** The editable integer `SimulationConfig` parameters of the dip-entry strategy. */
 export const INTEGER_FIELDS = ['horizonSlots', 'latencySlots', 'maxAgeSlots'] as const;
 export type IntegerField = (typeof INTEGER_FIELDS)[number];
@@ -45,6 +48,8 @@ export interface RunFormValues {
   hardExitStartSeconds: string;
   priceMeasure: PriceMeasure;
   followWalletSells: boolean;
+  /** SOL, typed text of whole lamports; empty means no minimum signal size. */
+  minSignalSol: string;
 }
 
 export const FIELD_LABELS: Record<IntegerField | PercentField | SecondsField | RuleField, string> =
@@ -76,7 +81,8 @@ export const FIELD_HINTS: Record<
   | 'notional'
   | 'minMarketCapUsd'
   | 'transactionCostSol'
-  | 'quoteMint',
+  | 'quoteMint'
+  | 'minSignalSol',
   string
 > = {
   notional: 'Quote units spent per entry, as a plain decimal.',
@@ -97,6 +103,8 @@ export const FIELD_HINTS: Record<
   latencySlots: 'Slots between a trigger and the trade that fills it (1 = next slot).',
   maxAgeSlots: 'How old (by price slot) an observation may be when used.',
   quoteMint: 'Only swaps against this mint create signals. Wrapped SOL by default.',
+  minSignalSol:
+    "Decu's buy is a signal only when it pays more than this, curve payment plus protocol and creator fees; empty for no minimum. Needs a dataset of schema 4 or later.",
   priceMeasure:
     'Which price the reference, the dip and take profit / stop loss compare. The exit levels still come from our own fill.',
   followWalletSells:
@@ -123,6 +131,7 @@ export function formValuesFrom(config: Config, datasetId: string | null): RunFor
     hardExitStartSeconds: secondsText(config.hardExitStartMs),
     priceMeasure: config.priceMeasure,
     followWalletSells: config.followWalletSells,
+    minSignalSol: config.minSignalSol ? trimFractionZeros(config.minSignalSol) : '',
   };
 }
 
@@ -202,6 +211,18 @@ export function smallestUnit(scale: number): string {
   return scale === 0 ? '1' : `0.${'1'.padStart(scale, '0')}`;
 }
 
+/** Empty means no minimum; otherwise whole lamports within the backend's range (checked exactly, never as a float). */
+function minSignalError(input: string, limits: ConfigLimits): string | null {
+  const value = input.trim();
+  if (value === '') return null;
+  const scale = limits.minSignalSolScale ?? LAMPORT_SCALE;
+  return validateDecimal(value, {
+    maxFractionDigits: scale,
+    maxIntegerDigits: 4,
+    ...(limits.minSignalSol ?? { min: smallestUnit(scale), max: '1000' }),
+  });
+}
+
 /** Client-side validation mirroring the backend limits; returns one message per invalid field. */
 export function validateRunForm(
   values: RunFormValues,
@@ -247,6 +268,8 @@ export function validateRunForm(
   if (hardSet && !holdSet && !errors.hardExitStartSeconds)
     errors.maxHoldSeconds = 'Set together with the hard exit start';
   if (!isSolanaAddress(values.quoteMint)) errors.quoteMint = 'Must be a 32-byte base58 address';
+  const minSignal = minSignalError(values.minSignalSol, limits);
+  if (minSignal) errors.minSignalSol = minSignal;
   return errors;
 }
 
@@ -273,6 +296,7 @@ export function toRunStartRequest(values: RunFormValues): RunStartRequest {
       hardExitStartMs: secondsToMs(values.hardExitStartSeconds) ?? null,
       priceMeasure: values.priceMeasure,
       followWalletSells: values.followWalletSells,
+      minSignalSol: values.minSignalSol.trim() === '' ? null : values.minSignalSol.trim(),
     },
   };
 }

@@ -25,6 +25,7 @@ import { paths } from '../paths';
 import { terminal } from '../theme';
 import { CommandPalette } from './CommandPalette';
 import {
+  IconAutomation,
   IconCapture,
   IconCompare,
   IconDashboard,
@@ -46,6 +47,7 @@ const NAV_ITEMS: Array<{ to: string; label: string; icon: ReactNode; end?: boole
   { to: paths.datasets, label: 'Datasets', icon: <IconDatabase /> },
   { to: paths.newRun, label: 'New run', icon: <IconPlay /> },
   { to: paths.captures, label: 'Captures', icon: <IconCapture /> },
+  { to: paths.automation, label: 'Automation', icon: <IconAutomation /> },
   { to: paths.usage, label: 'API usage', icon: <IconList /> },
   { to: paths.solana, label: 'Solana', icon: <IconSatellite /> },
 ];

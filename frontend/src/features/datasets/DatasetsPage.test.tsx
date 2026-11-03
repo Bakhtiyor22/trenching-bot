@@ -98,7 +98,7 @@ describe('DatasetsPage', () => {
     const row = (await screen.findByText(sampleDataset.name)).closest('tr') as HTMLElement;
 
     await user.click(within(row).getByRole('button', { name: 'Delete' }));
-    expect(await screen.findByText(/Runs made with it are kept/)).toBeInTheDocument();
+    expect(await screen.findByText(/Runs that keep their own copy of it are kept/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(deleted).toEqual([]);
 
@@ -106,5 +106,26 @@ describe('DatasetsPage', () => {
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(deleted).toEqual([SAMPLE_DATASET_ID]));
+  });
+
+  it('explains a dataset that runs still read, with a link to them', async () => {
+    server.use(
+      http.delete('/api/datasets/:id', () =>
+        HttpResponse.json(
+          { code: 'DATASET_IN_USE', message: 'Dataset is referenced by 10 runs', fields: {} },
+          { status: 409 },
+        ),
+      ),
+    );
+    const { user } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
+    const row = (await screen.findByText(sampleDataset.name)).closest('tr') as HTMLElement;
+    await user.click(within(row).getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+    expect(await within(dialog).findByText(/Runs read this dataset from the catalog/)).toBeInTheDocument();
+    expect(within(dialog).getByRole('link', { name: 'See its runs' })).toHaveAttribute(
+      'href',
+      `/runs?datasetId=${SAMPLE_DATASET_ID}`,
+    );
   });
 });

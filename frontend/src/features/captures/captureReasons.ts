@@ -83,6 +83,17 @@ const REASONS: Record<string, string> = {
   REFERENCE_UNAVAILABLE: "Decu's buy is not in the recorded market, so the reference is unknown.",
   SELL_CHECK_NEEDS_TRADES:
     "The dataset does not record who traded (schema 3), so Decu's sells cannot be followed.",
+  SIGNAL_SIZE_NEEDS_TRADES:
+    "The dataset does not record who traded (schema 3), so the size of Decu's buy cannot be checked against the minimum signal size.",
+  SIGNAL_BELOW_MIN_SIZE:
+    "Decu's buy paid no more than the minimum signal size, fees included, so it is not a signal.",
+  SIGNAL_SIZE_UNAVAILABLE:
+    "Decu's buy is not in the recorded market, so its size, fees included, is unknown.",
+  NO_CYCLE: 'The replay holds no cycle for this buy.',
+  MARKET_COVERAGE_ENDED:
+    'The dataset’s market recording ends before the outcome of these settings is decided.',
+  DATASET_NOT_FOUND: 'The buy’s registered dataset is no longer in the catalog.',
+  DATASET_INVALID: 'The buy’s registered dataset cannot be read as a replay dataset.',
   UNSUPPORTED_SUPPLY: 'The token’s supply is not one the strategy supports.',
   NO_FILL_AFTER_TRIGGER: 'No eligible observation after the trigger could fill the entry.',
   EXCEEDS_CURVE: 'The entry would take more tokens than the bonding curve holds.',

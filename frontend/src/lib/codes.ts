@@ -129,6 +129,10 @@ export const recommendationCopy: Record<string, { title: string; why: string }> 
 export const MARKET_COVERAGE_ENDED = 'MARKET_COVERAGE_ENDED';
 /** Run start refusal (409): the sell rule is on, but the dataset's observations do not record who traded. */
 export const SELL_CHECK_NEEDS_TRADES = 'SELL_CHECK_NEEDS_TRADES';
+/** Run start refusal (409): a minimum signal size is set, but the dataset's observations do not record who traded. */
+export const SIGNAL_SIZE_NEEDS_TRADES = 'SIGNAL_SIZE_NEEDS_TRADES';
+/** Dataset delete refusal (409): runs read the dataset from the catalog instead of a copy. */
+export const DATASET_IN_USE = 'DATASET_IN_USE';
 
 /** The minimum recording a DECIDED capture keeps after Decu's buy when a recommendation carries no number. */
 export const DEFAULT_MINIMUM_RECORDING_SECONDS = 240;
@@ -163,6 +167,9 @@ const explanations: Record<string, string> = {
   [MARKET_COVERAGE_ENDED]:
     'The dataset’s market recording ends before the outcome of these settings is decided.',
   [SELL_CHECK_NEEDS_TRADES]: reasonText(SELL_CHECK_NEEDS_TRADES) ?? SELL_CHECK_NEEDS_TRADES,
+  [SIGNAL_SIZE_NEEDS_TRADES]: reasonText(SIGNAL_SIZE_NEEDS_TRADES) ?? SIGNAL_SIZE_NEEDS_TRADES,
+  [DATASET_IN_USE]:
+    'Runs read this dataset from the catalog instead of keeping a copy (automation sweep runs), so it cannot be deleted while they exist.',
   FIRST_EVER_BUY: 'First-ever buy proof',
   SIGNAL_OVER_1_9_SOL: 'Signal larger than 1.9 SOL',
   ENTRY_SLIPPAGE_15_PERCENT: 'A 15% entry slippage limit',

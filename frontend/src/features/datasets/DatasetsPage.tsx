@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router';
 import { useDatasets, useDeleteDataset } from '../../api/queries';
 import type { Dataset } from '../../api/types';
 import { ConfirmDelete } from '../../components/ConfirmDelete';
+import { DatasetInUse, DeleteDatasetText } from './DatasetDelete';
 import { Mint, PairLabel, ShortId, Timestamp } from '../../components/DisplayValues';
 import { PageHeader, Section } from '../../components/Panels';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
@@ -65,8 +66,14 @@ function DatasetTable({ items }: { items: Dataset[] }) {
               </Table.Td>
               {/* The dialog renders in a portal, whose clicks still bubble to the row through React. */}
               <Table.Td onClick={(e) => e.stopPropagation()}>
-                <ConfirmDelete compact label="Delete" title="Delete this dataset?" onConfirm={() => deleteDataset.mutateAsync(dataset.id)}>
-                  Removes “{dataset.name}” from Datasets. Runs made with it are kept, each with its own copy of the dataset. Uploading the same file again restores it under the same id.
+                <ConfirmDelete
+                  compact
+                  label="Delete"
+                  title="Delete this dataset?"
+                  onConfirm={() => deleteDataset.mutateAsync(dataset.id)}
+                  explainError={(error) => <DatasetInUse error={error} datasetId={dataset.id} />}
+                >
+                  <DeleteDatasetText name={dataset.name} />
                 </ConfirmDelete>
               </Table.Td>
             </Table.Tr>

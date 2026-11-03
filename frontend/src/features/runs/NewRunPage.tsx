@@ -30,6 +30,7 @@ import {
   MARKET_COVERAGE_ENDED,
   presetStatusLabels,
   SELL_CHECK_NEEDS_TRADES,
+  SIGNAL_SIZE_NEEDS_TRADES,
 } from '../../lib/codes';
 import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
 import { formatPercent } from '../../lib/percent';
@@ -78,6 +79,7 @@ const SETTING_FIELDS: SettingField[] = [
   ...SECONDS_FIELDS,
   'priceMeasure',
   'followWalletSells',
+  'minSignalSol',
   'notional',
   'minMarketCapUsd',
   'transactionCostSol',
@@ -96,6 +98,7 @@ const UNITS: Partial<Record<SettingField, string>> = {
   notional: 'SOL',
   minMarketCapUsd: 'USD',
   transactionCostSol: 'SOL',
+  minSignalSol: 'SOL',
   latencySlots: 'slot',
   horizonSlots: 'slots',
   maxAgeSlots: 'slots',
@@ -204,6 +207,11 @@ function RunConfigForm({
     );
   }
   const submit = form.onSubmit(start);
+  /** After a SIGNAL_SIZE_NEEDS_TRADES refusal: the same settings without a minimum signal size, shown in the form too. */
+  function startWithoutMinSignal() {
+    form.setFieldValue('minSignalSol', '');
+    start({ ...form.values, minSignalSol: '' });
+  }
   /** After a SELL_CHECK_NEEDS_TRADES refusal: the same settings with the sell rule off, shown in the form too. */
   function startWithoutSells() {
     form.setFieldValue('followWalletSells', false);
@@ -242,7 +250,7 @@ function RunConfigForm({
             : undefined;
     const inputProps = {
       label: SETTING_LABELS[field],
-      withAsterisk: !isClock && !isRule,
+      withAsterisk: !isClock && !isRule && field !== 'minSignalSol',
       leftSection: prefix,
       rightSection: unit ? (
         <Text size="xs" c="dimmed">
@@ -318,6 +326,9 @@ function RunConfigForm({
             {isClock &&
               ` Range ${secondsText(limits[MILLIS_FIELD[field as SecondsField]].min)} – ${secondsText(limits[MILLIS_FIELD[field as SecondsField]].max)} s.`}
             {field === 'quoteMint' && ` ${mintLabel(form.values.quoteMint.trim())}.`}
+            {field === 'minSignalSol' &&
+              limits.minSignalSol &&
+              ` Range ${limits.minSignalSol.min} – ${limits.minSignalSol.max} SOL.`}
           </Text>
           {metadata?.noteCode && (
             <Text size="xs" c={missing ? 'red' : 'yellow'}>
@@ -459,6 +470,13 @@ function RunConfigForm({
               <Section title="In plain words">
                 <Stack gap="md">
                   <Text size="sm">
+                    {form.values.minSignalSol.trim() !== '' && (
+                      <>
+                        Only a buy by Decu of more than{' '}
+                        <strong>{trimFractionZeros(form.values.minSignalSol.trim())} SOL</strong>,
+                        fees included, is a signal.{' '}
+                      </>
+                    )}
                     After Decu's first buy of a token, wait for the price to drop{' '}
                     <strong>{formatPercent(form.values.dipPercent)}</strong> below his price. Then
                     buy <strong>{trimFractionZeros(form.values.notional)} SOL</strong>, and sell at{' '}
@@ -511,6 +529,7 @@ function RunConfigForm({
                       onRunLegacy={startLegacyRun}
                       legacyPending={legacy.isPending}
                       onRunWithoutSells={startWithoutSells}
+                      onRunWithoutMinSignal={startWithoutMinSignal}
                       pending={startRun.isPending}
                     />
                   )}
@@ -550,6 +569,7 @@ function RunStartError({
   onRunLegacy,
   legacyPending,
   onRunWithoutSells,
+  onRunWithoutMinSignal,
   pending,
 }: {
   error: Error;
@@ -557,11 +577,13 @@ function RunStartError({
   onRunLegacy: () => void;
   legacyPending: boolean;
   onRunWithoutSells: () => void;
+  onRunWithoutMinSignal: () => void;
   pending: boolean;
 }) {
   const code = error instanceof ApiError ? error.code : null;
   const coverageEnded = code === MARKET_COVERAGE_ENDED;
   const sellsHidden = code === SELL_CHECK_NEEDS_TRADES;
+  const sizeHidden = code === SIGNAL_SIZE_NEEDS_TRADES;
   return (
     <Alert
       color="red"
@@ -572,7 +594,9 @@ function RunStartError({
           ? 'This dataset ends before these settings can finish'
           : sellsHidden
             ? "This dataset cannot show Decu's sells"
-            : 'The run was not started'
+            : sizeHidden
+              ? "This dataset cannot size Decu's buy"
+              : 'The run was not started'
       }
       role="alert"
     >
@@ -582,7 +606,9 @@ function RunStartError({
             ? 'Its capture stopped recording the token once the outcome under the old default rules was decided, so a run with these settings would be cut short. Run the old defaults on it, or capture the token again with the market cutoff set to the whole window.'
             : sellsHidden
               ? 'Its market recording is schema 3, which does not record who traded. Turn off "Follow Decu\'s sells" to run it, or re-export the capture as a newer dataset.'
-              : `${errorMessage(error)}${fieldErrorsShown ? ' See the highlighted fields.' : ''}`}
+              : sizeHidden
+                ? 'Its market recording is schema 3, which does not record who traded, so the fees on Decu\'s buy cannot be counted. Clear "Minimum signal size" to run it, or re-export the capture as a newer dataset.'
+                : `${errorMessage(error)}${fieldErrorsShown ? ' See the highlighted fields.' : ''}`}
         </Text>
         {coverageEnded && (
           <Button size="xs" variant="light" onClick={onRunLegacy} loading={legacyPending}>
@@ -592,6 +618,11 @@ function RunStartError({
         {sellsHidden && (
           <Button size="xs" variant="light" onClick={onRunWithoutSells} loading={pending}>
             Run without following sells
+          </Button>
+        )}
+        {sizeHidden && (
+          <Button size="xs" variant="light" onClick={onRunWithoutMinSignal} loading={pending}>
+            Run without a minimum signal size
           </Button>
         )}
         {error instanceof ApiError && <CodeText code={error.code} />}

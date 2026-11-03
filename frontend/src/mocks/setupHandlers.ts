@@ -29,6 +29,7 @@ export const runPreset: RunPreset = {
     hardExitStartMs: 240000,
     priceMeasure: 'POST_TRADE',
     followWalletSells: true,
+    minSignalSol: '1.900000000',
   },
   fields: [
     { field: 'dipBps', status: 'AGREED', specRef: 'P6', noteCode: null },
@@ -46,6 +47,7 @@ export const runPreset: RunPreset = {
     },
     { field: 'quoteMint', status: 'AGREED', specRef: 'P15', noteCode: null },
     { field: 'minMarketCapUsd', status: 'AGREED', specRef: 'P5', noteCode: null },
+    { field: 'minSignalSol', status: 'AGREED', specRef: 'P3', noteCode: null },
     { field: 'priceMeasure', status: 'AGREED', specRef: 'P4 / Section 5', noteCode: null },
     {
       field: 'followWalletSells',
@@ -69,7 +71,6 @@ export const runPreset: RunPreset = {
   ],
   unsupportedRules: [
     { specRef: 'P2', code: 'FIRST_EVER_BUY' },
-    { specRef: 'P3', code: 'SIGNAL_OVER_1_9_SOL' },
     { specRef: 'P8', code: 'ENTRY_SLIPPAGE_15_PERCENT' },
     { specRef: 'Section 8', code: 'EXIT_RETRY_ECONOMICS' },
     { specRef: 'P13', code: 'ONE_POSITION_INCLUDING_IN_FLIGHT' },

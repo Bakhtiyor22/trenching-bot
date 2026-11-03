@@ -166,3 +166,11 @@ export const IconKeyboard = (p: IconProps) => (
     <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" />
   </Icon>
 );
+
+/** A moon over a loop: the nightly automation. */
+export const IconAutomation = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z" />
+    <path d="M16 3v4h4" />
+  </Icon>
+);

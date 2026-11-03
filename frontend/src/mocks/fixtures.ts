@@ -153,6 +153,7 @@ export const configDefaults: ConfigDefaults = {
     hardExitStartMs: null,
     priceMeasure: 'TRADE_AVERAGE',
     followWalletSells: false,
+    minSignalSol: null,
   },
   limits: {
     notionalScale: 9,
@@ -170,6 +171,8 @@ export const configDefaults: ConfigDefaults = {
     maxHoldMs: { min: 1000, max: 3600000 },
     hardExitStartMs: { min: 1000, max: 3600000 },
     priceMeasure: ['TRADE_AVERAGE', 'POST_TRADE'],
+    minSignalSolScale: 9,
+    minSignalSol: { min: '0.000000001', max: '1000' },
   },
 };
 

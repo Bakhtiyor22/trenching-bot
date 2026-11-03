@@ -68,6 +68,8 @@ import { EventsTable, OrdersTable, PositionsTable } from './RunTables';
 import {
   bpsLabel,
   formatSettingValue,
+  minSignalLabel,
+  storageLabel,
   horizonLabel,
   latencyLabel,
   transactionCostLabel,
@@ -102,6 +104,7 @@ function RunHeader({ detail }: { detail: RunDetail }) {
             ['Result checksum', <ShortId key="rc" value={run.resultChecksum} />],
             ['Quote mint', <Mint key="qm" mint={run.quoteMint} />],
             ['Created', <Timestamp key="ca" iso={run.createdAt} />],
+            ...(storageLabel(run.storage) ? [['Dataset', storageLabel(run.storage)] as [string, string]] : []),
           ]}
         />
       </Section>
@@ -119,6 +122,7 @@ function RunHeader({ detail }: { detail: RunDetail }) {
               "Follow Decu's sells",
               formatSettingValue('followWalletSells', config.followWalletSells),
             ],
+            ['Minimum signal size', minSignalLabel(config.minSignalSol)],
             ['Horizon', horizonLabel(config.horizonSlots, detail.millisPerSlot)],
             ['Latency', latencyLabel(config.latencySlots)],
             ['Transaction cost', transactionCostLabel(config.transactionCostSol)],

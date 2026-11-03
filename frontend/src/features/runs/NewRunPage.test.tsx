@@ -340,7 +340,7 @@ describe('NewRunPage', () => {
       '180',
       '240',
     ]);
-    expect(screen.getByText(/5 rules need the new decu-dip v2 engine/)).toHaveTextContent(
+    expect(screen.getByText(/4 rules need the new decu-dip v2 engine/)).toHaveTextContent(
       'Exit retries, slippage steps and fee escalation',
     );
     await user.clear(window);
@@ -374,12 +374,63 @@ describe('NewRunPage', () => {
     expect(screen.getByText('Changed · 2 settings')).toBeInTheDocument();
   });
 
-  it('says 5 unsupported rules, without post-trade prices', async () => {
+  it('says 4 unsupported rules, without post-trade prices or the signal size (engine dip-paper-v6)', async () => {
     renderNewRun();
     const rules = await screen.findByText(/rules need the new decu-dip v2 engine/);
-    expect(rules).toHaveTextContent(/^5 rules/);
+    expect(rules).toHaveTextContent(/^4 rules/);
     expect(rules).not.toHaveTextContent(/post-trade/i);
-    expect(screen.getByText(/applies 12 of the agreed rules exactly/)).toBeInTheDocument();
+    expect(rules).not.toHaveTextContent(/1\.9 SOL/);
+    expect(screen.getByText(/applies 13 of the agreed rules exactly/)).toBeInTheDocument();
+  });
+
+  it('prefills the agreed 1.9 SOL minimum signal size and sends it', async () => {
+    const bodies: RunStartRequest[] = [];
+    server.use(
+      http.post('/api/runs', async ({ request }) => {
+        bodies.push((await request.json()) as RunStartRequest);
+        return HttpResponse.json({ run: sampleRun, created: true });
+      }),
+    );
+    const { user } = renderNewRun();
+    const minimum = await screen.findByLabelText(/Minimum signal size/);
+    expect(minimum).toHaveValue('1.9');
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+    await screen.findByText('Run detail page');
+    expect(bodies[0]?.config?.minSignalSol).toBe('1.9');
+  });
+
+  it('flags a minimum signal size finer than a lamport', async () => {
+    const { user } = renderNewRun();
+    const minimum = await screen.findByLabelText(/Minimum signal size/);
+    await user.clear(minimum);
+    await user.type(minimum, '1.0000000001');
+    await user.tab();
+    expect(await screen.findByText('At most 9 decimals')).toBeInTheDocument();
+    expect(screen.getByText('Changed by you · agreed More than 1.9 SOL, fees included')).toBeInTheDocument();
+  });
+
+  it("explains a dataset that cannot size Decu's buy and reruns it without a minimum", async () => {
+    const bodies: RunStartRequest[] = [];
+    server.use(
+      http.post('/api/runs', async ({ request }) => {
+        const body = (await request.json()) as RunStartRequest;
+        bodies.push(body);
+        if (body.config?.minSignalSol)
+          return HttpResponse.json(
+            { code: 'SIGNAL_SIZE_NEEDS_TRADES', message: 'needs trades', fields: {} },
+            { status: 409 },
+          );
+        return HttpResponse.json({ run: sampleRun, created: true });
+      }),
+    );
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Minimum signal size/);
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+    expect(await screen.findByText("This dataset cannot size Decu's buy")).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Run without a minimum signal size' }));
+    await screen.findByText('Run detail page');
+    expect(bodies.map((b) => b.config?.minSignalSol ?? null)).toEqual(['1.9', null]);
+    expect(screen.queryByLabelText(/Minimum signal size/)).toBeNull();
   });
 
   it("explains a dataset that cannot show Decu's sells and reruns it with the sell rule off", async () => {

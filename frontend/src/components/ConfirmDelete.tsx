@@ -14,6 +14,7 @@ export function ConfirmDelete({
   onConfirm,
   disabled = false,
   compact = false,
+  explainError,
 }: {
   label: string;
   title: string;
@@ -21,6 +22,8 @@ export function ConfirmDelete({
   onConfirm: () => Promise<unknown>;
   disabled?: boolean;
   compact?: boolean;
+  /** A way forward for a refusal the caller understands, shown under the error; null to add nothing. */
+  explainError?: (error: unknown) => ReactNode;
 }) {
   const [opened, { open, close }] = useDisclosure(false);
   const [pending, setPending] = useState(false);
@@ -46,6 +49,7 @@ export function ConfirmDelete({
         <Stack gap="md">
           <Text size="sm" component="div">{children}</Text>
           {error != null && <ErrorState error={error} title="Delete failed" />}
+          {error != null && explainError?.(error)}
           <Group justify="flex-end">
             <Button variant="default" onClick={close} disabled={pending}>Cancel</Button>
             <Button color="red" onClick={() => void confirm()} loading={pending}>Delete</Button>

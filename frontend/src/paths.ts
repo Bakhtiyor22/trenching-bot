@@ -20,6 +20,12 @@ export const paths = {
   capture: (id: string) => `/captures/${encodeURIComponent(id)}`,
   newCapture: '/captures/new',
   usage: '/usage',
+  automation: '/automation',
+  automationNights: '/automation/nights',
+  automationNight: (id: string, itemId?: string | null) =>
+    `/automation/nights/${encodeURIComponent(id)}${itemId ? `?item=${encodeURIComponent(itemId)}` : ''}`,
+  automationItem: (id: string) => `/automation/items/${encodeURIComponent(id)}`,
+  automationSweepRuns: '/automation/sweep-runs',
   runChart: (id: string) => `/runs/${encodeURIComponent(id)}/chart`,
   compare: '/compare',
   compareRuns: (ids: string[]) =>
