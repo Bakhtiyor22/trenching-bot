@@ -21,9 +21,12 @@ export const paths = {
   newCapture: '/captures/new',
   usage: '/usage',
   automation: '/automation',
-  automationNights: '/automation/nights',
-  automationNight: (id: string, itemId?: string | null) =>
-    `/automation/nights/${encodeURIComponent(id)}${itemId ? `?item=${encodeURIComponent(itemId)}` : ''}`,
+  automationDays: '/automation/days',
+  automationDay: (day: string, itemId?: string | null) =>
+    `/automation/days/${encodeURIComponent(day)}${itemId ? `?item=${encodeURIComponent(itemId)}` : ''}`,
+  automationNight: (id: string) => `/automation/nights/${encodeURIComponent(id)}`,
+  automationBackfills: '/automation/backfills',
+  automationBackfill: (id: string) => `/automation/backfills/${encodeURIComponent(id)}`,
   automationItem: (id: string) => `/automation/items/${encodeURIComponent(id)}`,
   automationSweepRuns: '/automation/sweep-runs',
   runChart: (id: string) => `/runs/${encodeURIComponent(id)}/chart`,

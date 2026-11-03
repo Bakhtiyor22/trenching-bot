@@ -25,9 +25,9 @@ function VariationName({ evaluation }: { evaluation: AutomationEvaluation }) {
 }
 
 /**
- * Every variation of one night's window, in the backend's order (Success › No success › No result, then worst case
- * descending). The P&L bars share one scale, so their lengths compare across rows. Choosing a row selects it for the
- * trend view.
+ * Every variation of one trading day's 7-day window, in the backend's order (Success › No success › No result ›
+ * Pending, then worst case descending). The P&L bars share one scale, so their lengths compare across rows; a pending
+ * row keeps its counts so far, faded. Choosing a row selects it for the trend view.
  */
 export function Scoreboard({
   evaluations,
@@ -64,13 +64,13 @@ export function Scoreboard({
               <Stack gap={8}>
                 <Group justify="space-between" wrap="nowrap" gap="xs">
                   <VariationName evaluation={e} />
-                  <StatusChip status={e.status} />
+                  <StatusChip status={e.status} pendingDay={e.pendingDay} />
                 </Group>
                 <PnlBarCell
                   worst={e.worstCasePnl}
                   realized={e.realizedPnl}
                   scale={scale}
-                  faded={e.status === 'NO_RESULT'}
+                  faded={e.status === 'NO_RESULT' || e.status === 'PENDING'}
                   label={e.label}
                 />
                 <Group justify="space-between" gap="xs">
@@ -133,14 +133,14 @@ export function Scoreboard({
                   )}
                 </Table.Th>
                 <Table.Td>
-                  <StatusChip status={e.status} />
+                  <StatusChip status={e.status} pendingDay={e.pendingDay} />
                 </Table.Td>
                 <Table.Td>
                   <PnlBarCell
                     worst={e.worstCasePnl}
                     realized={e.realizedPnl}
                     scale={scale}
-                    faded={e.status === 'NO_RESULT'}
+                    faded={e.status === 'NO_RESULT' || e.status === 'PENDING'}
                     label={e.label}
                   />
                 </Table.Td>

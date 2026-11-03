@@ -1,67 +1,163 @@
-import { Anchor, Box, Button, Group, ScrollArea, Select, Stack, Table, Text } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Box,
+  Button,
+  Group,
+  ScrollArea,
+  Select,
+  Stack,
+  Table,
+  Text,
+  Tooltip,
+} from '@mantine/core';
 import { Link, useSearchParams } from 'react-router';
 import {
   useAllAutomationEvaluations,
-  useAutomationSessions,
-  type AutomationSession,
+  useAutomationDays,
+  useBackfill,
+  useRunDiscovery,
+  type AutomationDaySummary,
   type AutomationStatus,
   type EvaluationStatus,
 } from '../../api/automation';
+import { ApiError } from '../../api/client';
 import { RelativeTime } from '../../components/DisplayValues';
 import { Kpi, KpiStrip, Section } from '../../components/Panels';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
 import { paths } from '../../paths';
 import {
+  addDays,
   automationMode,
+  backfillDays,
+  isBackfillRefusal,
   BASELINE_LABEL,
   capPercent,
-  GRID_NIGHT_CHOICES,
-  type GridNights,
-  nightKeyBefore,
-  nightOf,
-  nightStart,
-  nightTitle,
+  dayInfo,
+  dayItemCounts,
+  daySpanText,
+  defaultScoredDay,
+  GRID_DAY_CHOICES,
+  pendingText,
   statusText,
-  variationChange,
+  tradingDayOf,
+  zoneDateTime,
   zoneLabel,
   zoneTime,
+  type GridDays,
 } from './automationModel';
 import {
   AutomationFrame,
   BuyStateBar,
   BuyStateLegend,
-  NightLink,
+  DayLink,
+  BestOfDay,
   StatusAlerts,
-  StatusChip,
   ZoneNote,
 } from './AutomationShared';
+import { BackfillRefusal, BackfillStateChip } from './BackfillShared';
 import { Scoreboard } from './Scoreboard';
 import { StatusGrid, StatusGridLegend } from './StatusGrid';
 import { VariationTrend } from './VariationTrend';
 
-const MODE_TEXT = { OFF: 'Off', DISCOVERY_ONLY: 'Discovery only', CAPTURING: 'Capturing' } as const;
+const MODE_TEXT = {
+  OFF: 'Off',
+  DISCOVERY_ONLY: 'Discovery only',
+  CAPTURING: 'Capturing',
+} as const;
 const STATUS_FILTERS: Array<{ value: 'ALL' | EvaluationStatus; label: string }> = [
   { value: 'ALL', label: 'All' },
   { value: 'SUCCESS', label: '✓ Success' },
   { value: 'NO_SUCCESS', label: '✕ No success' },
   { value: 'NO_RESULT', label: '– No result' },
+  { value: 'PENDING', label: '◷ Pending' },
 ];
-const RECENT_NIGHTS = 5;
-const DEFAULT_NIGHTS: GridNights = '14';
+const RECENT_DAYS = 5;
+const DEFAULT_SPAN: GridDays = '14';
+
+/** "Run now": queue one live discovery pass, whatever the mode or window. */
+function RunNow({ status }: { status: AutomationStatus }) {
+  const run = useRunDiscovery();
+  const queued = status.manualRunQueued || (run.isPending && !run.isError);
+  return (
+    <Stack gap={4} align="flex-start">
+      <Tooltip label="Scan Decu's wallet for new buys now; capture follows on the next minute's tick">
+        <Button
+          size="xs"
+          variant="light"
+          onClick={() => run.mutate()}
+          loading={run.isPending}
+          disabled={!status.enabled || status.manualRunQueued}
+        >
+          {queued ? 'Queued…' : 'Run now'}
+        </Button>
+      </Tooltip>
+      {run.isError && (
+        <Text size="xs" c="red" role="alert">
+          {isBackfillRefusal(run.error) ? (
+            <BackfillRefusal error={run.error} />
+          ) : run.error instanceof ApiError ? (
+            run.error.message
+          ) : (
+            'Run now failed'
+          )}
+        </Text>
+      )}
+      {run.data?.alreadyQueued && !status.manualRunQueued && (
+        <Text size="xs" c="dimmed">
+          A run was already queued.
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
+function ActiveBackfill({ id, zone }: { id: string; zone: string }) {
+  const backfill = useBackfill(id);
+  if (!backfill.data)
+    return (
+      <Anchor component={Link} to={paths.automationBackfill(id)} size="sm">
+        Open the running backfill
+      </Anchor>
+    );
+  const b = backfill.data;
+  return (
+    <Stack gap={4} align="flex-start">
+      <Anchor component={Link} to={paths.automationBackfill(id)} fw={600}>
+        {backfillDays(b)}
+      </Anchor>
+      <BackfillStateChip state={b.state} />
+      <Text size="xs" c="dimmed" ff="monospace">
+        {b.requestsSpent.toLocaleString('en-US')} / {b.requestBudget.toLocaleString('en-US')}{' '}
+        requests
+        {b.scannedTo && b.state === 'SCANNING'
+          ? ` · read to ${zoneDateTime(b.scannedTo, zone)}`
+          : ''}
+      </Text>
+    </Stack>
+  );
+}
 
 function StatusStrip({
   status,
-  tonight,
+  today,
 }: {
   status: AutomationStatus;
-  tonight: AutomationSession | null;
+  today: AutomationDaySummary | null;
 }) {
   const zone = zoneLabel(status.zone);
   const mode = automationMode(status);
   const percent = capPercent(status.requestsLast24h, status.maxRequestsPer24h);
   return (
-    <KpiStrip label="Automation status" min={190}>
-      <Kpi label="Mode" hint={`plan ${status.sweepPlanId}`}>
+    <KpiStrip label="Automation status" min={180}>
+      <Kpi
+        label="Mode"
+        hint={
+          status.mode === 'ALWAYS'
+            ? `always on · plan ${status.sweepPlanId}`
+            : `${status.pollFrom}–${status.pollTo} ${zone} · ${status.inPollWindow ? 'in window now' : 'outside the window'}`
+        }
+      >
         <Group gap={8} wrap="nowrap">
           <Box
             w={8}
@@ -78,26 +174,21 @@ function StatusStrip({
         </Group>
       </Kpi>
       <Kpi
-        label="Polling window"
-        hint={`${zone} · ${status.inPollWindow ? 'in window now' : 'outside the window'}`}
-      >
-        <Text fz="lg" ff="monospace">
-          {status.pollFrom}–{status.pollTo}
-        </Text>
-      </Kpi>
-      <Kpi
         label="Last check"
         hint={
           status.nextTickAt ? `next ${zoneTime(status.nextTickAt, status.zone)} ${zone}` : undefined
         }
       >
-        <Text fz="lg" component="div">
-          <RelativeTime iso={status.lastTickAt} />
-        </Text>
+        <Stack gap={6}>
+          <Text fz="lg" component="div">
+            <RelativeTime iso={status.lastTickAt} />
+          </Text>
+          <RunNow status={status} />
+        </Stack>
       </Kpi>
       <Kpi
         label="Requests, last 24 h"
-        hint={`${status.maxRequestsPer24h.toLocaleString('en-US')} cap, shared with manual captures`}
+        hint={`${status.maxRequestsPer24h.toLocaleString('en-US')} cap, shared with manual captures and backfills`}
       >
         <Stack gap={6}>
           <Text fz="lg" ff="monospace">
@@ -131,86 +222,67 @@ function StatusStrip({
           </Box>
         </Stack>
       </Kpi>
-      <Kpi
-        label="Tonight"
-        hint={
-          tonight
-            ? `open · since ${zoneTime(tonight.firstBuyAt, status.zone)} ${zone}`
-            : status.inPollWindow
-              ? 'no buy yet tonight'
-              : 'outside the polling window'
-        }
-      >
-        {tonight ? (
+      <Kpi label="Covered since" hint="live discovery; backfills reach further back">
+        <Text fz="lg">
+          {status.coveredFrom ? zoneDateTime(status.coveredFrom, status.zone) : '—'}
+        </Text>
+      </Kpi>
+      <Kpi label="Today" hint={daySpanText(status.zone, status.tradingDayStart)}>
+        {today ? (
           <Stack gap={4}>
-            <NightLink id={tonight.id}>{nightTitle(tonight, status.zone)}</NightLink>
-            <BuyStateBar counts={tonight.itemCounts} captureEnabled={status.captureEnabled} />
+            <DayLink day={today.day} />
+            <BuyStateBar counts={dayItemCounts(today)} captureEnabled={status.captureEnabled} />
           </Stack>
         ) : (
           <Text fz="lg" c="dimmed">
-            No open night
+            No buys yet
           </Text>
+        )}
+      </Kpi>
+      <Kpi label="Backfill" hint="fills older days with past buys">
+        {status.activeBackfillId ? (
+          <ActiveBackfill id={status.activeBackfillId} zone={status.zone} />
+        ) : (
+          <Anchor component={Link} to={paths.automationBackfills} size="sm">
+            None running · start one
+          </Anchor>
         )}
       </Kpi>
     </KpiStrip>
   );
 }
 
-function RecentNights({
-  sessions,
-  status,
-}: {
-  sessions: AutomationSession[];
-  status: AutomationStatus;
-}) {
+function RecentDays({ days, status }: { days: AutomationDaySummary[]; status: AutomationStatus }) {
   return (
     <ScrollArea type="auto">
-      <Table miw={820} aria-label="Recent nights">
+      <Table miw={820} aria-label="Recent days">
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>Night ({zoneLabel(status.zone)})</Table.Th>
-            <Table.Th>State</Table.Th>
+            <Table.Th>Day ({daySpanText(status.zone, status.tradingDayStart)})</Table.Th>
             <Table.Th>Buys</Table.Th>
             <Table.Th>Best variation</Table.Th>
             <Table.Th ta="right">Requests</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
-          {sessions.map((s) => (
-            <Table.Tr key={s.id}>
+          {days.map((d) => (
+            <Table.Tr key={d.day}>
               <Table.Th scope="row" fw={400}>
                 <Stack gap={0}>
-                  <NightLink id={s.id}>{nightOf(s.firstBuyAt, status.zone).label}</NightLink>
-                  <Text size="xs" c="dimmed" ff="monospace">
-                    {zoneTime(s.firstBuyAt, status.zone)} → {zoneTime(s.lastBuyAt, status.zone)}
+                  <DayLink day={d.day} />
+                  <Text size="xs" c="dimmed">
+                    {d.complete ? 'complete' : d.covered ? 'not complete yet' : 'not fully covered'}
                   </Text>
                 </Stack>
               </Table.Th>
               <Table.Td>
-                {s.state === 'CLOSED' ? 'Closed' : s.state === 'OPEN' ? 'Open' : 'Closing'}
+                <BuyStateBar counts={dayItemCounts(d)} captureEnabled={status.captureEnabled} />
               </Table.Td>
               <Table.Td>
-                <BuyStateBar counts={s.itemCounts} captureEnabled={status.captureEnabled} />
-              </Table.Td>
-              <Table.Td>
-                {s.bestStatus ? (
-                  <Group gap={6} wrap="nowrap">
-                    <StatusChip status={s.bestStatus} />
-                    <Text span ff="monospace" size="sm" fw={600}>
-                      {s.bestLabel}
-                    </Text>
-                    <Text span size="xs" c="dimmed" visibleFrom="md">
-                      {s.bestLabel ? variationChange(status.sweepPlanId, s.bestLabel) : null}
-                    </Text>
-                  </Group>
-                ) : (
-                  <Text size="sm" c="dimmed">
-                    Not scored yet
-                  </Text>
-                )}
+                <BestOfDay day={d} planId={status.sweepPlanId} />
               </Table.Td>
               <Table.Td ta="right" ff="monospace">
-                {s.requestsUsed.toLocaleString('en-US')}
+                {d.requestsUsed.toLocaleString('en-US')}
               </Table.Td>
             </Table.Tr>
           ))}
@@ -222,9 +294,9 @@ function RecentNights({
 
 function Overview({ status }: { status: AutomationStatus }) {
   const [params, setParams] = useSearchParams();
-  const nights = (GRID_NIGHT_CHOICES as readonly string[]).includes(params.get('nights') ?? '')
-    ? (params.get('nights') as GridNights)
-    : DEFAULT_NIGHTS;
+  const span = (GRID_DAY_CHOICES as readonly string[]).includes(params.get('days') ?? '')
+    ? (params.get('days') as GridDays)
+    : DEFAULT_SPAN;
   const statusFilter = (params.get('status') as EvaluationStatus | null) ?? null;
   const set = (key: string, value: string | null, fallback?: string) =>
     setParams(
@@ -236,70 +308,65 @@ function Overview({ status }: { status: AutomationStatus }) {
       },
       { replace: true },
     );
-  const from = nightStart(
-    nightKeyBefore(new Date().toISOString(), status.zone, Number(nights) - 1),
-    status.zone,
-  );
-  const sessions = useAutomationSessions({
-    page: 0,
-    size: Number(nights) + 1,
-    from,
-    sort: 'createdAt,desc',
-  });
-  const evaluations = useAllAutomationEvaluations({ planId: status.sweepPlanId, from });
+  const today = tradingDayOf(new Date().toISOString(), status.zone, status.tradingDayStart);
+  const from = addDays(today, -(Number(span) - 1));
+  const days = useAutomationDays({ from, to: today });
+  const evaluations = useAllAutomationEvaluations({ from, to: today, sort: 'day,desc' });
 
-  if (sessions.isPending || evaluations.isPending)
-    return <LoadingState label="Loading nights and scores…" />;
-  if (sessions.isError)
-    return <ErrorState error={sessions.error} onRetry={() => void sessions.refetch()} />;
+  if (days.isPending || evaluations.isPending)
+    return <LoadingState label="Loading days and scores…" />;
+  if (days.isError) return <ErrorState error={days.error} onRetry={() => void days.refetch()} />;
   if (evaluations.isError)
     return <ErrorState error={evaluations.error} onRetry={() => void evaluations.refetch()} />;
 
-  const rows = sessions.data.items;
-  const tonight = rows.find((s) => s.id === status.openSessionId) ?? null;
+  const list = days.data.items;
+  const todaySummary = list.find((d) => d.day === today && d.buys > 0) ?? null;
   const all = evaluations.data;
-  const scoredNights = rows.filter((s) => all.some((e) => e.sessionId === s.id));
-  const scoredId = params.get('scored');
-  const scored = scoredNights.find((s) => s.id === scoredId) ?? scoredNights[0] ?? null;
   const labels = [...new Set(all.map((e) => e.label))].sort();
+  const scoredId = params.get('day');
+  const scored = list.find((d) => d.day === scoredId) ?? defaultScoredDay(list);
   const variation = params.get('variation') ?? BASELINE_LABEL;
   const selected = labels.includes(variation) ? variation : (labels[0] ?? BASELINE_LABEL);
-  const board = scored
-    ? all.filter((e) => e.sessionId === scored.id && (!statusFilter || e.status === statusFilter))
-    : [];
-  const windowNights = scored
-    ? (all.find((e) => e.sessionId === scored.id)?.windowSessionIds.length ?? 0)
-    : 0;
+  const dayRows = scored ? all.filter((e) => e.day === scored.day) : [];
+  const board = dayRows.filter((e) => !statusFilter || e.status === statusFilter);
+  const allPending = list.length > 0 && list.every((d) => d.bestStatus === 'PENDING');
+  const anyBuys = list.some((d) => d.buys > 0);
+  const daysShown = list.map((d) => d.day);
 
   return (
     <Stack gap="lg">
       <StatusAlerts status={status} />
-      <StatusStrip status={status} tonight={tonight} />
-      {rows.length === 0 ? (
+      <StatusStrip status={status} today={todaySummary} />
+      {!anyBuys && labels.length === 0 ? (
         <EmptyState
-          title="No nights yet"
-          description={`A night starts with Decu's first buy in the polling window (${status.pollFrom}–${status.pollTo} ${zoneLabel(status.zone)}) and ends after 60 minutes without a new buy.`}
+          title="No buys in these days yet"
+          description={`A trading day runs ${daySpanText(status.zone, status.tradingDayStart)}. Buys appear here once discovery finds them; use Run now to scan immediately, or a backfill for older days.`}
         />
       ) : (
         <>
           <Section
             title="Scoreboard · which variation works"
-            hint="Success = worst-case net P&L above 0 SOL over at least 10 signals in the 7-night window. Sorted Success › No success › No result, then by worst case. Worst case counts a position still open at the end as a loss of its entry cost."
+            hint="Success = worst-case net P&L above 0 SOL over at least 10 signals in the 7 trading days ending the chosen day. Sorted Success › No success › No result › Pending, then by worst case. Worst case counts a position still open at the end as a loss of its entry cost."
             actions={<ZoneNote zone={status.zone} />}
           >
             <Stack gap="md">
+              {allPending && (
+                <Alert color="gray" variant="light" title="Every day here is pending">
+                  {status.captureEnabled
+                    ? 'A day gets a verdict once it and the 6 days before it are complete: covered by discovery, every session closed and every buy finished. Rows below show the counts so far.'
+                    : 'Discovery only: buys are counted, but none is captured or replayed, so no day completes. Turn capture on to score days.'}
+                </Alert>
+              )}
               <Group gap="sm" wrap="wrap" align="flex-end">
                 <Select
-                  label="Scored up to"
-                  placeholder="No scored night yet"
-                  value={scored?.id ?? null}
-                  onChange={(v) => set('scored', v, scoredNights[0]?.id)}
-                  data={scoredNights.map((s, i) => ({
-                    value: s.id,
-                    label: `${nightOf(s.firstBuyAt, status.zone).label}${i === 0 ? ' (latest)' : ''}`,
+                  label="Scored day"
+                  value={scored?.day ?? null}
+                  onChange={(v) => set('day', v, defaultScoredDay(list)?.day)}
+                  data={list.map((d) => ({
+                    value: d.day,
+                    label: `${dayInfo(d.day).label}${d.bestStatus === 'PENDING' ? ' (pending)' : ''}`,
                   }))}
                   allowDeselect={false}
-                  disabled={scoredNights.length === 0}
                   w={240}
                 />
                 <Group gap={4} wrap="wrap" role="group" aria-label="Show status">
@@ -318,29 +385,24 @@ function Overview({ status }: { status: AutomationStatus }) {
                     );
                   })}
                 </Group>
-                {scored && (
+                {scored && dayRows[0] && (
                   <Text size="xs" c="dimmed" pb={8}>
-                    Window: the {windowNights} nights ending{' '}
-                    {nightOf(scored.firstBuyAt, status.zone).label}
-                    {windowNights < 7 && ' (fills up after 7 closed nights)'}
+                    Window: {dayInfo(dayRows[0].windowDays[0] ?? scored.day).short} →{' '}
+                    {dayInfo(scored.day).short}
+                    {dayRows[0].status === 'PENDING' && ` · ${pendingText(dayRows[0].pendingDay)}`}
                   </Text>
                 )}
               </Group>
-              {!scored ? (
-                <EmptyState
-                  title="Not scored yet"
-                  description={
-                    status.captureEnabled
-                      ? 'A night is scored once it and every earlier night are closed. Until 7 nights are closed every variation shows No result.'
-                      : 'Discovery only: buys are counted, but nothing is replayed or scored.'
-                  }
-                />
-              ) : board.length === 0 ? (
+              {board.length === 0 ? (
                 <Text size="sm" c="dimmed">
-                  No variation is {statusText[statusFilter!].toLowerCase()} for this night.{' '}
-                  <Anchor component="button" size="sm" onClick={() => set('status', null)}>
-                    Show all
-                  </Anchor>
+                  {statusFilter
+                    ? `No variation is ${statusText[statusFilter].toLowerCase()} for this day. `
+                    : 'No rows for this day. '}
+                  {statusFilter && (
+                    <Anchor component="button" size="sm" onClick={() => set('status', null)}>
+                      Show all
+                    </Anchor>
+                  )}
                 </Text>
               ) : (
                 <Scoreboard
@@ -353,20 +415,19 @@ function Overview({ status }: { status: AutomationStatus }) {
           </Section>
           {labels.length > 0 && (
             <Section
-              title="Status by night"
-              hint="Each cell scores the 7 nights ending that night. A variation that stays ✓ across a row is consistent, not lucky. Choose a variation to follow it below; click a cell to open its night."
+              title="Status by day"
+              hint="Each cell scores the 7 trading days ending that day. A variation that stays ✓ across a row is consistent, not lucky. Choose a variation to follow it below; click a cell to open its day."
               actions={<StatusGridLegend />}
             >
               <StatusGrid
-                sessions={rows}
+                days={daysShown}
                 evaluations={all}
-                zone={status.zone}
                 planId={status.sweepPlanId}
                 labels={labels}
                 selectedLabel={selected}
                 onSelectLabel={(l) => set('variation', l, BASELINE_LABEL)}
-                nights={nights}
-                onNightsChange={(n) => set('nights', n, DEFAULT_NIGHTS)}
+                span={span}
+                onSpanChange={(n) => set('days', n, DEFAULT_SPAN)}
               />
             </Section>
           )}
@@ -374,15 +435,14 @@ function Overview({ status }: { status: AutomationStatus }) {
             <Section
               title={
                 selected === BASELINE_LABEL
-                  ? `The default (${BASELINE_LABEL}) by night, with the other variations as context`
-                  : `${selected} against the default (${BASELINE_LABEL}), by night`
+                  ? `The default (${BASELINE_LABEL}) by day, with the other variations as context`
+                  : `${selected} against the default (${BASELINE_LABEL}), by day`
               }
-              hint="Worst-case net P&L of the 7 nights ending each night. Success needs it above the 0 SOL line with at least 10 signals."
+              hint="Worst-case net P&L of the 7 trading days ending each day. Success needs it above the 0 SOL line with at least 10 signals."
             >
               <VariationTrend
-                sessions={rows}
+                days={daysShown}
                 evaluations={all}
-                zone={status.zone}
                 planId={status.sweepPlanId}
                 labels={labels}
                 selected={selected}
@@ -391,17 +451,17 @@ function Overview({ status }: { status: AutomationStatus }) {
             </Section>
           )}
           <Section
-            title="Recent nights"
+            title="Recent days"
             actions={
               <Group gap="md" wrap="wrap">
                 <BuyStateLegend captureEnabled={status.captureEnabled} />
-                <Anchor component={Link} to={paths.automationNights} size="sm">
-                  All nights →
+                <Anchor component={Link} to={paths.automationDays} size="sm">
+                  All days →
                 </Anchor>
               </Group>
             }
           >
-            <RecentNights sessions={rows.slice(0, RECENT_NIGHTS)} status={status} />
+            <RecentDays days={list.slice(0, RECENT_DAYS)} status={status} />
           </Section>
         </>
       )}

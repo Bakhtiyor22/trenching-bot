@@ -12,7 +12,7 @@ import {
 import type { EChartsOption } from 'echarts';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import type { AutomationEvaluation, AutomationSession } from '../../api/automation';
+import type { AutomationEvaluation } from '../../api/automation';
 import { Chart } from '../../components/Chart';
 import { formatDecimal, toChartNumber } from '../../lib/decimal';
 import { paths } from '../../paths';
@@ -59,21 +59,20 @@ function label(planId: string, l: string): string {
 
 /**
  * Trend option B: one variation's rolling worst-case P&L against the default (V00), the other variations as faint
- * context, with a labelled zero line. Hollow points mark windows under 10 signals (No result). The signals sit in a
+ * context, with a labelled zero line. Hollow points mark windows under 10 signals (No result) or still pending. The signals sit in a
  * second, separate chart, never on a second y-axis.
  */
 export function VariationTrend({
-  sessions,
+  days,
   evaluations,
-  zone,
   planId,
   labels,
   selected,
   onSelect,
 }: {
-  sessions: AutomationSession[];
+  /** The trading days shown, any order. */
+  days: string[];
   evaluations: AutomationEvaluation[];
-  zone: string;
   planId: string;
   labels: string[];
   selected: string;
@@ -83,17 +82,16 @@ export function VariationTrend({
   const scheme = useComputedColorScheme('dark');
   const c = COLORS[scheme];
   const [tableView, setTableView] = useState(false);
-  const closed = sessions.filter((s) => s.state === 'CLOSED');
-  const grid = statusGrid(closed, evaluations, zone, labels);
+  const grid = statusGrid(days, evaluations, labels);
   const columns = grid.columns.filter((_, i) => grid.rows.some((row) => row.cells[i] != null));
-  const indexOf = new Map(grid.columns.map((col, i) => [col.session.id, i]));
+  const indexOf = new Map(grid.columns.map((col, i) => [col.key, i]));
   const cells = (l: string) => {
     const row = grid.rows.find((r) => r.label === l);
-    return columns.map((col) => row?.cells[indexOf.get(col.session.id)!] ?? null);
+    return columns.map((col) => row?.cells[indexOf.get(col.key)!] ?? null);
   };
   const focus = cells(selected);
   const base = cells(BASELINE_LABEL);
-  const x = columns.map((col) => col.night.short);
+  const x = columns.map((col) => col.short);
   const num = (e: AutomationEvaluation | null) => (e ? toChartNumber(e.worstCasePnl) : null);
   const others = labels.filter((l) => l !== selected && l !== BASELINE_LABEL);
 
@@ -112,7 +110,7 @@ export function VariationTrend({
             ? `${name}: ${shortSol(e.worstCasePnl)} SOL · ${statusText[e.status]} · ${e.signals} signals, ${e.unscored} unscored`
             : `${name}: not scored`;
         return [
-          `<b>${columns[i]?.night.label ?? ''}</b>`,
+          `<b>${columns[i]?.label ?? ''}</b>`,
           line(selected, f),
           selected === BASELINE_LABEL ? '' : line(BASELINE_LABEL, b),
         ]
@@ -169,7 +167,7 @@ export function VariationTrend({
           symbol: 'circle',
           symbolSize: 9,
           itemStyle:
-            e && e.signals >= MIN_SIGNALS
+            e && e.signals >= MIN_SIGNALS && e.status !== 'PENDING'
               ? { color: c.focus, borderColor: c.surface, borderWidth: 2 }
               : { color: c.surface, borderColor: c.focus, borderWidth: 2 },
         })),
@@ -227,7 +225,7 @@ export function VariationTrend({
   const openNight = (params: unknown) => {
     const i = (params as { dataIndex?: number }).dataIndex;
     const col = i == null ? undefined : columns[i];
-    if (col) void navigate(paths.automationNight(col.session.id));
+    if (col) void navigate(paths.automationDay(col.key));
   };
 
   return (
@@ -274,11 +272,11 @@ export function VariationTrend({
       </Group>
       {columns.length === 0 ? (
         <Text size="sm" c="dimmed">
-          No scored nights yet. Scoring starts when a night and every earlier night are closed.
+          No days in this range yet.
         </Text>
       ) : tableView ? (
         <ScrollArea type="auto">
-          <Table aria-label={`${selected} against ${BASELINE_LABEL} by night`}>
+          <Table aria-label={`${selected} against ${BASELINE_LABEL} by day`}>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Night</Table.Th>
@@ -290,9 +288,15 @@ export function VariationTrend({
             </Table.Thead>
             <Table.Tbody>
               {columns.map((col, i) => (
-                <Table.Tr key={col.session.id}>
-                  <Table.Td>{col.night.label}</Table.Td>
-                  <Table.Td>{focus[i] ? <StatusChip status={focus[i].status} /> : '—'}</Table.Td>
+                <Table.Tr key={col.key}>
+                  <Table.Td>{col.label}</Table.Td>
+                  <Table.Td>
+                    {focus[i] ? (
+                      <StatusChip status={focus[i].status} pendingDay={focus[i].pendingDay} />
+                    ) : (
+                      '—'
+                    )}
+                  </Table.Td>
                   <Table.Td ta="right">
                     {focus[i] ? <SolValue value={focus[i].worstCasePnl} strong /> : '—'}
                   </Table.Td>
@@ -310,7 +314,7 @@ export function VariationTrend({
       ) : (
         <>
           <Chart
-            ariaLabel={`Worst-case net P&L of ${selected} and ${BASELINE_LABEL} for the 7 nights ending each night, from ${x[0]} to ${x[x.length - 1]}. Latest: ${selected} ${focus[focus.length - 1] ? formatDecimal(focus[focus.length - 1]!.worstCasePnl) : 'not scored'} SOL.`}
+            ariaLabel={`Worst-case net P&L of ${selected} and ${BASELINE_LABEL} for the 7 days ending each day, from ${x[0]} to ${x[x.length - 1]}. Latest: ${selected} ${focus[focus.length - 1] ? formatDecimal(focus[focus.length - 1]!.worstCasePnl) : 'not scored'} SOL.`}
             height={300}
             option={lineOption}
             onEvents={{ click: openNight }}
@@ -319,14 +323,14 @@ export function VariationTrend({
             Signals in each window, {selected}
           </Text>
           <Chart
-            ariaLabel={`Signals in each 7-night window for ${selected}; 10 are needed for a result.`}
+            ariaLabel={`Signals in each 7-day window for ${selected}; 10 are needed for a result.`}
             height={130}
             option={signalsOption}
             onEvents={{ click: openNight }}
           />
           <Text size="xs" c="dimmed">
-            Hollow points: under 10 signals, so No result. Hover a night for both values; click to
-            open it.
+            Hollow points: under 10 signals (No result) or pending. Hover a day for both values;
+            click to open it.
           </Text>
         </>
       )}

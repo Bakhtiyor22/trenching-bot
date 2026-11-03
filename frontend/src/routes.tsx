@@ -71,31 +71,57 @@ export const routes: RouteObject[] = [
       {
         path: 'automation',
         lazy: async () => ({
-          Component: (await import('./features/automation/AutomationOverviewPage')).AutomationOverviewPage,
+          Component: (await import('./features/automation/AutomationOverviewPage'))
+            .AutomationOverviewPage,
+        }),
+      },
+      {
+        path: 'automation/days',
+        lazy: async () => ({
+          Component: (await import('./features/automation/AutomationDaysPage')).AutomationDaysPage,
+        }),
+      },
+      {
+        path: 'automation/days/:date',
+        lazy: async () => ({
+          Component: (await import('./features/automation/AutomationDayPage')).AutomationDayPage,
+        }),
+      },
+      {
+        path: 'automation/backfills',
+        lazy: async () => ({
+          Component: (await import('./features/automation/BackfillsPage')).BackfillsPage,
+        }),
+      },
+      {
+        path: 'automation/backfills/:id',
+        lazy: async () => ({
+          Component: (await import('./features/automation/BackfillDetailPage')).BackfillDetailPage,
         }),
       },
       {
         path: 'automation/nights',
         lazy: async () => ({
-          Component: (await import('./features/automation/AutomationNightsPage')).AutomationNightsPage,
+          Component: (await import('./features/automation/AutomationRedirects')).NightsRedirect,
         }),
       },
       {
         path: 'automation/nights/:id',
         lazy: async () => ({
-          Component: (await import('./features/automation/AutomationNightPage')).AutomationNightPage,
+          Component: (await import('./features/automation/AutomationRedirects')).NightRedirect,
         }),
       },
       {
         path: 'automation/items/:id',
         lazy: async () => ({
-          Component: (await import('./features/automation/AutomationItemRedirect')).AutomationItemRedirect,
+          Component: (await import('./features/automation/AutomationRedirects')).ItemRedirect,
         }),
       },
       {
         path: 'automation/sweep-runs',
         lazy: async () => ({
-          Component: (await import('./features/automation/AutomationSweepRunsPage')).AutomationSweepRunsPage,
+          Component: (await import('./features/automation/AutomationSweepRunsPage'))
+            .AutomationSweepRunsPage,
         }),
       },
       {

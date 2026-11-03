@@ -1,20 +1,31 @@
 import { describe, expect, it } from 'vitest';
-import type { AutomationEvaluation, AutomationSession } from '../../api/automation';
+import type { AutomationDaySummary, AutomationEvaluation } from '../../api/automation';
+import { isSolanaAddress } from '../../lib/base58';
 import {
+  addDays,
   buyBuckets,
   capPercent,
+  captureBudgetFor,
   compareWorstDesc,
+  dayInfo,
+  dayItemCounts,
+  dayRange,
+  daysBetween,
+  dayStartInstant,
+  defaultScoredDay,
+  isFilteredBackfill,
   lamportsToSol,
-  nightKeyBefore,
-  nightOf,
-  nightStart,
   outcomeLabel,
+  parseMints,
+  pendingText,
   planLabels,
   pnlBar,
   pnlScale,
+  scanFraction,
   shortSol,
   statusGrid,
   stepMarks,
+  tradingDayOf,
   variationChange,
   zoneDateTime,
   zoneLabel,
@@ -22,39 +33,43 @@ import {
 } from './automationModel';
 
 const ZONE = '+05:00';
+const MINT = 'So11111111111111111111111111111111111111112';
 
-function session(id: string, firstBuyAt: string): AutomationSession {
+function evaluation(day: string, label: string, worst = '0.1'): AutomationEvaluation {
   return {
-    id,
-    wallet: 'w',
-    firstItemId: `${id}-item`,
-    firstBuyAt,
-    lastBuyAt: firstBuyAt,
-    state: 'CLOSED',
-    closedAt: firstBuyAt,
-    closeReason: 'IDLE',
-    belowFilterCount: 0,
-    createdAt: firstBuyAt,
-    itemCounts: {},
-    requestsUsed: 0,
-    bestStatus: null,
-    bestLabel: null,
-  };
-}
-
-function evaluation(sessionId: string, label: string, worst = '0.1'): AutomationEvaluation {
-  return {
-    sessionId,
+    day,
     planId: 'decu-sweep-1',
     label,
-    windowSessionIds: [sessionId],
+    windowDays: [day],
     signals: 12,
     scored: 12,
     unscored: 0,
     realizedPnl: worst,
     worstCasePnl: worst,
     status: 'SUCCESS',
-    evaluatedAt: '2026-11-02T00:00:00Z',
+    pendingDay: null,
+  };
+}
+
+function summary(day: string, overrides: Partial<AutomationDaySummary> = {}): AutomationDaySummary {
+  return {
+    day,
+    from: '',
+    to: '',
+    covered: true,
+    complete: true,
+    sessions: 1,
+    buys: 4,
+    belowFilter: 0,
+    captured: 3,
+    simulated: 2,
+    failed: 1,
+    abandoned: 0,
+    requestsUsed: 0,
+    bestStatus: 'SUCCESS',
+    bestLabel: 'V03',
+    pendingDay: null,
+    ...overrides,
   };
 }
 
@@ -73,22 +88,64 @@ describe('the automation clock', () => {
     expect(zoneTime('2026-11-02T14:12:00Z', 'Asia/Tashkent')).toBe('19:12');
     expect(zoneTime(null, ZONE)).toBe('—');
   });
+});
 
-  it('puts a buy after midnight into the night of the evening before', () => {
-    expect(nightOf('2026-11-02T14:12:00Z', ZONE)).toEqual({
+describe('trading days', () => {
+  it('runs noon to noon and is named by its start date', () => {
+    expect(tradingDayOf('2026-11-02T14:12:00Z', ZONE)).toBe('2026-11-02');
+    // 01:30 on 3 Nov in UTC+5 still belongs to the day that started on 2 Nov at noon.
+    expect(tradingDayOf('2026-11-02T20:30:00Z', ZONE)).toBe('2026-11-02');
+    // A buy exactly at 12:00:00 belongs to the new day; one second before, to the old one.
+    expect(tradingDayOf('2026-11-03T07:00:00Z', ZONE)).toBe('2026-11-03');
+    expect(tradingDayOf('2026-11-03T06:59:59Z', ZONE)).toBe('2026-11-02');
+    // A configured start moves the boundary.
+    expect(tradingDayOf('2026-11-03T05:30:00Z', ZONE, '10:00')).toBe('2026-11-03');
+  });
+
+  it('labels, steps and spans days', () => {
+    expect(dayInfo('2026-11-02')).toEqual({
       key: '2026-11-02',
       label: 'Mon 2 Nov',
       short: '2 Nov',
     });
-    // 01:30 on 3 Nov in UTC+5 is still the night of Mon 2 Nov.
-    expect(nightOf('2026-11-02T20:30:00Z', ZONE).label).toBe('Mon 2 Nov');
-    // Noon starts the next night.
-    expect(nightOf('2026-11-03T07:00:00Z', ZONE).label).toBe('Tue 3 Nov');
+    expect(addDays('2026-11-02', -6)).toBe('2026-10-27');
+    expect(addDays('2026-10-31', 1)).toBe('2026-11-01');
+    expect(daysBetween('2026-10-01', '2026-12-01')).toBe(61);
+    expect(dayRange('2026-10-30', '2026-11-01')).toEqual([
+      '2026-10-30',
+      '2026-10-31',
+      '2026-11-01',
+    ]);
+    expect(dayRange('2026-11-02', '2026-11-01')).toEqual([]);
+    expect(dayStartInstant('2026-11-02', ZONE)).toBe('2026-11-02T07:00:00.000Z');
   });
 
-  it('bounds date filters at the noon rollover in the zone', () => {
-    expect(nightStart('2026-11-02', ZONE)).toBe('2026-11-02T07:00:00.000Z');
-    expect(nightKeyBefore('2026-11-02T20:30:00Z', ZONE, 6)).toBe('2026-10-27');
+  it('defaults the scoreboard to the newest day with a verdict', () => {
+    const days = [
+      summary('2026-11-02', { bestStatus: 'PENDING', bestLabel: null, pendingDay: '2026-11-02' }),
+      summary('2026-11-01', { bestStatus: 'NO_SUCCESS' }),
+      summary('2026-10-31'),
+    ];
+    expect(defaultScoredDay(days)?.day).toBe('2026-11-01');
+    expect(defaultScoredDay(days.slice(0, 1))?.day).toBe('2026-11-02');
+    expect(defaultScoredDay([])).toBeNull();
+  });
+
+  it('says which day a pending row waits for', () => {
+    expect(pendingText('2026-10-31')).toBe('waiting for Sat 31 Oct to complete');
+    expect(pendingText(null)).toBe('waiting for its days to complete');
+  });
+
+  it('turns a day summary into buy counts, the rest finished on a complete day', () => {
+    expect(dayItemCounts(summary('2026-11-01'))).toEqual({
+      SIMULATED: 2,
+      FAILED: 1,
+      ABANDONED: 0,
+      SKIPPED_NOT_FIRST_BUY: 1,
+    });
+    expect(dayItemCounts(summary('2026-11-02', { complete: false }))).toMatchObject({
+      CAPTURING: 1,
+    });
   });
 });
 
@@ -184,21 +241,63 @@ describe('variations and outcomes', () => {
   });
 });
 
-describe('the status-by-night grid', () => {
-  it('puts nights oldest first and leaves a gap where a night is not scored', () => {
-    const sessions = [
-      session('b', '2026-11-01T14:00:00Z'),
-      session('a', '2026-10-31T14:00:00Z'),
-      session('c', '2026-11-02T14:00:00Z'),
-    ];
+describe('the status-by-day grid', () => {
+  it('puts days oldest first, a column for every day, and leaves a gap without a row', () => {
     const grid = statusGrid(
-      sessions,
-      [evaluation('a', 'V00'), evaluation('b', 'V00'), evaluation('b', 'V01')],
-      ZONE,
+      ['2026-11-01', '2026-10-31', '2026-11-02'],
+      [
+        evaluation('2026-10-31', 'V00'),
+        evaluation('2026-11-01', 'V00'),
+        evaluation('2026-11-01', 'V01'),
+      ],
       ['V00', 'V01'],
     );
-    expect(grid.columns.map((c) => c.night.short)).toEqual(['31 Oct', '1 Nov', '2 Nov']);
-    expect(grid.rows[0]!.cells.map((c) => c?.sessionId ?? null)).toEqual(['a', 'b', null]);
-    expect(grid.rows[1]!.cells.map((c) => c?.sessionId ?? null)).toEqual([null, 'b', null]);
+    expect(grid.columns.map((c) => c.short)).toEqual(['31 Oct', '1 Nov', '2 Nov']);
+    expect(grid.rows[0]!.cells.map((c) => c?.day ?? null)).toEqual([
+      '2026-10-31',
+      '2026-11-01',
+      null,
+    ]);
+    expect(grid.rows[1]!.cells.map((c) => c?.day ?? null)).toEqual([null, '2026-11-01', null]);
+  });
+});
+
+describe('backfills', () => {
+  const base = {
+    rangeStart: '2026-10-06T07:00:00Z',
+    rangeEnd: '2026-10-10T07:00:00Z',
+    scannedTo: null,
+  };
+
+  it('measures how far the newest-first scan has read back', () => {
+    expect(scanFraction({ ...base, state: 'QUEUED' })).toBe(0);
+    expect(scanFraction({ ...base, state: 'SCANNING', scannedTo: '2026-10-08T07:00:00Z' })).toBe(
+      0.5,
+    );
+    expect(scanFraction({ ...base, state: 'CAPTURING' })).toBe(1);
+    expect(scanFraction({ ...base, state: 'DONE', scannedTo: '2026-10-06T07:00:00Z' })).toBe(1);
+  });
+
+  it('parses a token list, one per line or comma-separated, with duplicates dropped and bad ones apart', () => {
+    expect(parseMints(`${MINT}\n${MINT}, not-a-mint\n\n`, isSolanaAddress)).toEqual({
+      mints: [MINT],
+      invalid: ['not-a-mint'],
+    });
+    expect(parseMints('   ', isSolanaAddress)).toEqual({ mints: [], invalid: [] });
+  });
+
+  it('calls a backfill filtered with a token list or a minimum above the capture filter', () => {
+    expect(isFilteredBackfill('', [])).toBe(false);
+    expect(isFilteredBackfill('1.5', [])).toBe(false);
+    expect(isFilteredBackfill('1.500000001', [])).toBe(true);
+    expect(isFilteredBackfill('', [MINT])).toBe(true);
+    expect(isFilteredBackfill('abc', [])).toBe(false);
+  });
+
+  it('starts a capture from the estimate, within the budget limits', () => {
+    expect(captureBudgetFor(3150)).toBe(3150);
+    expect(captureBudgetFor(400)).toBe(1222);
+    expect(captureBudgetFor(null)).toBe(1222);
+    expect(captureBudgetFor(50_000)).toBe(20_000);
   });
 });

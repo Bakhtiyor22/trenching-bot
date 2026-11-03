@@ -17,15 +17,15 @@ import { useDisclosure } from '@mantine/hooks';
 import { Link, useParams, useSearchParams } from 'react-router';
 import {
   STEPS,
+  useAutomationDay,
   useAutomationItem,
-  useAutomationSession,
   useCloseSession,
+  type AutomationDayDetail,
   type AutomationItem,
-  type AutomationSessionDetail,
+  type AutomationSession,
   type AutomationStatus,
   type AutomationStep,
 } from '../../api/automation';
-import { ApiError } from '../../api/client';
 import { Mint, ShortId } from '../../components/DisplayValues';
 import { Kpi, KpiStrip, Section } from '../../components/Panels';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
@@ -33,14 +33,15 @@ import { formatDecimal } from '../../lib/decimal';
 import { paths } from '../../paths';
 import { reasonText } from '../captures/captureReasons';
 import {
+  addDays,
   bucketOf,
   stepMarks,
   type StepMark,
-  buyBuckets,
   compareWorstDesc,
+  dayInfo,
   itemStateLabels,
   lamportsToSol,
-  nightTitle,
+  tradingDayOf,
   outcomeExplanation,
   outcomeLabel,
   variationChange,
@@ -48,7 +49,14 @@ import {
   zoneLabel,
   zoneTime,
 } from './automationModel';
-import { AutomationFrame, SolValue, StatusAlerts, StatusChip, ZoneTime } from './AutomationShared';
+import {
+  AutomationFrame,
+  BestOfDay,
+  BuyStateBar,
+  SolValue,
+  StatusAlerts,
+  ZoneTime,
+} from './AutomationShared';
 import { Scoreboard } from './Scoreboard';
 
 const STEP_NAMES: Record<AutomationStep, string> = {
@@ -132,34 +140,28 @@ function ItemNote({ item, zone }: { item: AutomationItem; zone: string }) {
   );
 }
 
-function CloseNight({ detail }: { detail: AutomationSessionDetail }) {
+const TERMINAL = ['SIMULATED', 'FAILED', 'ABANDONED', 'SKIPPED_NOT_FIRST_BUY'];
+
+function CloseSession({ session, items }: { session: AutomationSession; items: AutomationItem[] }) {
   const [opened, { open, close }] = useDisclosure(false);
-  const mutation = useCloseSession(detail.session.id);
-  const unfinished = detail.items.filter(
-    (i) => !['SIMULATED', 'FAILED', 'ABANDONED', 'SKIPPED_NOT_FIRST_BUY'].includes(i.state),
+  const mutation = useCloseSession(session.id);
+  const unfinished = items.filter(
+    (i) => i.sessionId === session.id && !TERMINAL.includes(i.state),
   ).length;
-  if (detail.session.state === 'CLOSED') {
-    return (
-      <Tooltip label="Only an open night can be closed">
-        <Button variant="default" disabled>
-          Close night now
-        </Button>
-      </Tooltip>
-    );
-  }
+  if (session.state === 'CLOSED') return null;
   return (
     <>
-      <Button variant="default" color="red" onClick={open}>
-        Close night now
+      <Button variant="default" color="red" size="xs" onClick={open}>
+        Close session now
       </Button>
-      <Modal opened={opened} onClose={close} title="Close this night now?" centered>
+      <Modal opened={opened} onClose={close} title="Close this session now?" centered>
         <Stack gap="md">
           <Text size="sm">
-            The night ends now instead of 60 minutes after the last buy.{' '}
+            The session ends now instead of 60 minutes after its last buy.{' '}
             {unfinished > 0
               ? `${unfinished} unfinished ${unfinished === 1 ? 'buy becomes' : 'buys become'} Abandoned and ${unfinished === 1 ? 'is' : 'are'} not scored.`
               : 'Every buy has finished, so nothing is abandoned.'}{' '}
-            Buys found later start a new night.
+            Buys found later start a new session.
           </Text>
           {mutation.isError && <ErrorState error={mutation.error} title="Close failed" />}
           <Group justify="flex-end">
@@ -171,12 +173,70 @@ function CloseNight({ detail }: { detail: AutomationSessionDetail }) {
               loading={mutation.isPending}
               onClick={() => mutation.mutate(undefined, { onSuccess: close })}
             >
-              Close night
+              Close session
             </Button>
           </Group>
         </Stack>
       </Modal>
     </>
+  );
+}
+
+const SESSION_STATE = {
+  OPEN: { text: 'Open', color: 'teal' },
+  CLOSING: { text: 'Closing', color: 'amber' },
+  CLOSED: { text: 'Closed', color: 'gray' },
+} as const;
+
+function Sessions({ detail, status }: { detail: AutomationDayDetail; status: AutomationStatus }) {
+  return (
+    <ScrollArea type="auto">
+      <Table miw={760} aria-label="Sessions this day">
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>Session ({zoneLabel(status.zone)})</Table.Th>
+            <Table.Th>Source</Table.Th>
+            <Table.Th>State</Table.Th>
+            <Table.Th>Buys</Table.Th>
+            <Table.Th ta="right">Requests</Table.Th>
+            <Table.Th />
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {detail.sessions.map((s) => (
+            <Table.Tr key={s.id}>
+              <Table.Th scope="row" fw={400} ff="monospace">
+                {zoneTime(s.firstBuyAt, status.zone)} → {zoneTime(s.lastBuyAt, status.zone)}
+              </Table.Th>
+              <Table.Td>
+                {s.backfillId ? (
+                  <Anchor component={Link} to={paths.automationBackfill(s.backfillId)} size="sm">
+                    Backfill
+                  </Anchor>
+                ) : (
+                  <Text size="sm">Live</Text>
+                )}
+              </Table.Td>
+              <Table.Td>
+                <Badge variant="light" color={SESSION_STATE[s.state].color} tt="none">
+                  {SESSION_STATE[s.state].text}
+                  {s.closeReason === 'MANUAL' ? ' by hand' : ''}
+                </Badge>
+              </Table.Td>
+              <Table.Td>
+                <BuyStateBar counts={s.itemCounts} captureEnabled={status.captureEnabled} />
+              </Table.Td>
+              <Table.Td ta="right" ff="monospace">
+                {s.requestsUsed.toLocaleString('en-US')}
+              </Table.Td>
+              <Table.Td ta="right">
+                <CloseSession session={s} items={detail.items} />
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+    </ScrollArea>
   );
 }
 
@@ -323,10 +383,33 @@ function SelectedBuy({ itemId, status }: { itemId: string; status: AutomationSta
   );
 }
 
-function Night({ detail, status }: { detail: AutomationSessionDetail; status: AutomationStatus }) {
+function coverageText(detail: AutomationDayDetail, zone: string): string {
+  const { summary, coverage, items } = detail;
+  const unfinished = items.filter((i) => !TERMINAL.includes(i.state)).length;
+  const open = detail.sessions.filter((s) => s.state !== 'CLOSED').length;
+  const running = Date.parse(summary.to) > Date.now();
+  const ranges = coverage.ranges
+    .map((r) => `${zoneDateTime(r.from, zone)} → ${zoneDateTime(r.to, zone)}`)
+    .join(', ');
+  const covered = coverage.covered
+    ? 'Fully covered by discovery'
+    : running
+      ? `Today, until ${zoneDateTime(summary.to, zone)}${ranges ? `; covered so far ${ranges}` : ''}`
+      : ranges
+        ? `Partly covered: ${ranges}`
+        : 'Not covered by discovery yet';
+  if (summary.complete) return `${covered} · complete`;
+  const reasons = [
+    !coverage.covered && !running && 'not fully covered',
+    open > 0 && `${open} ${open === 1 ? 'session' : 'sessions'} still open`,
+    unfinished > 0 && `${unfinished} ${unfinished === 1 ? 'buy' : 'buys'} still in progress`,
+  ].filter(Boolean);
+  return `${covered} · not complete${reasons.length ? `: ${reasons.join(', ')}` : ''}`;
+}
+
+function Day({ detail, status }: { detail: AutomationDayDetail; status: AutomationStatus }) {
   const [params, setParams] = useSearchParams();
-  const { session, items, evaluations } = detail;
-  const buckets = buyBuckets(session.itemCounts);
+  const { summary, items, evaluations } = detail;
   const requested = params.get('item');
   const selectedId =
     items.find((i) => i.id === requested)?.id ??
@@ -342,64 +425,68 @@ function Night({ detail, status }: { detail: AutomationSessionDetail; status: Au
       },
       { replace: true },
     );
-  const best = evaluations[0];
-  const unscored = buckets.issues;
+  const skipped = items.filter((i) => i.state === 'SKIPPED_NOT_FIRST_BUY').length;
+  const inProgress = items.filter((i) => !TERMINAL.includes(i.state)).length;
   return (
     <Stack gap="lg">
-      <KpiStrip label="Night totals" min={170}>
+      <KpiStrip label="Day totals" min={170}>
         <Kpi
           label="Buys"
           hint={[
-            buckets.replayed && `${buckets.replayed} replayed`,
-            buckets.inProgress && `${buckets.inProgress} in progress`,
-            buckets.skipped && `${buckets.skipped} not first`,
-            buckets.issues && `${buckets.issues} failed or abandoned`,
+            summary.simulated && `${summary.simulated} replayed`,
+            inProgress && `${inProgress} in progress`,
+            skipped && `${skipped} not first`,
+            summary.failed + summary.abandoned &&
+              `${summary.failed + summary.abandoned} failed or abandoned`,
           ]
             .filter(Boolean)
             .join(' · ')}
         >
           <Text fz="xl" fw={600}>
-            {items.length}
+            {summary.buys}
           </Text>
         </Kpi>
         <Kpi label="Below the filter" hint="buys too small to capture, fees included">
           <Text fz="xl" fw={600}>
-            {session.belowFilterCount}
+            {summary.belowFilter}
           </Text>
         </Kpi>
-        <Kpi label="Best variation" hint="over the 7 nights ending here">
-          {best ? (
-            <Group gap={6}>
-              <StatusChip status={best.status} />
-              <Text ff="monospace" fw={600}>
-                {best.label}
-              </Text>
-            </Group>
-          ) : (
-            <Text c="dimmed">Not scored yet</Text>
-          )}
+        <Kpi label="Best variation" hint="over the 7 trading days ending here">
+          <BestOfDay day={summary} planId={status.sweepPlanId} />
         </Kpi>
         <Kpi label="Unscored" hint="failed or abandoned buys, kept out of P&L">
           <Text fz="xl" fw={600}>
-            {unscored}
+            {summary.failed + summary.abandoned}
           </Text>
         </Kpi>
         <Kpi label="Requests" hint="provider calls for these captures">
           <Text fz="xl" fw={600} ff="monospace">
-            {session.requestsUsed.toLocaleString('en-US')}
+            {summary.requestsUsed.toLocaleString('en-US')}
           </Text>
         </Kpi>
       </KpiStrip>
 
       <Section
-        title="Buys this night · oldest first"
-        hint="Steps: session · wallet · market · rates · export · qualify · register · sweep. Choose a buy to see its 10 sweep runs."
+        title="Sessions"
+        hint="Buys grouped by idle gaps of 60 minutes, never across a day boundary."
       >
-        {items.length === 0 ? (
-          <EmptyState title="No buys in this night" />
+        {detail.sessions.length === 0 ? (
+          <Text size="sm" c="dimmed">
+            No buys this day
+            {summary.covered ? '. It counts toward the 7-day window with zero signals.' : '.'}
+          </Text>
         ) : (
+          <Sessions detail={detail} status={status} />
+        )}
+      </Section>
+
+      {items.length > 0 && (
+        <Section
+          title="Buys this day · oldest first"
+          hint="Steps: session · wallet · market · rates · export · qualify · register · sweep. Choose a buy to see its 10 sweep runs."
+        >
           <ScrollArea type="auto">
-            <Table miw={900} aria-label="Buys this night">
+            <Table miw={900} aria-label="Buys this day">
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>Buy ({zoneLabel(status.zone)})</Table.Th>
@@ -455,18 +542,18 @@ function Night({ detail, status }: { detail: AutomationSessionDetail; status: Au
               </Table.Tbody>
             </Table>
           </ScrollArea>
-        )}
-      </Section>
+        </Section>
+      )}
 
       {selectedId && <SelectedBuy itemId={selectedId} status={status} />}
 
       <Section
-        title="Scoreboard for the 7 nights ending here"
-        hint="The same rule as the overview: worst-case net P&L above 0 SOL over at least 10 signals."
+        title="Scoreboard for the 7 trading days ending here"
+        hint="The same rule as the overview: worst-case net P&L above 0 SOL over at least 10 signals. Pending rows show the counts so far."
       >
         {evaluations.length === 0 ? (
           <Text size="sm" c="dimmed">
-            Not scored yet: scoring starts when this night and every earlier night are closed.
+            No rows for this day.
           </Text>
         ) : (
           <Scoreboard evaluations={evaluations} />
@@ -476,95 +563,82 @@ function Night({ detail, status }: { detail: AutomationSessionDetail; status: Au
   );
 }
 
-function NightBreadcrumb({ title }: { title: string }) {
+function DayBreadcrumb({ title }: { title: string }) {
   return (
     <Breadcrumbs separator="›">
       <Anchor component={Link} to={paths.automation} size="sm">
         Automation
       </Anchor>
-      <Anchor component={Link} to={paths.automationNights} size="sm">
-        Nights
+      <Anchor component={Link} to={paths.automationDays} size="sm">
+        Days
       </Anchor>
       <Text size="sm">{title}</Text>
     </Breadcrumbs>
   );
 }
 
-export function AutomationNightPage() {
-  const { id = '' } = useParams();
-  const detail = useAutomationSession(id);
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export function AutomationDayPage() {
+  const { date = '' } = useParams();
+  const valid = DATE.test(date);
+  const detail = useAutomationDay(valid ? date : null);
   return (
     <AutomationFrame description="">
       {(status) => {
-        if (detail.isPending) return <LoadingState label="Loading the night…" />;
+        if (!valid)
+          return <EmptyState title="Not a trading day" description="Days are named YYYY-MM-DD." />;
+        if (detail.isPending) return <LoadingState label="Loading the day…" />;
         if (detail.isError)
-          return detail.error instanceof ApiError &&
-            detail.error.code === 'AUTOMATION_SESSION_NOT_FOUND' ? (
-            <EmptyState
-              title="Night not found"
-              description="It may have been merged into another night by a catch-up scan."
-            />
-          ) : (
-            <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />
-          );
-        const { session } = detail.data;
-        const title = nightTitle(session, status.zone);
+          return <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />;
+        const { summary } = detail.data;
+        const title = dayInfo(summary.day).label;
+        const today = tradingDayOf(new Date().toISOString(), status.zone, status.tradingDayStart);
         return (
           <Stack gap="lg">
-            <NightBreadcrumb title={title} />
+            <DayBreadcrumb title={title} />
             <Card padding="md">
               <Group justify="space-between" wrap="wrap" gap="md">
                 <Stack gap={4}>
                   <Text fz="xl" fw={700} component="h2" m={0}>
                     {title}
+                    {summary.day === today && (
+                      <Text span c="dimmed" fz="md" fw={400}>
+                        {' '}
+                        · today
+                      </Text>
+                    )}
                   </Text>
                   <Text size="sm" c="dimmed">
-                    {zoneDateTime(session.firstBuyAt, status.zone)} →{' '}
-                    {zoneTime(session.lastBuyAt, status.zone)} {zoneLabel(status.zone)}
-                    {session.state === 'CLOSED'
-                      ? session.closeReason === 'MANUAL'
-                        ? ' · closed by hand'
-                        : ' · closed after 60 min without a new buy'
-                      : session.state === 'OPEN'
-                        ? ' · open, waiting for more buys'
-                        : ' · closing, waiting for its last buys to finish'}{' '}
-                    · wallet <ShortId value={session.wallet} />
+                    {zoneDateTime(summary.from, status.zone)} →{' '}
+                    {zoneDateTime(summary.to, status.zone)} {zoneLabel(status.zone)}
                   </Text>
+                  <Text size="sm">{coverageText(detail.data, status.zone)}</Text>
                 </Stack>
                 <Group gap="xs" wrap="wrap">
-                  <Badge
-                    variant="light"
-                    color={
-                      session.state === 'CLOSED'
-                        ? 'gray'
-                        : session.state === 'OPEN'
-                          ? 'teal'
-                          : 'amber'
-                    }
-                    tt="none"
+                  <Button
+                    component={Link}
+                    to={paths.automationDay(addDays(summary.day, -1))}
+                    variant="default"
+                    size="xs"
                   >
-                    {session.state === 'CLOSED'
-                      ? 'Closed'
-                      : session.state === 'OPEN'
-                        ? 'Open'
-                        : 'Closing'}
-                  </Badge>
-                  {buyBuckets(session.itemCounts).issues > 0 && (
-                    <Badge
-                      variant="light"
-                      color="amber"
-                      tt="none"
-                      leftSection={<span aria-hidden="true">⚠</span>}
+                    ← {dayInfo(addDays(summary.day, -1)).short}
+                  </Button>
+                  {summary.day < today && (
+                    <Button
+                      component={Link}
+                      to={paths.automationDay(addDays(summary.day, 1))}
+                      variant="default"
+                      size="xs"
                     >
-                      Capture issues
-                    </Badge>
+                      {dayInfo(addDays(summary.day, 1)).short} →
+                    </Button>
                   )}
-                  <CloseNight detail={detail.data} />
                 </Group>
               </Group>
             </Card>
             <StatusAlerts status={status} />
-            <Night detail={detail.data} status={status} />
+            <Day detail={detail.data} status={status} />
           </Stack>
         );
       }}

@@ -16,6 +16,7 @@ import { Link, useLocation, useNavigate } from 'react-router';
 import {
   isAutomationOff,
   useAutomationStatus,
+  type AutomationDaySummary,
   type AutomationSession,
   type AutomationStatus,
   type EvaluationStatus,
@@ -27,6 +28,8 @@ import { paths } from '../../paths';
 import {
   BUY_BUCKETS,
   bucketLabel,
+  dayInfo,
+  pendingText,
   buyBuckets,
   pnlBar,
   shortSol,
@@ -35,6 +38,7 @@ import {
   zoneDateTime,
   zoneLabel,
   zoneTime,
+  variationChange,
   type BuyBucket,
 } from './automationModel';
 
@@ -42,23 +46,37 @@ const STATUS_COLOR: Record<EvaluationStatus, string> = {
   SUCCESS: 'teal',
   NO_SUCCESS: 'red',
   NO_RESULT: 'gray',
+  PENDING: 'gray',
 };
 
-/** A status with its icon and word, never colour alone. */
-export function StatusChip({ status, suffix }: { status: EvaluationStatus; suffix?: ReactNode }) {
-  return (
+/**
+ * A status with its icon and word, never colour alone. PENDING is a state, not a verdict: it shows a clock, an outline
+ * instead of a fill, and says which day it waits for.
+ */
+export function StatusChip({
+  status,
+  pendingDay,
+  suffix,
+}: {
+  status: EvaluationStatus;
+  pendingDay?: string | null;
+  suffix?: ReactNode;
+}) {
+  const badge = (
     <Badge
       color={STATUS_COLOR[status]}
-      variant="light"
+      variant={status === 'PENDING' ? 'outline' : 'light'}
       radius="xl"
       tt="none"
       leftSection={<span aria-hidden="true">{statusGlyph[status]}</span>}
       style={{ whiteSpace: 'nowrap' }}
+      aria-label={status === 'PENDING' ? `Pending, ${pendingText(pendingDay)}` : undefined}
     >
       {statusText[status]}
       {suffix}
     </Badge>
   );
+  return status === 'PENDING' ? <Tooltip label={pendingText(pendingDay)}>{badge}</Tooltip> : badge;
 }
 
 /** A compact signed SOL value with the exact decimal in a tooltip, coloured by sign. */
@@ -323,13 +341,15 @@ export function AutomationOffState() {
 
 const TABS = [
   { value: paths.automation, label: 'Overview' },
-  { value: paths.automationNights, label: 'Nights' },
+  { value: paths.automationDays, label: 'Days' },
+  { value: paths.automationBackfills, label: 'Backfills' },
   { value: paths.automationSweepRuns, label: 'Sweep runs' },
 ];
 
 function activeTab(pathname: string): string {
   if (pathname.startsWith(paths.automationSweepRuns)) return paths.automationSweepRuns;
-  if (pathname.startsWith(paths.automationNights)) return paths.automationNights;
+  if (pathname.startsWith(paths.automationDays)) return paths.automationDays;
+  if (pathname.startsWith(paths.automationBackfills)) return paths.automationBackfills;
   return paths.automation;
 }
 
@@ -415,9 +435,10 @@ export function StatusAlerts({ status }: { status: AutomationStatus }) {
       )}
       {status.enabled && !status.captureEnabled && (
         <Alert color="blue" variant="light" title="Discovery only">
-          Buys are found and grouped into nights, but nothing is captured, replayed or scored, and
-          no capture requests are spent. Turn on <Code>trenching.automation.capture-enabled</Code>{' '}
-          once the nightly volume is known.
+          Buys are found and grouped into trading days, but nothing is captured, replayed or scored,
+          and no capture requests are spent, so every day stays Pending. Turn on{' '}
+          <Code>trenching.automation.capture-enabled</Code> once the daily volume is known; the days
+          found so far are then captured and complete.
         </Alert>
       )}
       {status.watermark?.resumeBefore && (
@@ -439,19 +460,49 @@ export function ZoneNote({ zone }: { zone: string }) {
   );
 }
 
-/** A link to a night, named by its night. */
-export function NightLink({
-  id,
+/** A link to a trading day, named by its date; `itemId` opens that buy in it. */
+export function DayLink({
+  day,
   children,
   itemId,
 }: {
-  id: string;
-  children: ReactNode;
+  day: string;
+  children?: ReactNode;
   itemId?: string | null;
 }) {
   return (
-    <Anchor component={Link} to={paths.automationNight(id, itemId)} fw={600} size="sm">
-      {children}
+    <Anchor component={Link} to={paths.automationDay(day, itemId)} fw={600} size="sm">
+      {children ?? dayInfo(day).label}
     </Anchor>
+  );
+}
+
+/** A day's best verdict and variation, or Pending with the day it waits for. */
+export function BestOfDay({ day, planId }: { day: AutomationDaySummary; planId: string }) {
+  if (!day.bestStatus)
+    return (
+      <Text size="sm" c="dimmed">
+        —
+      </Text>
+    );
+  if (day.bestStatus === 'PENDING')
+    return (
+      <Group gap={6} wrap="wrap">
+        <StatusChip status="PENDING" pendingDay={day.pendingDay} />
+        <Text span size="xs" c="dimmed" visibleFrom="md">
+          {pendingText(day.pendingDay)}
+        </Text>
+      </Group>
+    );
+  return (
+    <Group gap={6} wrap="nowrap">
+      <StatusChip status={day.bestStatus} />
+      <Text span ff="monospace" size="sm" fw={600}>
+        {day.bestLabel}
+      </Text>
+      <Text span size="xs" c="dimmed" visibleFrom="md">
+        {day.bestLabel ? variationChange(planId, day.bestLabel) : null}
+      </Text>
+    </Group>
   );
 }

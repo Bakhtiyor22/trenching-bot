@@ -22,9 +22,10 @@ import { PagingFooter, Section } from '../../components/Panels';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
 import { paths } from '../../paths';
 import {
-  nightKeyBefore,
-  nightOf,
-  nightStart,
+  addDays,
+  dayInfo,
+  dayStartInstant,
+  tradingDayOf,
   OUTCOME_GROUPS,
   outcomeExplanation,
   outcomeLabel,
@@ -33,22 +34,22 @@ import {
   zoneLabel,
   zoneTime,
 } from './automationModel';
-import { AutomationFrame, NightLink, SolValue } from './AutomationShared';
+import { AutomationFrame, DayLink, SolValue } from './AutomationShared';
 
 const PAGE_SIZE = 50;
-/** Nights offered by the night picker; the date range narrows them (the sweep-run API has no date filter). */
+/** Sessions offered by the session picker; the day range narrows them (the sweep-run API has no date filter). */
 const NIGHT_CHOICES = 100;
 const RANGES = [
-  { value: '7', label: 'Last 7 nights', nights: 7 },
-  { value: '30', label: 'Last 30 nights', nights: 30 },
-  { value: 'all', label: 'All nights', nights: null },
+  { value: '7', label: 'Last 7 days', nights: 7 },
+  { value: '30', label: 'Last 30 days', nights: 30 },
+  { value: 'all', label: 'All days', nights: null },
 ] as const;
 const MINT_DEBOUNCE_MS = 300;
 
 function SweepRuns({ status }: { status: AutomationStatus }) {
   const [params, setParams] = useSearchParams();
   const range = RANGES.find((r) => r.value === params.get('range')) ?? RANGES[1];
-  const sessionId = params.get('night');
+  const sessionId = params.get('session');
   const label = params.get('variation');
   const outcome = params.get('outcome');
   const page = Math.max(1, Number(params.get('page') ?? 1));
@@ -74,15 +75,18 @@ function SweepRuns({ status }: { status: AutomationStatus }) {
   const from =
     range.nights == null
       ? null
-      : nightStart(
-          nightKeyBefore(new Date().toISOString(), status.zone, range.nights - 1),
+      : dayStartInstant(
+          addDays(
+            tradingDayOf(new Date().toISOString(), status.zone, status.tradingDayStart),
+            -(range.nights - 1),
+          ),
           status.zone,
+          status.tradingDayStart,
         );
   const nights = useAutomationSessions({
     page: 0,
     size: NIGHT_CHOICES,
     from,
-    sort: 'createdAt,desc',
   });
   const runs = useAutomationSweepRuns({
     sessionId,
@@ -99,12 +103,12 @@ function SweepRuns({ status }: { status: AutomationStatus }) {
   return (
     <Section
       title="Sweep runs"
-      hint={`Every variation replayed on every captured buy, newest buy first. Times in ${zone}. To see one date, pick its night.`}
+      hint={`Every variation replayed on every captured buy, newest buy first. Times in ${zone}. To see one day, pick one of its sessions.`}
     >
       <Stack gap="md">
         <Group gap="sm" wrap="wrap" align="flex-end" role="search" aria-label="Sweep run filters">
           <Select
-            label="Nights to pick from"
+            label="Sessions from"
             value={range.value}
             onChange={(v) => {
               set('range', v === '30' ? null : v);
@@ -114,17 +118,17 @@ function SweepRuns({ status }: { status: AutomationStatus }) {
             w={160}
           />
           <Select
-            label="Night"
-            placeholder="Any night"
+            label="Session"
+            placeholder="Any session"
             value={sessionId}
-            onChange={(v) => set('night', v)}
+            onChange={(v) => set('session', v)}
             data={(nights.data?.items ?? []).map((s) => ({
               value: s.id,
-              label: `${nightOf(s.firstBuyAt, status.zone).label}${s.state === 'CLOSED' ? '' : ' (open)'}`,
+              label: `${dayInfo(s.tradingDay).label} · ${zoneTime(s.firstBuyAt, status.zone)}${s.backfillId ? ' · backfill' : ''}${s.state === 'CLOSED' ? '' : ' (open)'}`,
             }))}
             clearable
             searchable
-            nothingFoundMessage="No night in this range"
+            nothingFoundMessage="No session in this range"
             w={200}
           />
           <Select
@@ -175,7 +179,7 @@ function SweepRuns({ status }: { status: AutomationStatus }) {
               <Table miw={1000} aria-label="Sweep runs">
                 <Table.Thead>
                   <Table.Tr>
-                    <Table.Th>Night</Table.Th>
+                    <Table.Th>Day</Table.Th>
                     <Table.Th>Buy ({zone})</Table.Th>
                     <Table.Th>Token</Table.Th>
                     <Table.Th>Variation</Table.Th>
@@ -192,13 +196,16 @@ function SweepRuns({ status }: { status: AutomationStatus }) {
                     return (
                       <Table.Tr key={`${r.itemId}-${r.planId}-${r.label}`}>
                         <Table.Td>
-                          <NightLink id={r.sessionId} itemId={r.itemId}>
-                            {night
-                              ? nightOf(night.firstBuyAt, status.zone).label
-                              : r.blockTime
-                                ? nightOf(r.blockTime, status.zone).label
-                                : 'Open night'}
-                          </NightLink>
+                          {night ? (
+                            <DayLink day={night.tradingDay} itemId={r.itemId} />
+                          ) : r.blockTime ? (
+                            <DayLink
+                              day={tradingDayOf(r.blockTime, status.zone, status.tradingDayStart)}
+                              itemId={r.itemId}
+                            />
+                          ) : (
+                            '—'
+                          )}
                         </Table.Td>
                         <Table.Td ff="monospace">
                           {zoneTime(r.blockTime, status.zone, true)}

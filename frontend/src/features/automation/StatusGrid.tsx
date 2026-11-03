@@ -11,32 +11,29 @@ import {
 } from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import type { AutomationEvaluation, AutomationSession } from '../../api/automation';
+import type { AutomationEvaluation } from '../../api/automation';
 import { formatDecimal } from '../../lib/decimal';
 import { paths } from '../../paths';
 import {
-  GRID_NIGHT_CHOICES,
+  GRID_DAY_CHOICES,
+  pendingText,
   shortSol,
   statusGlyph,
   statusGrid,
   statusText,
   variationChange,
-  type GridNights,
+  type GridDays,
 } from './automationModel';
 import { SolValue, StatusChip } from './AutomationShared';
 
-function cellLabel(
-  label: string,
-  night: string,
-  e: AutomationEvaluation | null,
-  open: boolean,
-): string {
-  if (!e)
-    return `${label}, night of ${night}: ${open ? 'night still open, not scored yet' : 'not scored'}`;
-  return `${label}, night of ${night}: ${statusText[e.status]}, worst case ${formatDecimal(e.worstCasePnl)} SOL, ${e.signals} signals`;
+function cellLabel(label: string, day: string, e: AutomationEvaluation | null): string {
+  if (!e) return `${label}, ${day}: no row`;
+  if (e.status === 'PENDING')
+    return `${label}, ${day}: pending, ${pendingText(e.pendingDay)}, ${e.signals} signals so far`;
+  return `${label}, ${day}: ${statusText[e.status]}, worst case ${formatDecimal(e.worstCasePnl)} SOL, ${e.signals} signals`;
 }
 
-function legendCell(status: 'SUCCESS' | 'NO_SUCCESS' | 'NO_RESULT' | 'NONE', glyph: string) {
+function legendCell(status: 'SUCCESS' | 'NO_SUCCESS' | 'NO_RESULT' | 'PENDING', glyph: string) {
   return (
     <span
       className="automation-cell"
@@ -52,68 +49,62 @@ function legendCell(status: 'SUCCESS' | 'NO_SUCCESS' | 'NO_RESULT' | 'NONE', gly
 export function StatusGridLegend() {
   return (
     <Group gap="md" wrap="wrap">
-      {(['SUCCESS', 'NO_SUCCESS', 'NO_RESULT'] as const).map((s) => (
+      {(['SUCCESS', 'NO_SUCCESS', 'NO_RESULT', 'PENDING'] as const).map((s) => (
         <Group key={s} gap={6} wrap="nowrap">
           {legendCell(s, statusGlyph[s])}
           <Text size="xs" c="dimmed">
             {statusText[s]}
             {s === 'NO_RESULT' && ' (under 10 signals)'}
+            {s === 'PENDING' && ' (a day of the window is incomplete)'}
           </Text>
         </Group>
       ))}
-      <Group gap={6} wrap="nowrap">
-        {legendCell('NONE', '·')}
-        <Text size="xs" c="dimmed">
-          Not scored yet
-        </Text>
-      </Group>
     </Group>
   );
 }
 
 /**
- * Trend option A: one row per variation, one column per night (oldest left), each cell the status of the 7-night
- * window ending that night. A run of ✓ across a row means the variation is consistent, not lucky. Cells link to their
- * night; the table view lists the same values as text.
+ * Trend option A: one row per variation, one column per trading day (oldest left), each cell the status of the 7-day
+ * window ending that day. A run of ✓ across a row means the variation is consistent, not lucky. Days without buys are
+ * real columns, since they count toward the window. Cells link to their day; the table view lists the same values.
  */
 export function StatusGrid({
-  sessions,
+  days,
   evaluations,
-  zone,
   planId,
   labels,
   selectedLabel,
   onSelectLabel,
-  nights,
-  onNightsChange,
+  span,
+  onSpanChange,
 }: {
-  sessions: AutomationSession[];
+  /** The trading days shown, any order. */
+  days: string[];
   evaluations: AutomationEvaluation[];
-  zone: string;
   planId: string;
   labels: string[];
   selectedLabel: string | null;
   onSelectLabel: (label: string) => void;
-  nights: GridNights;
-  onNightsChange: (value: GridNights) => void;
+  span: GridDays;
+  onSpanChange: (value: GridDays) => void;
 }) {
   const [tableView, setTableView] = useState(false);
-  const grid = statusGrid(sessions, evaluations, zone, labels);
+  const grid = statusGrid(days, evaluations, labels);
   const viewport = useRef<HTMLDivElement>(null);
-  const newest = grid.columns.at(-1)?.session.id;
-  // Newest nights sit on the right; on a narrow screen open the grid there instead of at the oldest night.
+  const newest = grid.columns.at(-1)?.key;
+  // Newest days sit on the right; on a narrow screen open the grid there instead of at the oldest day.
   useEffect(() => {
     const element = viewport.current;
     if (element) element.scrollLeft = element.scrollWidth;
-  }, [newest, nights, tableView]);
+  }, [newest, span, tableView]);
   const controls = (
     <Group gap="sm" wrap="wrap">
       <SegmentedControl
         size="xs"
-        value={nights}
-        onChange={(v) => onNightsChange(v as GridNights)}
-        data={GRID_NIGHT_CHOICES.map((n) => ({ value: n, label: `${n} nights` }))}
-        aria-label="Nights shown"
+        value={span}
+        onChange={(v) => onSpanChange(v as GridDays)}
+        data={GRID_DAY_CHOICES.map((n) => ({ value: n, label: `${n} days` }))}
+        aria-label="Days shown"
       />
       <Button
         size="xs"
@@ -125,12 +116,12 @@ export function StatusGrid({
       </Button>
     </Group>
   );
-  if (grid.columns.length === 0) {
+  if (grid.columns.length === 0 || grid.rows.length === 0) {
     return (
       <Stack gap="sm">
         {controls}
         <Text size="sm" c="dimmed">
-          No nights in this range yet.
+          No days in this range yet.
         </Text>
       </Stack>
     );
@@ -140,10 +131,10 @@ export function StatusGrid({
       <Stack gap="sm">
         {controls}
         <ScrollArea type="auto" h={420}>
-          <Table stickyHeader aria-label="Status by night, as a table">
+          <Table stickyHeader aria-label="Status by day, as a table">
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Night</Table.Th>
+                <Table.Th>Day</Table.Th>
                 <Table.Th>Variation</Table.Th>
                 <Table.Th>Status</Table.Th>
                 <Table.Th ta="right">Worst case</Table.Th>
@@ -157,17 +148,11 @@ export function StatusGrid({
                 grid.rows.map((row) => {
                   const e = row.cells[grid.columns.indexOf(column)];
                   return (
-                    <Table.Tr key={`${column.session.id}-${row.label}`}>
-                      <Table.Td>{column.night.label}</Table.Td>
+                    <Table.Tr key={`${column.key}-${row.label}`}>
+                      <Table.Td>{column.label}</Table.Td>
                       <Table.Td ff="monospace">{row.label}</Table.Td>
                       <Table.Td>
-                        {e ? (
-                          <StatusChip status={e.status} />
-                        ) : (
-                          <Text size="sm" c="dimmed">
-                            Not scored
-                          </Text>
-                        )}
+                        {e ? <StatusChip status={e.status} pendingDay={e.pendingDay} /> : '—'}
                       </Table.Td>
                       <Table.Td ta="right">
                         {e ? <SolValue value={e.worstCasePnl} strong /> : '—'}
@@ -193,10 +178,7 @@ export function StatusGrid({
     <Stack gap="sm">
       {controls}
       <ScrollArea type="auto" offsetScrollbars viewportRef={viewport}>
-        <table
-          style={{ borderCollapse: 'separate', borderSpacing: 2 }}
-          aria-label="Status by night"
-        >
+        <table style={{ borderCollapse: 'separate', borderSpacing: 2 }} aria-label="Status by day">
           <thead>
             <tr>
               <Box
@@ -214,7 +196,7 @@ export function StatusGrid({
               {grid.columns.map((c) => (
                 <Box
                   component="th"
-                  key={c.session.id}
+                  key={c.key}
                   scope="col"
                   fz={11}
                   fw={500}
@@ -223,7 +205,7 @@ export function StatusGrid({
                   ta="center"
                   style={{ whiteSpace: 'nowrap' }}
                 >
-                  {c.night.short}
+                  {c.short}
                 </Box>
               ))}
             </tr>
@@ -264,24 +246,28 @@ export function StatusGrid({
                   </Box>
                   {row.cells.map((e, i) => {
                     const column = grid.columns[i]!;
-                    const open = column.session.state !== 'CLOSED';
-                    const aria = cellLabel(row.label, column.night.label, e, open);
+                    const aria = cellLabel(row.label, column.label, e);
                     return (
-                      <td key={column.session.id} style={{ padding: 0 }}>
+                      <td key={column.key} style={{ padding: 0 }}>
                         <Tooltip
                           label={
                             e ? (
                               <Stack gap={2}>
                                 <Text size="xs" fw={600}>
-                                  {row.label} · {column.night.label}
+                                  {row.label} · {column.label}
                                 </Text>
-                                <Text size="xs">{statusText[e.status]}</Text>
+                                <Text size="xs">
+                                  {e.status === 'PENDING'
+                                    ? `Pending, ${pendingText(e.pendingDay)}`
+                                    : statusText[e.status]}
+                                </Text>
                                 <Text size="xs" ff="monospace">
                                   worst {shortSol(e.worstCasePnl)} · realized{' '}
                                   {shortSol(e.realizedPnl)} SOL
                                 </Text>
                                 <Text size="xs">
                                   {e.signals} signals · {e.unscored} unscored
+                                  {e.status === 'PENDING' && ' so far'}
                                 </Text>
                               </Stack>
                             ) : (
@@ -290,7 +276,7 @@ export function StatusGrid({
                           }
                         >
                           <Link
-                            to={paths.automationNight(column.session.id)}
+                            to={paths.automationDay(column.key)}
                             className="automation-cell"
                             data-status={e?.status ?? 'NONE'}
                             data-selected={selected}

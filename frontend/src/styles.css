@@ -153,6 +153,11 @@ body {
   color: var(--mantine-color-dimmed);
 }
 
+.automation-cell[data-status='PENDING'] {
+  border: 1px dotted var(--mantine-color-dimmed);
+  color: var(--mantine-color-dimmed);
+}
+
 .automation-cell[data-status='NONE'] {
   border: 1px dashed var(--mantine-color-default-border);
   color: var(--mantine-color-dimmed);

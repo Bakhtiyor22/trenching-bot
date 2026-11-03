@@ -1,5 +1,7 @@
 import { STEPS } from '../../api/automation';
 import type {
+  AutomationBackfill,
+  AutomationDaySummary,
   AutomationEvaluation,
   AutomationItem,
   AutomationItemState,
@@ -7,18 +9,18 @@ import type {
   AutomationStatus,
   EvaluationStatus,
 } from '../../api/automation';
-import { compareDecimals, decimalSign, toChartNumber } from '../../lib/decimal';
+import { compareDecimals, decimalSign, isDecimalString, toChartNumber } from '../../lib/decimal';
 import { reasonText } from '../captures/captureReasons';
 
 /**
- * Pure helpers of the Automation pages: the automation's own time zone, nights, buy-state buckets, scoreboard bar
- * geometry, the status-by-night grid and plain-language outcome labels.
+ * Pure helpers of the Automation pages: the automation's own time zone, trading days, buy-state buckets, scoreboard
+ * bar geometry, the status-by-day grid, backfill forms and progress, and plain-language outcome labels.
  */
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
-/** A buy before noon belongs to the previous evening's night (Decu trades about 19:00–03:00). */
-const NIGHT_ROLLOVER_HOUR = 12;
+/** The backend's default trading-day start; `/status` gives the configured one. */
+export const DEFAULT_DAY_START = '12:00';
 const OFFSET_ZONE = /^([+-])(\d{2}):?(\d{2})$/;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -112,8 +114,8 @@ export function zoneDateTime(iso: string | null | undefined, zone: string): stri
   return `${p.day} ${MONTHS[p.month]}, ${pad(p.hour)}:${pad(p.minute)}`;
 }
 
-export interface Night {
-  /** `YYYY-MM-DD` of the evening the night started on. */
+export interface TradingDayInfo {
+  /** `YYYY-MM-DD`, the date the trading day starts on. */
   key: string;
   /** "Mon 2 Nov". */
   label: string;
@@ -121,41 +123,64 @@ export interface Night {
   short: string;
 }
 
-/** The night a buy belongs to: the evening date in the zone, where a buy before noon counts for the evening before. */
-export function nightOf(iso: string, zone: string): Night {
-  const p = zoneParts(iso, zone);
-  const date = new Date(
-    Date.UTC(p.year, p.month, p.day) - (p.hour < NIGHT_ROLLOVER_HOUR ? DAY_MS : 0),
-  );
+function parseKey(key: string): number {
+  const [year, month, day] = key.split('-').map(Number) as [number, number, number];
+  return Date.UTC(year, month - 1, day);
+}
+
+function keyOf(ms: number): string {
+  const date = new Date(ms);
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+}
+
+/** Labels of a trading day named by its start date. */
+export function dayInfo(key: string): TradingDayInfo {
+  const date = new Date(parseKey(key));
   const day = date.getUTCDate();
   const month = MONTHS[date.getUTCMonth()];
-  return {
-    key: `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(day)}`,
-    label: `${WEEKDAYS[date.getUTCDay()]} ${day} ${month}`,
-    short: `${day} ${month}`,
-  };
+  return { key, label: `${WEEKDAYS[date.getUTCDay()]} ${day} ${month}`, short: `${day} ${month}` };
 }
 
-/** "Night of Mon 2 Nov". */
-export function nightTitle(session: Pick<AutomationSession, 'firstBuyAt'>, zone: string): string {
-  return `Night of ${nightOf(session.firstBuyAt, zone).label}`;
+/** The date `days` after `key` (negative for before). */
+export function addDays(key: string, days: number): string {
+  return keyOf(parseKey(key) + days * DAY_MS);
 }
 
-/** The UTC instant at which `YYYY-MM-DD` starts in the zone's clock at the night rollover hour, for date filters. */
-export function nightStart(key: string, zone: string): string {
-  const [year, month, day] = key.split('-').map(Number) as [number, number, number];
+/** Whole days from `from` to `to`; 0 for the same day. */
+export function daysBetween(from: string, to: string): number {
+  return Math.round((parseKey(to) - parseKey(from)) / DAY_MS);
+}
+
+/** Every date from `from` to `to`, both included, oldest first. */
+export function dayRange(from: string, to: string): string[] {
+  const count = daysBetween(from, to);
+  return count < 0 ? [] : Array.from({ length: count + 1 }, (_, i) => addDays(from, i));
+}
+
+function startMinutes(start: string): number {
+  const [hours = '12', minutes = '0'] = start.split(':');
+  return Number(hours) * 60 + Number(minutes);
+}
+
+/**
+ * The trading day an instant belongs to: its date in the zone after stepping back by the day start (12:00 by default),
+ * so a buy at 01:30 belongs to the day that started the previous noon, and a buy exactly at 12:00 to the new day.
+ */
+export function tradingDayOf(iso: string, zone: string, start = DEFAULT_DAY_START): string {
+  const p = zoneParts(iso, zone);
+  const local = Date.UTC(p.year, p.month, p.day, p.hour, p.minute, p.second);
+  return keyOf(local - startMinutes(start) * 60_000);
+}
+
+/** The UTC instant a trading day starts, for instant filters such as the session list's. */
+export function dayStartInstant(key: string, zone: string, start = DEFAULT_DAY_START): string {
   const offset = offsetMinutes(zone) ?? 0;
-  return new Date(
-    Date.UTC(year, month - 1, day, NIGHT_ROLLOVER_HOUR) - offset * 60_000,
-  ).toISOString();
+  return new Date(parseKey(key) + (startMinutes(start) - offset) * 60_000).toISOString();
 }
 
-/** The night key `days` nights before the night of `nowIso`. */
-export function nightKeyBefore(nowIso: string, zone: string, days: number): string {
-  const key = nightOf(nowIso, zone).key;
-  const [year, month, day] = key.split('-').map(Number) as [number, number, number];
-  const date = new Date(Date.UTC(year, month - 1, day) - days * DAY_MS);
-  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+/** "12:00 → 12:00 UTC+5", the span every trading day covers. */
+export function daySpanText(zone: string, start = DEFAULT_DAY_START): string {
+  return `${start} → ${start} ${zoneLabel(zone)}`;
 }
 
 const LAMPORTS_PER_SOL_DIGITS = 9;
@@ -238,13 +263,22 @@ export const statusText: Record<EvaluationStatus, string> = {
   SUCCESS: 'Success',
   NO_SUCCESS: 'No success',
   NO_RESULT: 'No result',
+  PENDING: 'Pending',
 };
 
 export const statusGlyph: Record<EvaluationStatus, string> = {
   SUCCESS: '✓',
   NO_SUCCESS: '✕',
   NO_RESULT: '–',
+  PENDING: '◷',
 };
+
+/** Why a row or day is pending, e.g. "waiting for Sat 31 Oct to complete". */
+export function pendingText(pendingDay: string | null | undefined): string {
+  return pendingDay
+    ? `waiting for ${dayInfo(pendingDay).label} to complete`
+    : 'waiting for its days to complete';
+}
 
 export type AutomationMode = 'OFF' | 'DISCOVERY_ONLY' | 'CAPTURING';
 
@@ -310,42 +344,54 @@ export function pnlBar(worst: string, realized: string, scale: number): PnlBar {
   };
 }
 
-export interface GridColumn {
-  session: AutomationSession;
-  night: Night;
-}
-
 export interface GridRow {
   label: string;
   cells: Array<AutomationEvaluation | null>;
 }
 
 /**
- * The status-by-night matrix: one column per night (oldest first), one row per variation (label order), each cell that
- * night's evaluation of the variation, or null when the night is not scored for it (open, or a window still filling).
+ * The status-by-day matrix: one column per trading day of `days` (oldest first), one row per variation (label order),
+ * each cell that day's row for the variation, or null when the API returned none for it.
  */
 export function statusGrid(
-  sessions: AutomationSession[],
+  days: string[],
   evaluations: AutomationEvaluation[],
-  zone: string,
   labels?: string[],
-): { columns: GridColumn[]; rows: GridRow[] } {
-  const columns = [...sessions]
-    .sort((a, b) => Date.parse(a.firstBuyAt) - Date.parse(b.firstBuyAt))
-    .map((session) => ({ session, night: nightOf(session.firstBuyAt, zone) }));
-  const bySession = new Map<string, Map<string, AutomationEvaluation>>();
+): { columns: TradingDayInfo[]; rows: GridRow[] } {
+  const byDay = new Map<string, Map<string, AutomationEvaluation>>();
   for (const evaluation of evaluations) {
-    let row = bySession.get(evaluation.sessionId);
-    if (!row) bySession.set(evaluation.sessionId, (row = new Map()));
+    let row = byDay.get(evaluation.day);
+    if (!row) byDay.set(evaluation.day, (row = new Map()));
     row.set(evaluation.label, evaluation);
   }
+  const columns = [...days].sort().map(dayInfo);
   const allLabels = labels ?? [...new Set(evaluations.map((e) => e.label))].sort();
   return {
     columns,
     rows: allLabels.map((label) => ({
       label,
-      cells: columns.map((c) => bySession.get(c.session.id)?.get(label) ?? null),
+      cells: columns.map((c) => byDay.get(c.key)?.get(label) ?? null),
     })),
+  };
+}
+
+/** The newest day of `days` (newest first) with a verdict, else the newest day. */
+export function defaultScoredDay(days: AutomationDaySummary[]): AutomationDaySummary | null {
+  return days.find((d) => d.bestStatus != null && d.bestStatus !== 'PENDING') ?? days[0] ?? null;
+}
+
+/**
+ * A day summary's counts as item counts, so it draws with the same buy-state bar as a session. The summary has no
+ * count for buys that were not a first buy: on a complete day every other buy is finished, so the rest are those;
+ * otherwise they are still in progress.
+ */
+export function dayItemCounts(day: AutomationDaySummary): AutomationSession['itemCounts'] {
+  const rest = Math.max(0, day.buys - day.simulated - day.failed - day.abandoned);
+  return {
+    SIMULATED: day.simulated,
+    FAILED: day.failed,
+    ABANDONED: day.abandoned,
+    [day.complete ? 'SKIPPED_NOT_FIRST_BUY' : 'CAPTURING']: rest,
   };
 }
 
@@ -465,6 +511,106 @@ export function stepMarks(item: Pick<AutomationItem, 'state' | 'step'>): StepMar
   return STEPS.map((_, i) => (i < at ? 'done' : i === at ? here : 'pending'));
 }
 
-/** Night counts the status grid offers. */
-export const GRID_NIGHT_CHOICES = ['7', '14', '30'] as const;
-export type GridNights = (typeof GRID_NIGHT_CHOICES)[number];
+/** Day counts the status grid offers. */
+export const GRID_DAY_CHOICES = ['7', '14', '30'] as const;
+export type GridDays = (typeof GRID_DAY_CHOICES)[number];
+
+/** Request budget and range limits of a backfill (backend `AutomationProperties` and the plan's amendments). */
+export const BACKFILL_LIMITS = {
+  minDryRunBudget: 100,
+  minCaptureBudget: 1222,
+  maxBudget: 20_000,
+  maxDays: 31,
+  maxMints: 50,
+  /** The capture filter; a lower minimum is refused, a higher one makes the backfill filtered. */
+  captureMinSol: '1.5',
+} as const;
+
+/** The budget a new dry run starts from. */
+export const DEFAULT_DRY_RUN_BUDGET = 500;
+
+export const backfillStateText: Record<AutomationBackfill['state'], string> = {
+  QUEUED: 'Queued',
+  SCANNING: 'Scanning',
+  CAPTURING: 'Capturing',
+  DONE: 'Done',
+  STOPPED_BUDGET: 'Stopped · budget',
+  CANCELLED: 'Cancelled',
+};
+
+/** How far the newest-first scan has read back through the range, 0 to 1. */
+export function scanFraction(
+  b: Pick<AutomationBackfill, 'rangeStart' | 'rangeEnd' | 'scannedTo' | 'state'>,
+): number {
+  if (b.state === 'CAPTURING') return 1;
+  const start = Date.parse(b.rangeStart);
+  const end = Date.parse(b.rangeEnd);
+  if (!b.scannedTo || end <= start) return b.state === 'DONE' ? 1 : 0;
+  return Math.max(0, Math.min(1, (end - Date.parse(b.scannedTo)) / (end - start)));
+}
+
+/** Mints typed one per line (commas and spaces also split), de-duplicated in order, with the invalid ones apart. */
+export function parseMints(
+  text: string,
+  isValid: (value: string) => boolean,
+): { mints: string[]; invalid: string[] } {
+  const tokens = text
+    .split(/[\s,]+/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const mints: string[] = [];
+  const invalid: string[] = [];
+  for (const token of tokens) {
+    if (!isValid(token)) invalid.push(token);
+    else if (!mints.includes(token)) mints.push(token);
+  }
+  return { mints, invalid };
+}
+
+/** A token list, or a minimum above the capture filter, keeps a backfill out of coverage and day verdicts. */
+export function isFilteredBackfill(minSignalSol: string, mints: string[]): boolean {
+  const min = minSignalSol.trim();
+  return (
+    mints.length > 0 ||
+    (isDecimalString(min) && compareDecimals(min, BACKFILL_LIMITS.captureMinSol) > 0)
+  );
+}
+
+/** The budget a capture of a dry run's range starts from: its estimate, never below the capture minimum. */
+export function captureBudgetFor(estimate: number | null): number {
+  return Math.min(
+    BACKFILL_LIMITS.maxBudget,
+    Math.max(BACKFILL_LIMITS.minCaptureBudget, estimate ?? 0),
+  );
+}
+
+/** "6 → 9 Oct", the trading days a backfill asked for. */
+export function backfillDays(b: Pick<AutomationBackfill, 'fromDay' | 'toDay'>): string {
+  const from = dayInfo(b.fromDay);
+  const to = dayInfo(b.toDay);
+  return b.fromDay === b.toDay ? to.short : `${from.short} → ${to.short}`;
+}
+
+/** "Dry run", "Capture" or "Capture · filtered (2 tokens)". */
+export function backfillKind(b: Pick<AutomationBackfill, 'dryRun' | 'filtered' | 'mints'>): string {
+  if (b.dryRun) return 'Dry run';
+  if (!b.filtered) return 'Capture';
+  return b.mints.length > 0
+    ? `Capture · filtered (${b.mints.length} ${b.mints.length === 1 ? 'token' : 'tokens'})`
+    : 'Capture · filtered (higher minimum)';
+}
+
+/** Plain explanations of the backend's backfill and run-now refusals (409), by code. */
+export const REFUSAL_TEXT: Record<string, string> = {
+  BACKFILL_OVERLAPS_COVERAGE:
+    'Live discovery already covers these days. A capture backfill fills older days only: end it on or before the day live coverage starts.',
+  CAPTURE_DISABLED:
+    'Capture is off on the backend (trenching.automation.capture-enabled=false), so only a dry run can start.',
+  AUTOMATION_DISABLED: 'Automation is off on the backend (trenching.automation.enabled=false).',
+};
+
+/** True for a refusal {@link REFUSAL_TEXT} or the running-backfill message explains. */
+export function isBackfillRefusal(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === 'string' && (code === 'BACKFILL_ACTIVE' || code in REFUSAL_TEXT);
+}
