@@ -22,7 +22,8 @@ how to call it explicitly.
 
    On macOS/Linux use your JDK path, e.g. `/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home`.
 4. Start a new Claude Code session so the settings load. Type `/` to see the project skills
-   (`/backplan`, `/orchestrate`, `/review`, `/kotlin-spring-guidelines`) and the `/ask` command.
+   (`/backplan`, `/orchestrate`, `/review`, `/kotlin-spring-guidelines`, `/trading-console-ui`) and
+   the `/ask` command.
 
 ## 2. What's in `.claude/`
 
@@ -32,6 +33,7 @@ how to call it explicitly.
 ├── settings.local.json            your personal overrides, e.g. JAVA_HOME (gitignored)
 ├── skills/
 │   ├── kotlin-spring-guidelines/  project conventions + references/ (strict rules, domain, ...)
+│   ├── trading-console-ui/        frontend UI/UX conventions + references/ (numbers, charts, review)
 │   ├── backplan/                  write a plan for a feature
 │   ├── orchestrate/               split an approved plan across sub-agents
 │   └── review/                    review a change against its requirement
@@ -71,6 +73,19 @@ fix it") — but note that new features are expected to start with a plan.
 code.
 
 **Explicit use:** `/kotlin-spring-guidelines` to load the rules before a free-form discussion.
+
+### `trading-console-ui` — the frontend convention source
+
+**Auto-triggers when:** writing, changing, reviewing or planning anything under `frontend/src` —
+"add a P&L column", "fix the chart gap", "make the backfill page clearer", "review this page".
+
+**Covers:** exact decimal display, signed P&L, time and slots, layout, the five view states, live
+polling, ECharts conventions, copy, accessibility and browser verification. For chart colours and
+marks it defers to the `dataviz` skill.
+
+**Does not trigger for:** Kotlin backend code (`kotlin-spring-guidelines` covers that).
+
+**Explicit use:** `/trading-console-ui`, or ask for its review checklist on a frontend diff.
 
 ### `backplan` — plan before building
 

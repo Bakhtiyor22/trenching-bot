@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: sweep-runs-cumulative-chart
+expected_outcome: |
+  A chart rendered through the console's Chart wrapper with an aria label, its option built in a tested module, an exact running total with float conversion only for coordinates, and tooltips showing the exact values.

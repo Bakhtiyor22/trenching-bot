@@ -29,6 +29,7 @@ Project tooling lives in `.claude/`; the developer guide is
 | Situation | Use |
 |---|---|
 | Writing, changing, reviewing or planning Kotlin code | `kotlin-spring-guidelines` skill (conventions; always loaded by the others) |
+| Writing, changing, reviewing or planning anything in `frontend/` | `trading-console-ui` skill (console UI/UX conventions), plus `dataviz` for charts |
 | A new feature, design, module contract or schema design | `backplan` skill → plan in `docs/plans/`, stop for approval |
 | An approved plan or multi-part task to implement | `orchestrate` skill → `backend-developer` per part, then `backend-reviewer` |
 | A scoped implementation part | `backend-developer` agent |

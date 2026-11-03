@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: backfills-last-updated
+expected_outcome: |
+  A last-updated note driven by the query's dataUpdatedAt on the automation clock, a live cue that reuses the existing polling, and a list that stays on screen with an inline notice when a background refresh fails.

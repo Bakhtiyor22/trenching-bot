@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: runs-list-pnl-total
+expected_outcome: |
+  An exact total per quote mint (never adding SOL and other quote mints together), shown with a visible sign, covering every filtered run rather than one page, with tests.

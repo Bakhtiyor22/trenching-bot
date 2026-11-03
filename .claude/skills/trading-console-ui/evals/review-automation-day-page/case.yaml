@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: review-automation-day-page
+expected_outcome: |
+  A review with file:line findings that flags float conversion of P&L strings (Number(r.realizedPnl) === 0), the error card that replaces the day on a failed background refetch, the stale selected-buy panel, and other convention breaks, without editing the file.
