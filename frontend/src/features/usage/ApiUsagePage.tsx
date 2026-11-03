@@ -1,20 +1,31 @@
-import { Alert, Box, Button, Group, ScrollArea, Select, Stack, Table, Text } from '@mantine/core';
+import { useMemo } from 'react';
+import {
+  Alert,
+  Box,
+  Button,
+  Group,
+  ScrollArea,
+  SegmentedControl,
+  Select,
+  Stack,
+  Table,
+  Text,
+} from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
-import { Fragment } from 'react';
 import { useSearchParams } from 'react-router';
 import { setupApi, type UsagePeriod, type UsageProvider, type UsageReport } from '../../api/setup';
+import { useChartTokens } from '../../charts/chartTokens';
 import { Chart } from '../../components/Chart';
-import { RelativeTime } from '../../components/DisplayValues';
+import { RelativeTime, Timestamp } from '../../components/DisplayValues';
+import { IconInfo } from '../../components/Icons';
+import { Meter } from '../../components/Meter';
 import { Kpi, KpiStrip, PageHeader, Section } from '../../components/Panels';
-import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
+import { QueryView } from '../../components/QueryView';
+import { EmptyState } from '../../components/StateViews';
 import { providerLabels, purposeLabels, taskLabels } from '../../lib/codes';
-import {
-  aggregateUsage,
-  allCaptureChoices,
-  groupUsageCalls,
-  dataSize,
-  sortUsageTasks,
-} from './usageData';
+import { formatBytes, formatCount } from '../../lib/format';
+import { bucketWord, buildUsageChartOption, providerColor, usageBucketSeconds } from './usageChart';
+import { allCaptureChoices, groupUsageCalls, sortUsageTasks } from './usageData';
 
 const PERIOD_LABELS: Record<UsagePeriod, string> = {
   LAST_HOUR: 'Last hour',
@@ -22,38 +33,137 @@ const PERIOD_LABELS: Record<UsagePeriod, string> = {
   LAST_7_DAYS: 'Last 7 days',
   ALL: 'All recorded',
 };
-const PROVIDER_COLORS: Record<UsageProvider, string> = {
-  SOLANA_RPC: '#65a9ff',
-  BINANCE: '#e5ad52',
-  TELEGRAM: '#9099a4',
-};
+const PERIOD_OPTIONS = (Object.keys(PERIOD_LABELS) as UsagePeriod[]).map((value) => ({
+  value,
+  label: PERIOD_LABELS[value],
+}));
+const DEFAULT_PERIOD: UsagePeriod = 'LAST_HOUR';
+const PERIOD_PARAM = 'period';
+const CAPTURE_PARAM = 'captureId';
+const FIVE_MINUTES = 300;
+const HOUR = 3600;
 const PROVIDER_NOTES: Partial<Record<UsageProvider, string>> = {
   SOLANA_RPC: 'your configured provider; address hidden because it can contain a key',
   BINANCE: 'public market data, no key',
 };
-function recordingSentence(report: UsageReport) {
-  return report.recordingStartedAt
-    ? `Recording started ${new Date(report.recordingStartedAt).toLocaleString()}; nothing before that is counted.`
-    : 'Nothing has been recorded yet.';
+const CALL_COLUMNS: Array<{ label: string; numeric?: boolean }> = [
+  { label: 'API' },
+  { label: 'Call' },
+  { label: 'Used for' },
+  { label: 'Requests', numeric: true },
+  { label: 'Share', numeric: true },
+  { label: 'Failed', numeric: true },
+  { label: 'Rate-limited', numeric: true },
+  { label: 'Data', numeric: true },
+  { label: 'Last call' },
+];
+
+function isUsagePeriod(value: string | null): value is UsagePeriod {
+  return value != null && Object.hasOwn(PERIOD_LABELS, value);
 }
-function ShareBar({
-  percent,
-  color = 'var(--mantine-color-blue-5)',
-}: {
-  percent: string;
-  color?: string;
-}) {
-  return (
-    <Box
-      h={4}
-      miw={65}
-      bg="var(--mantine-color-dark-4)"
-      style={{ borderRadius: 3, overflow: 'hidden' }}
-    >
-      <Box h="100%" style={{ width: `${percent}%`, maxWidth: '100%', background: color }} />
-    </Box>
+
+function bucketAdjective(seconds: number): string {
+  return seconds === FIVE_MINUTES ? '5-minute' : seconds === HOUR ? 'hourly' : 'daily (UTC days)';
+}
+
+function RecordingSentence({ report }: { report: UsageReport }) {
+  return report.recordingStartedAt ? (
+    <>
+      Recording started <Timestamp iso={report.recordingStartedAt} />; nothing before that is
+      counted.
+    </>
+  ) : (
+    <>Nothing has been recorded yet.</>
   );
 }
+
+function CallsTable({ report }: { report: UsageReport }) {
+  const tokens = useChartTokens();
+  const groups = groupUsageCalls(report.byCall);
+  const notes = groups.filter((group) => PROVIDER_NOTES[group.provider]);
+  return (
+    <Section
+      title="Calls by provider"
+      hint={
+        notes.length > 0 ? (
+          <Stack gap={0} component="span">
+            {notes.map((group) => (
+              <span key={group.provider}>
+                {providerLabels[group.provider]}: <span>{PROVIDER_NOTES[group.provider]}</span>
+              </span>
+            ))}
+          </Stack>
+        ) : undefined
+      }
+    >
+      <ScrollArea>
+        <Table miw={1100} verticalSpacing="xs">
+          <Table.Thead>
+            <Table.Tr>
+              {CALL_COLUMNS.map((column, index) => (
+                <Table.Th
+                  key={column.label}
+                  ta={column.numeric ? 'right' : undefined}
+                  className={index === 0 ? 'console-sticky' : undefined}
+                >
+                  {column.label}
+                </Table.Th>
+              ))}
+            </Table.Tr>
+          </Table.Thead>
+          <Table.Tbody>
+            {groups
+              .flatMap((group) => group.calls)
+              .map((call) => (
+                <Table.Tr key={`${call.provider}/${call.operation}/${call.purpose}`}>
+                  <Table.Td className="console-sticky" fw={500}>
+                    {providerLabels[call.provider]}
+                  </Table.Td>
+                  <Table.Td>
+                    <Text size="xs" ff="monospace">
+                      {call.operation}
+                    </Text>
+                  </Table.Td>
+                  <Table.Td miw={290}>{purposeLabels[call.purpose]}</Table.Td>
+                  <Table.Td ta="right" ff="monospace">
+                    {formatCount(call.totals.requests)}
+                  </Table.Td>
+                  <Table.Td ta="right">
+                    <Stack gap={4} align="flex-end">
+                      <Text size="xs" ff="monospace">
+                        {call.sharePercent}%
+                      </Text>
+                      <Box w={80}>
+                        <Meter
+                          label={`${providerLabels[call.provider]} ${call.operation}: share of requests`}
+                          value={Number(call.sharePercent)}
+                          max={100}
+                          color={providerColor(call.provider, tokens)}
+                        />
+                      </Box>
+                    </Stack>
+                  </Table.Td>
+                  <Table.Td ta="right" ff="monospace">
+                    {formatCount(call.totals.failedRequests)}
+                  </Table.Td>
+                  <Table.Td ta="right" ff="monospace">
+                    {formatCount(call.totals.rateLimitedResponses)}
+                  </Table.Td>
+                  <Table.Td ta="right" ff="monospace">
+                    {formatBytes(call.totals.responseBytes)}
+                  </Table.Td>
+                  <Table.Td>
+                    <Timestamp iso={call.lastCallAt} size="xs" ff="monospace" />
+                  </Table.Td>
+                </Table.Tr>
+              ))}
+          </Table.Tbody>
+        </Table>
+      </ScrollArea>
+    </Section>
+  );
+}
+
 function UsageContent({
   report,
   period,
@@ -65,168 +175,63 @@ function UsageContent({
   updatedAt: number;
   onShowDay: () => void;
 }) {
-  const points = aggregateUsage(report.series, period === 'LAST_HOUR' ? 300 : 3600);
-  const times = [...new Set(points.map((point) => point.bucketStart))];
-  const providers = [...new Set(points.map((point) => point.provider))];
+  const tokens = useChartTokens();
+  // Built once per report: a new option object on every render would make the chart redraw.
+  const chartOption = useMemo(() => buildUsageChartOption(report, period, tokens), [report, period, tokens]);
+  const seconds = usageBucketSeconds(report, period);
+  const unit = bucketWord(seconds);
   const periodText = PERIOD_LABELS[period].toLowerCase();
   const empty = report.totals.requests === 0 && report.totals.cacheHits === 0;
   const taskTotal = report.byTask.reduce((sum, task) => sum + task.totals.requests, 0);
   return (
     <Stack gap="lg">
       <Text size="sm">
-        Showing{' '}
-        <strong>
-          {new Date(report.from).toLocaleString()} → {new Date(report.to).toLocaleString()}
-        </strong>{' '}
-        (your local time), in {period === 'LAST_HOUR' ? '5-minute' : 'hourly'} buckets. Updated{' '}
-        <RelativeTime iso={new Date(updatedAt).toISOString()} />. {recordingSentence(report)}
+        Showing <Timestamp iso={report.from} fw={600} /> → <Timestamp iso={report.to} fw={600} />{' '}
+        (your local time), in {bucketAdjective(seconds)} buckets. Updated{' '}
+        <RelativeTime iso={new Date(updatedAt).toISOString()} />.{' '}
+        <RecordingSentence report={report} />
       </Text>
       <KpiStrip label="API usage totals">
         <Kpi label="Requests sent" hint={`HTTP calls, all APIs, ${periodText}`}>
-          {report.totals.requests.toLocaleString()}
+          {formatCount(report.totals.requests)}
         </Kpi>
         <Kpi label="Data received" hint={`response bodies, ${periodText}`}>
-          {dataSize(report.totals.responseBytes)}
+          {formatBytes(report.totals.responseBytes)}
         </Kpi>
         <Kpi label="Rate-limited replies" hint="HTTP 429 answers, retried automatically">
-          {report.totals.rateLimitedResponses.toLocaleString()}
+          {formatCount(report.totals.rateLimitedResponses)}
         </Kpi>
         <Kpi label="Served from cache" hint="transactions, no request sent">
-          {report.totals.cacheHits.toLocaleString()}
+          {formatCount(report.totals.cacheHits)}
         </Kpi>
       </KpiStrip>
       {empty ? (
-        <EmptyState
-          title={`No calls in the ${periodText}`}
-          description={recordingSentence(report)}
-          action={
-            period === 'LAST_HOUR' ? (
-              <Button variant="default" onClick={onShowDay}>
-                Show last 24 hours
-              </Button>
-            ) : undefined
-          }
-        />
+        <Section title={`Requests sent per ${unit}`}>
+          <EmptyState
+            title={`No calls in the ${periodText}`}
+            description={<RecordingSentence report={report} />}
+            action={
+              period === 'LAST_HOUR' ? (
+                <Button variant="default" onClick={onShowDay}>
+                  Show last 24 hours
+                </Button>
+              ) : undefined
+            }
+          />
+        </Section>
       ) : (
-        <Section title={`Requests sent per ${period === 'LAST_HOUR' ? '5 minutes' : 'hour'}`}>
+        <Section
+          title={`Requests sent per ${unit}`}
+          hint={`Every ${unit} of the period is on the axis, so a gap means no requests were sent then. Before recording started a bucket is "not recorded".`}
+        >
           <Chart
             ariaLabel="Provider requests over time"
             height={300}
-            option={{
-              tooltip: { trigger: 'axis', valueFormatter: (value) => `${String(value)} requests` },
-              legend: { top: 0 },
-              grid: { left: 50, right: 20, top: 45, bottom: 60 },
-              xAxis: {
-                type: 'category',
-                data: times.map((time) => {
-                  const date = new Date(time);
-                  const clock = date.toLocaleTimeString('en-GB', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    hour12: false,
-                  });
-                  return period === 'LAST_7_DAYS' || period === 'ALL'
-                    ? `${date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${clock}`
-                    : clock;
-                }),
-              },
-              yAxis: { type: 'value', minInterval: 1, name: 'Requests' },
-              series: providers.map((provider) => ({
-                name: providerLabels[provider],
-                type: 'bar',
-                stack: 'requests',
-                itemStyle: { color: PROVIDER_COLORS[provider] },
-                data: times.map(
-                  (time) =>
-                    points.find(
-                      (point) => point.bucketStart === time && point.provider === provider,
-                    )?.requests ?? 0,
-                ),
-              })),
-            }}
+            option={chartOption}
           />
         </Section>
       )}
-      <Section title="Calls by provider">
-        <ScrollArea>
-          <Table miw={1100}>
-            <Table.Thead>
-              <Table.Tr>
-                {[
-                  'API',
-                  'Call',
-                  'Used for',
-                  'Requests',
-                  'Share',
-                  'Failed',
-                  'Rate-limited',
-                  'Data',
-                  'Last call',
-                ].map((label) => (
-                  <Table.Th key={label}>{label}</Table.Th>
-                ))}
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {groupUsageCalls(report.byCall).map((group) => (
-                <Fragment key={group.provider}>
-                  <Table.Tr>
-                    <Table.Th colSpan={9} scope="colgroup" py="md">
-                      <Text size="sm" fw={600}>
-                        {providerLabels[group.provider]}
-                      </Text>
-                      {PROVIDER_NOTES[group.provider] && (
-                        <Text size="xs" c="dimmed">
-                          {PROVIDER_NOTES[group.provider]}
-                        </Text>
-                      )}
-                    </Table.Th>
-                  </Table.Tr>
-                  {group.calls.map((call) => (
-                    <Table.Tr key={`${call.provider}/${call.operation}/${call.purpose}`}>
-                      <Table.Td>{providerLabels[call.provider]}</Table.Td>
-                      <Table.Td>
-                        <Text size="xs" ff="monospace">
-                          {call.operation}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td miw={290}>{purposeLabels[call.purpose]}</Table.Td>
-                      <Table.Td>{call.totals.requests.toLocaleString()}</Table.Td>
-                      <Table.Td>
-                        <Stack gap={4}>
-                          <Text size="xs">{call.sharePercent}%</Text>
-                          <ShareBar
-                            percent={call.sharePercent}
-                            color={PROVIDER_COLORS[call.provider]}
-                          />
-                        </Stack>
-                      </Table.Td>
-                      <Table.Td>{call.totals.failedRequests.toLocaleString()}</Table.Td>
-                      <Table.Td>{call.totals.rateLimitedResponses.toLocaleString()}</Table.Td>
-                      <Table.Td>{dataSize(call.totals.responseBytes)}</Table.Td>
-                      <Table.Td>
-                        <Text
-                          size="xs"
-                          ff="monospace"
-                          title={
-                            call.lastCallAt ? new Date(call.lastCallAt).toLocaleString() : undefined
-                          }
-                        >
-                          {call.lastCallAt
-                            ? new Date(call.lastCallAt).toLocaleTimeString('en-GB', {
-                                hour12: false,
-                              })
-                            : '—'}
-                        </Text>
-                      </Table.Td>
-                    </Table.Tr>
-                  ))}
-                </Fragment>
-              ))}
-            </Table.Tbody>
-          </Table>
-        </ScrollArea>
-      </Section>
+      <CallsTable report={report} />
       <Section title="By task">
         <Stack gap="md">
           {sortUsageTasks(report.byTask).map((task) => (
@@ -234,11 +239,13 @@ function UsageContent({
               <Group justify="space-between" gap="xs">
                 <Text size="sm">{taskLabels[task.task]}</Text>
                 <Text size="sm" ff="monospace">
-                  {task.totals.requests.toLocaleString()} req
+                  {formatCount(task.totals.requests)} req
                 </Text>
               </Group>
-              <ShareBar
-                percent={taskTotal ? String((task.totals.requests * 100) / taskTotal) : '0'}
+              <Meter
+                label={`${taskLabels[task.task]}: requests of all tasks`}
+                value={task.totals.requests}
+                max={taskTotal}
               />
             </Stack>
           ))}
@@ -250,11 +257,11 @@ function UsageContent({
             <Text key={item.provider} size="sm">
               {providerLabels[item.provider]} pace set in this backend:{' '}
               {item.minRequestIntervalMillis > 0
-                ? (1000 / item.minRequestIntervalMillis).toLocaleString(undefined, {
+                ? (1000 / item.minRequestIntervalMillis).toLocaleString('en-US', {
                     maximumFractionDigits: 3,
                   })
                 : 'unlimited'}{' '}
-              requests per second, {item.maxConcurrentRequests} at a time.
+              requests per second, {formatCount(item.maxConcurrentRequests)} at a time.
             </Text>
           ))}
           <Text size="sm">
@@ -263,7 +270,7 @@ function UsageContent({
           </Text>
           <Text size="sm">
             1 request = one HTTP call sent. Retries count separately. Cache hits send no request. 1
-            KB = 1,000 bytes and 1 MB = 1,000,000 bytes.
+            KB = 1,024 bytes and 1 MB = 1,024 KB.
           </Text>
           {!report.byCall.some((call) => call.provider === 'TELEGRAM') && (
             <Text size="sm">Telegram: not used yet.</Text>
@@ -277,14 +284,12 @@ function UsageContent({
     </Stack>
   );
 }
+
 export function ApiUsagePage() {
   const [params, setParams] = useSearchParams();
-  const selected = params.get('period');
-  const period: UsagePeriod =
-    selected === 'LAST_24_HOURS' || selected === 'LAST_7_DAYS' || selected === 'ALL'
-      ? selected
-      : 'LAST_HOUR';
-  const captureId = params.get('captureId');
+  const selected = params.get(PERIOD_PARAM);
+  const period: UsagePeriod = isUsagePeriod(selected) ? selected : DEFAULT_PERIOD;
+  const captureId = params.get(CAPTURE_PARAM);
   const captures = useQuery({
     queryKey: ['captures', 'usage-options'],
     queryFn: ({ signal }) => allCaptureChoices(signal),
@@ -308,7 +313,7 @@ export function ApiUsagePage() {
     });
   }
   return (
-    <Stack gap="lg">
+    <>
       <PageHeader
         title="API usage"
         description="See the requests, data and cache savings recorded by this application."
@@ -318,45 +323,44 @@ export function ApiUsagePage() {
           </Button>
         }
       />
-      <Group justify="space-between" align="flex-end">
-        <Group aria-label="Usage period" gap="xs">
-          {(Object.keys(PERIOD_LABELS) as UsagePeriod[]).map((value) => (
-            <Button
-              key={value}
-              variant={period === value ? 'light' : 'default'}
+      <Stack gap="lg">
+        <Group justify="space-between" align="flex-end" gap="sm">
+          <ScrollArea type="never" maw="100%">
+            <SegmentedControl
+              aria-label="Usage period"
               size="xs"
-              aria-pressed={period === value}
-              onClick={() => change('period', value)}
-            >
-              {PERIOD_LABELS[value]}
-            </Button>
-          ))}
+              value={period}
+              onChange={(value) => change(PERIOD_PARAM, value)}
+              data={PERIOD_OPTIONS}
+            />
+          </ScrollArea>
+          <Select
+            label="For"
+            searchable
+            clearable
+            placeholder="Everything"
+            value={captureId}
+            onChange={(value) => change(CAPTURE_PARAM, value)}
+            data={options}
+            w={{ base: '100%', sm: 260 }}
+          />
         </Group>
-        <Select
-          label="For"
-          searchable
-          clearable
-          placeholder="Everything"
-          value={captureId}
-          onChange={(value) => change('captureId', value)}
-          data={options}
-        />
-      </Group>
-      {captures.isError && (
-        <Alert color="yellow">Capture choices could not be loaded. Usage is still available.</Alert>
-      )}
-      {usage.isPending ? (
-        <LoadingState label="Loading API usage…" />
-      ) : usage.isError ? (
-        <ErrorState error={usage.error} onRetry={() => void usage.refetch()} />
-      ) : (
-        <UsageContent
-          report={usage.data}
-          period={period}
-          updatedAt={usage.dataUpdatedAt}
-          onShowDay={() => change('period', 'LAST_24_HOURS')}
-        />
-      )}
-    </Stack>
+        {captures.isError && (
+          <Alert color="gray" variant="light" icon={<IconInfo />}>
+            Capture choices could not be loaded. Usage is still available.
+          </Alert>
+        )}
+        <QueryView query={usage} loadingLabel="Loading API usage…" errorTitle="Could not load API usage">
+          {(report) => (
+            <UsageContent
+              report={report}
+              period={period}
+              updatedAt={usage.dataUpdatedAt}
+              onShowDay={() => change(PERIOD_PARAM, 'LAST_24_HOURS')}
+            />
+          )}
+        </QueryView>
+      </Stack>
+    </>
   );
 }

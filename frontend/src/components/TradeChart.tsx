@@ -55,13 +55,17 @@ import { readWatchlist, WATCHLIST_KEY, WATCHLIST_LIMIT } from '../charts/tradeWa
 import { chartTimelineOption } from '../features/runs/timelineChart';
 import { clampRange } from '../features/results/chartRange';
 import { isSolanaAddress } from '../lib/base58';
-import { mintLabel, shortId } from '../lib/format';
-import { FONT_MONO, terminal } from '../theme';
+import { formatLocalTime, formatSlot, mintLabel, shortId } from '../lib/format';
+import { useChartTokens } from '../charts/chartTokens';
+import { codeLabel } from '../lib/codes';
+import { FONT_MONO } from '../theme';
+import { intervalLabel, rateSourceLabel, sourceLabel } from '../features/runs/recordLabels';
 import { Chart } from './Chart';
 import { ChartDrawingLayer } from './ChartDrawingLayer';
 import { CopyValue } from './DisplayValues';
 import { MarketActionCard } from './MarketActionCard';
 import { MarketMarkerOverlay } from './MarketMarkerOverlay';
+import { RefreshNotice } from './QueryView';
 import { EmptyState, ErrorState, LoadingState } from './StateViews';
 import classes from './TradeChart.module.css';
 
@@ -207,6 +211,7 @@ function TradeChartView({
   emptyActions,
 }: TradeChartProps & { trackedWallet: string | null }) {
   const [params, setParams] = useSearchParams();
+  const tokens = useChartTokens();
   const [watchlist, setWatchlist] = useState(readWatchlist);
   const [wallet, setWallet] = useState('');
   const [inputError, setInputError] = useState<string | null>(null);
@@ -326,7 +331,7 @@ function TradeChartView({
     const precise = span < 120_000;
     const clock = precise ? `${new Date(time).toISOString().slice(11, 21)} UTC` : marketTime(time);
     const tick = marketPointAt(points, time)?.tick;
-    return `${zero === null ? '' : `${secondsFrom(time, zero, precise)} · `}${clock}${tick ? ` · slot ${tick.slot.toLocaleString('en-US')} · #${tick.indexInSlot + 1} in slot` : ''}`;
+    return `${zero === null ? '' : `${secondsFrom(time, zero, precise)} · `}${clock}${tick ? ` · slot ${formatSlot(tick.slot)} · #${tick.indexInSlot + 1} in slot` : ''}`;
   };
   const displayed = hovered ?? validPoints.at(-1);
   const change =
@@ -372,6 +377,7 @@ function TradeChartView({
             extent: extent ?? undefined,
             fullPage: expanded || fullscreen,
             drawing: tool !== 'pointer',
+            tokens,
           },
         )
       : chartCandleOption(visible, view, style, origin, {
@@ -379,6 +385,7 @@ function TradeChartView({
           extent: extent ?? undefined,
           fullPage: expanded || fullscreen,
           drawing: tool !== 'pointer',
+          tokens,
         })
     : {};
 
@@ -584,7 +591,8 @@ function TradeChartView({
         <LoadingState label="Loading chart…" />
       </ChartState>
     );
-  if (full.isError)
+  // Only a chart that never loaded is replaced by the error; a failed refresh keeps it with a notice below.
+  if (full.isError && !fullData)
     return (
       <ChartState>
         <ErrorState
@@ -724,11 +732,16 @@ function TradeChartView({
               <Text size="sm" fw={600}>
                 {basis.label}
               </Text>
-              <Text size="xs">
-                Supply: {basis.supply ?? 'unavailable'} · {basis.supplySource ?? 'unavailable'}
+              <Text size="xs" title={basis.supplySource ?? undefined}>
+                Supply: {basis.supply ?? 'unavailable'} ·{' '}
+                {basis.supplySource ? sourceLabel(basis.supplySource) : 'unavailable'}
               </Text>
-              <Text size="xs">
-                Rate: {basis.rateSource ?? 'unavailable'} · {basis.rateGranularity ?? 'unavailable'}
+              <Text
+                size="xs"
+                title={[basis.rateSource, basis.rateGranularity].filter(Boolean).join(' · ') || undefined}
+              >
+                Rate: {basis.rateSource ? rateSourceLabel(basis.rateSource) : 'unavailable'} ·{' '}
+                {basis.rateGranularity ? intervalLabel(basis.rateGranularity) : 'unavailable'}
               </Text>
               <Text size="xs">
                 {missing} points without a rate · {unsupported} unsupported
@@ -751,13 +764,13 @@ function TradeChartView({
               size="xs"
               className={classes.changeChip}
               style={{
-                color: change.up ? terminal.gain : terminal.loss,
-                background: change.up ? '#3DDC9715' : '#FF6B6B15',
+                color: change.up ? 'var(--console-gain)' : 'var(--console-loss)',
+                background: change.up ? 'var(--console-gain-soft)' : 'var(--console-loss-soft)',
               }}
             >
               {change.up ? '▲' : '▼'} {change.percent ?? '—'}%
             </Text>
-            <Text size="xs" c={change.up ? terminal.gain : terminal.loss}>
+            <Text size="xs" c={change.up ? 'teal' : 'red'}>
               {change.up ? '+' : ''}
               {marketValue(change.absolute, view)}
             </Text>
@@ -774,16 +787,16 @@ function TradeChartView({
         </Text>
       </Group>
       {!basis.available && (
-        <Text size="xs" c={terminal.accent} mb="xs">
-          Mcap unavailable: {basis.unavailableReason}. Showing Price (SOL).
+        <Text size="xs" c="orange" mb="xs" title={basis.unavailableReason ?? undefined}>
+          ▲ Market cap unavailable
+          {basis.unavailableReason ? `: ${codeLabel(basis.unavailableReason)}` : ''}. Showing Price (SOL).
         </Text>
       )}
+      {full.isError && (
+        <RefreshNotice error={full.error} updatedAt={full.dataUpdatedAt} onRetry={() => void full.refetch()} />
+      )}
       {ranged.isError && (
-        <ErrorState
-          error={ranged.error}
-          title="Could not refresh chart; showing the previous view"
-          onRetry={() => void ranged.refetch()}
-        />
+        <RefreshNotice error={ranged.error} updatedAt={ranged.dataUpdatedAt} onRetry={() => void ranged.refetch()} />
       )}
       <Group justify="space-between" gap="sm" mt="sm" wrap="wrap" data-market-control>
         {
@@ -1094,12 +1107,12 @@ function TradeChartView({
                 position: 'absolute',
                 inset: '15% 8%',
                 zIndex: 7,
-                background: terminal.panel,
+                background: 'var(--console-panel)',
                 overflow: 'auto',
               }}
             >
               <EmptyState
-                title={`No trades between ${new Date(range?.from ?? data.range.from).toLocaleString(undefined, { hour12: false })} and ${new Date(range?.to ?? data.range.to).toLocaleString(undefined, { hour12: false })}`}
+                title={`No trades between ${formatLocalTime(range?.from ?? data.range.from)} and ${formatLocalTime(range?.to ?? data.range.to)}`}
                 description="Nobody traded this token in the selected range."
                 action={emptyActions}
               />
@@ -1112,7 +1125,7 @@ function TradeChartView({
               style={{
                 left: hoverPixel[0],
                 top: hoverPixel[1],
-                borderColor: change?.up === false ? terminal.loss : terminal.gain,
+                borderColor: change?.up === false ? 'var(--console-loss)' : 'var(--console-gain)',
               }}
             />
             <span
@@ -1263,7 +1276,7 @@ function TradeChartView({
           </Text>
           {paperLayer && kind === 'run' && (
             <Text size="xs">
-              <span style={{ color: terminal.accent }}>◇</span> Bot paper fill
+              <span className={classes.paperLegend} aria-hidden /> Bot paper fill
             </Text>
           )}
         </Group>

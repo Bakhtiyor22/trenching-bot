@@ -12,25 +12,24 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import type { AutomationEvaluation } from '../../api/automation';
-import { formatDecimal } from '../../lib/decimal';
+import { formatSignedDecimal } from '../../lib/decimal';
 import { paths } from '../../paths';
 import {
   GRID_DAY_CHOICES,
   pendingText,
-  shortSol,
   statusGlyph,
   statusGrid,
   statusText,
   variationChange,
   type GridDays,
 } from './automationModel';
-import { SolValue, StatusChip } from './AutomationShared';
+import { EvaluationChip, SolValue } from './AutomationShared';
 
 function cellLabel(label: string, day: string, e: AutomationEvaluation | null): string {
   if (!e) return `${label}, ${day}: no row`;
   if (e.status === 'PENDING')
     return `${label}, ${day}: pending, ${pendingText(e.pendingDay)}, ${e.signals} signals so far`;
-  return `${label}, ${day}: ${statusText[e.status]}, worst case ${formatDecimal(e.worstCasePnl)} SOL, ${e.signals} signals`;
+  return `${label}, ${day}: ${statusText[e.status]}, worst case ${formatSignedDecimal(e.worstCasePnl)} SOL, ${e.signals} signals`;
 }
 
 function legendCell(status: 'SUCCESS' | 'NO_SUCCESS' | 'NO_RESULT' | 'PENDING', glyph: string) {
@@ -106,14 +105,16 @@ export function StatusGrid({
         data={GRID_DAY_CHOICES.map((n) => ({ value: n, label: `${n} days` }))}
         aria-label="Days shown"
       />
-      <Button
+      <SegmentedControl
         size="xs"
-        variant="default"
-        onClick={() => setTableView((v) => !v)}
-        aria-pressed={tableView}
-      >
-        {tableView ? 'Grid view' : 'Table view'}
-      </Button>
+        value={tableView ? 'table' : 'grid'}
+        onChange={(v) => setTableView(v === 'table')}
+        data={[
+          { value: 'grid', label: 'Grid' },
+          { value: 'table', label: 'Table' },
+        ]}
+        aria-label="Status by day view"
+      />
     </Group>
   );
   if (grid.columns.length === 0 || grid.rows.length === 0) {
@@ -131,7 +132,7 @@ export function StatusGrid({
       <Stack gap="sm">
         {controls}
         <ScrollArea type="auto" h={420}>
-          <Table stickyHeader aria-label="Status by day, as a table">
+          <Table stickyHeader verticalSpacing="xs" aria-label="Status by day, as a table">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Day</Table.Th>
@@ -152,7 +153,7 @@ export function StatusGrid({
                       <Table.Td>{column.label}</Table.Td>
                       <Table.Td ff="monospace">{row.label}</Table.Td>
                       <Table.Td>
-                        {e ? <StatusChip status={e.status} pendingDay={e.pendingDay} /> : '—'}
+                        {e ? <EvaluationChip status={e.status} pendingDay={e.pendingDay} /> : '—'}
                       </Table.Td>
                       <Table.Td ta="right">
                         {e ? <SolValue value={e.worstCasePnl} strong /> : '—'}
@@ -262,8 +263,10 @@ export function StatusGrid({
                                     : statusText[e.status]}
                                 </Text>
                                 <Text size="xs" ff="monospace">
-                                  worst {shortSol(e.worstCasePnl)} · realized{' '}
-                                  {shortSol(e.realizedPnl)} SOL
+                                  worst case {formatSignedDecimal(e.worstCasePnl)} SOL
+                                </Text>
+                                <Text size="xs" ff="monospace">
+                                  realized {formatSignedDecimal(e.realizedPnl)} SOL
                                 </Text>
                                 <Text size="xs">
                                   {e.signals} signals · {e.unscored} unscored

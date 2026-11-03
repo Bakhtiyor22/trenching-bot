@@ -1,5 +1,6 @@
 import type { CaptureOperation, CaptureStageName, CaptureSummary } from '../../api/captures';
 import { stageLabels } from '../../lib/codes';
+import { formatCount } from '../../lib/format';
 import { knownReasonText } from './captureReasons';
 
 interface NowCopy {
@@ -30,7 +31,7 @@ export function nowCopy(summary: CaptureSummary, operation: CaptureOperation | n
   const stage = stageLabels[summary.currentStep.stage];
   const processed = summary.progress?.processed ?? operation?.progress?.processed ?? 0;
   const selected = summary.progress?.selected ?? operation?.progress?.selected ?? 0;
-  const remaining = Math.max(0, selected - processed).toLocaleString('en-US');
+  const remaining = formatCount(Math.max(0, selected - processed));
   const budget = operation?.budget.requestBudget ?? summary.nextAction.maxRequests;
   const plural = summary.currentStep.stage === 'MARKETS' || summary.currentStep.stage === 'RATES';
   switch (summary.status) {
@@ -39,11 +40,11 @@ export function nowCopy(summary: CaptureSummary, operation: CaptureOperation | n
         headline: /BYTE|DATA_LIMIT/.test(summary.reasonCode ?? operation?.code ?? '')
           ? `${stage} reached this run's data limit`
           : budget != null
-            ? `${stage} stopped after using this run's ${budget.toLocaleString('en-US')} requests`
+            ? `${stage} stopped after using this run's ${formatCount(budget)} requests`
             : `${stage} stopped at this run's limit`,
         body:
           summary.currentStep.stage === 'MARKETS'
-            ? `Nothing is lost: ${processed.toLocaleString('en-US')} of ${selected.toLocaleString('en-US')} transactions are saved. Resume to download the remaining ${remaining}. After that come rates, then the dataset.`
+            ? `Nothing is lost: ${formatCount(processed)} of ${formatCount(selected)} transactions are saved. Resume to download the remaining ${remaining}. After that come rates, then the dataset.`
             : 'Nothing is lost: this step’s progress is saved. Resume with a fresh allowance to continue where it stopped. The later steps will follow when this one is complete.',
       };
     case 'STOPPED_DEADLINE':

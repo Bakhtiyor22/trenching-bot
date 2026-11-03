@@ -156,7 +156,7 @@ describe('capture setup and list', () => {
       path: '/captures',
       url: '/captures?sort=name%2Casc',
     });
-    await user.click(await screen.findByRole('button', { name: 'Needs attention · 2' }));
+    await user.click(await screen.findByRole('radio', { name: 'Needs attention · 2' }));
     await waitFor(() =>
       expect(requests.at(-1)?.searchParams.get('status')).toBe('NEEDS_ATTENTION'),
     );
@@ -235,7 +235,7 @@ describe('capture design states', () => {
       'Status',
       'Progress',
       'Next step',
-      'Created ↓',
+      'Created',
       '',
     ]);
     expect(
@@ -250,8 +250,8 @@ describe('capture design states', () => {
     expect(screen.getByText('Step 2 of 4 · Markets')).toBeInTheDocument();
     expect(screen.getByText('1,323 of 1,748 transactions · 75%')).toBeInTheDocument();
     expect(screen.getByText('At most 400 requests')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'All · 1' })).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.queryByRole('button', { name: 'Done · 0' })).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'All · 1' })).toBeChecked();
+    expect(screen.queryByRole('radio', { name: 'Done · 0' })).not.toBeInTheDocument();
     expect(screen.getByText('Showing 1–1 of 1 · Newest first')).toBeInTheDocument();
   });
   it('keeps a selected zero-count filter visible and offers Decu and attach actions when empty', async () => {
@@ -261,10 +261,7 @@ describe('capture design states', () => {
       ),
     );
     renderPage(<CapturesPage />, { path: '/captures', url: '/captures?status=DONE' });
-    expect(await screen.findByRole('button', { name: 'Done · 0' })).toHaveAttribute(
-      'aria-pressed',
-      'true',
-    );
+    expect(await screen.findByRole('radio', { name: 'Done · 0' })).toBeChecked();
     expect(await screen.findByRole('link', { name: 'New capture with Decu' })).toHaveAttribute(
       'href',
       '/captures/new',
@@ -346,7 +343,8 @@ describe('capture design states', () => {
     const radio = await screen.findByRole('radio', { name: `Select ${BASE_MINT} at slot 1010` });
     await user.click(radio);
     expect(radio).toBeChecked();
-    expect(radio.closest('tr')).toHaveStyle({ background: 'var(--mantine-color-blue-light)' });
+    expect(radio.closest('tr')).toHaveStyle({ background: 'var(--console-raised)' });
+    expect(radio.closest('tr')).toHaveAttribute('aria-selected', 'true');
     await user.click(screen.getByRole('button', { name: 'Buys only' }));
     expect(screen.getAllByRole('columnheader').map((header) => header.textContent)).toEqual([
       'Select',

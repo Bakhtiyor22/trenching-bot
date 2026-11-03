@@ -1,6 +1,6 @@
 import {
   Alert,
-  Badge,
+  Anchor,
   Box,
   Button,
   Card,
@@ -18,6 +18,7 @@ import {
 import { useForm } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
 import { useQuery } from '@tanstack/react-query';
+import { useMediaQuery } from '@mantine/hooks';
 import { useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { ApiError, errorMessage } from '../../api/client';
@@ -37,8 +38,10 @@ import { formatPercent } from '../../lib/percent';
 import { IconAlert, IconPlay } from '../../components/Icons';
 import { PageHeader, Section } from '../../components/Panels';
 import { CodeText } from '../../components/PlainLanguage';
-import { ErrorState, LoadingState } from '../../components/StateViews';
-import { mintLabel, shortId, slotRange } from '../../lib/format';
+import { RefreshNotice } from '../../components/QueryView';
+import { StatusChip } from '../../components/StatusChip';
+import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
+import { formatCount, mintLabel, shortId, slotRange } from '../../lib/format';
 import { paths } from '../../paths';
 import {
   changedSettings,
@@ -70,7 +73,7 @@ export interface RunStartNavigationState {
 function datasetOptions(datasets: Dataset[]) {
   return datasets.map((d) => ({
     value: d.id,
-    label: `${d.name} — ${d.pairs.length} ${d.pairs.length === 1 ? 'token' : 'tokens'}, ${d.transactionCount.toLocaleString()} trades`,
+    label: `${d.name || '—'} — ${d.pairs.length} ${d.pairs.length === 1 ? 'token' : 'tokens'}, ${formatCount(d.transactionCount)} trades`,
   }));
 }
 
@@ -160,6 +163,8 @@ function RunConfigForm({
   const changed = changedSettings(form.values, defaults);
   const missingFields = preset?.fields.filter((field) => field.status === 'MISSING') ?? [];
   const isAgreed = preset !== undefined && changed.length === 0;
+  // Below md the summary column sits far under the settings, so Start run moves to a bar pinned to the bottom.
+  const narrow = useMediaQuery('(max-width: 62em)') ?? false;
   async function applyRecommendation(item: Recommendation) {
     if (item.id === 'USE_AGREED_STRATEGY' && preset) {
       undoValues.current = { ...form.values };
@@ -265,28 +270,23 @@ function RunConfigForm({
         key={field}
         padding="md"
         withBorder
+        data-edited={edited || undefined}
+        data-missing={missing || undefined}
         style={{
-          background: missing
-            ? 'var(--mantine-color-red-light)'
-            : edited
-              ? 'var(--mantine-color-yellow-light)'
-              : undefined,
+          // Edited reads from the raised tone and the words; a setting without an agreed value needs attention.
+          background: edited ? 'var(--console-raised)' : undefined,
           borderColor: missing
-            ? 'var(--mantine-color-red-8)'
+            ? 'var(--console-rejected)'
             : edited
-              ? 'var(--mantine-color-yellow-8)'
+              ? 'var(--console-line-strong)'
               : undefined,
         }}
       >
         <Stack gap="xs">
-          <Badge
-            size="xs"
-            variant="light"
-            color={missing ? 'red' : edited ? 'yellow' : 'teal'}
-            style={{ maxWidth: '100%', whiteSpace: 'normal', height: 'auto', lineHeight: 1.6 }}
-          >
+          <Text size="xs" fw={500} c={missing ? 'orange' : edited ? undefined : 'dimmed'}>
+            {missing && <span aria-hidden>▲ </span>}
             {status}
-          </Badge>
+          </Text>
           {field === 'followWalletSells' ? (
             <Checkbox
               label={SETTING_LABELS[field]}
@@ -331,14 +331,13 @@ function RunConfigForm({
               ` Range ${limits.minSignalSol.min} – ${limits.minSignalSol.max} SOL.`}
           </Text>
           {metadata?.noteCode && (
-            <Text size="xs" c={missing ? 'red' : 'yellow'}>
+            <Text size="xs" c={missing ? 'orange' : 'dimmed'} title={metadata.noteCode}>
               {codeLabel(metadata.noteCode)}
             </Text>
           )}
           {preset && edited && (
             <Button
-              variant="subtle"
-              color="yellow"
+              variant="default"
               size="compact-xs"
               style={{ alignSelf: 'flex-start' }}
               onClick={() => form.setFieldValue(field, agreed[field])}
@@ -359,9 +358,13 @@ function RunConfigForm({
             title={`Agreed strategy: ${preset.source.strategy} v${preset.source.version}`}
             actions={
               <Group gap="xs">
-                <Badge color={isAgreed ? 'teal' : 'yellow'}>
-                  {isAgreed ? 'Applied' : `Changed · ${changed.length} settings`}
-                </Badge>
+                {isAgreed ? (
+                  <StatusChip tone="success" glyph="✓">
+                    Applied
+                  </StatusChip>
+                ) : (
+                  <StatusChip tone="neutral">{`Changed · ${changed.length} settings`}</StatusChip>
+                )}
                 <Button variant="default" size="xs" onClick={() => form.setValues(agreed)}>
                   Reset to agreed
                 </Button>
@@ -384,7 +387,7 @@ function RunConfigForm({
               From the strategy spec, last updated {specDate(preset.source.updated)}. You can change
               any setting below; changed ones are marked.
             </Text>
-            <Alert color="yellow" title="Simulator limitations">
+            <Alert color="gray" title="Simulator limitations">
               <Stack gap="xs">
                 <Text size="sm">
                   This simulator ({preset.engine}) applies{' '}
@@ -412,7 +415,7 @@ function RunConfigForm({
             </Alert>
           </Section>
         ) : (
-          <Alert color="yellow" title="Engine defaults">
+          <Alert color="orange" variant="light" title="Engine defaults">
             These are not the agreed strategy settings.
           </Alert>
         )}
@@ -430,16 +433,14 @@ function RunConfigForm({
           {sourceDataset.data?.source?.captureId && (
             <Text size="xs" mt="xs">
               From capture{' '}
-              <Text
-                span
+              <Anchor
                 component={Link}
                 to={paths.capture(sourceDataset.data.source.captureId)}
-                c="blue"
-                td="underline"
+                size="xs"
               >
                 {sourceDataset.data.source.captureDisplayName ??
                   shortId(sourceDataset.data.source.captureId)}
-              </Text>
+              </Anchor>
               .
             </Text>
           )}
@@ -514,14 +515,16 @@ function RunConfigForm({
                       : ''}
                     .
                   </Text>
-                  <Button
-                    type="submit"
-                    loading={startRun.isPending || legacy.isPending}
-                    leftSection={<IconPlay size={16} />}
-                    size="md"
-                  >
-                    Start run
-                  </Button>
+                  {!narrow && (
+                    <Button
+                      type="submit"
+                      loading={startRun.isPending || legacy.isPending}
+                      leftSection={<IconPlay size={16} />}
+                      size="md"
+                    >
+                      Start run
+                    </Button>
+                  )}
                   {serverError && (
                     <RunStartError
                       error={serverError}
@@ -554,6 +557,51 @@ function RunConfigForm({
             if (undoValues.current) form.setValues(undoValues.current);
           }}
         />
+        {narrow && (
+          <Box
+            role="region"
+            aria-label="Run summary"
+            px="md"
+            py="sm"
+            style={{
+              position: 'sticky',
+              bottom: 0,
+              zIndex: 20,
+              background: 'var(--console-panel)',
+              borderTop: '1px solid var(--console-line-strong)',
+              boxShadow: '0 -8px 24px rgba(0,0,0,0.25)',
+            }}
+          >
+            <Group justify="space-between" gap="sm" wrap="nowrap">
+              <Stack gap={0} style={{ minWidth: 0 }}>
+                <Text size="sm" fw={500}>
+                  {changed.length === 0
+                    ? preset
+                      ? 'Agreed strategy'
+                      : 'Engine defaults'
+                    : `${changed.length} ${changed.length === 1 ? 'setting' : 'settings'} changed`}
+                </Text>
+                {serverError || legacy.error ? (
+                  <Text size="xs" c="red">
+                    Not started. The reason is under In plain words.
+                  </Text>
+                ) : (
+                  <Text size="xs" c="dimmed" truncate>
+                    {datasets.find((d) => d.id === form.values.datasetId)?.name || 'Choose a dataset'}
+                  </Text>
+                )}
+              </Stack>
+              <Button
+                type="submit"
+                loading={startRun.isPending || legacy.isPending}
+                leftSection={<IconPlay size={16} />}
+                style={{ flex: 'none' }}
+              >
+                Start run
+              </Button>
+            </Group>
+          </Box>
+        )}
       </Stack>
     </form>
   );
@@ -645,7 +693,7 @@ export function NewRunPage() {
   const initialDatasetId = params.get('datasetId');
   const needsLinkedDataset =
     Boolean(initialDatasetId) &&
-    datasets.isSuccess &&
+    datasets.data !== undefined &&
     !datasets.data.items.some((dataset) => dataset.id === initialDatasetId);
   const linkedDataset = useDataset(initialDatasetId ?? '', needsLinkedDataset);
   const availableDatasets =
@@ -658,37 +706,44 @@ export function NewRunPage() {
         title="New run"
         description="Replay a stored dataset through the paper-trading simulator. Runs are synchronous and finish in seconds."
       />
-      {defaults.isPending ||
-      preset.isPending ||
-      datasets.isPending ||
-      (needsLinkedDataset && linkedDataset.isPending) ? (
-        <LoadingState label="Loading defaults and datasets…" />
-      ) : defaults.isError ? (
+      {/* Errors only replace the form when the data never loaded: a failed refresh keeps the user's edits. */}
+      {defaults.data && defaults.isError && (
+        <RefreshNotice error={defaults.error} updatedAt={defaults.dataUpdatedAt} onRetry={() => void defaults.refetch()} />
+      )}
+      {datasets.data && datasets.isError && (
+        <RefreshNotice error={datasets.error} updatedAt={datasets.dataUpdatedAt} onRetry={() => void datasets.refetch()} />
+      )}
+      {defaults.data === undefined && defaults.isError ? (
         <ErrorState
           error={defaults.error}
           title="Could not load the configuration defaults"
           onRetry={() => void defaults.refetch()}
         />
-      ) : datasets.isError ? (
+      ) : datasets.data === undefined && datasets.isError ? (
         <ErrorState
           error={datasets.error}
           title="Could not load datasets"
           onRetry={() => void datasets.refetch()}
         />
-      ) : needsLinkedDataset && linkedDataset.isError ? (
+      ) : needsLinkedDataset && linkedDataset.data === undefined && linkedDataset.isError ? (
         <ErrorState
           error={linkedDataset.error}
           title="Could not load the selected dataset"
           onRetry={() => void linkedDataset.refetch()}
         />
-      ) : preset.isError && !continueDefaults ? (
-        <Alert color="yellow" title="Agreed strategy could not be loaded">
+      ) : defaults.data === undefined ||
+        datasets.data === undefined ||
+        preset.isPending ||
+        (needsLinkedDataset && linkedDataset.data === undefined) ? (
+        <LoadingState label="Loading defaults and datasets…" />
+      ) : preset.data === undefined && preset.isError && !continueDefaults ? (
+        <Alert color="orange" title="Agreed strategy could not be loaded">
           <Stack gap="sm">
             <Text size="sm">
               The agreed strategy settings are unavailable. Retry, or continue with this simulator's
               engine defaults; they are not the agreed strategy.
             </Text>
-            <Text size="xs">Technical code: STRATEGY_PRESET_UNAVAILABLE</Text>
+            <CodeText code="STRATEGY_PRESET_UNAVAILABLE" />
             <Group>
               <Button
                 variant="default"
@@ -702,13 +757,15 @@ export function NewRunPage() {
           </Stack>
         </Alert>
       ) : availableDatasets.length === 0 ? (
-        <Alert color="blue" variant="light" title="No datasets yet">
-          Upload a dataset or import the sample on the{' '}
-          <Text span component={Link} to={paths.datasets} c="blue" td="underline">
-            Datasets
-          </Text>{' '}
-          page first.
-        </Alert>
+        <EmptyState
+          title="No datasets yet"
+          description="Upload a dataset or import the sample on the Datasets page first."
+          action={
+            <Button component={Link} to={paths.datasets} variant="default">
+              Open datasets
+            </Button>
+          }
+        />
       ) : (
         <RunConfigForm
           key={`${initialDatasetId}/${preset.data?.id ?? 'defaults'}`}

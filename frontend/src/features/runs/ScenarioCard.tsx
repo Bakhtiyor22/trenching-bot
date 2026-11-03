@@ -1,10 +1,12 @@
-import { Alert, Badge, Card, Code, Divider, Group, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Alert, Card, Divider, Group, SimpleGrid, Stack, Text, Tooltip } from '@mantine/core';
 import type { ReactNode } from 'react';
 import type { Config, Scenario, UsdtScenario } from '../../api/types';
 import { Decimal, Pnl, Timestamp } from '../../components/DisplayValues';
 import { MarketLinks } from '../../components/MarketLinks';
 import { Stat } from '../../components/Panels';
-import { standingCurveLabel } from '../../lib/codes';
+import { CodeText } from '../../components/PlainLanguage';
+import { StatusChip } from '../../components/StatusChip';
+import { codeLabel, standingCurveLabel } from '../../lib/codes';
 import { formatDecimal } from '../../lib/decimal';
 import { levelPercent } from '../../lib/percent';
 import { formatSlot, humanizeCode, shortId, signedBps, usdtRateNote } from '../../lib/format';
@@ -13,11 +15,13 @@ import { closeReasonText, knownReasonText } from '../captures/captureReasons';
 import { scenarioOutcome } from './scenarioOutcome';
 import { watchEnd, watchEndText } from './watchEnd';
 
+/** A reason in plain words, with the code below it for support. */
 function Reason({ code }: { code: string | null }) {
   return (
-    <>
-      {knownReasonText(code) ?? humanizeCode(code)} {code && <Code fz="xs">{code}</Code>}
-    </>
+    <Stack gap={2}>
+      <Text size="sm">{knownReasonText(code) ?? humanizeCode(code)}</Text>
+      <CodeText code={code} />
+    </Stack>
   );
 }
 
@@ -33,9 +37,11 @@ function Usdt({
 }) {
   if (value == null) {
     return (
-      <Text span size="sm" c="dimmed">
-        — {reason && <Code fz="xs">{reason}</Code>}
-      </Text>
+      <Tooltip label={reason ?? 'No value'} withArrow disabled={!reason}>
+        <Text span size="sm" c="dimmed">
+          —{reason && ` ${codeLabel(reason)}`}
+        </Text>
+      </Tooltip>
     );
   }
   return pnl ? <Pnl value={value} size="md" /> : <Decimal value={value} />;
@@ -77,13 +83,13 @@ function RateNote({
   ) : null;
 }
 
-/** The cycle's end state in one badge: take profit, stop loss, still open, or no entry. */
+/** The cycle's end state as a chip: take profit, stop loss, still open, or no entry. */
 function OutcomeBadge({ scenario }: { scenario: Scenario }) {
   const outcome = scenarioOutcome(scenario);
   return (
-    <Badge color={outcome.color} variant="light">
+    <StatusChip tone={outcome.tone} glyph={outcome.glyph}>
       {outcome.label}
-    </Badge>
+    </StatusChip>
   );
 }
 
@@ -93,20 +99,15 @@ function NoEntry({ scenario }: { scenario: Scenario }) {
   if (scenario.rejectionReason === 'WALLET_SOLD' && sell)
     return (
       <Stack gap={4}>
-        <Text size="sm">
-          Decu sold before the dip <Code fz="xs">WALLET_SOLD</Code>
-        </Text>
+        <Text size="sm">Decu sold before the dip</Text>
+        <CodeText code="WALLET_SOLD" />
         <Text size="xs" c="dimmed">
           Sold at slot {formatSlot(sell.slot)}
         </Text>
         <TradeLinks label="Decu's sell" observationId={sell.eventId} />
       </Stack>
     );
-  return (
-    <Text size="sm">
-      <Reason code={scenario.rejectionReason} />
-    </Text>
-  );
+  return <Reason code={scenario.rejectionReason} />;
 }
 
 function ExitTriggered({ position }: { position: NonNullable<Scenario['position']> }) {
@@ -181,7 +182,7 @@ export function ScenarioCard({
       component="article"
       aria-label={`Cycle ${token}`}
       aria-current={selected || undefined}
-      style={selected ? { borderColor: 'var(--mantine-primary-color-filled)' } : undefined}
+      style={selected ? { borderColor: 'var(--console-accent)' } : undefined}
     >
       <Group justify="space-between" mb="xs" wrap="nowrap">
         <Stack gap={0}>
@@ -283,13 +284,9 @@ export function ScenarioCard({
                 <Group gap={6}>
                   Exit
                   {position && (
-                    <Badge
-                      size="xs"
-                      variant="light"
-                      color={position.state === 'OPEN' ? 'yellow' : 'gray'}
-                    >
-                      {position.state}
-                    </Badge>
+                    <StatusChip tone="neutral" glyph={position.state === 'OPEN' ? '◷' : undefined}>
+                      {position.state === 'OPEN' ? 'Position open' : position.state === 'CLOSED' ? 'Position closed' : humanizeCode(position.state)}
+                    </StatusChip>
                   )}
                 </Group>
               }
@@ -396,10 +393,8 @@ export function ScenarioCard({
                 />
               </>
             ) : (
-              <Alert color="yellow" variant="light" p="xs" title="Still open">
-                <Text size="sm">
-                  No exit: <Reason code={scenario.exitUnavailableReason} />
-                </Text>
+              <Alert color="gray" variant="light" p="xs" title="Still open">
+                <Reason code={scenario.exitUnavailableReason} />
               </Alert>
             )}
           </>

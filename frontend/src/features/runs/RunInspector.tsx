@@ -1,24 +1,13 @@
-import {
-  Badge,
-  Box,
-  Card,
-  Group,
-  Kbd,
-  ScrollArea,
-  Stack,
-  Text,
-  UnstyledButton,
-} from '@mantine/core';
+import { Box, Group, Kbd, ScrollArea, Stack, Text, UnstyledButton } from '@mantine/core';
 import type { Config, Scenario } from '../../api/types';
 import { Section } from '../../components/Panels';
-import { formatDecimal, pnlColor } from '../../lib/decimal';
+import { StatusChip } from '../../components/StatusChip';
+import { formatSignedDecimal, pnlColor } from '../../lib/decimal';
 import { formatSlot, shortId } from '../../lib/format';
-import { terminal } from '../../theme';
+import classes from './RunInspector.module.css';
 import { scenarioOutcome, type ScenarioOutcome } from './scenarioOutcome';
 import { runLanes, scenarioEvents } from './scenarioStory';
 
-/** Lane grid: token, track, result. */
-const LANE_COLUMNS = '110px minmax(0, 1fr) 150px';
 /** Ticks under the run timeline, as fractions of its span. */
 const LANE_TICKS = [0, 0.25, 0.5, 0.75, 1];
 
@@ -43,7 +32,7 @@ export function OutcomeBar({ scenarios }: { scenarios: Scenario[] }) {
           gap: 2,
           borderRadius: 3,
           overflow: 'hidden',
-          background: terminal.neutral,
+          background: 'var(--console-raised)',
         }}
       >
         {parts.map((p) => (
@@ -62,8 +51,9 @@ export function OutcomeBar({ scenarios }: { scenarios: Scenario[] }) {
   );
 }
 
+/** Signed P&L with its unit, e.g. "+0.0283 SOL" or "−0.0135 SOL". */
 function pnlText(pnl: string, unit: string): string {
-  return `${formatDecimal(pnl)} ${unit}`;
+  return `${formatSignedDecimal(pnl)} ${unit}`;
 }
 
 /** The run's cycles as a pickable list; the selected one drives the chart, its story and the highlighted card. */
@@ -79,68 +69,63 @@ export function CycleList({
   unit: string;
 }) {
   return (
-    <Card padding={0} component="nav" aria-label="Cycles">
-      <Group
-        justify="space-between"
-        px="md"
-        py="sm"
-        style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
-      >
-        <Text fw={600} fz={15}>
-          Cycles
-        </Text>
-        <Text size="xs" c="dimmed">
+    <Section
+      title="Cycles"
+      hint="One per token, in first-buy order"
+      padding="md"
+      actions={
+        <Text size="xs" c="dimmed" visibleFrom="sm" style={{ whiteSpace: 'nowrap' }}>
           <Kbd>J</Kbd> <Kbd>K</Kbd> to step
         </Text>
-      </Group>
-      <ScrollArea.Autosize mah={560} type="auto">
-        {scenarios.map((s, index) => {
-          const outcome = scenarioOutcome(s);
-          const active = index === selected;
-          return (
-            <UnstyledButton
-              key={s.intentId}
-              className="console-row-button"
-              onClick={() => onSelect(index)}
-              aria-pressed={active}
-              aria-label={`Cycle ${shortId(s.pair.base)}: ${outcome.label}`}
-              px="md"
-              py={10}
-              style={{
-                borderBottom: '1px solid var(--mantine-color-default-border)',
-                borderLeft: `3px solid ${active ? terminal.accent : 'transparent'}`,
-                background: active ? 'var(--mantine-color-default-hover)' : undefined,
-              }}
-            >
-              <Group gap={8} wrap="nowrap">
-                <Badge size="sm" variant="filled" color={outcome.color} ff="monospace" miw={44}>
-                  {outcome.tag}
-                </Badge>
-                <Text ff="monospace" size="sm" style={{ flex: 1 }}>
-                  {shortId(s.pair.base)}
-                </Text>
-                {outcome.pnl ? (
-                  <Text ff="monospace" size="sm" fw={600} c={pnlColor(outcome.pnl)}>
-                    {pnlText(outcome.pnl, unit)}
+      }
+    >
+      <Box component="nav" aria-label="Cycles" mx="calc(var(--mantine-spacing-md) * -1)" mb="calc(var(--mantine-spacing-md) * -1)">
+        <ScrollArea.Autosize mah={560} type="auto" style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
+          {scenarios.map((s, index) => {
+            const outcome = scenarioOutcome(s);
+            const active = index === selected;
+            return (
+              <UnstyledButton
+                key={s.intentId}
+                className="console-row-button"
+                onClick={() => onSelect(index)}
+                aria-pressed={active}
+                aria-label={`Cycle ${shortId(s.pair.base)}: ${outcome.label}`}
+                px="md"
+                py={10}
+                style={{
+                  borderBottom: '1px solid var(--mantine-color-default-border)',
+                  borderLeft: `3px solid ${active ? 'var(--console-accent)' : 'transparent'}`,
+                }}
+              >
+                <Group gap={8} wrap="nowrap">
+                  <Text ff="monospace" size="sm" style={{ flex: 1 }}>
+                    {shortId(s.pair.base)}
                   </Text>
-                ) : (
-                  <Text size="xs" c="dimmed">
+                  {outcome.pnl && (
+                    <Text ff="monospace" size="sm" fw={600} c={pnlColor(outcome.pnl)} style={{ whiteSpace: 'nowrap' }}>
+                      {pnlText(outcome.pnl, unit)}
+                    </Text>
+                  )}
+                </Group>
+                <Group gap={8} mt={6} wrap="wrap">
+                  <StatusChip tone={outcome.tone} glyph={outcome.glyph}>
                     {outcome.label}
+                  </StatusChip>
+                  <Text size="xs" c="dimmed">
+                    First buy at slot {formatSlot(s.sourceSlot)}
+                    {s.trigger ? ` · dip +${formatSlot(s.trigger.slot - s.sourceSlot)}` : ''}
+                    {s.position?.close
+                      ? ` · exit +${formatSlot(s.position.close.slot - s.sourceSlot)}`
+                      : ''}
                   </Text>
-                )}
-              </Group>
-              <Text size="xs" c="dimmed" mt={4}>
-                First buy at slot {formatSlot(s.sourceSlot)}
-                {s.trigger ? ` · dip +${formatSlot(s.trigger.slot - s.sourceSlot)}` : ''}
-                {s.position?.close
-                  ? ` · exit +${formatSlot(s.position.close.slot - s.sourceSlot)}`
-                  : ''}
-              </Text>
-            </UnstyledButton>
-          );
-        })}
-      </ScrollArea.Autosize>
-    </Card>
+                </Group>
+              </UnstyledButton>
+            );
+          })}
+        </ScrollArea.Autosize>
+      </Box>
+    </Section>
   );
 }
 
@@ -184,11 +169,11 @@ export function CycleStory({ scenario, unit }: { scenario: Scenario; unit: strin
                 <Box w={1} style={{ flex: 1, background: 'var(--mantine-color-default-border)' }} />
               )}
             </Box>
-            <Stack gap={0} pb="sm">
+            <Stack gap={0} pb="sm" style={{ minWidth: 0 }}>
               <Text size="sm" fw={500}>
                 {e.title}
               </Text>
-              <Text size="xs" c="dimmed" ff="monospace">
+              <Text size="xs" c="dimmed" ff="monospace" style={{ overflowWrap: 'anywhere' }}>
                 {e.detail}
               </Text>
             </Stack>
@@ -233,25 +218,16 @@ export function RunLanes({
               className="console-row-button"
               onClick={() => onSelect(index)}
               aria-label={`Inspect cycle ${lane.token}`}
+              aria-current={index === selected ? 'true' : undefined}
               px={8}
               py={6}
-              style={{
-                borderRadius: 6,
-                outline: index === selected ? `1px solid ${terminal.accent}` : undefined,
-              }}
+              style={{ borderRadius: 6 }}
             >
-              <Box
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: LANE_COLUMNS,
-                  gap: 12,
-                  alignItems: 'center',
-                }}
-              >
-                <Text size="xs" ff="monospace">
+              <Box className={classes.lane}>
+                <Text size="xs" ff="monospace" className={classes.token}>
                   {lane.token}
                 </Text>
-                <Box pos="relative" h={18}>
+                <Box pos="relative" h={18} className={classes.track}>
                   <Box
                     pos="absolute"
                     left={0}
@@ -268,7 +244,8 @@ export function RunLanes({
                       left={0}
                       w={lane.watchEnd > 0 ? width(lane.watchEnd) : 0}
                       style={{
-                        background: `repeating-linear-gradient(90deg, ${terminal.dimmed} 0 4px, transparent 4px 8px)`,
+                        background:
+                          'repeating-linear-gradient(90deg, var(--console-dimmed) 0 4px, transparent 4px 8px)',
                       }}
                     />
                   ) : (
@@ -278,7 +255,7 @@ export function RunLanes({
                       h={8}
                       left={0}
                       w={width(lane.fill ?? lane.dip)}
-                      style={{ background: terminal.neutral, borderRadius: 2 }}
+                      style={{ background: 'var(--console-line-strong)', borderRadius: 2 }}
                     />
                   )}
                   {lane.fill != null && holdEnd != null && (
@@ -295,7 +272,7 @@ export function RunLanes({
                 <Text
                   size="xs"
                   ff="monospace"
-                  ta="right"
+                  className={classes.result}
                   c={lane.outcome.pnl ? pnlColor(lane.outcome.pnl) : 'dimmed'}
                 >
                   {lane.outcome.pnl
@@ -306,9 +283,9 @@ export function RunLanes({
             </UnstyledButton>
           );
         })}
-        <Box style={{ display: 'grid', gridTemplateColumns: LANE_COLUMNS, gap: 12 }} px={8}>
-          <span />
-          <Group justify="space-between">
+        <Box className={classes.lane} px={8}>
+          <span className={classes.token} />
+          <Group justify="space-between" className={classes.track}>
             {LANE_TICKS.map((f, i) => (
               <Text key={f} size="xs" c="dimmed" ff="monospace">
                 +{formatSlot(Math.round(span * f))}
@@ -316,7 +293,7 @@ export function RunLanes({
               </Text>
             ))}
           </Group>
-          <span />
+          <span className={classes.result} />
         </Box>
       </Stack>
     </Section>

@@ -12,14 +12,14 @@ import { createBrowserRouter, RouterProvider } from 'react-router';
 import { createQueryClient } from './api/queries';
 import { ROUTER_BASENAME } from './paths';
 import { routes } from './routes';
-import { theme } from './theme';
+import { cssVariablesResolver, theme } from './theme';
 
 const router = createBrowserRouter(routes, { basename: ROUTER_BASENAME });
 
 export function App() {
   const [queryClient] = useState(createQueryClient);
   return (
-    <MantineProvider theme={theme} defaultColorScheme="dark">
+    <MantineProvider theme={theme} defaultColorScheme="dark" cssVariablesResolver={cssVariablesResolver}>
       <Notifications position="bottom-right" />
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />

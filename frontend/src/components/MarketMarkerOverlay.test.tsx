@@ -113,8 +113,8 @@ describe('MarketMarkerOverlay', () => {
     ]);
     await user.click(buttons[0]!);
     expect(select).toHaveBeenCalledWith(buy, { x: 100, y: 74 });
-    expect(screen.getByTestId('market-pin-buy')).toHaveStyle({ background: '#F2B43C' });
-    expect(screen.getByTestId('market-pin-sell')).toHaveStyle({ border: '2px solid #F2B43C' });
+    expect(screen.getByTestId('market-pin-buy')).toHaveStyle({ background: 'var(--console-accent)' });
+    expect(screen.getByTestId('market-pin-sell')).toHaveAttribute('data-marker-color', 'decu');
   });
   it('opens a stack list and updates positions on chart completion and zoom', async () => {
     const { chart, handlers, convertToPixel } = chartInstance();
@@ -171,6 +171,7 @@ describe('MarketMarkerOverlay', () => {
     );
     expect(screen.getAllByRole('button')).toHaveLength(2);
     expect(screen.getByTestId('market-pin-intent:ENTRY')).toHaveStyle({
+      background: 'var(--console-info)',
       width: '11px',
       height: '11px',
       transform: 'rotate(45deg)',

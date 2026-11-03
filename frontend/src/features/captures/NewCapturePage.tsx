@@ -4,7 +4,6 @@ import {
   Alert,
   Anchor,
   Badge,
-  Breadcrumbs,
   Button,
   Checkbox,
   Group,
@@ -38,8 +37,9 @@ import {
   WALLET_TOKEN_SCOPE,
 } from '../../api/captures';
 import { setupApi, type Recommendation } from '../../api/setup';
-import { RelativeTime, ShortId } from '../../components/DisplayValues';
+import { RelativeTime, ShortId, Timestamp } from '../../components/DisplayValues';
 import { PageHeader, Section } from '../../components/Panels';
+import { QueryView } from '../../components/QueryView';
 import { Term } from '../../components/PlainLanguage';
 import { Recommendations } from '../../components/Recommendations';
 import {
@@ -50,6 +50,7 @@ import {
 } from '../../components/StateViews';
 import { isSolanaAddress } from '../../lib/base58';
 import { codeLabel } from '../../lib/codes';
+import { pumpFunTokenHref } from '../../lib/marketLinks';
 import { paths } from '../../paths';
 import { activityNote, solFromLamports } from './activityDisplay';
 import { CommandError } from './CaptureShared';
@@ -154,7 +155,7 @@ function WalletActivityPicker({
       <Group gap="xs">
         <Button
           size="xs"
-          variant={buys ? 'filled' : 'default'}
+          variant={buys ? 'light' : 'default'}
           aria-pressed={buys}
           onClick={() => setBuys(!buys)}
         >
@@ -162,7 +163,7 @@ function WalletActivityPicker({
         </Button>
         <Button
           size="xs"
-          variant={hideCaptured ? 'filled' : 'default'}
+          variant={hideCaptured ? 'light' : 'default'}
           aria-pressed={hideCaptured}
           onClick={() => setHideCaptured(!hideCaptured)}
         >
@@ -171,7 +172,7 @@ function WalletActivityPicker({
         <Tooltip label="Curve payment, excluding fees">
           <Button
             size="xs"
-            variant={overThreshold ? 'filled' : 'default'}
+            variant={overThreshold ? 'light' : 'default'}
             aria-pressed={overThreshold}
             onClick={() => setOverThreshold(!overThreshold)}
           >
@@ -222,9 +223,22 @@ function WalletActivityPicker({
         />
       )}
       {!!rows.length && !visible.length && (
-        <Text size="sm">
-          No actions match these filters. Change the filters or paste a token mint.
-        </Text>
+        <EmptyState
+          title="No actions match these filters"
+          description="Change the filters or paste a token mint."
+          action={
+            <Button
+              variant="default"
+              onClick={() => {
+                setBuys(false);
+                setHideCaptured(false);
+                setOverThreshold(false);
+              }}
+            >
+              Show all actions
+            </Button>
+          }
+        />
       )}
       {!!visible.length && (
         <ScrollArea>
@@ -248,7 +262,18 @@ function WalletActivityPicker({
                 const sol = solFromLamports(action.solLamports);
                 const note = activityNote(action);
                 return (
-                  <Table.Tr key={key} bg={selected ? 'var(--mantine-color-blue-light)' : undefined}>
+                  <Table.Tr
+                    key={key}
+                    aria-selected={selected}
+                    style={
+                      selected
+                        ? {
+                            background: 'var(--console-raised)',
+                            boxShadow: 'inset 0 0 0 1px var(--console-line-strong)',
+                          }
+                        : undefined
+                    }
+                  >
                     <Table.Td>
                       <Radio
                         name="activity-token"
@@ -268,11 +293,13 @@ function WalletActivityPicker({
                     </Table.Td>
                     <Table.Td>
                       <RelativeTime iso={action.blockTime} />
-                      <Text size="xs" c="dimmed">
-                        {action.blockTime
-                          ? new Date(action.blockTime).toLocaleTimeString('en-GB')
-                          : 'Time unavailable'}
-                      </Text>
+                      {action.blockTime ? (
+                        <Timestamp iso={action.blockTime} size="xs" c="dimmed" display="block" />
+                      ) : (
+                        <Text size="xs" c="dimmed">
+                          Time unavailable
+                        </Text>
+                      )}
                     </Table.Td>
                     <Table.Td>
                       <Badge variant="light" color={action.side === 'BUY' ? 'teal' : 'red'}>
@@ -283,15 +310,15 @@ function WalletActivityPicker({
                       <Stack gap={2}>
                         <ShortId value={action.mint} />
                         <Anchor
-                          href={`https://pump.fun/coin/${encodeURIComponent(action.mint)}`}
+                          href={pumpFunTokenHref(action.mint)}
                           target="_blank"
                           rel="noopener noreferrer"
                           size="xs"
                         >
                           pump.fun ↗
                         </Anchor>
-                        <Text size="xs" c="dimmed">
-                          Name not loaded
+                        <Text size="xs" c="dimmed" aria-label="Token name not loaded">
+                          —
                         </Text>
                       </Stack>
                     </Table.Td>
@@ -546,14 +573,18 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
               <Section title="1 · Whose trades?">
                 <Stack>
                   {suggested && (
-                    <Alert color="violet" variant="light" title={`Suggested: ${suggested.label}`}>
+                    <Alert color="gray" variant="light" title={`Suggested: ${suggested.label}`}>
                       <Stack gap="sm">
                         <Text size="sm">
                           The agreed strategy follows {suggested.label}'s buys. Start here, or paste
                           another wallet below.
                         </Text>
                         <Group>
-                          {wallet === suggested.address && <Badge variant="light">Applied</Badge>}
+                          {wallet === suggested.address && (
+                            <Badge variant="light" color="gray">
+                              Applied
+                            </Badge>
+                          )}
                           <Button
                             variant="default"
                             disabled={locked}
@@ -581,7 +612,7 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
                     spellCheck={false}
                     leftSection={
                       walletLabel ? (
-                        <Badge size="xs" variant="light">
+                        <Badge size="xs" variant="light" color="gray">
                           {walletLabel}
                         </Badge>
                       ) : undefined
@@ -730,12 +761,12 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
                 </Text>
               )}
               {suggestion && (
-                <Button variant="light" onClick={() => setName(suggestion)} title={suggestion}>
+                <Button variant="default" onClick={() => setName(suggestion)} title={suggestion}>
                   Use suggestion
                 </Button>
               )}
               {nameCheck.isError && (
-                <Text size="xs" c="yellow">
+                <Text size="xs" c="orange">
                   Name availability could not be checked. Creation will check it again.
                 </Text>
               )}
@@ -779,7 +810,9 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
                       ]}
                     />
                     {cutoffMode === 'DECIDED' && (
-                      <Alert color="yellow">{codeLabel('CUTOFF_USES_AGREED_STRATEGY')}</Alert>
+                      <Alert color="blue" variant="light">
+                        {codeLabel('CUTOFF_USES_AGREED_STRATEGY')}
+                      </Alert>
                     )}
                     <Checkbox
                       id="capture-recovery"
@@ -834,7 +867,7 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
                 )}
               </Group>
               {mode === 'new' && !config.rpcConfigured && (
-                <Text size="xs" c="yellow">
+                <Text size="xs" c="orange">
                   Solana RPC is not set up. Configure SOLANA_RPC_URL for the backend before starting
                   the wallet step.
                 </Text>
@@ -891,14 +924,9 @@ function NewCaptureForm({ config }: { config: CaptureConfig }) {
 export function NewCapturePage() {
   const config = useCaptureConfig();
   return (
-    <Stack gap="lg">
-      <Breadcrumbs>
-        <Anchor component={Link} to={paths.captures}>
-          Captures
-        </Anchor>
-        <Text size="sm">New capture</Text>
-      </Breadcrumbs>
+    <>
       <PageHeader
+        breadcrumbs={[{ label: 'Captures', to: paths.captures }, { label: 'New capture' }]}
         title="New capture"
         description="Choose a wallet and token, then collect the evidence for a replay."
         actions={
@@ -907,13 +935,13 @@ export function NewCapturePage() {
           </Button>
         }
       />
-      {config.isPending ? (
-        <LoadingState label="Loading capture settings…" />
-      ) : config.isError ? (
-        <ErrorState error={config.error} onRetry={() => void config.refetch()} />
-      ) : (
-        <NewCaptureForm config={config.data} />
-      )}
-    </Stack>
+      <QueryView
+        query={config}
+        loadingLabel="Loading capture settings…"
+        errorTitle="Could not load capture settings"
+      >
+        {(data) => <NewCaptureForm config={data} />}
+      </QueryView>
+    </>
   );
 }

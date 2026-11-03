@@ -65,7 +65,7 @@ describe('ScenarioCard exits', () => {
     expect(
       screen.getByText(/The exit was triggered, but no curve could pay the sale/),
     ).toBeInTheDocument();
-    expect(screen.getByText('UNRESOLVED')).toBeInTheDocument();
+    expect(screen.getByText('Technical code: UNRESOLVED')).toBeInTheDocument();
   });
 
   it('explains a skip because Decu bought at or below the minimum market cap', () => {

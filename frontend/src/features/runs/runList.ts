@@ -53,3 +53,26 @@ export function sortRuns(runs: RunSummary[], sort: Sort): RunSummary[] {
 export function toggleSort(current: Sort, key: SortKey): Sort {
   return current.key === key ? { key, descending: !current.descending } : { key, descending: true };
 }
+
+const OUTCOMES: readonly Outcome[] = ['all', 'profit', 'loss', 'flat'];
+const SORT_KEYS: readonly SortKey[] = ['created', 'pnl', 'scenarios'];
+const ASCENDING_SUFFIX = '-asc';
+
+/** The outcome in `?outcome`; anything unknown is "all". */
+export function parseOutcome(value: string | null): Outcome {
+  return OUTCOMES.find((outcome) => outcome === value) ?? 'all';
+}
+
+/** The sort in `?sort` ("pnl", "pnl-asc", ...); anything unknown is the default. */
+export function parseSort(value: string | null): Sort {
+  if (!value) return DEFAULT_SORT;
+  const ascending = value.endsWith(ASCENDING_SUFFIX);
+  const key = SORT_KEYS.find((k) => k === (ascending ? value.slice(0, -ASCENDING_SUFFIX.length) : value));
+  return key ? { key, descending: !ascending } : DEFAULT_SORT;
+}
+
+/** `?sort` for a sort, or null for the default so the URL stays short. */
+export function serializeSort(sort: Sort): string | null {
+  if (sort.key === DEFAULT_SORT.key && sort.descending === DEFAULT_SORT.descending) return null;
+  return sort.descending ? sort.key : `${sort.key}${ASCENDING_SUFFIX}`;
+}

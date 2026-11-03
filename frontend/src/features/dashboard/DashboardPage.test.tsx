@@ -3,6 +3,7 @@ import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { SAMPLE_TOTAL_PNL, dashboardFixture } from '../../mocks/fixtures';
 import { server } from '../../mocks/server';
+import { formatSignedDecimal } from '../../lib/decimal';
 import { renderPage } from '../../test/render';
 import { DashboardPage } from './DashboardPage';
 
@@ -21,7 +22,7 @@ describe('DashboardPage', () => {
       }),
     );
     renderPage(<DashboardPage />);
-    await screen.findByLabelText('Application health: UP');
+    await screen.findByLabelText('Application health: Up');
     expect(polls).toBe(1);
     await waitFor(() => expect(polls).toBe(2), { timeout: 6500 });
     expect(probes).toBe(0);
@@ -29,13 +30,14 @@ describe('DashboardPage', () => {
 
   it('shows Solana as not configured (neutral) while the other tiles are healthy', async () => {
     renderPage(<DashboardPage />);
-    const app = await screen.findByLabelText('Application health: UP');
-    const db = screen.getByLabelText('Database health: UP');
+    const app = await screen.findByLabelText('Application health: Up');
+    const db = screen.getByLabelText('Database health: Up');
     const solana = await screen.findByLabelText('Solana health: Not configured');
 
-    expect(within(app).getByText('UP')).toBeInTheDocument();
-    expect(within(db).getByText('UP')).toBeInTheDocument();
-    expect(within(solana).getByText('Set SOLANA_RPC_URL to enable')).toBeInTheDocument();
+    // Backend codes read as words.
+    expect(within(app).getByText('Up')).toBeInTheDocument();
+    expect(within(db).getByText('Up')).toBeInTheDocument();
+    expect(within(solana).getByText(/Set SOLANA_RPC_URL to enable/)).toBeInTheDocument();
     // Neutral, not an error color.
     expect(within(solana).getByText('Not configured')).not.toHaveStyle({
       color: 'var(--mantine-color-red-text)',
@@ -44,7 +46,8 @@ describe('DashboardPage', () => {
       'red',
     );
 
-    expect(screen.getByText(SAMPLE_TOTAL_PNL)).toBeInTheDocument();
+    // The headline is signed and trimmed; the exact stored string stays in the cumulative table.
+    expect(screen.getByText(formatSignedDecimal(SAMPLE_TOTAL_PNL, { trim: true }))).toBeInTheDocument();
     expect(screen.getByText('2 in the last 24 h')).toBeInTheDocument();
   });
 
@@ -67,6 +70,29 @@ describe('DashboardPage', () => {
     expect(screen.getByText('No rejection data')).toBeInTheDocument();
     expect(screen.queryByText(/in the last 24 h/)).not.toBeInTheDocument();
     expect(screen.getAllByText('1m 1s').length).toBeGreaterThan(0);
+  });
+
+  it('keeps the figures on screen when a background refresh fails', async () => {
+    let fail = false;
+    server.use(
+      http.get('/api/dashboard', () =>
+        fail ? new HttpResponse('Bad gateway', { status: 502 }) : HttpResponse.json(dashboardFixture()),
+      ),
+    );
+    const { queryClient } = renderPage(<DashboardPage />);
+    await screen.findByLabelText('Application health: Up');
+    fail = true;
+    await queryClient.refetchQueries({ queryKey: ['dashboard'] });
+    expect(await screen.findByText(/Couldn.t refresh/)).toBeInTheDocument();
+    expect(screen.getByText(/Update failed/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Application health: Up')).toBeInTheDocument();
+    expect(screen.queryByText('Dashboard unavailable')).not.toBeInTheDocument();
+  });
+
+  it('summarises automation and says when it is off', async () => {
+    server.use(http.get('/api/automation/status', () => new HttpResponse(null, { status: 404 })));
+    renderPage(<DashboardPage />);
+    expect(await screen.findByText(/Automation is off on this backend/)).toBeInTheDocument();
   });
 
   it('shows an error state when the dashboard cannot be loaded', async () => {

@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ApiError, BAD_RESPONSE } from '../../api/client';
-import { capturesApi, type CaptureSession } from '../../api/captures';
+import { capturesApi, type CaptureCase, type CaptureSession } from '../../api/captures';
 
 export const CAPTURE_POLL_MS = 2000;
 export const captureKeys = {
@@ -35,18 +35,22 @@ export function useCapture(id: string) {
     staleTime: 0,
   });
 }
+/** Whether a capture's token list polls: while its main batch or any token's own operation runs. */
+export const casesPolling = (
+  mainOperationState: string | undefined,
+  data: { items: CaptureCase[] } | undefined,
+) =>
+  isCaptureOperationActive(mainOperationState) ||
+  !!data?.items.some(
+    (item) =>
+      isCaptureOperationActive(item.readiness) || isCaptureOperationActive(item.operationState),
+  );
 export function useCaptureCases(id: string, mainOperationState?: string) {
   return useQuery({
     queryKey: captureKeys.cases(id),
     queryFn: ({ signal }) => capturesApi.cases(id, signal),
     refetchInterval: (query) =>
-      isCaptureOperationActive(mainOperationState) ||
-      query.state.data?.items.some(
-        (item) =>
-          isCaptureOperationActive(item.readiness) || isCaptureOperationActive(item.operationState),
-      )
-        ? CAPTURE_POLL_MS
-        : false,
+      casesPolling(mainOperationState, query.state.data) ? CAPTURE_POLL_MS : false,
     refetchIntervalInBackground: false,
     staleTime: 0,
   });

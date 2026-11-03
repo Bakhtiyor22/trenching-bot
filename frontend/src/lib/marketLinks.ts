@@ -17,12 +17,27 @@ function isSignature(value: string): boolean {
   return value.length >= 64 && value.length <= 88 && base58ByteLength(value) === SIGNATURE_BYTES;
 }
 
+/** The Solscan page of a transaction signature (not checked: callers pass recorded mainnet signatures). */
+export function solscanTransactionHref(signature: string): string {
+  return `https://solscan.io/tx/${encodeURIComponent(signature)}`;
+}
+
+/** The Solscan page of a token mint (not checked: callers pass recorded mainnet mints). */
+export function solscanTokenHref(mint: string): string {
+  return `https://solscan.io/token/${encodeURIComponent(mint)}`;
+}
+
+/** The pump.fun page of a token mint (not checked: callers pass recorded mainnet mints). */
+export function pumpFunTokenHref(mint: string): string {
+  return `https://pump.fun/coin/${encodeURIComponent(mint)}`;
+}
+
 /** Solscan and Solana Explorer pages of a transaction; none for a value that is not a signature. */
 export function transactionLinks(signature: string): MarketLink[] {
   if (!isSignature(signature)) return [];
   const value = encodeURIComponent(signature);
   return [
-    { label: 'Solscan', href: `https://solscan.io/tx/${value}` },
+    { label: 'Solscan', href: solscanTransactionHref(signature) },
     { label: 'Solana Explorer', href: `https://explorer.solana.com/tx/${value}` },
   ];
 }
@@ -32,7 +47,7 @@ export function tokenLinks(mint: string): MarketLink[] {
   if (!isSolanaAddress(mint)) return [];
   const value = encodeURIComponent(mint);
   return [
-    { label: 'pump.fun', href: `https://pump.fun/coin/${value}` },
+    { label: 'pump.fun', href: pumpFunTokenHref(mint) },
     { label: 'DexScreener', href: `https://dexscreener.com/solana/${value}` },
   ];
 }
@@ -47,6 +62,11 @@ export function recordedTradeSignature(observationId: string): string | null {
 }
 
 /** The transaction of a recorded wallet buy; null for any other wallet event. */
-export function recordedEventSignature(event: { source: string; signature: string }): string | null {
-  return event.source === RECORDED_BUY_SOURCE && isSignature(event.signature) ? event.signature : null;
+export function recordedEventSignature(event: {
+  source: string;
+  signature: string;
+}): string | null {
+  return event.source === RECORDED_BUY_SOURCE && isSignature(event.signature)
+    ? event.signature
+    : null;
 }

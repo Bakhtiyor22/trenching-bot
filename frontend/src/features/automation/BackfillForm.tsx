@@ -15,6 +15,7 @@ import { useCreateBackfill, type AutomationStatus } from '../../api/automation';
 import { ApiError } from '../../api/client';
 import { isSolanaAddress } from '../../lib/base58';
 import { compareDecimals, isDecimalString } from '../../lib/decimal';
+import { formatCount } from '../../lib/format';
 import { paths } from '../../paths';
 import {
   addDays,
@@ -25,14 +26,24 @@ import {
   DEFAULT_DRY_RUN_BUDGET,
   isBackfillRefusal,
   isFilteredBackfill,
+  isRealDate,
+  parseBackfillPrefill,
   parseMints,
   tradingDayOf,
   zoneDateTime,
 } from './automationModel';
 import { BackfillRefusal } from './BackfillShared';
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const LAMPORT_DECIMALS = 9;
+const DATE_WIDTH = { base: '100%', xs: 170 } as const;
+/** Link keys in words, for the note about values the form ignored. */
+const PREFILL_NAMES: Record<string, string> = {
+  from: 'first day',
+  to: 'last day',
+  dryRun: 'dry run',
+  budget: 'budget',
+  min: 'minimum signal size',
+};
 /** Monospace for the typed number only, not the label and description. */
 const MONO_INPUT = { input: { fontFamily: 'var(--mantine-font-family-monospace)' } };
 
@@ -48,8 +59,8 @@ interface Values {
 /** Client checks mirroring the backend's (plan Rule 35); the backend's own field errors still win. */
 function validate(values: Values, today: string): Record<string, string> {
   const errors: Record<string, string> = {};
-  if (!DATE.test(values.fromDay)) errors.fromDay = 'Choose the first day';
-  if (!DATE.test(values.toDay)) errors.toDay = 'Choose the last day';
+  if (!isRealDate(values.fromDay)) errors.fromDay = 'Choose the first day';
+  if (!isRealDate(values.toDay)) errors.toDay = 'Choose the last day';
   if (!errors.fromDay && !errors.toDay) {
     const days = daysBetween(values.fromDay, values.toDay) + 1;
     if (days < 1) errors.toDay = 'Must not be before the first day';
@@ -60,7 +71,7 @@ function validate(values: Values, today: string): Record<string, string> {
   const min = values.dryRun ? BACKFILL_LIMITS.minDryRunBudget : BACKFILL_LIMITS.minCaptureBudget;
   const budget = Number(values.budget);
   if (!/^\d+$/.test(values.budget.trim()) || budget < min || budget > BACKFILL_LIMITS.maxBudget)
-    errors.budget = `A whole number from ${min.toLocaleString('en-US')} to ${BACKFILL_LIMITS.maxBudget.toLocaleString('en-US')}`;
+    errors.budget = `A whole number from ${formatCount(min)} to ${formatCount(BACKFILL_LIMITS.maxBudget)}`;
   const minSol = values.minSignalSol.trim();
   if (minSol !== '') {
     if (!isDecimalString(minSol) || minSol.startsWith('-'))
@@ -89,6 +100,7 @@ const SERVER_FIELDS: Record<string, string> = {
 /**
  * The new-backfill form. It defaults to a dry run, so the first step always estimates before anything is captured.
  * The URL can pre-fill it (from a finished dry run's "Capture this range"): `from`, `to`, `dryRun`, `budget`, `min`.
+ * Only valid link values are used; the rest keep their defaults and a note says which were ignored.
  */
 export function BackfillForm({ status }: { status: AutomationStatus }) {
   const navigate = useNavigate();
@@ -98,19 +110,19 @@ export function BackfillForm({ status }: { status: AutomationStatus }) {
     ? tradingDayOf(status.coveredFrom, status.zone, status.tradingDayStart)
     : null;
   const defaultTo = coveredDay ? addDays(coveredDay, -1) : addDays(today, -1);
-  const prefilledDryRun = params.get('dryRun') !== 'false';
+  const [prefill] = useState(() => parseBackfillPrefill(params));
   const [values, setValues] = useState<Values>(() => ({
-    fromDay: params.get('from') ?? addDays(defaultTo, -6),
-    toDay: params.get('to') ?? defaultTo,
-    dryRun: prefilledDryRun,
+    fromDay: prefill.fromDay ?? addDays(defaultTo, -6),
+    toDay: prefill.toDay ?? defaultTo,
+    dryRun: prefill.dryRun,
     budget:
-      params.get('budget') ??
-      String(prefilledDryRun ? DEFAULT_DRY_RUN_BUDGET : BACKFILL_LIMITS.minCaptureBudget),
-    minSignalSol: params.get('min') ?? '',
+      prefill.budget ??
+      String(prefill.dryRun ? DEFAULT_DRY_RUN_BUDGET : BACKFILL_LIMITS.minCaptureBudget),
+    minSignalSol: prefill.minSignalSol ?? '',
     mintsText: '',
   }));
   const [touched, setTouched] = useState(false);
-  const [filtersOpen, setFiltersOpen] = useState(params.has('min'));
+  const [filtersOpen, setFiltersOpen] = useState(prefill.minSignalSol != null);
   const create = useCreateBackfill();
   const errors = validate(values, today);
   const serverErrors: Record<string, string> = {};
@@ -122,7 +134,7 @@ export function BackfillForm({ status }: { status: AutomationStatus }) {
   const { mints } = parseMints(values.mintsText, isSolanaAddress);
   const filtered = isFilteredBackfill(values.minSignalSol, mints);
   const days =
-    DATE.test(values.fromDay) && DATE.test(values.toDay)
+    isRealDate(values.fromDay) && isRealDate(values.toDay)
       ? daysBetween(values.fromDay, values.toDay) + 1
       : 0;
   const set = <K extends keyof Values>(key: K, value: Values[K]) => {
@@ -166,6 +178,15 @@ export function BackfillForm({ status }: { status: AutomationStatus }) {
       }}
     >
       <Stack gap="md">
+        {prefill.ignored.length > 0 && (
+          <Alert color="gray" variant="light" p="xs">
+            <Text size="sm">
+              The link&apos;s {prefill.ignored.map((key) => PREFILL_NAMES[key] ?? key).join(', ')}{' '}
+              {prefill.ignored.length === 1 ? 'was' : 'were'} not valid, so the form uses its
+              default instead.
+            </Text>
+          </Alert>
+        )}
         <Group gap="sm" wrap="wrap" align="flex-start">
           <TextInput
             type="date"
@@ -174,7 +195,7 @@ export function BackfillForm({ status }: { status: AutomationStatus }) {
             max={addDays(today, -1)}
             onChange={(e) => set('fromDay', e.currentTarget.value)}
             error={shown('fromDay')}
-            w={170}
+            w={DATE_WIDTH}
           />
           <TextInput
             type="date"
@@ -183,7 +204,7 @@ export function BackfillForm({ status }: { status: AutomationStatus }) {
             max={addDays(today, -1)}
             onChange={(e) => set('toDay', e.currentTarget.value)}
             error={shown('toDay')}
-            w={170}
+            w={DATE_WIDTH}
           />
         </Group>
         <Text size="xs" c="dimmed" mt={-8}>
@@ -209,7 +230,7 @@ export function BackfillForm({ status }: { status: AutomationStatus }) {
           value={values.budget}
           onChange={(e) => set('budget', e.currentTarget.value)}
           error={shown('budget')}
-          description={`At least ${(values.dryRun ? BACKFILL_LIMITS.minDryRunBudget : BACKFILL_LIMITS.minCaptureBudget).toLocaleString('en-US')} for a ${values.dryRun ? 'dry run' : 'capture'}, at most ${BACKFILL_LIMITS.maxBudget.toLocaleString('en-US')}. It counts inside the shared 24 h cap, and live capture keeps a reserve.`}
+          description={`At least ${formatCount(values.dryRun ? BACKFILL_LIMITS.minDryRunBudget : BACKFILL_LIMITS.minCaptureBudget)} for a ${values.dryRun ? 'dry run' : 'capture'}, at most ${formatCount(BACKFILL_LIMITS.maxBudget)}. It counts inside the shared 24 h cap, and live capture keeps a reserve.`}
           maw={360}
           styles={MONO_INPUT}
         />
@@ -221,7 +242,7 @@ export function BackfillForm({ status }: { status: AutomationStatus }) {
           <Text size="sm" fw={600}>
             {filtersOpen ? '▾' : '▸'} Filters (optional)
             {filtered && (
-              <Text span size="sm" c="amber" fw={400}>
+              <Text span size="sm" c="orange" fw={400}>
                 {' '}
                 · filtered
               </Text>
@@ -253,7 +274,7 @@ export function BackfillForm({ status }: { status: AutomationStatus }) {
           </Stack>
         )}
         {filtered && (
-          <Alert color="amber" variant="light" title="Filtered backfill">
+          <Alert color="orange" variant="light" title="Filtered backfill">
             A token list, or a minimum above {BACKFILL_LIMITS.captureMinSol} SOL, makes this
             backfill filtered. It captures those buys, but its days do not count as covered and it
             does not count toward day verdicts.
@@ -272,13 +293,16 @@ export function BackfillForm({ status }: { status: AutomationStatus }) {
             )}
           </Alert>
         )}
-        <Group gap="sm">
+        <Stack gap={4} align="flex-start">
           <Button type="submit" loading={create.isPending}>
-            {values.dryRun
-              ? 'Start dry run'
-              : `Start capture backfill (spends up to ${budgetNumber.toLocaleString('en-US')} requests)`}
+            {values.dryRun ? 'Start dry run' : 'Start capture backfill'}
           </Button>
-        </Group>
+          <Text size="xs" c="dimmed">
+            {values.dryRun
+              ? `Spends discovery requests only, up to ${formatCount(budgetNumber)}; nothing is captured.`
+              : `Spends up to ${formatCount(budgetNumber)} requests.`}
+          </Text>
+        </Stack>
       </Stack>
     </form>
   );

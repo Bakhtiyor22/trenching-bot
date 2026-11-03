@@ -23,20 +23,43 @@ describe('API usage page', () => {
     expect(screen.getByText('response bodies, last hour')).toBeInTheDocument();
     expect(screen.getByText('HTTP 429 answers, retried automatically')).toBeInTheDocument();
     expect(screen.getByText('transactions, no request sent')).toBeInTheDocument();
-    expect(
-      within(screen.getByRole('table'))
-        .getAllByRole('columnheader')
-        .some((cell) => cell.getAttribute('scope') === 'colgroup'),
-    ).toBe(true);
+    const table = screen.getByRole('table');
+    // One row per call, with the provider in the sticky first column (no provider group rows).
+    expect(within(table).getAllByRole('row')).toHaveLength(3);
+    expect(within(table).getByRole('columnheader', { name: 'API' })).toHaveClass('console-sticky');
+    expect(within(table).getByRole('columnheader', { name: 'Requests' })).toHaveStyle({
+      textAlign: 'right',
+    });
+    expect(within(table).getByText('Binance')).toHaveClass('console-sticky');
     expect(
       screen.getByText('your configured provider; address hidden because it can contain a key'),
     ).toBeInTheDocument();
     expect(screen.getByText('public market data, no key')).toBeInTheDocument();
-    expect(screen.getAllByText('2.5 MB').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2.4 MB').length).toBeGreaterThan(0);
     expect(screen.getByText('Market step')).toBeInTheDocument();
     expect(screen.getByText(/Gradle CLI captures are not counted/)).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Last hour' })).toBeChecked();
     await user.click(screen.getByText('Last 24 hours'));
     expect(router.state.location.search).toContain('period=LAST_24_HOURS');
+    expect(screen.getByRole('radio', { name: 'Last 24 hours' })).toBeChecked();
+  });
+
+  it('keeps the report on screen when a refresh fails', async () => {
+    const { user } = renderPage(<ApiUsagePage />, { path: '/usage', url: '/usage' });
+    expect(await screen.findByText('getTransaction')).toBeInTheDocument();
+    server.use(
+      http.get('/api/usage', () =>
+        HttpResponse.json(
+          { code: 'UNAVAILABLE', message: 'Backend unreachable' },
+          { status: 503 },
+        ),
+      ),
+    );
+    await user.click(screen.getByRole('button', { name: 'Refresh usage' }));
+    expect(await screen.findByText(/Couldn.t refresh/)).toBeInTheDocument();
+    expect(screen.getByText('getTransaction')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'API usage totals' })).toBeInTheDocument();
+    expect(screen.queryByText('Could not load API usage')).not.toBeInTheDocument();
   });
 
   it('offers every capture after paging beyond the first twenty', async () => {

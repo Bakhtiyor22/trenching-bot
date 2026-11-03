@@ -1,92 +1,40 @@
-import { Anchor, Badge, Box, Group, Stack, Text } from '@mantine/core';
+import { Anchor, Stack, Text } from '@mantine/core';
 import { Link } from 'react-router';
 import type { AutomationBackfill, BackfillState } from '../../api/automation';
 import { ApiError } from '../../api/client';
+import { Meter } from '../../components/Meter';
+import { StatusChip, type StatusTone } from '../../components/StatusChip';
+import { formatCount } from '../../lib/format';
 import { paths } from '../../paths';
 import { backfillStateText, REFUSAL_TEXT, scanFraction, zoneDateTime } from './automationModel';
 
-const STATE_STYLE: Record<
-  BackfillState,
-  { color: string; glyph: string; variant: 'light' | 'outline' }
-> = {
-  QUEUED: { color: 'gray', glyph: '…', variant: 'outline' },
-  SCANNING: { color: 'blue', glyph: '●', variant: 'light' },
-  CAPTURING: { color: 'amber', glyph: '●', variant: 'light' },
-  DONE: { color: 'blue', glyph: '✓', variant: 'light' },
-  STOPPED_BUDGET: { color: 'red', glyph: '■', variant: 'light' },
-  CANCELLED: { color: 'gray', glyph: '✕', variant: 'light' },
+const STATE_CHIP: Record<BackfillState, { tone: StatusTone; glyph?: string }> = {
+  QUEUED: { tone: 'pending', glyph: '◷' },
+  SCANNING: { tone: 'running' },
+  CAPTURING: { tone: 'running' },
+  DONE: { tone: 'success', glyph: '✓' },
+  STOPPED_BUDGET: { tone: 'attention', glyph: '▲' },
+  CANCELLED: { tone: 'neutral', glyph: '–' },
 };
 
-/** A backfill's state with its glyph and word. */
+/** A backfill's state with its glyph (or running dot) and word. */
 export function BackfillStateChip({ state }: { state: BackfillState }) {
-  const style = STATE_STYLE[state];
+  const chip = STATE_CHIP[state];
   return (
-    <Badge
-      color={style.color}
-      variant={style.variant}
-      radius="xl"
-      tt="none"
-      leftSection={<span aria-hidden="true">{style.glyph}</span>}
-      style={{ whiteSpace: 'nowrap' }}
-    >
+    <StatusChip tone={chip.tone} glyph={chip.glyph}>
       {backfillStateText[state]}
-    </Badge>
+    </StatusChip>
   );
 }
 
-function Bar({
-  parts,
-  label,
-  max,
-}: {
-  parts: Array<{ value: number; color: string }>;
-  label: string;
-  max: number;
-}) {
-  const total = parts.reduce((sum, p) => sum + p.value, 0);
-  return (
-    <Group
-      gap={2}
-      wrap="nowrap"
-      h={8}
-      role="meter"
-      aria-label={label}
-      aria-valuemin={0}
-      aria-valuemax={max}
-      aria-valuenow={Math.min(total, max)}
-      style={{
-        borderRadius: 4,
-        overflow: 'hidden',
-        background: 'var(--mantine-color-default-border)',
-      }}
-    >
-      {parts
-        .filter((p) => p.value > 0)
-        .map((p, i) => (
-          <Box
-            key={i}
-            h="100%"
-            style={{
-              width: `${Math.min(100, (p.value / Math.max(1, max)) * 100)}%`,
-              background: p.color,
-            }}
-          />
-        ))}
-    </Group>
-  );
-}
-
-/** How far back the newest-first scan has read, as a bar and in words. */
+/** How far back the newest-first scan has read, as a meter and in words. */
 export function ScanProgress({ backfill, zone }: { backfill: AutomationBackfill; zone: string }) {
   const fraction = scanFraction(backfill);
   const done = fraction >= 1 || backfill.state === 'DONE';
+  const percent = Math.round(fraction * 100);
   return (
     <Stack gap={6}>
-      <Bar
-        parts={[{ value: Math.round(fraction * 100), color: 'var(--automation-replayed)' }]}
-        label="Scan progress, percent"
-        max={100}
-      />
+      <Meter label="Scan progress, percent" value={percent} max={100} />
       <Text size="sm">
         {backfill.scannedTo == null ? (
           backfill.state === 'QUEUED' ? (
@@ -97,7 +45,7 @@ export function ScanProgress({ backfill, zone }: { backfill: AutomationBackfill;
         ) : (
           <>
             Read back to <strong>{zoneDateTime(backfill.scannedTo, zone)}</strong>
-            {done ? ' · finished' : ` · ${Math.round(fraction * 100)}%`}
+            {done ? ' · finished' : ` · ${percent}%`}
           </>
         )}
       </Text>
@@ -105,32 +53,28 @@ export function ScanProgress({ backfill, zone }: { backfill: AutomationBackfill;
   );
 }
 
-/** Requests spent against the budget, split into discovery and captures. */
+/** Requests spent against the budget, with the split into discovery and captures in words. */
 export function BudgetMeter({ backfill }: { backfill: AutomationBackfill }) {
   return (
     <Stack gap={6}>
-      <Bar
-        parts={[
-          { value: backfill.discoveryRequests, color: 'var(--automation-skipped)' },
-          { value: backfill.itemRequests, color: 'var(--automation-replayed)' },
-        ]}
+      <Meter
         label="Requests spent of the budget"
+        value={backfill.requestsSpent}
         max={backfill.requestBudget}
       />
       <Text size="sm" ff="monospace">
-        {backfill.requestsSpent.toLocaleString('en-US')} /{' '}
-        {backfill.requestBudget.toLocaleString('en-US')}
+        {formatCount(backfill.requestsSpent)} / {formatCount(backfill.requestBudget)}
         <Text span size="sm" c="dimmed" ff="inherit">
           {' '}
-          · {backfill.discoveryRequests.toLocaleString('en-US')} discovery +{' '}
-          {backfill.itemRequests.toLocaleString('en-US')} captures
+          · {formatCount(backfill.discoveryRequests)} discovery +{' '}
+          {formatCount(backfill.itemRequests)} captures
         </Text>
       </Text>
     </Stack>
   );
 }
 
-/** A plain explanation of a backfill or run-now refusal; render it only when {@link isBackfillRefusal} holds. */
+/** A plain explanation of a backfill or run-now refusal; render it only when `isBackfillRefusal` holds. */
 export function BackfillRefusal({
   error,
   activeBackfillId,

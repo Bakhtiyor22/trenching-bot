@@ -1,15 +1,4 @@
-import {
-  ActionIcon,
-  Alert,
-  Box,
-  Button,
-  Group,
-  SimpleGrid,
-  Stack,
-  Text,
-  TextInput,
-  UnstyledButton,
-} from '@mantine/core';
+import { ActionIcon, Box, Button, Group, Stack, Text, TextInput, UnstyledButton } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
@@ -21,12 +10,16 @@ import { marketRange, marketValue, shortPrice } from '../../charts/marketSummary
 import { chartExtent } from '../../charts/priceChart';
 import { chartSearchParams, useChartView } from '../../charts/chartViewState';
 import { exactUnits } from '../../charts/tradeWallets';
-import { Section } from '../../components/Panels';
-import { SourceLinks } from '../../components/SourceLinks';
-import { ErrorState, LoadingState } from '../../components/StateViews';
+import { Pnl, Timestamp } from '../../components/DisplayValues';
+import { IconChevronLeft, IconChevronRight } from '../../components/Icons';
+import { Kpi, KpiStrip, PageHeader, Section } from '../../components/Panels';
+import { RefreshNotice } from '../../components/QueryView';
+import { sourceCrumbs } from '../runs/sourceCrumbs';
+import { StatusChip } from '../../components/StatusChip';
+import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
 import { TradeChart } from '../../components/TradeChart';
-import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
-import { mintLabel } from '../../lib/format';
+import { formatDecimal, formatSignedDecimal, trimFractionZeros } from '../../lib/decimal';
+import { mintLabel, shortId } from '../../lib/format';
 import { formatPercent, levelPercent } from '../../lib/percent';
 import { paths } from '../../paths';
 import { changedSettings, SETTING_LABELS } from '../runs/configLabels';
@@ -37,9 +30,6 @@ import { clampRange, type TimeRange } from './chartRange';
 function localInput(ms: number): string {
   const date = new Date(ms);
   return new Date(ms - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 19);
-}
-function clock(iso: string): string {
-  return new Date(iso).toLocaleTimeString('en-GB', { hour12: false });
 }
 function exact(value: string): string {
   return formatDecimal(trimFractionZeros(value)).replace(/^-/, '−');
@@ -79,7 +69,7 @@ function RangeInputs({
         step="1"
         value={from}
         size="xs"
-        w={205}
+        w={{ base: '100%', xs: 205 }}
         onChange={(event) => setFrom(event.currentTarget.value)}
         onBlur={apply}
         onKeyDown={(event) => {
@@ -96,7 +86,7 @@ function RangeInputs({
         step="1"
         value={to}
         size="xs"
-        w={205}
+        w={{ base: '100%', xs: 205 }}
         onChange={(event) => setTo(event.currentTarget.value)}
         onBlur={apply}
         onKeyDown={(event) => {
@@ -157,7 +147,9 @@ function scenarioEvents(
     entryAt: `${exact(scenario.notional)} SOL${scenario.fill ? ` · fees ${levelPercent(scenario.fill.feePercent, scenario.fill.feeBps)} · impact ${levelPercent(scenario.fill.priceImpactPercent, scenario.fill.priceImpactBps)}` : ''}`,
     exitTriggerAt: EXIT_TRIGGER_TEXT[triggerReason ?? '']?.detail ?? 'The exit was triggered.',
     exitAt: `${
-      outcome.pnl !== null ? `Net result ${exact(outcome.pnl)} SOL` : 'No realized result recorded.'
+      outcome.pnl !== null
+        ? `Net result ${formatSignedDecimal(outcome.pnl, { trim: true })} SOL`
+        : 'No realized result recorded.'
     }${standing ? ' · sold against the standing curve' : ''}`,
   };
   // The short labels above cut tiny prices; the exact values stay one hover away.
@@ -260,8 +252,14 @@ export function RunChartPage() {
       return next;
     });
   }
-  if (run.isPending) return <LoadingState label="Loading run chart…" />;
-  if (run.isError) return <ErrorState error={run.error} onRetry={() => void run.refetch()} />;
+  // A failed refresh keeps the chart; the full error only shows when the run never loaded.
+  if (!run.data) {
+    return run.isError ? (
+      <ErrorState error={run.error} onRetry={() => void run.refetch()} />
+    ) : (
+      <LoadingState label="Loading run chart…" />
+    );
+  }
   const changes = preset.data
     ? changedSettings(formValuesFrom(run.data.config, null), preset.data.config)
     : [];
@@ -279,77 +277,50 @@ export function RunChartPage() {
   const outcome = scenario ? scenarioOutcome(scenario) : null;
   const tokenIndex = pairs.findIndex((item) => pairKey(item) === key);
   const events = scenarioEvents(scenario, latestChart, full.data);
+  const tokenTitle = pair ? `${mintLabel(pair.base)} / SOL` : 'No token';
   return (
     <Stack gap="lg">
-      <SourceLinks source={run.data.source} runId={id} chart />
-      <Section title="Results chart">
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-          <Stack gap={4}>
-            <Text size="xs" c="dimmed">
-              Token
-            </Text>
-            <Text size="sm">{pair ? `${mintLabel(pair.base)} / SOL` : 'No token'}</Text>
-          </Stack>
-          <Stack gap={4}>
-            <Text size="xs" c="dimmed">
-              Result
-            </Text>
-            <Text size="sm">
-              {outcome?.label ?? 'No result'}
-              {outcome?.pnl != null && ` · ${exact(outcome.pnl)} SOL`}
-            </Text>
-          </Stack>
-          <Stack gap={4}>
-            <Text size="xs" c="dimmed">
-              Settings
-            </Text>
-            <Text size="sm">{settings}</Text>
-          </Stack>
-          <Stack gap={4}>
-            <Text size="xs" c="dimmed">
-              Simulator
-            </Text>
-            <Text size="sm">
-              {run.data.config.strategyName} v{run.data.config.strategyVersion} · run{' '}
-              {new Date(run.data.run.createdAt).toLocaleString('en-GB', {
-                day: 'numeric',
-                month: 'short',
-                hour: '2-digit',
-                minute: '2-digit',
-                hour12: false,
-              })}
-            </Text>
-          </Stack>
-        </SimpleGrid>
-        <Group justify="space-between" mt="md" gap="xs">
-          <Group gap="xs" aria-label="Token stepper">
-            <ActionIcon
-              variant="default"
-              aria-label="Previous token"
-              disabled={tokenIndex <= 0}
-              onClick={() => chooseToken(tokenIndex - 1)}
-            >
-              ‹
-            </ActionIcon>
-            <Text size="sm">
-              Token {pairs.length ? tokenIndex + 1 : 0} of {pairs.length}
-            </Text>
-            <ActionIcon
-              variant="default"
-              aria-label="Next token"
-              disabled={tokenIndex >= pairs.length - 1}
-              onClick={() => chooseToken(tokenIndex + 1)}
-            >
-              ›
-            </ActionIcon>
-          </Group>
-          <Group gap="xs">
+      <PageHeader
+        breadcrumbs={[
+          { label: 'Runs', to: paths.runs },
+          ...sourceCrumbs(run.data.source),
+          { label: `Run ${shortId(id)}`, to: paths.run(id) },
+        ]}
+        title={`Chart · ${tokenTitle}`}
+        status={outcome && <StatusChip tone={outcome.tone} glyph={outcome.glyph}>{outcome.label}</StatusChip>}
+        description="Market cap and trades of one token in this run, with Decu's buys and our paper fills."
+        actions={
+          <>
+            <Group gap={6} wrap="nowrap" role="group" aria-label="Token stepper">
+              <ActionIcon
+                variant="default"
+                size="lg"
+                aria-label="Previous token"
+                disabled={tokenIndex <= 0}
+                onClick={() => chooseToken(tokenIndex - 1)}
+              >
+                <IconChevronLeft size={16} />
+              </ActionIcon>
+              <Text size="sm" style={{ whiteSpace: 'nowrap' }}>
+                Token {pairs.length ? tokenIndex + 1 : 0} of {pairs.length}
+              </Text>
+              <ActionIcon
+                variant="default"
+                size="lg"
+                aria-label="Next token"
+                disabled={tokenIndex >= pairs.length - 1}
+                onClick={() => chooseToken(tokenIndex + 1)}
+              >
+                <IconChevronRight size={16} />
+              </ActionIcon>
+            </Group>
             <Button
               component={Link}
               to={`${paths.run(id)}${chartSearchParams(params, key)}`}
               variant="default"
+              leftSection={<IconChevronLeft size={16} />}
             >
-              ← Back to run
+              Back to run
             </Button>
             {run.data.source?.captureId && (
               <Button
@@ -360,21 +331,69 @@ export function RunChartPage() {
                 Open capture
               </Button>
             )}
-          </Group>
-        </Group>
-      </Section>
+          </>
+        }
+      />
+      {run.isError && (
+        <RefreshNotice error={run.error} updatedAt={run.dataUpdatedAt} onRetry={() => void run.refetch()} />
+      )}
+      <KpiStrip label="This token">
+        <Kpi label="Token" size="sm">
+          {tokenTitle}
+        </Kpi>
+        <Kpi label="Result" size="sm" hint={outcome?.label ?? 'No result'}>
+          {outcome?.pnl != null ? (
+            <Pnl value={outcome.pnl} trim unit="SOL" fz="inherit" fw={500} />
+          ) : (
+            <Text span c="dimmed" inherit>
+              —
+            </Text>
+          )}
+        </Kpi>
+        <Kpi label="Settings" size="sm" text>
+          <Text span inherit style={{ fontFamily: 'var(--mantine-font-family)' }}>
+            {settings}
+          </Text>
+        </Kpi>
+        <Kpi
+          label="Simulator"
+          size="sm"
+          hint={
+            <>
+              Run created <Timestamp iso={run.data.run.createdAt} size="xs" c="dimmed" />
+            </>
+          }
+        >
+          {run.data.config.strategyName} v{run.data.config.strategyVersion}
+        </Kpi>
+      </KpiStrip>
       {!key ? (
-        <Alert>No tokens in this run.</Alert>
-      ) : full.isPending ? (
-        <LoadingState label="Loading recorded window…" />
-      ) : full.isError ? (
-        <ErrorState error={full.error} onRetry={() => void full.refetch()} />
+        <Section title="Chart">
+          <EmptyState
+            title="No tokens in this run"
+            description="The dataset had no confirmed buys against the quote mint, so there is nothing to chart."
+            action={
+              <Button component={Link} to={paths.run(id)} variant="default">
+                Back to run
+              </Button>
+            }
+          />
+        </Section>
+      ) : full.data === undefined ? (
+        full.isError ? (
+          <ErrorState error={full.error} onRetry={() => void full.refetch()} />
+        ) : (
+          <LoadingState label="Loading recorded window…" />
+        )
       ) : (
         range &&
         extent &&
         initialRange && (
           <>
             <Stack gap="sm">
+              {full.isError && (
+                <RefreshNotice error={full.error} updatedAt={full.dataUpdatedAt} onRetry={() => void full.refetch()} />
+              )}
               <RangeInputs
                 key={`${range.from}/${range.to}`}
                 range={range}
@@ -406,13 +425,15 @@ export function RunChartPage() {
                 ← / →, 0 to reset, or F to fit.
               </Text>
             </Stack>
-            <Section title="What happened · click to jump">
-              <Stack component="ol" gap="xs" m={0} pl="lg">
+            <Section title="What happened" hint="Click an event to jump the chart to it.">
+              <Stack component="ol" gap={2} m={0} p={0} style={{ listStyle: 'none' }}>
                 {events.map((event) => (
                   <Box component="li" key={event.name}>
                     <UnstyledButton
-                      w="100%"
+                      className="console-row-button"
+                      px="sm"
                       py="xs"
+                      style={{ borderRadius: 6 }}
                       onClick={() =>
                         chartView.setWindow(
                           clampRange(
@@ -426,9 +447,7 @@ export function RunChartPage() {
                       }
                     >
                       <Group gap="sm">
-                        <Text size="xs" ff="monospace">
-                          {clock(event.at)}
-                        </Text>
+                        <Timestamp iso={event.at} size="xs" ff="monospace" c="dimmed" />
                         <Text size="sm" fw={600}>
                           {event.label}
                         </Text>
@@ -441,14 +460,17 @@ export function RunChartPage() {
                 ))}
               </Stack>
               {!events.length && (
-                <Text size="sm">No event times were recorded for this cycle.</Text>
+                <EmptyState
+                  title="No event times"
+                  description="No event times were recorded for this cycle."
+                />
               )}
             </Section>
             <Section title="How to read this">
               <Stack gap="xs">
                 <Text size="sm">
-                  B: Decu's own buy (observed on chain). Gold diamonds: our simulated paper trades,
-                  never real.
+                  Amber B and S pins: Decu's own buys and sells (observed on chain). Blue diamonds:
+                  our simulated paper trades, never real.
                 </Text>
                 <Text size="sm">
                   Market cap = price × total supply × SOL/USDT at that minute. USDT stands in for

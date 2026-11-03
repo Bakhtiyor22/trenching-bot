@@ -62,8 +62,9 @@ describe('DatasetDetailPage', () => {
     const { user, unmount } = renderDataset(V4_DATASET_ID);
     await user.click(await screen.findByRole('button', { name: 'Valuation information' }));
     expect(await screen.findByText(v4Chart.valuationBasis.label)).toBeInTheDocument();
-    expect(screen.getByText(/pumpfun-standard-supply/)).toBeInTheDocument();
-    expect(screen.getByText(/recorded:SOLUSDT:1m:open/)).toBeInTheDocument();
+    // The chart words the sources and keeps the raw source codes in the titles.
+    expect(screen.getByTitle('pumpfun-standard-supply')).toBeInTheDocument();
+    expect(screen.getByTitle(/recorded:SOLUSDT:1m:open/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Valuation information' }));
     await user.click(screen.getByRole('button', { name: 'Layers' }));
     await user.type(screen.getByRole('textbox', { name: 'Watchlist wallet' }), WATCHED_WALLET);
@@ -99,7 +100,9 @@ describe('DatasetDetailPage', () => {
     const { user } = renderDataset(V4_DATASET_ID);
     await user.click(await screen.findByRole('button', { name: 'Next Decu action' }));
     await user.click(await screen.findByRole('button', { name: /Open action/ }));
-    const row = (await screen.findByText('v4-observation-0')).closest('tr');
+    const row = (
+      await screen.findByRole('button', { name: 'Copy full value: v4-observation-0' })
+    ).closest('tr');
     expect(row).toHaveAttribute('id', 'observation-v4-observation-0');
     expect(row).toHaveAttribute('data-highlighted', 'true');
     expect(screen.queryByText('◇ Bot paper fill')).not.toBeInTheDocument();
@@ -128,7 +131,7 @@ describe('DatasetDetailPage', () => {
     expect(
       within(table).getByRole('button', { name: `Copy full value: ${WATCHED_WALLET}` }),
     ).toBeInTheDocument();
-    expect(within(table).getByText('BUY')).toBeInTheDocument();
+    expect(within(table).getByText('Buy')).toBeInTheDocument();
   });
 
   it('explains a dataset with no pairs without requesting observations', async () => {

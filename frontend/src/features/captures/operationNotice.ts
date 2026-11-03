@@ -7,7 +7,7 @@ export interface OperationNoticeContent {
   /** The specific explanation: the code's plain text, else the backend's message, else a sentence for the state. */
   detail: string;
   code: string | null;
-  color: 'red' | 'amber' | 'gray';
+  color: 'red' | 'orange' | 'gray';
 }
 
 const TITLES: Record<string, string> = {
@@ -50,7 +50,7 @@ export function operationNotice(
     detail: knownReasonText(code) ?? message ?? FALLBACKS[operation.state] ?? title,
     code,
     color:
-      operation.state === 'FAILED' ? 'red' : operation.state === 'CANCELLED' ? 'gray' : 'amber',
+      operation.state === 'FAILED' ? 'red' : operation.state === 'CANCELLED' ? 'gray' : 'orange',
   };
 }
 

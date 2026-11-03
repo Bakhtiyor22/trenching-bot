@@ -60,6 +60,32 @@ export function formatDecimal(
   return fraction === undefined ? `${sign}${grouped}` : `${sign}${grouped}.${fraction}`;
 }
 
+/** The true minus sign (U+2212), wider and easier to read than a hyphen. */
+export const MINUS = '−';
+
+export interface FormatSignedDecimalOptions extends FormatDecimalOptions {
+  /** Drop trailing fraction zeros (the value is unchanged), for a headline figure. Default false. */
+  trim?: boolean;
+}
+
+/**
+ * A signed exact amount for P&L and deltas: "+" before a gain, "−" before a loss, no sign at zero,
+ * every digit kept, so the direction reads without colour. Missing is "—"; a value that is not a
+ * plain decimal is returned unchanged.
+ */
+export function formatSignedDecimal(
+  value: string | null | undefined,
+  { trim = false, group = true }: FormatSignedDecimalOptions = {},
+): string {
+  if (value == null) return '—';
+  const trimmed = value.trim();
+  if (!isDecimalString(trimmed)) return value;
+  const sign = decimalSign(trimmed);
+  const unsigned = trimmed.replace(/^[+-]/, '');
+  const body = formatDecimal(trim ? trimFractionZeros(unsigned) : unsigned, { group });
+  return sign > 0 ? `+${body}` : sign < 0 ? `${MINUS}${body}` : body;
+}
+
 const SUBSCRIPT_DIGITS = '₀₁₂₃₄₅₆₇₈₉';
 /** Below this many leading fractional zeros a price is short enough to show as is. */
 const COMPACT_MIN_ZEROS = 4;

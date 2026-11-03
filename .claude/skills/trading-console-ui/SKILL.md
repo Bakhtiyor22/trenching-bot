@@ -31,7 +31,7 @@ a second, slightly different version is how inconsistency starts.
 | Need | Use | Where |
 |---|---|---|
 | Exact amount, digits untouched | `<Decimal>` / `formatDecimal` | `components/DisplayValues.tsx`, `lib/decimal.ts` |
-| Signed P&L with colour | `<Pnl>`, `pnlTone`, `pnlColor` | same |
+| Signed P&L with colour | `<Pnl>` (signed; `trim` for a headline), `formatSignedDecimal`, `pnlTone`, `pnlColor` | same |
 | Tiny price (`0.0₇8643`) | `compactDecimal` | `lib/decimal.ts` |
 | Sums, sorting, sign of amounts | `addDecimals`, `compareDecimals`, `decimalSign` | `lib/decimal.ts` |
 | Number for a chart coordinate only | `toChartNumber` | `lib/decimal.ts` |
@@ -39,11 +39,14 @@ a second, slightly different version is how inconsistency starts.
 | Time | `<Timestamp>` (local, UTC in tooltip), `<RelativeTime>`; automation clock: `<ZoneTime>`, `<ZoneNote>` | `components/DisplayValues.tsx`, `features/automation/AutomationShared.tsx` |
 | Slot, slot range, counts, bytes, durations | `formatSlot`, `slotRange`, `formatCount`, … | `lib/format.ts` |
 | Address, mint, id | `<ShortId>`, `<Mint>`, `<CopyValue>`, `<PairLabel>` | `components/DisplayValues.tsx` |
-| Page title, panel, KPIs | `PageHeader`, `Section`, `KpiStrip` + `Kpi`, `Stat`, `KeyValueTable` | `components/Panels.tsx` |
+| Page title, tabs, panel, KPIs | `PageHeader` (breadcrumbs, status, meta, tabs), `SubNav`, `Section`, `KpiStrip` + `Kpi` (`size`, `span`, `text`), `Stat`, `KeyValueTable` | `components/Panels.tsx` |
+| A status as glyph + word | `StatusChip` (tones: success, failure, running, attention, pending, neutral, ready) | `components/StatusChip.tsx` |
+| Any bar of counts (cap, share, buy states) | `Meter`, `MeterLegend` | `components/Meter.tsx` |
 | A polled value that changed | `<Flash watch={value}>`, `.console-live-dot` | `components/Panels.tsx`, `styles.css` |
 | Loading / error / empty / provider down | `LoadingState`, `ErrorState`, `EmptyState`, `ProviderErrorState`, `RetryCountdown` | `components/StateViews.tsx` |
+| A query rendered data first (failed refresh keeps data) | `QueryView`, `RefreshNotice` | `components/QueryView.tsx` |
 | Jargon and backend codes | `<Term>` + `lib/glossary.ts`, `codeLabel`, `humanizeCode`, `<CodeText>` | `components/PlainLanguage.tsx`, `lib/codes.ts` |
-| Colours | Mantine theme, `terminal` tokens, CSS variables in `styles.css` | `theme.ts`, `styles.css` |
+| Colours | Mantine `teal`/`red`/`blue`/`orange` (= gain, loss, info, rejected in both schemes), `--console-*` CSS variables, `terminal` / `terminalLight`; charts `useChartTokens()` | `theme.ts`, `styles.css`, `charts/chartTokens.ts` |
 | Charts | `<Chart>` wrapper with the `terminal` ECharts theme | `components/Chart.tsx` |
 | Routes and URL params | `paths`, constants in `paths.ts` | `paths.ts` |
 
@@ -74,10 +77,8 @@ Details, edge cases and percent/bps rules: [references/numbers-and-time.md](refe
 - Gain is `teal` / `terminal.gain`, loss is `red` / `terminal.loss`, zero is `dimmed`. Use
   `pnlColor` / `pnlTone`, never a hand-picked green.
 - Colour is never the only signal: about 1 in 12 men cannot tell this red from this green. Show the
-  sign — `+` for gains, `−` (U+2212) for losses, as `formatPercent` and `SolValue` do. The backend
-  sends `"12.5"`, not `"+12.5"`, so `<Pnl>` and `formatDecimal` alone show a gain by colour only.
-  For a new P&L display use a signed form; if no exact signed helper exists yet, add one to
-  `lib/decimal.ts` (with tests) rather than prefixing `+` inline.
+  sign — `+` for gains, `−` (U+2212) for losses. `<Pnl>` and `formatSignedDecimal` do this (the backend sends
+  `"12.5"`, not `"+12.5"`); never prefix `+` inline.
 - Label what the number is relative to (realized vs worst case, SOL vs USDT, per scenario vs total).
   An unlabelled "+3.2%" invites the wrong conclusion.
 - Rejected scenarios are orange (`terminal.rejected`), deliberately apart from loss red.

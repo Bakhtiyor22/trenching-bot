@@ -174,3 +174,37 @@ export const IconAutomation = (p: IconProps) => (
     <path d="M16 3v4h4" />
   </Icon>
 );
+
+export const IconGauge = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 18a8 8 0 1 1 16 0" />
+    <path d="M12 18l4-6" />
+    <path d="M7.5 18h0M16.5 18h0" />
+  </Icon>
+);
+
+export const IconChevronLeft = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M15 6l-6 6 6 6" />
+  </Icon>
+);
+
+export const IconChevronRight = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M9 6l6 6-6 6" />
+  </Icon>
+);
+
+export const IconSidebar = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M9 4v16" />
+  </Icon>
+);
+
+export const IconRuns = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 19h16" />
+    <path d="M6 15l4-5 3 3 5-7" />
+  </Icon>
+);

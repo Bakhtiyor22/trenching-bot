@@ -45,8 +45,8 @@ A SOL figure converted to USDT carries its provenance (`usdtRateNote`: the rate 
 
 - Gains: `+` and `teal` (`terminal.gain`). Losses: `−` and `red` (`terminal.loss`). Zero: no sign,
   `dimmed`.
-- The sign must be readable without colour. `SolValue` and `formatPercent` do this; `<Pnl>` keeps
-  the string's own sign, so a positive value without `+` shows colour only — prefer a signed display.
+- The sign must be readable without colour. `<Pnl>`, `formatSignedDecimal`, `SolValue` and `formatPercent` do
+  this; a headline may drop trailing zeros (`<Pnl trim>`) as long as the exact string is in its tooltip.
 
 ## Time
 

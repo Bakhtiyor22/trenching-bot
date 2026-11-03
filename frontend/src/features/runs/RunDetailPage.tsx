@@ -1,19 +1,6 @@
-import {
-  Alert,
-  Anchor,
-  Badge,
-  Box,
-  Button,
-  Group,
-  SegmentedControl,
-  SimpleGrid,
-  Stack,
-  Tabs,
-  Text,
-  Title,
-} from '@mantine/core';
+import { Alert, Anchor, Badge, Box, Button, Group, SegmentedControl, SimpleGrid, Stack, Tabs, Text } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import { ApiError } from '../../api/client';
 import { api, pairKey } from '../../api/endpoints';
@@ -38,20 +25,16 @@ import type {
 } from '../../api/types';
 import { chartSearchParams } from '../../charts/chartViewState';
 import { TradeChart } from '../../components/TradeChart';
-import { SourceLinks } from '../../components/SourceLinks';
+import { sourceCrumbs } from './sourceCrumbs';
 import { CopyValue, Decimal, Mint, Pnl, ShortId, Timestamp } from '../../components/DisplayValues';
 import { IconCompare, IconDownload, IconPlay } from '../../components/Icons';
 import { MarketLinks } from '../../components/MarketLinks';
 import { ObservationTable } from '../../components/ObservationTable';
-import {
-  KeyValueTable,
-  Kpi,
-  KPI_VALUE_SIZE,
-  KpiStrip,
-  PageHeader,
-  Section,
-} from '../../components/Panels';
+import { CodeText } from '../../components/PlainLanguage';
+import { KeyValueTable, Kpi, KpiStrip, PageHeader, Section } from '../../components/Panels';
+import { QueryView, RefreshNotice } from '../../components/QueryView';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
+import { codeLabel } from '../../lib/codes';
 import { formatDecimal } from '../../lib/decimal';
 import {
   formatCount,
@@ -77,10 +60,22 @@ import {
 import { CycleList, CycleStory, OutcomeBar, RunLanes } from './RunInspector';
 import { ScenarioCard } from './ScenarioCard';
 
-type RecordTab = 'events' | 'observations' | 'orders' | 'positions';
+const RECORD_TABS = ['events', 'observations', 'orders', 'positions'] as const;
+type RecordTab = (typeof RECORD_TABS)[number];
+const DEFAULT_RECORD_TAB: RecordTab = 'events';
+/** URL parameters this page owns besides the chart's: the stored-records tab and the selected cycle's pair. */
+const RECORDS_PARAM = 'records';
+const PAIR_PARAM = 'pair';
+/** Chart view parameters that belong to one cycle and reset when another cycle is picked. */
+const CYCLE_VIEW_PARAMS = ['from', 'to', 'action', 'fill'];
+
+function parseRecordTab(value: string | null): RecordTab {
+  return RECORD_TABS.find((tab) => tab === value) ?? DEFAULT_RECORD_TAB;
+}
 
 function RunHeader({ detail }: { detail: RunDetail }) {
   const { run, config } = detail;
+  const storage = storageLabel(run.storage);
   return (
     <SimpleGrid cols={{ base: 1, lg: 2 }}>
       <Section title="Run">
@@ -104,7 +99,7 @@ function RunHeader({ detail }: { detail: RunDetail }) {
             ['Result checksum', <ShortId key="rc" value={run.resultChecksum} />],
             ['Quote mint', <Mint key="qm" mint={run.quoteMint} />],
             ['Created', <Timestamp key="ca" iso={run.createdAt} />],
-            ...(storageLabel(run.storage) ? [['Dataset', storageLabel(run.storage)] as [string, string]] : []),
+            ...(storage ? [['Dataset storage', storage] as [string, string]] : []),
           ]}
         />
       </Section>
@@ -152,49 +147,50 @@ function openReasons(scenarios: Scenario[]): string | undefined {
 function RunTotals({ detail, usdt }: { detail: RunDetail; usdt: RunUsdtView | null }) {
   const { run } = detail;
   const reasons = openReasons(detail.scenarios);
+  const unit = mintLabel(run.quoteMint);
   return (
     <KpiStrip label="Outcome">
       {usdt ? (
         <Kpi
           label="Realized P&L (USDT)"
           hint="Net proceeds at each exit minute's rate minus cost at each entry minute's rate"
+          size="hero"
+          span="full"
         >
           {usdt.realizedPnlUsdt == null ? (
-            <Text c="dimmed">— {usdt.realizedPnlUnavailableReason}</Text>
+            <Stack gap={2}>
+              <Text c="dimmed" size="sm">
+                —{usdt.realizedPnlUnavailableReason && ` ${codeLabel(usdt.realizedPnlUnavailableReason)}`}
+              </Text>
+              <CodeText code={usdt.realizedPnlUnavailableReason} />
+            </Stack>
           ) : (
-            <Pnl value={usdt.realizedPnlUsdt} fz={KPI_VALUE_SIZE} fw={500} />
+            <Pnl value={usdt.realizedPnlUsdt} trim unit="USDT" fz="inherit" fw={500} />
           )}
         </Kpi>
       ) : (
-        <Kpi
-          label={`Realized P&L (${mintLabel(run.quoteMint)})`}
-          hint="Exact sum over closed positions"
-        >
-          <Pnl value={run.realizedPnl} fz={KPI_VALUE_SIZE} fw={500} />
+        <Kpi label={`Realized P&L (${unit})`} hint="Exact sum over closed positions" size="hero" span="full">
+          <Pnl value={run.realizedPnl} trim unit={unit} fz="inherit" fw={500} />
         </Kpi>
       )}
       <Kpi label="Outcomes">
         <OutcomeBar scenarios={detail.scenarios} />
       </Kpi>
       <Kpi label="Tokens · entered / no entry">
-        <Text ff="monospace" fz={KPI_VALUE_SIZE} fw={500}>
-          {formatCount(run.scenarioCount)}{' '}
-          <Text span c="dimmed" inherit>
-            ·
-          </Text>{' '}
-          <Text span c="teal" inherit>
-            {formatCount(run.filledCount)}
-          </Text>
-          {' / '}
-          <Text span c={run.rejectedCount > 0 ? 'orange' : undefined} inherit>
-            {formatCount(run.rejectedCount)}
-          </Text>
+        {formatCount(run.scenarioCount)}{' '}
+        <Text span c="dimmed" inherit>
+          ·
+        </Text>{' '}
+        <Text span c="teal" inherit>
+          {formatCount(run.filledCount)}
+        </Text>
+        {' / '}
+        <Text span c={run.rejectedCount > 0 ? 'orange' : undefined} inherit>
+          {formatCount(run.rejectedCount)}
         </Text>
       </Kpi>
       <Kpi label="Open / closed" hint={reasons && `Open: ${reasons}`}>
-        <Text ff="monospace" fz={KPI_VALUE_SIZE} fw={500}>
-          {formatCount(run.openCount)} / {formatCount(run.closedCount)}
-        </Text>
+        {formatCount(run.openCount)} / {formatCount(run.closedCount)}
       </Kpi>
     </KpiStrip>
   );
@@ -218,7 +214,7 @@ function Timeline({
       <Button
         component={Link}
         to={`${paths.runChart(runId)}${chartSearchParams(chartParams, pairKey(cycle.pair))}`}
-        variant="light"
+        variant="default"
       >
         Open chart
       </Button>
@@ -278,14 +274,10 @@ function Scenarios({
   const eventsById = new Map((events.data ?? []).map((e) => [e.eventId, e]));
   const usdtById = new Map((usdt?.scenarios ?? []).map((s) => [s.intentId, s]));
   return (
-    <Stack gap="md">
-      <Stack gap={2}>
-        <Title order={3}>Cycle details</Title>
-        <Text size="sm" c="dimmed">
-          One per token, from the wallet's first buy of it. Later buys of the same token start no
-          cycle.
-        </Text>
-      </Stack>
+    <Section
+      title="Cycle details"
+      hint="One per token, from the wallet's first buy of it. Later buys of the same token start no cycle."
+    >
       <SimpleGrid cols={{ base: 1, md: 2, xl: 3 }}>
         {scenarios.map((s) => (
           <Stack
@@ -305,7 +297,7 @@ function Scenarios({
           </Stack>
         ))}
       </SimpleGrid>
-    </Stack>
+    </Section>
   );
 }
 
@@ -336,63 +328,51 @@ function RecordTabs({
   const orders = useRunOrders(runId, tab === 'orders');
   const positions = useRunPositions(runId, tab === 'positions');
 
-  const panel = (
-    query: { isPending: boolean; isError: boolean; error: unknown; refetch: () => unknown },
-    content: () => ReactNode,
-  ) =>
-    query.isPending ? (
-      <LoadingState />
-    ) : query.isError ? (
-      <ErrorState error={query.error} onRetry={() => void query.refetch()} />
-    ) : (
-      content()
-    );
-
   return (
     <Section title="Stored records">
-      <Tabs
-        value={tab}
-        onChange={(value) => value && onTabChange(value as RecordTab)}
-        keepMounted={false}
-      >
-        <Tabs.List mb="md">
+      <Tabs value={tab} onChange={(value) => value && onTabChange(parseRecordTab(value))} keepMounted={false}>
+        <Tabs.List mb="md" style={{ flexWrap: 'nowrap', overflowX: 'auto' }}>
           <Tabs.Tab value="events">Events</Tabs.Tab>
           <Tabs.Tab value="observations">Observations</Tabs.Tab>
           <Tabs.Tab value="orders">Orders &amp; fills</Tabs.Tab>
           <Tabs.Tab value="positions">Positions</Tabs.Tab>
         </Tabs.List>
         <Tabs.Panel value="events">
-          {panel(events, () => (
-            <EventsTable events={events.data ?? []} />
-          ))}
+          <QueryView query={events}>{(data) => <EventsTable events={data} />}</QueryView>
         </Tabs.Panel>
         <Tabs.Panel value="observations">
-          {panel(observations, () => (
-            <ObservationTable
-              key={navigationRequest}
-              observations={observations.data ?? []}
-              usdt={usdt?.observations}
-              selectedId={selectedObservation}
-            />
-          ))}
+          <QueryView query={observations}>
+            {(data) => (
+              <ObservationTable
+                key={navigationRequest}
+                observations={data}
+                usdt={usdt?.observations}
+                selectedId={selectedObservation}
+              />
+            )}
+          </QueryView>
         </Tabs.Panel>
         <Tabs.Panel value="orders">
-          {panel(orders, () => (
-            <OrdersTable
-              key={navigationRequest}
-              orders={orders.data ?? []}
-              selectedIntentId={selectedFill?.phase === 'ENTRY' ? selectedFill.intentId : null}
-            />
-          ))}
+          <QueryView query={orders}>
+            {(data) => (
+              <OrdersTable
+                key={navigationRequest}
+                orders={data}
+                selectedIntentId={selectedFill?.phase === 'ENTRY' ? selectedFill.intentId : null}
+              />
+            )}
+          </QueryView>
         </Tabs.Panel>
         <Tabs.Panel value="positions">
-          {panel(positions, () => (
-            <PositionsTable
-              key={navigationRequest}
-              positions={positions.data ?? []}
-              selectedIntentId={selectedFill?.phase === 'EXIT' ? selectedFill.intentId : null}
-            />
-          ))}
+          <QueryView query={positions}>
+            {(data) => (
+              <PositionsTable
+                key={navigationRequest}
+                positions={data}
+                selectedIntentId={selectedFill?.phase === 'EXIT' ? selectedFill.intentId : null}
+              />
+            )}
+          </QueryView>
         </Tabs.Panel>
       </Tabs>
     </Section>
@@ -429,9 +409,9 @@ function SolPrice() {
       color="gray"
       tt="none"
       size="lg"
-      title="Binance SOLUSDT, refreshed every 30 seconds"
+      title={unavailableReason ? `Binance SOLUSDT · ${unavailableReason}` : 'Binance SOLUSDT, refreshed every 30 seconds'}
     >
-      {rate ? `1 SOL = ${rate} USDT` : `SOL price unavailable: ${unavailableReason}`}
+      {rate ? `1 SOL = ${rate} USDT` : `SOL price unavailable${unavailableReason ? `: ${codeLabel(unavailableReason)}` : ''}`}
     </Badge>
   );
 }
@@ -455,30 +435,65 @@ function RunDataset({ datasetId }: { datasetId: string }) {
     </Anchor>
   );
 }
+
+/** The selected cycle and the stored-records tab, both in the URL so a link reopens the same view. */
+function useRunViewParams(cycles: Scenario[]) {
+  const [params, setParams] = useSearchParams();
+  const requestedPair = params.get(PAIR_PARAM);
+  const selected = Math.max(
+    0,
+    cycles.findIndex((cycle) => pairKey(cycle.pair) === requestedPair),
+  );
+  // The tab is state mirrored into the URL after render: opening a chart action switches it in the same click
+  // that the chart writes its own selection, and two search-param writes in one tick would drop one of them.
+  const [recordTab, setRecordTab] = useState(() => parseRecordTab(params.get(RECORDS_PARAM)));
+  const urlTab = params.get(RECORDS_PARAM);
+  const wantedTab = recordTab === DEFAULT_RECORD_TAB ? null : recordTab;
+  useEffect(() => {
+    if (urlTab === wantedTab) return;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (wantedTab) next.set(RECORDS_PARAM, wantedTab);
+        else next.delete(RECORDS_PARAM);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [urlTab, wantedTab, setParams]);
+  /** `resetView` drops the previous cycle's chart window and selected action, as the chart page does. */
+  const selectCycle = (index: number, resetView = true) => {
+    const cycle = cycles[index];
+    if (!cycle) return;
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        if (next.get(PAIR_PARAM) === pairKey(cycle.pair) && !resetView) return current;
+        next.set(PAIR_PARAM, pairKey(cycle.pair));
+        if (resetView) for (const key of CYCLE_VIEW_PARAMS) next.delete(key);
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  return { selected, selectCycle, recordTab, setRecordTab };
+}
+
 export function RunDetailPage() {
   const { id = '' } = useParams();
   const location = useLocation();
   const navigationState = location.state as RunStartNavigationState | null;
   const run = useRun(id);
-  const [chartParams] = useSearchParams();
   const [usdtSelected, setUsdtSelected] = useQuoteCurrency();
   const solQuoted = run.data?.run.quoteMint === WRAPPED_SOL_MINT;
   const usdtQuery = useRunUsdt(id, solQuoted && usdtSelected);
-  const [selectedIndex, setSelected] = useState<number | null>(null);
-  const [recordTab, setRecordTab] = useState<RecordTab>('events');
   const [selectedObservation, setSelectedObservation] = useState<string | null>(null);
   const [selectedFill, setSelectedFill] = useState<PaperChartFill | null>(null);
   const [navigationRequest, setNavigationRequest] = useState(0);
   const cycles = run.data ? byFirstBuy(run.data.scenarios) : [];
-  const selected =
-    selectedIndex ??
-    Math.max(
-      0,
-      cycles.findIndex((cycle) => pairKey(cycle.pair) === chartParams.get('pair')),
-    );
+  const { selected, selectCycle, recordTab, setRecordTab } = useRunViewParams(cycles);
   const step = (by: number) => {
-    if (cycles.length > 0)
-      setSelected((current) => ((current ?? selected) + by + cycles.length) % cycles.length);
+    if (cycles.length > 0) selectCycle((selected + by + cycles.length) % cycles.length);
   };
 
   useHotkeys([
@@ -487,15 +502,14 @@ export function RunDetailPage() {
     ['u', () => solQuoted && setUsdtSelected(!usdtSelected)],
   ]);
 
-  if (run.isPending) return <LoadingState label="Loading run…" />;
-  if (run.isError)
-    return (
-      <ErrorState
-        error={run.error}
-        title="Could not load the run"
-        onRetry={() => void run.refetch()}
-      />
+  // A failed refresh keeps the run on screen; the full error only shows when nothing was loaded.
+  if (!run.data) {
+    return run.isError ? (
+      <ErrorState error={run.error} title="Could not load the run" onRetry={() => void run.refetch()} />
+    ) : (
+      <LoadingState label="Loading run…" />
     );
+  }
 
   const detail = run.data;
   const unit = mintLabel(detail.run.quoteMint);
@@ -518,7 +532,7 @@ export function RunDetailPage() {
         pairKey(cycle.pair) === pairKey(current?.pair ?? cycle.pair),
     );
     if (cycleIndex >= 0) {
-      setSelected(cycleIndex);
+      selectCycle(cycleIndex, false);
       document
         .getElementById(`cycle-${encodeURIComponent(cycles[cycleIndex]!.intentId)}`)
         ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -532,16 +546,21 @@ export function RunDetailPage() {
   };
   return (
     <Stack gap="lg">
-      <SourceLinks source={detail.source} runId={detail.run.id} />
       <PageHeader
+        breadcrumbs={[{ label: 'Runs', to: paths.runs }, ...sourceCrumbs(detail.source)]}
         title={
-          <Group gap="xs">
+          <Group gap="xs" component="span" wrap="nowrap">
             Run{' '}
             <Text span ff="monospace" inherit>
               {shortId(detail.run.id)}
             </Text>
             <CopyValue value={detail.run.id} label="Copy run id" />
           </Group>
+        }
+        meta={
+          <>
+            Engine {detail.run.engineVersion} · created <Timestamp iso={detail.run.createdAt} size="xs" c="dimmed" />
+          </>
         }
         description="A persisted, immutable replay run. Pick a cycle to follow it on the chart; J and K step through them."
         actions={
@@ -577,6 +596,7 @@ export function RunDetailPage() {
               component="a"
               href={api.runReportUrl(detail.run.id)}
               download={`run-${detail.run.id}.json`}
+              variant="subtle"
               leftSection={<IconDownload size={16} />}
             >
               Download report
@@ -584,19 +604,25 @@ export function RunDetailPage() {
           </>
         }
       />
+      {run.isError && (
+        <RefreshNotice error={run.error} updatedAt={run.dataUpdatedAt} onRetry={() => void run.refetch()} />
+      )}
       {navigationState?.created === false && (
-        <Alert color="blue" variant="light" title="Run already existed">
+        <Alert color="gray" variant="light" title="Run already existed">
           This exact run already existed — identical dataset, config and engine produce the same run
           id.
         </Alert>
       )}
       {usdtView?.unavailableReason && (
-        <Alert color="yellow" variant="light" title="USDT view unavailable">
-          Values stay in {unit}: {usdtView.unavailableReason}
+        <Alert color="orange" variant="light" title="USDT view unavailable">
+          <Text size="sm">
+            Values stay in {unit}: {codeLabel(usdtView.unavailableReason)}
+          </Text>
+          <CodeText code={usdtView.unavailableReason} />
         </Alert>
       )}
-      {usdtQuery.isError && usdtSelected && (
-        <Alert color="yellow" variant="light" title="USDT view unavailable">
+      {usdtQuery.isError && !usdtQuery.data && usdtSelected && (
+        <Alert color="orange" variant="light" title="USDT view unavailable">
           Values stay in {unit}.
         </Alert>
       )}
@@ -619,12 +645,7 @@ export function RunDetailPage() {
             }}
           >
             <Box style={{ flex: '1 1 300px', minWidth: 0 }}>
-              <CycleList
-                scenarios={cycles}
-                selected={selected}
-                onSelect={setSelected}
-                unit={unit}
-              />
+              <CycleList scenarios={cycles} selected={selected} onSelect={selectCycle} unit={unit} />
             </Box>
             <Stack gap="lg" style={{ flex: '3 1 560px', minWidth: 0 }}>
               <Timeline
@@ -639,7 +660,7 @@ export function RunDetailPage() {
           <RunLanes
             scenarios={cycles}
             selected={selected}
-            onSelect={setSelected}
+            onSelect={selectCycle}
             unit={unit}
             config={detail.config}
             millisPerSlot={detail.millisPerSlot}

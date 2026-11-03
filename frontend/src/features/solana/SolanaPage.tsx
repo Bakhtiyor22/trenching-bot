@@ -1,6 +1,5 @@
 import {
   Alert,
-  Badge,
   Button,
   Code,
   Group,
@@ -16,12 +15,26 @@ import { ApiError, errorMessage } from '../../api/client';
 import { useAddressCheck, useSolanaCheck, useSolanaStatus } from '../../api/queries';
 import type { AddressCheck, SolanaCheck } from '../../api/types';
 import { ShortId, Timestamp } from '../../components/DisplayValues';
-import { IconAlert, IconCheck, IconSatellite, IconX } from '../../components/Icons';
+import { IconCheck, IconInfo, IconSatellite, IconX } from '../../components/Icons';
 import { KeyValueTable, PageHeader, Section } from '../../components/Panels';
-import { ErrorState, LoadingState } from '../../components/StateViews';
+import { CodeText } from '../../components/PlainLanguage';
+import { QueryView } from '../../components/QueryView';
+import { ProviderErrorState } from '../../components/StateViews';
+import { StatusChip } from '../../components/StatusChip';
 import { isSolanaAddress } from '../../lib/base58';
-import { formatSlot } from '../../lib/format';
-import { clusterColor, outcomeColor, outcomeLabel } from './solanaOutcome';
+import { formatCount, formatSlot } from '../../lib/format';
+import {
+  clusterLabel,
+  isKnownOutcome,
+  outcomeAlertColor,
+  outcomeLabel,
+  outcomeTone,
+  toneGlyph,
+} from './solanaOutcome';
+
+/** Error code of an address check when no RPC is configured: a setup state, not a provider failure. */
+const NOT_CONFIGURED_CODE = 'SOLANA_NOT_CONFIGURED';
+const CACHE_NOTE = 'Results are cached for 30 s so repeated clicks do not spend RPC quota';
 
 function NotConfiguredHelp() {
   return (
@@ -35,46 +48,71 @@ function NotConfiguredHelp() {
   );
 }
 
+/** An outcome as a chip (glyph and word); an outcome without a written label also shows its code. */
+function OutcomeChip({ outcome }: { outcome: string }) {
+  const tone = outcomeTone(outcome);
+  return (
+    <Stack gap={2}>
+      <StatusChip tone={tone} glyph={toneGlyph(tone)}>
+        {outcomeLabel(outcome)}
+      </StatusChip>
+      {!isKnownOutcome(outcome) && <CodeText code={outcome} />}
+    </Stack>
+  );
+}
+
+/** A cluster name in words, neutral for every cluster, with the name the node reported as its code. */
+function Cluster({ cluster }: { cluster: string | null | undefined }) {
+  if (!cluster) return <>—</>;
+  return (
+    <Stack gap={2} align="flex-start">
+      <StatusChip tone="neutral">{clusterLabel(cluster)}</StatusChip>
+      <CodeText code={cluster} />
+    </Stack>
+  );
+}
+
+function ResultHeader({ outcome, cached, checkedAt }: { outcome: string; cached: boolean; checkedAt: string }) {
+  return (
+    <Group gap="sm" align="flex-start">
+      <OutcomeChip outcome={outcome} />
+      {cached && (
+        <StatusChip tone="neutral" glyph="◷" title={CACHE_NOTE}>
+          Cached result
+        </StatusChip>
+      )}
+      <Text size="sm" c="dimmed">
+        Checked <Timestamp iso={checkedAt} size="sm" />
+      </Text>
+    </Group>
+  );
+}
+
+function OutcomeMessage({ outcome, message }: { outcome: string; message: string | null }) {
+  if (!message) return null;
+  return (
+    <Alert color={outcomeAlertColor(outcome)} variant="light" p="xs">
+      <Text size="sm">{message}</Text>
+    </Alert>
+  );
+}
+
 function CheckResult({ check }: { check: SolanaCheck }) {
-  const color = outcomeColor(check.outcome);
   return (
     <Stack gap="sm">
-      <Group gap="sm">
-        <Badge color={color} variant="filled" size="lg">
-          {outcomeLabel(check.outcome)}
-        </Badge>
-        {check.cached && (
-          <Badge color="gray" variant="outline" title="Results are cached for 30 s so repeated clicks do not spend RPC quota">
-            Cached result
-          </Badge>
-        )}
-        <Text size="sm" c="dimmed">
-          Checked <Timestamp iso={check.checkedAt} size="sm" />
-        </Text>
-      </Group>
+      <ResultHeader outcome={check.outcome} cached={check.cached} checkedAt={check.checkedAt} />
       <KeyValueTable
         rows={[
-          ['Latency', check.latencyMs == null ? '—' : `${check.latencyMs} ms`],
+          ['Latency', check.latencyMs == null ? '—' : `${formatCount(check.latencyMs)} ms`],
           ['Node version', check.version ?? '—'],
           ['Slot', formatSlot(check.slot)],
-          [
-            'Cluster',
-            check.cluster ? (
-              <Badge key="c" color={clusterColor(check.cluster)} variant="light" tt="none">
-                {check.cluster}
-              </Badge>
-            ) : (
-              '—'
-            ),
-          ],
-          ...(check.rpcErrorCode != null ? [['RPC error code', String(check.rpcErrorCode)] as [string, string]] : []),
+          ['Cluster', <Cluster key="c" cluster={check.cluster} />],
+          ...(check.rpcErrorCode != null
+            ? [['RPC error code', String(check.rpcErrorCode)] as [string, string]]
+            : []),
         ]}
       />
-      {check.message && (
-        <Alert color={color === 'teal' ? 'gray' : color} variant="light" p="xs">
-          <Text size="sm">{check.message}</Text>
-        </Alert>
-      )}
+      <OutcomeMessage outcome={check.outcome} message={check.message} />
     </Stack>
   );
 }
@@ -107,37 +145,22 @@ function FieldChecklist({ result }: { result: AddressCheck }) {
 }
 
 function AddressResult({ result }: { result: AddressCheck }) {
-  const color = outcomeColor(result.outcome);
   return (
     <Stack gap="sm">
-      <Group gap="sm">
-        <Badge color={color} variant="filled" size="lg">
-          {outcomeLabel(result.outcome)}
-        </Badge>
-        {result.cached && (
-          <Badge color="gray" variant="outline">
-            Cached result
-          </Badge>
-        )}
-        <Text size="sm" c="dimmed">
-          Checked <Timestamp iso={result.checkedAt} size="sm" />
-        </Text>
-      </Group>
+      <ResultHeader outcome={result.outcome} cached={result.cached} checkedAt={result.checkedAt} />
       <KeyValueTable
         rows={[
           ['Address', <ShortId key="a" value={result.address} />],
           ['Signature', result.signature ? <ShortId key="s" value={result.signature} /> : '—'],
           ['Slot', formatSlot(result.slot)],
           ['Transaction version', result.transactionVersion ?? '—'],
-          ['Signatures examined', result.signaturesExamined == null ? '—' : String(result.signaturesExamined)],
-          ...(result.rpcErrorCode != null ? [['RPC error code', String(result.rpcErrorCode)] as [string, string]] : []),
+          ['Signatures examined', formatCount(result.signaturesExamined)],
+          ...(result.rpcErrorCode != null
+            ? [['RPC error code', String(result.rpcErrorCode)] as [string, string]]
+            : []),
         ]}
       />
-      {result.message && (
-        <Alert color={color === 'teal' ? 'gray' : color} variant="light" p="xs">
-          <Text size="sm">{result.message}</Text>
-        </Alert>
-      )}
+      <OutcomeMessage outcome={result.outcome} message={result.message} />
       {result.outcome === 'NO_SUCCESSFUL_TRANSACTION' && (
         <Text size="sm" c="dimmed">
           None of the newest signatures was a successful transaction, so no fields could be inspected.
@@ -154,6 +177,9 @@ function AddressCheckForm({ configured }: { configured: boolean }) {
   const check = useAddressCheck();
   const serverError = check.error instanceof ApiError ? check.error : null;
   const fieldError = clientError ?? serverError?.fields.address ?? null;
+  const retry = () => {
+    if (check.variables) check.mutate(check.variables);
+  };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -186,9 +212,9 @@ function AddressCheckForm({ configured }: { configured: boolean }) {
             ff="monospace"
             autoComplete="off"
             spellCheck={false}
-            style={{ flex: '1 1 340px' }}
+            style={{ flex: '1 1 240px', minWidth: 0 }}
           />
-          <Button type="submit" mt={25} loading={check.isPending} disabled={!configured}>
+          <Button type="submit" variant="default" mt={25} loading={check.isPending} disabled={!configured}>
             Check address
           </Button>
         </Group>
@@ -198,11 +224,15 @@ function AddressCheckForm({ configured }: { configured: boolean }) {
           Available once an RPC is configured.
         </Text>
       )}
-      {check.isError && !serverError?.fields.address && (
-        <Alert color={serverError?.code === 'SOLANA_NOT_CONFIGURED' ? 'gray' : 'red'} variant="light" icon={<IconAlert />} role="alert">
-          {errorMessage(check.error)}
-        </Alert>
-      )}
+      {check.isError &&
+        !serverError?.fields.address &&
+        (serverError?.code === NOT_CONFIGURED_CODE ? (
+          <Alert color="gray" variant="light" icon={<IconInfo />} role="alert">
+            {errorMessage(check.error)}
+          </Alert>
+        ) : (
+          <ProviderErrorState error={check.error} onRetry={retry} />
+        ))}
       {check.data && <AddressResult result={check.data} />}
     </Stack>
   );
@@ -211,66 +241,69 @@ function AddressCheckForm({ configured }: { configured: boolean }) {
 export function SolanaPage() {
   const status = useSolanaStatus();
   const check = useSolanaCheck();
-  const data = status.data;
-  const latest = check.data ?? data?.lastCheck ?? null;
 
   return (
-    <Stack gap="lg">
+    <>
       <PageHeader
         title="Solana"
         description="Read-only connectivity checks. Nothing here signs or sends a transaction; checks run only when you click."
       />
-      {status.isPending ? (
-        <LoadingState label="Loading Solana status…" />
-      ) : status.isError ? (
-        <ErrorState error={status.error} title="Could not load the Solana status" onRetry={() => void status.refetch()} />
-      ) : data ? (
-        <SimpleGrid cols={{ base: 1, lg: 2 }}>
-          <Section
-            title="RPC status"
-            actions={
-              <Button onClick={() => check.mutate()} loading={check.isPending} variant={data.configured ? 'filled' : 'default'}>
-                Run connectivity check
-              </Button>
-            }
-          >
-            <Stack gap="md">
-              <KeyValueTable
-                rows={[
-                  [
-                    'Configured',
-                    <Badge key="c" color={data.configured ? 'teal' : 'gray'} variant="light">
-                      {data.configured ? 'Yes' : 'Not configured'}
-                    </Badge>,
-                  ],
-                  ['Host', data.host ?? '—'],
-                  [
-                    'Cluster',
-                    data.cluster ? (
-                      <Badge key="cl" color={clusterColor(data.cluster)} variant="light" tt="none">
-                        {data.cluster}
-                      </Badge>
-                    ) : (
-                      '—'
-                    ),
-                  ],
-                  ['Last check', data.lastCheck ? <Timestamp key="lc" iso={data.lastCheck.checkedAt} /> : 'Never'],
-                ]}
-              />
-              {!data.configured && <NotConfiguredHelp />}
-              {check.isError && <ErrorState error={check.error} title="The check could not run" />}
-              {latest && <CheckResult check={latest} />}
-              <Text size="xs" c="dimmed">
-                Calls getHealth, getVersion, getSlot and getGenesisHash. Results are cached for 30 s
-                and concurrent clicks share one request.
-              </Text>
-            </Stack>
-          </Section>
-          <Section title="Address check">
-            <AddressCheckForm configured={data.configured} />
-          </Section>
-        </SimpleGrid>
-      ) : null}
-    </Stack>
+      <QueryView query={status} loadingLabel="Loading Solana status…" errorTitle="Could not load the Solana status">
+        {(data) => {
+          const latest = check.data ?? data.lastCheck ?? null;
+          return (
+            <SimpleGrid cols={{ base: 1, lg: 2 }}>
+              <Section
+                title="RPC status"
+                actions={
+                  <Button
+                    onClick={() => check.mutate()}
+                    loading={check.isPending}
+                    variant={data.configured ? 'filled' : 'default'}
+                  >
+                    Run connectivity check
+                  </Button>
+                }
+              >
+                <Stack gap="md">
+                  <KeyValueTable
+                    rows={[
+                      [
+                        'Configured',
+                        data.configured ? (
+                          <StatusChip key="c" tone="success" glyph="✓">
+                            Yes
+                          </StatusChip>
+                        ) : (
+                          <StatusChip key="c" tone="neutral" glyph="–">
+                            Not configured
+                          </StatusChip>
+                        ),
+                      ],
+                      ['Host', data.host ?? '—'],
+                      ['Cluster', <Cluster key="cl" cluster={data.cluster} />],
+                      [
+                        'Last check',
+                        data.lastCheck ? <Timestamp key="lc" iso={data.lastCheck.checkedAt} /> : 'Never',
+                      ],
+                    ]}
+                  />
+                  {!data.configured && <NotConfiguredHelp />}
+                  {check.isError && <ProviderErrorState error={check.error} onRetry={() => check.mutate()} />}
+                  {latest && <CheckResult check={latest} />}
+                  <Text size="xs" c="dimmed">
+                    Calls getHealth, getVersion, getSlot and getGenesisHash. Results are cached for 30 s
+                    and concurrent clicks share one request.
+                  </Text>
+                </Stack>
+              </Section>
+              <Section title="Address check">
+                <AddressCheckForm configured={data.configured} />
+              </Section>
+            </SimpleGrid>
+          );
+        }}
+      </QueryView>
+    </>
   );
 }

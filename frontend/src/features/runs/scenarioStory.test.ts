@@ -6,6 +6,7 @@ import {
   soldBeforeDipScenario,
   walletSoldScenario,
 } from '../../mocks/fixtures';
+import { codeLabel } from '../../lib/codes';
 import { runLanes, scenarioEvents } from './scenarioStory';
 
 const [takeProfit, stopLoss, noDip] = sampleScenarios;
@@ -23,17 +24,17 @@ describe('scenarioEvents', () => {
     expect(events[2]!.detail).toBe(
       '0.0₇8616345143543821057475551350438 · impact +0.19% · 1.25% fees',
     );
-    expect(events[4]!.detail).toBe('0.0₆11474828329182461687631176780630 · P&L 0.028260434000 SOL');
+    expect(events[4]!.detail).toBe('0.0₆11474828329182461687631176780630 · P&L +0.028260434000 SOL');
   });
 
   it('ends a cycle without entry, or a position that never exited, with the reason', () => {
     expect(scenarioEvents(noDip!, 'SOL').at(-1)).toMatchObject({
       title: 'No entry',
-      detail: 'NO_DIP',
+      detail: codeLabel('NO_DIP'),
     });
     expect(scenarioEvents(edgeScenarios[0]!, 'SOL').at(-1)).toMatchObject({
       title: 'Still open',
-      detail: 'HORIZON_REACHED',
+      detail: codeLabel('HORIZON_REACHED'),
     });
     expect(scenarioEvents(stopLoss!, 'SOL').map((e) => e.title)).toContain('Stop loss crossed');
   });

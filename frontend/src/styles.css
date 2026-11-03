@@ -1,17 +1,64 @@
-/* Global console styles that Mantine props cannot express: tabular numbers, live cues, scrollbars. */
+/* Global console styles that Mantine props cannot express: tokens, tabular numbers, live cues, shared classes.
+   Tokens mirror `terminal` / `terminalLight` in theme.ts ("quiet ledger", docs/plans/20261103-frontend-redesign.md). */
+
+:root,
+[data-mantine-color-scheme='dark'] {
+  --console-ground: #0a0d10;
+  --console-panel: #10151a;
+  --console-raised: #151b21;
+  --console-line: #1f2830;
+  --console-line-strong: #2a343d;
+  --console-text: #e7ecef;
+  --console-text-2: #c3cdd5;
+  --console-dimmed: #93a1ad;
+  --console-accent: #f2b43c;
+  --console-accent-ink: #1a1300;
+  --console-accent-soft: rgba(242, 180, 60, 0.14);
+  --console-gain: #3ddc97;
+  --console-gain-soft: rgba(61, 220, 151, 0.13);
+  --console-loss: #ff6b6b;
+  --console-loss-soft: rgba(255, 107, 107, 0.13);
+  --console-info: #5aa9ff;
+  --console-info-soft: rgba(90, 169, 255, 0.13);
+  --console-rejected: #f7a04a;
+  --console-rejected-soft: rgba(247, 160, 74, 0.14);
+  --console-neutral: #6b7885;
+  --console-neutral-soft: rgba(147, 161, 173, 0.12);
+}
+
+[data-mantine-color-scheme='light'] {
+  --console-ground: #f5f6f8;
+  --console-panel: #ffffff;
+  --console-raised: #f0f2f5;
+  --console-line: #e2e6eb;
+  --console-line-strong: #cdd3da;
+  --console-text: #11161b;
+  --console-text-2: #2f3943;
+  --console-dimmed: #5b6773;
+  --console-accent: #b9841f;
+  --console-accent-ink: #1a1300;
+  --console-accent-soft: rgba(185, 132, 31, 0.13);
+  --console-gain: #0c7a54;
+  --console-gain-soft: rgba(12, 122, 84, 0.1);
+  --console-loss: #c93030;
+  --console-loss-soft: rgba(201, 48, 48, 0.09);
+  --console-info: #1f6fd1;
+  --console-info-soft: rgba(31, 111, 209, 0.09);
+  --console-rejected: #a85200;
+  --console-rejected-soft: rgba(168, 82, 0, 0.1);
+  --console-neutral: #8a96a3;
+  --console-neutral-soft: rgba(91, 103, 115, 0.1);
+}
 
 body {
   font-feature-settings: 'tnum' 1;
-}
-
-[data-mantine-color-scheme='dark'] body {
-  background: #0a0d10;
+  background: var(--console-ground);
 }
 
 /* A value that just changed flashes once, so polled updates are noticed without moving the layout. */
 @keyframes console-flash {
   from {
-    background-color: rgba(242, 180, 60, 0.28);
+    background-color: var(--console-accent-soft);
   }
   to {
     background-color: transparent;
@@ -62,6 +109,12 @@ body {
   outline-offset: -2px;
 }
 
+.console-row-button[aria-pressed='true'],
+.console-row-button[aria-current='true'] {
+  background: var(--console-raised);
+  box-shadow: inset 0 0 0 1px var(--console-line-strong);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .console-flash,
   .console-live-dot {
@@ -71,7 +124,15 @@ body {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: #2a343d transparent;
+  scrollbar-color: var(--console-line-strong) transparent;
+}
+
+/* Section and KPI labels: sentence case, medium weight, dimmed. The figures are the loud part. */
+.console-label {
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 500;
+  color: var(--mantine-color-dimmed);
+  line-height: 1.4;
 }
 
 .console-kpi-strip {
@@ -84,12 +145,166 @@ body {
 .console-kpi-strip > .console-kpi {
   border-left: 1px solid var(--mantine-color-default-border);
   border-bottom: 1px solid var(--mantine-color-default-border);
+  min-width: 0;
 }
 
-/* Exact decimals are long; a headline figure wraps inside its cell instead of overflowing it. */
+/* On a phone the strip is two columns, not one cell per row; a hero cell spans both. */
+@media (max-width: 48em) {
+  .console-kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .console-kpi[data-span='full'] {
+    grid-column: 1 / -1;
+  }
+}
+
+.console-kpi[data-span='full'] {
+  grid-column: span 2;
+}
+
+/* A headline figure: mono, tabular, one size across the console; long exact decimals wrap inside the cell. */
 .console-kpi-value {
   min-width: 0;
   overflow-wrap: anywhere;
+  font-family: var(--mantine-font-family-monospace);
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.25;
+}
+
+.console-kpi-value[data-size='hero'] {
+  font-size: clamp(24px, 2.4vw, 32px);
+}
+
+.console-kpi-value[data-size='sm'] {
+  font-size: 16px;
+}
+
+/* The unit after a figure never wraps away from it. */
+.console-unit {
+  white-space: nowrap;
+  font-size: 0.6em;
+  color: var(--mantine-color-dimmed);
+  margin-left: 0.35em;
+}
+
+/* Underline tabs under a page header: real links, scroll sideways on a phone instead of wrapping. */
+.console-subnav {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+}
+
+.console-subnav a {
+  flex: none;
+  padding: 8px 12px;
+  color: var(--mantine-color-dimmed);
+  text-decoration: none;
+  font-size: var(--mantine-font-size-sm);
+  border-radius: 4px 4px 0 0;
+}
+
+.console-subnav a:hover {
+  color: var(--mantine-color-text);
+}
+
+.console-subnav a[aria-current='page'] {
+  color: var(--mantine-color-text);
+  font-weight: 500;
+  box-shadow: inset 0 -2px 0 var(--console-accent);
+}
+
+.console-subnav a:focus-visible {
+  outline: 2px solid var(--mantine-primary-color-filled);
+  outline-offset: -2px;
+}
+
+/* One meter for every bar: a single value against a maximum, or segments of a whole with a 2 px gap. */
+.console-meter {
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--console-raised);
+}
+
+.console-meter[data-size='lg'] {
+  height: 10px;
+  border-radius: 4px;
+}
+
+.console-meter > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+}
+
+/* Status chip: glyph and word, tone from the meaning. */
+.console-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.console-chip[data-tone='success'] {
+  background: var(--console-gain-soft);
+  color: var(--console-gain);
+}
+
+.console-chip[data-tone='failure'] {
+  background: var(--console-loss-soft);
+  color: var(--console-loss);
+}
+
+.console-chip[data-tone='running'] {
+  background: var(--console-info-soft);
+  color: var(--console-info);
+}
+
+.console-chip[data-tone='attention'] {
+  background: var(--console-rejected-soft);
+  color: var(--console-rejected);
+}
+
+.console-chip[data-tone='neutral'] {
+  background: var(--console-neutral-soft);
+  color: var(--mantine-color-dimmed);
+}
+
+.console-chip[data-tone='pending'] {
+  border: 1px dashed var(--console-line-strong);
+  color: var(--mantine-color-dimmed);
+}
+
+.console-chip[data-tone='ready'] {
+  background: var(--console-gain-soft);
+  color: var(--console-gain);
+}
+
+.console-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+
+/* Sticky identifying column for tables that scroll sideways. */
+.console-sticky {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--automation-sticky-bg);
+  box-shadow: 1px 0 0 0 var(--mantine-color-default-border);
 }
 
 /* The palette's highlighted result: a raised row with an amber edge, so colored P&L stays readable. */
@@ -107,7 +322,7 @@ body {
   --automation-skipped: #adb5bd;
   --automation-issues: #e03131;
   --automation-cell-empty: #f1f3f5;
-  --automation-sticky-bg: var(--mantine-color-body);
+  --automation-sticky-bg: var(--console-panel);
 }
 
 [data-mantine-color-scheme='dark'] {
@@ -116,17 +331,17 @@ body {
   --automation-skipped: #6b7885;
   --automation-issues: #e5534b;
   --automation-cell-empty: #151b21;
-  --automation-sticky-bg: var(--mantine-color-dark-6);
+  --automation-sticky-bg: var(--console-panel);
 }
 
-/* Status-by-night cells: a link per cell, at least 32 px tall for touch, with a visible focus ring. */
+/* Status-by-day cells: a link per cell, at least 32 px tall for touch, with a visible focus ring. */
 .automation-cell {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
+  width: 40px;
   height: 32px;
-  border-radius: 4px;
+  border-radius: 5px;
   font-size: 13px;
   font-weight: 600;
   text-decoration: none;
@@ -139,13 +354,13 @@ body {
 }
 
 .automation-cell[data-status='SUCCESS'] {
-  background: var(--mantine-color-teal-light);
-  color: var(--mantine-color-teal-light-color);
+  background: var(--console-gain-soft);
+  color: var(--console-gain);
 }
 
 .automation-cell[data-status='NO_SUCCESS'] {
-  background: var(--mantine-color-red-light);
-  color: var(--mantine-color-red-light-color);
+  background: var(--console-loss-soft);
+  color: var(--console-loss);
 }
 
 .automation-cell[data-status='NO_RESULT'] {
@@ -175,4 +390,42 @@ body {
   background: var(--automation-sticky-bg);
   /* Covers the 2 px cell spacing on its left, so scrolled cells never peek out beside the label. */
   box-shadow: -2px 0 0 0 var(--automation-sticky-bg);
+}
+
+/* Sidebar items: a raised background and an amber icon mark the page you are on, not an amber fill. */
+.console-nav-link {
+  border-radius: 7px;
+  min-height: 36px;
+  color: var(--console-text-2);
+}
+
+.console-nav-link[data-active] {
+  background: var(--console-raised);
+  color: var(--mantine-color-text);
+  font-weight: 500;
+  box-shadow: inset 0 0 0 1px var(--console-line-strong);
+}
+
+.console-nav-link[data-active] .mantine-NavLink-section {
+  color: var(--console-accent);
+}
+
+.console-nav-link[data-rail] {
+  width: 44px;
+  justify-content: center;
+  padding: 0;
+}
+
+.console-nav-link[data-rail] .mantine-NavLink-section {
+  margin: 0;
+}
+
+.console-nav-link[data-rail] .mantine-NavLink-body {
+  display: none;
+}
+
+/* A KPI whose value is words, not a figure: the sans, a step smaller. */
+.console-kpi-value[data-text] {
+  font-family: var(--mantine-font-family);
+  font-size: 17px;
 }

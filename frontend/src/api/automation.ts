@@ -447,11 +447,16 @@ export function useAutomationSession(id: string | null) {
   });
 }
 
-export function useAutomationItem(id: string | null) {
+/**
+ * One buy with its sweep runs. `poll` refreshes it on the same interval as the day it is shown in, so a buy still in
+ * progress moves together with the day's list.
+ */
+export function useAutomationItem(id: string | null, { poll = false }: { poll?: boolean } = {}) {
   return useQuery({
     queryKey: automationKeys.item(id ?? ''),
     queryFn: ({ signal }) => automationApi.item(id!, signal),
     enabled: id != null,
+    refetchInterval: poll ? visiblePoll(AUTOMATION_LIST_POLL_MS) : false,
   });
 }
 

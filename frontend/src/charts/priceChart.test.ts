@@ -1,3 +1,4 @@
+import { terminal } from '../theme';
 import type { LineSeriesOption } from 'echarts';
 import { describe, expect, it } from 'vitest';
 import { sampleObservations, v4Chart } from '../mocks/fixtures';
@@ -366,12 +367,12 @@ describe('time-axis candle chart', () => {
     expect(series[0]!.data).toHaveLength(2);
     expect(series[0]!.data[0]!.value).toEqual([Date.parse(time), 25.00000000000001]);
     expect(series[0]!.data[0]!.itemStyle).toMatchObject({
-      color: '#5C6B78',
-      borderColor: '#5C6B78',
+      color: terminal.neutral,
+      borderColor: terminal.neutral,
     });
     expect(series[0]!.data[1]!.itemStyle).toMatchObject({
-      color: '#0A0D10',
-      borderColor: '#5C6B78',
+      color: terminal.ground,
+      borderColor: terminal.neutral,
     });
   });
 

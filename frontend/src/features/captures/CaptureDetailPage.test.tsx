@@ -83,8 +83,8 @@ describe('capture detail design', () => {
       '/usage?captureId=capture-demo',
     );
     const terms = screen.getByRole('complementary', { name: 'Terms on this page' });
-    expect(within(terms).getAllByRole('term')).toHaveLength(6);
-    expect(within(terms).getAllByRole('definition')).toHaveLength(6);
+    expect(within(terms).getAllByRole('button')).toHaveLength(6);
+    expect(within(terms).getByRole('button', { name: /^Gap: / })).toBeInTheDocument();
   });
 
   it('shows an offline check without download counters and explains its stop in plain words', async () => {
@@ -143,12 +143,14 @@ describe('capture detail design', () => {
 
   it('keeps all six tabs and their controls inside closed Advanced', async () => {
     const { user } = renderDetail();
-    const label = await screen.findByText('Advanced: limits, attempts and history');
-    const advanced = label.closest('details');
-    if (!advanced) throw new Error('Advanced disclosure is missing');
-    expect(advanced).not.toHaveAttribute('open');
-    await user.click(label);
-    expect(within(advanced).getAllByRole('tab')).toHaveLength(6);
+    const advanced = await screen.findByRole('button', {
+      name: /Advanced: limits, attempts and history/,
+    });
+    expect(advanced).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+    await user.click(advanced);
+    expect(advanced).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getAllByRole('tab')).toHaveLength(6);
     await user.click(screen.getByRole('tab', { name: 'Markets' }));
     expect(screen.getByRole('button', { name: 'New market attempt' })).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Rates' }));
@@ -243,8 +245,8 @@ describe('capture detail design', () => {
     await user.click(within(card).getByRole('button', { name: 'Resume market step' }));
     expect(screen.getByRole('tab', { name: 'Markets', selected: true })).toBeInTheDocument();
     expect(
-      screen.getByText('Advanced: limits, attempts and history').closest('details'),
-    ).toHaveAttribute('open');
+      screen.getByRole('button', { name: /Advanced: limits, attempts and history/ }),
+    ).toHaveAttribute('aria-expanded', 'true');
   });
 
   it('explains an empty capture and provides the wallet action', async () => {
@@ -264,10 +266,9 @@ describe('capture detail design', () => {
       http.get('/api/captures/capture-demo/cases', () => HttpResponse.json({ items: [] })),
     );
     renderDetail();
+    expect(await screen.findByText('No tokens to capture yet')).toBeInTheDocument();
     expect(
-      await screen.findByText(
-        'No tokens to capture yet. Run the wallet step first. It finds the buys this capture will follow.',
-      ),
+      screen.getByText('Run the wallet step first. It finds the buys this capture will follow.'),
     ).toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: 'Start wallet step' })).toHaveLength(2);
   });

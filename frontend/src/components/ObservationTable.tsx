@@ -1,20 +1,27 @@
-import { Badge, Code, ScrollArea, Table, Text } from '@mantine/core';
+import { ScrollArea, Table, Text, Tooltip } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import type { Observation, UsdtObservation } from '../api/types';
+import { codeLabel } from '../lib/codes';
 import { humanizeCode, formatSlot, usdtRateNote } from '../lib/format';
+import { commitmentLabel, sideLabel, sourceLabel } from '../features/runs/recordLabels';
 import { recordedTradeSignature, transactionLinks } from '../lib/marketLinks';
 import { Decimal, ShortId, Timestamp } from './DisplayValues';
 import { MarketLinks } from './MarketLinks';
 import { PagingFooter } from './Panels';
 import { useClientPaging } from './useClientPaging';
 import { EmptyState } from './StateViews';
+import { StatusChip } from './StatusChip';
 
+/** An observation's quality in words; only an invalid one is marked as a failure. */
 export function QualityBadge({ quality }: { quality: string }) {
-  const color = quality === 'INVALID' ? 'red' : quality === 'MIDPOINT' ? 'violet' : 'blue';
-  return (
-    <Badge variant="light" color={color} size="sm" radius="sm">
+  return quality === 'INVALID' ? (
+    <StatusChip tone="failure" glyph="✕" title={quality}>
       {humanizeCode(quality)}
-    </Badge>
+    </StatusChip>
+  ) : (
+    <StatusChip tone="neutral" title={quality}>
+      {humanizeCode(quality)}
+    </StatusChip>
   );
 }
 
@@ -27,8 +34,8 @@ function UsdtPrice({ value }: { value: UsdtObservation | undefined }) {
     );
   }
   return (
-    <Text span size="sm" c="dimmed">
-      — {value?.unavailableReason && <Code fz="xs">{value.unavailableReason}</Code>}
+    <Text span size="sm" c="dimmed" title={value?.unavailableReason ?? undefined}>
+      —{value?.unavailableReason && ` ${codeLabel(value.unavailableReason)}`}
     </Text>
   );
 }
@@ -68,10 +75,10 @@ export function ObservationTable({
   return (
     <>
       <ScrollArea type="auto">
-        <Table striped verticalSpacing={6} miw={900} fz="sm">
+        <Table striped verticalSpacing="xs" miw={900} fz="sm">
           <Table.Thead>
             <Table.Tr>
-              <Table.Th>Id</Table.Th>
+              <Table.Th className="console-sticky">Id</Table.Th>
               <Table.Th ta="right">Slot</Table.Th>
               <Table.Th ta="right">Price slot</Table.Th>
               <Table.Th>Observed</Table.Th>
@@ -93,14 +100,17 @@ export function ObservationTable({
                 style={
                   o.id === selectedId
                     ? {
-                        outline: '2px solid var(--mantine-color-yellow-5)',
-                        outlineOffset: -2,
+                        background: 'var(--console-raised)',
+                        outline: '1px solid var(--console-line-strong)',
+                        outlineOffset: -1,
                         scrollMarginTop: 24,
                       }
                     : undefined
                 }
               >
-                <Table.Td ff="monospace">{o.id}</Table.Td>
+                <Table.Td className="console-sticky">
+                  <ShortId value={o.id} />
+                </Table.Td>
                 <Table.Td ta="right">{formatSlot(o.slot)}</Table.Td>
                 <Table.Td ta="right">{formatSlot(o.priceSlot)}</Table.Td>
                 <Table.Td style={{ whiteSpace: 'nowrap' }}>
@@ -112,7 +122,7 @@ export function ObservationTable({
                       <>
                         <ShortId value={o.trade.trader} />
                         <Text size="xs" c="dimmed">
-                          {o.trade.side}
+                          {sideLabel(o.trade.side)}
                         </Text>
                       </>
                     ) : (
@@ -138,13 +148,13 @@ export function ObservationTable({
                   <QualityBadge quality={o.quality} />
                 </Table.Td>
                 <Table.Td>
-                  <Text size="sm">{o.source}</Text>
-                  <Text size="xs" c="dimmed" ff="monospace">
-                    {o.sourceEventId}
-                  </Text>
+                  <Tooltip label={o.source} withArrow>
+                    <Text size="sm">{sourceLabel(o.source)}</Text>
+                  </Tooltip>
+                  <ShortId value={o.sourceEventId} size="xs" c="dimmed" />
                   <TradeLinks observationId={o.id} />
                 </Table.Td>
-                <Table.Td>{o.commitment}</Table.Td>
+                <Table.Td title={o.commitment}>{commitmentLabel(o.commitment)}</Table.Td>
               </Table.Tr>
             ))}
           </Table.Tbody>

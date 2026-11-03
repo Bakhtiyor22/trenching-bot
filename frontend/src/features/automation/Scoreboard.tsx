@@ -2,10 +2,22 @@ import { Card, Group, ScrollArea, Stack, Table, Text, UnstyledButton } from '@ma
 import { useMediaQuery } from '@mantine/hooks';
 import type { AutomationEvaluation } from '../../api/automation';
 import { BASELINE_LABEL, pnlScale, variationChange } from './automationModel';
-import { PnlBarCell, PnlBarLegend, SignalsMeter, SolValue, StatusChip } from './AutomationShared';
+import {
+  EvaluationChip,
+  PnlBarCell,
+  PnlBarLegend,
+  SignalsMeter,
+  SIGNALS_NEEDED,
+  SolValue,
+} from './AutomationShared';
 
 /** Below this width the scoreboard becomes one card per variation. */
 const NARROW = '(max-width: 48em)';
+/** The chosen variation: the raised tone with the accent edge. */
+const SELECTED = {
+  background: 'var(--console-raised)',
+  boxShadow: 'inset 3px 0 0 var(--mantine-primary-color-filled)',
+} as const;
 
 function VariationName({ evaluation }: { evaluation: AutomationEvaluation }) {
   const change = variationChange(evaluation.planId, evaluation.label);
@@ -55,6 +67,7 @@ export function Scoreboard({
             component="li"
             padding="sm"
             aria-current={e.label === selectedLabel || undefined}
+            style={e.label === selectedLabel ? SELECTED : undefined}
           >
             <UnstyledButton
               onClick={() => onSelect?.(e.label)}
@@ -64,7 +77,7 @@ export function Scoreboard({
               <Stack gap={8}>
                 <Group justify="space-between" wrap="nowrap" gap="xs">
                   <VariationName evaluation={e} />
-                  <StatusChip status={e.status} pendingDay={e.pendingDay} />
+                  <EvaluationChip status={e.status} pendingDay={e.pendingDay} />
                 </Group>
                 <PnlBarCell
                   worst={e.worstCasePnl}
@@ -79,7 +92,8 @@ export function Scoreboard({
                     <SolValue value={e.realizedPnl} />
                   </Text>
                   <Text size="xs" c="dimmed">
-                    {e.signals} signals (10 needed){e.unscored > 0 && ` · ${e.unscored} unscored`}
+                    {e.signals} signals ({SIGNALS_NEEDED} needed)
+                    {e.unscored > 0 && ` · ${e.unscored} unscored`}
                   </Text>
                 </Group>
               </Stack>
@@ -93,15 +107,15 @@ export function Scoreboard({
     <Stack gap="xs">
       <PnlBarLegend />
       <ScrollArea type="auto">
-        <Table miw={880} aria-label="Scoreboard">
+        <Table miw={880} verticalSpacing="xs" aria-label="Scoreboard">
           <Table.Thead>
             <Table.Tr>
-              <Table.Th>Variation</Table.Th>
+              <Table.Th className="console-sticky">Variation</Table.Th>
               <Table.Th>Status</Table.Th>
               <Table.Th w={280}>Net P&amp;L, SOL · 0 in the middle</Table.Th>
               <Table.Th ta="right">Worst case</Table.Th>
               <Table.Th ta="right">Realized</Table.Th>
-              <Table.Th>Signals (need 10)</Table.Th>
+              <Table.Th>Signals (need {SIGNALS_NEEDED})</Table.Th>
               <Table.Th ta="right">Unscored</Table.Th>
             </Table.Tr>
           </Table.Thead>
@@ -110,17 +124,22 @@ export function Scoreboard({
               <Table.Tr
                 key={e.label}
                 onClick={() => onSelect?.(e.label)}
-                style={{ cursor: onSelect ? 'pointer' : undefined }}
-                bg={
-                  e.label === selectedLabel
-                    ? 'var(--mantine-primary-color-light)'
+                style={{
+                  cursor: onSelect ? 'pointer' : undefined,
+                  ...(e.label === selectedLabel
+                    ? SELECTED
                     : e.label === BASELINE_LABEL
-                      ? 'var(--mantine-color-default-hover)'
-                      : undefined
-                }
+                      ? { background: 'var(--console-neutral-soft)' }
+                      : undefined),
+                }}
                 aria-selected={onSelect ? e.label === selectedLabel : undefined}
               >
-                <Table.Th scope="row" fw={400}>
+                <Table.Th
+                  scope="row"
+                  fw={400}
+                  className="console-sticky"
+                  style={e.label === selectedLabel ? SELECTED : undefined}
+                >
                   {onSelect ? (
                     <UnstyledButton
                       onClick={() => onSelect(e.label)}
@@ -133,7 +152,7 @@ export function Scoreboard({
                   )}
                 </Table.Th>
                 <Table.Td>
-                  <StatusChip status={e.status} pendingDay={e.pendingDay} />
+                  <EvaluationChip status={e.status} pendingDay={e.pendingDay} />
                 </Table.Td>
                 <Table.Td>
                   <PnlBarCell

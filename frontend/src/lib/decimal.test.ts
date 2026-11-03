@@ -6,6 +6,7 @@ import {
   compareToZero,
   decimalSign,
   formatDecimal,
+  formatSignedDecimal,
   isDecimalString,
   pnlColor,
   toChartNumber,
@@ -154,5 +155,30 @@ describe('compareDecimals', () => {
     expect(compareDecimals('-3.58', '-3.580')).toBe(0);
     expect(compareDecimals('0.10000000000000000001', '0.1')).toBe(1);
     expect(compareDecimals('-1', '+2')).toBe(-1);
+  });
+});
+
+describe('formatSignedDecimal', () => {
+  it('puts a plus on gains and a true minus on losses, keeping every digit', () => {
+    expect(formatSignedDecimal('0.028260434000')).toBe('+0.028260434000');
+    expect(formatSignedDecimal('-0.041748258000')).toBe('−0.041748258000');
+    expect(formatSignedDecimal('+1234.5')).toBe('+1,234.5');
+  });
+
+  it('shows zero without a sign, at its stored scale', () => {
+    expect(formatSignedDecimal('0.000000000000')).toBe('0.000000000000');
+    expect(formatSignedDecimal('-0.000')).toBe('0.000');
+  });
+
+  it('can drop trailing fraction zeros for a headline, still exact', () => {
+    expect(formatSignedDecimal('-0.013487824000', { trim: true })).toBe('−0.013487824');
+    expect(formatSignedDecimal('2.000', { trim: true })).toBe('+2');
+    expect(formatSignedDecimal('0.000', { trim: true })).toBe('0');
+  });
+
+  it('shows a dash for missing and leaves non-decimals unchanged', () => {
+    expect(formatSignedDecimal(null)).toBe('—');
+    expect(formatSignedDecimal(undefined)).toBe('—');
+    expect(formatSignedDecimal('n/a')).toBe('n/a');
   });
 });

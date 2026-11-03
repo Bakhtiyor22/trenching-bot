@@ -8,7 +8,6 @@ import {
   type DrawingPoint,
   type DrawingTool,
 } from '../charts/chartDrawings';
-import { terminal } from '../theme';
 import { chartContainsPoint, chartGeometryReady, chartGridRect } from '../charts/chartGeometry';
 
 export interface ChartDrawingLayerProps {
@@ -72,7 +71,7 @@ function DrawingShape({
   onSelect: () => void;
   onDrag: (event: ReactPointerEvent, drawing: ChartDrawing, part: DragState['part']) => void;
 }) {
-  const color = drawing.b.value >= drawing.a.value ? terminal.gain : terminal.loss;
+  const color = drawing.b.value >= drawing.a.value ? 'var(--console-gain)' : 'var(--console-loss)';
   const text = drawingLabel(drawing);
   const lines = text.length * 6.5 + 14 > (rect?.width ?? 400) - 8 ? text.split(' · ') : [text];
   const textWidth = Math.min(
@@ -134,7 +133,7 @@ function DrawingShape({
         width={textWidth}
         height={textHeight}
         rx={3}
-        fill={terminal.panel}
+        fill="var(--console-panel)"
         fillOpacity={0.95}
       />
       <text
@@ -173,7 +172,7 @@ function DrawingShape({
                 cx={point.x}
                 cy={point.y}
                 r={4}
-                fill={terminal.panel}
+                fill="var(--console-panel)"
                 stroke={color}
                 strokeWidth={2}
               />
@@ -481,10 +480,10 @@ export function ChartDrawingLayer({
             left: Math.max(rect.x, Math.min(selectedProjection.b.x + 8, rect.x + rect.width - 65)),
             top: Math.max(rect.y, Math.min(selectedProjection.b.y + 12, rect.y + rect.height - 28)),
             pointerEvents: 'auto',
-            background: terminal.panel,
-            border: `1px solid ${terminal.line}`,
+            background: 'var(--console-panel)',
+            border: '1px solid var(--console-line)',
             borderRadius: 4,
-            color: terminal.text,
+            color: 'var(--console-text)',
             padding: '3px 8px',
             fontSize: 11,
           }}

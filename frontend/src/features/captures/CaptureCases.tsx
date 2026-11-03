@@ -10,17 +10,19 @@ import {
 } from '../../api/captures';
 import { KeyValueTable, Section } from '../../components/Panels';
 import { Timestamp } from '../../components/DisplayValues';
-import { ErrorState } from '../../components/StateViews';
+import { QueryView } from '../../components/QueryView';
+import { EmptyState, ErrorState } from '../../components/StateViews';
 import { paths } from '../../paths';
 import { codeLabel } from '../../lib/codes';
-import { mintLabel, shortId } from '../../lib/format';
+import { formatCount, formatSlot, humanizeCode, mintLabel, shortId } from '../../lib/format';
 import { CodeText } from '../../components/PlainLanguage';
 import { ApiError } from '../../api/client';
 import { knownReasonText } from './captureReasons';
-import { CaptureStatus, CommandError, OperationNotice } from './CaptureShared';
+import { CaptureStatus, CommandError, LiveCue, OperationNotice } from './CaptureShared';
 import {
   captureKeys,
   CAPTURE_POLL_MS,
+  casesPolling,
   isCaptureOperationActive,
   isCaptureOperationOpen,
   useCaptureCases,
@@ -28,7 +30,6 @@ import {
 } from './captureQueries';
 import { useNextAction } from './useNextAction';
 
-const count = (value: number) => value.toLocaleString('en-US');
 const readinessLabel = (state: CaptureCase['readiness']) =>
   ({
     READY_TO_VALIDATE: 'Ready for validation',
@@ -101,7 +102,8 @@ function CaseCard({
         <Group justify="space-between" align="flex-start">
           <Stack gap={3} style={{ minWidth: 0 }}>
             <Text fw={600} ff="monospace" style={{ overflowWrap: 'anywhere' }}>
-              <span title={item.mint}>{mintLabel(item.mint)}</span> · Name not loaded
+              <span title={item.mint}>{mintLabel(item.mint)}</span> ·{' '}
+              <span aria-label="Token name not loaded">—</span>
             </Text>
             <Text size="xs" c="dimmed" style={{ overflowWrap: 'anywhere' }}>
               Case {item.caseId}
@@ -113,14 +115,14 @@ function CaseCard({
           {item.ready
             ? 'This token has passed its checks and is ready for a replay dataset.'
             : item.readiness === 'RUNNING'
-              ? `${count(item.captured)} of ${count(item.selected)} transactions are saved; this token is still downloading.`
+              ? `${formatCount(item.captured)} of ${formatCount(item.selected)} transactions are saved; this token is still downloading.`
               : item.blocker
                 ? codeLabel(item.blocker)
                 : 'This token’s saved evidence needs another step before it can be replayed.'}
         </Text>
         <Text size="xs" c="dimmed">
-          Buy at slot {count(item.anchorSlot)} · Window slots {count(item.fromSlot)}–
-          {count(item.toSlot)} ·{' '}
+          Buy at slot {formatSlot(item.anchorSlot)} · Window slots {formatSlot(item.fromSlot)}–
+          {formatSlot(item.toSlot)} ·{' '}
           <span title={item.anchorSignature}>{shortId(item.anchorSignature)}</span>
         </Text>
         <CodeText code={item.blocker} />
@@ -128,7 +130,12 @@ function CaseCard({
         <Group gap="xs">
           {item.datasetId && item.ready ? (
             <>
-              <Button size="sm" component={Link} to={paths.newRunFor(item.datasetId)}>
+              <Button
+                size="sm"
+                variant="default"
+                component={Link}
+                to={paths.newRunFor(item.datasetId)}
+              >
                 Start a run
               </Button>
               <Button
@@ -145,6 +152,7 @@ function CaseCard({
               {item.ready && (item.canExport || item.canRegisterDataset) ? (
                 <Button
                   size="sm"
+                  variant="default"
                   disabled={
                     operationActive ||
                     exportCase.isPending ||
@@ -160,6 +168,7 @@ function CaseCard({
               ) : item.canCaptureRates ? (
                 <Button
                   size="sm"
+                  variant="default"
                   disabled={operationActive || rates.isPending || !!rates.pendingCommand}
                   onClick={() => rates.submit({})}
                 >
@@ -215,19 +224,22 @@ function CaseCard({
                 [
                   'Anchor',
                   <Text size="sm" ff="monospace" key="anchor" style={{ overflowWrap: 'anywhere' }}>
-                    {item.anchorSignature} · slot {count(item.anchorSlot)} · instruction{' '}
+                    {item.anchorSignature} · slot {formatSlot(item.anchorSlot)} · instruction{' '}
                     {item.instructionIndex}
                   </Text>,
                 ],
-                ['Market window', `${count(item.fromSlot)}–${count(item.toSlot)}`],
-                ['Market stage / coverage', `${item.marketStage} · ${item.coverage}`],
+                ['Market window', `${formatSlot(item.fromSlot)}–${formatSlot(item.toSlot)}`],
+                [
+                  'Market stage / coverage',
+                  `${humanizeCode(item.marketStage)} · ${humanizeCode(item.coverage).toLowerCase()}`,
+                ],
               ]}
             />
             <KeyValueTable
               rows={[
                 [
                   'Selected / captured / gaps',
-                  `${count(item.selected)} / ${count(item.captured)} / ${count(item.gaps)}`,
+                  `${formatCount(item.selected)} / ${formatCount(item.captured)} / ${formatCount(item.gaps)}`,
                 ],
                 ['Capture complete', item.captureComplete ? 'Yes' : 'No'],
                 ['Validated / ready', item.validated && item.ready ? 'Yes' : 'No'],
@@ -235,7 +247,7 @@ function CaseCard({
                   ? [
                       [
                         'Progress',
-                        `${progress.phase} · ${count(progress.processed ?? 0)} / ${count(progress.selected ?? 0)}`,
+                        `${humanizeCode(progress.phase)} · ${formatCount(progress.processed ?? 0)} / ${formatCount(progress.selected ?? 0)}`,
                       ] as [string, ReactNode],
                     ]
                   : []),
@@ -252,7 +264,7 @@ function CaseCard({
           </SimpleGrid>
           {item.blocker && (
             <Alert
-              color={item.readiness === 'READY_TO_VALIDATE' ? 'blue' : 'amber'}
+              color={item.readiness === 'READY_TO_VALIDATE' ? 'blue' : 'orange'}
               title={
                 item.readiness === 'READY_TO_VALIDATE' ? 'Validation needed' : 'Case is blocked'
               }
@@ -271,6 +283,7 @@ function CaseCard({
             {item.canCaptureRates && (
               <Button
                 size="sm"
+                variant="default"
                 disabled={operationActive || rates.isPending || !!rates.pendingCommand}
                 onClick={() => rates.submit({})}
               >
@@ -280,6 +293,7 @@ function CaseCard({
             {item.canExport && (
               <Button
                 size="sm"
+                variant="default"
                 disabled={operationActive || exportCase.isPending || !!exportCase.pendingCommand}
                 onClick={() => exportCase.submit({})}
               >
@@ -299,6 +313,7 @@ function CaseCard({
             {item.canRegisterDataset && (
               <Button
                 size="sm"
+                variant="default"
                 disabled={registration.isPending}
                 loading={registration.isPending}
                 onClick={() => registration.mutate()}
@@ -347,59 +362,75 @@ export function CaptureCases({
 }) {
   const query = useCaptureCases(sessionId, mainOperationState);
   const next = useNextAction(session, config);
+  const notReadable =
+    query.data === undefined &&
+    query.isError &&
+    query.error instanceof ApiError &&
+    query.error.status === 409
+      ? query.error
+      : null;
   return (
     <Section
       title="Tokens in this capture"
       hint="Each token becomes ready on its own, so you can replay one while another is still downloading."
+      actions={<LiveCue active={casesPolling(mainOperationState, query.data)} />}
     >
-      {query.isPending ? (
-        <Text size="sm" c="dimmed">
-          Loading market cases…
-        </Text>
-      ) : query.isError && query.error instanceof ApiError && query.error.status === 409 ? (
+      {notReadable ? (
         // 409: the capture's state does not allow listing tokens yet; not a failure to retry.
         <Stack gap={4} align="flex-start">
           <Text size="sm" c="dimmed">
             Tokens appear once the wallet evidence can be read.{' '}
-            {knownReasonText(query.error.code) ?? query.error.message}
+            {knownReasonText(notReadable.code) ?? notReadable.message}
           </Text>
-          <CodeText code={query.error.code} />
-        </Stack>
-      ) : query.isError ? (
-        <ErrorState
-          error={query.error}
-          title="Could not load market cases"
-          onRetry={() => void query.refetch()}
-        />
-      ) : query.data.items.length === 0 ? (
-        <Stack align="flex-start">
-          <Text size="sm" c="dimmed">
-            No tokens to capture yet. Run the wallet step first. It finds the buys this capture will
-            follow.
-          </Text>
-          <Button
-            disabled={
-              next.disabled ||
-              !!next.pendingCommand ||
-              session.summary?.nextAction.kind !== 'START_WALLET'
-            }
-            loading={next.isPending}
-            onClick={next.run}
-          >
-            Start wallet step
-          </Button>
-          <CommandError
-            error={next.error}
-            uncertain={!!next.pendingCommand && !next.isPending}
-            retry={next.retry}
-          />
+          <CodeText code={notReadable.code} />
         </Stack>
       ) : (
-        <Stack gap="sm">
-          {query.data.items.map((item) => (
-            <CaseCard key={item.caseId} sessionId={sessionId} item={item} onResume={onResume} />
-          ))}
-        </Stack>
+        <QueryView
+          query={query}
+          loadingLabel="Loading tokens…"
+          errorTitle="Could not load market cases"
+        >
+          {(data) =>
+            data.items.length === 0 ? (
+              <EmptyState
+                title="No tokens to capture yet"
+                description="Run the wallet step first. It finds the buys this capture will follow."
+                action={
+                  <Stack gap="xs" align="center">
+                    <Button
+                      variant="default"
+                      disabled={
+                        next.disabled ||
+                        !!next.pendingCommand ||
+                        session.summary?.nextAction.kind !== 'START_WALLET'
+                      }
+                      loading={next.isPending}
+                      onClick={next.run}
+                    >
+                      Start wallet step
+                    </Button>
+                    <CommandError
+                      error={next.error}
+                      uncertain={!!next.pendingCommand && !next.isPending}
+                      retry={next.retry}
+                    />
+                  </Stack>
+                }
+              />
+            ) : (
+              <Stack gap="sm">
+                {data.items.map((item) => (
+                  <CaseCard
+                    key={item.caseId}
+                    sessionId={sessionId}
+                    item={item}
+                    onResume={onResume}
+                  />
+                ))}
+              </Stack>
+            )
+          }
+        </QueryView>
       )}
     </Section>
   );

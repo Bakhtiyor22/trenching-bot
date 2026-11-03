@@ -1,7 +1,7 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BackfillCreateRequest } from '../../api/automation';
+import { automationKeys, type BackfillCreateRequest } from '../../api/automation';
 import { createAutomationDb, dayRows, discoveryOnly } from '../../mocks/automationFixtures';
 import { resetAutomationMocks } from '../../mocks/automationHandlers';
 import { server } from '../../mocks/server';
@@ -52,12 +52,25 @@ function postBodies<T>(fragment: string): T[] {
   return bodies;
 }
 
+/** A failing answer for a background refresh. */
+const unavailable = () =>
+  HttpResponse.json(
+    { code: 'UNAVAILABLE', message: 'Backend unreachable', fields: {} },
+    { status: 503 },
+  );
+
+function header() {
+  return screen.getByRole('banner');
+}
+
 describe('AutomationOverviewPage', () => {
   it('shows mode, coverage, today and the running backfill in the status strip', async () => {
     renderOverview();
     const strip = await screen.findByRole('region', { name: 'Automation status' });
-    expect(within(strip).getByText('Capturing')).toBeInTheDocument();
-    expect(within(strip).getByText(/always on/)).toBeInTheDocument();
+    expect(within(header()).getByText('Capturing')).toBeInTheDocument();
+    expect(within(header()).getByText('Times in UTC+5')).toBeInTheDocument();
+    expect(within(strip).getByText('Always on')).toBeInTheDocument();
+    expect(within(strip).getByText(/plan decu-sweep-1/)).toBeInTheDocument();
     expect(within(strip).getByText('17 Oct, 12:00')).toBeInTheDocument();
     expect(within(strip).getByRole('link', { name: 'Mon 2 Nov' })).toHaveAttribute(
       'href',
@@ -67,12 +80,13 @@ describe('AutomationOverviewPage', () => {
       'href',
       `/automation/backfills/${activeBackfill.id}`,
     );
-    expect(within(strip).getByRole('button', { name: 'Run now' })).toBeEnabled();
+    expect(within(header()).getByRole('button', { name: 'Run discovery now' })).toBeEnabled();
   });
 
-  it('scores the newest day with a verdict by default, in the backend order', async () => {
-    renderOverview();
+  it('scores the newest day with a verdict by default, in the backend order, and pins it in the URL', async () => {
+    const { router } = renderOverview();
     expect(await screen.findByRole('combobox', { name: 'Scored day' })).toHaveValue('Sun 1 Nov');
+    await waitFor(() => expect(router.state.location.search).toContain('day=2026-11-01'));
     const rows = within(screen.getByRole('table', { name: 'Scoreboard' }))
       .getAllByRole('row')
       .slice(1);
@@ -95,7 +109,7 @@ describe('AutomationOverviewPage', () => {
   it('filters the scoreboard by status and keeps the filter in the URL', async () => {
     const { user, router } = renderOverview();
     await screen.findByRole('table', { name: 'Scoreboard' });
-    await user.click(screen.getByRole('button', { name: '✕ No success' }));
+    await user.click(screen.getByRole('radio', { name: '✕ No success' }));
     expect(router.state.location.search).toContain('status=NO_SUCCESS');
     for (const row of within(screen.getByRole('table', { name: 'Scoreboard' }))
       .getAllByRole('row')
@@ -115,12 +129,19 @@ describe('AutomationOverviewPage', () => {
     ).toBeInTheDocument();
   });
 
+  it('ignores a status filter in the URL that is not a status', async () => {
+    renderOverview('/automation?status=BOGUS');
+    const board = await screen.findByRole('table', { name: 'Scoreboard' });
+    expect(within(board).getAllByRole('row').slice(1)).toHaveLength(10);
+    expect(screen.getByRole('radio', { name: 'All' })).toBeChecked();
+  });
+
   it('queues a run now and shows it queued', async () => {
     const posts = postBodies('/discovery/run');
     const { user } = renderOverview();
-    const strip = await screen.findByRole('region', { name: 'Automation status' });
-    await user.click(within(strip).getByRole('button', { name: 'Run now' }));
-    expect(await within(strip).findByRole('button', { name: 'Queued…' })).toBeDisabled();
+    await screen.findByRole('region', { name: 'Automation status' });
+    await user.click(within(header()).getByRole('button', { name: 'Run discovery now' }));
+    expect(await within(header()).findByRole('button', { name: 'Queued…' })).toBeDisabled();
     expect(posts).toHaveLength(1);
   });
 
@@ -134,9 +155,21 @@ describe('AutomationOverviewPage', () => {
       ),
     );
     const { user } = renderOverview();
-    const strip = await screen.findByRole('region', { name: 'Automation status' });
-    await user.click(within(strip).getByRole('button', { name: 'Run now' }));
-    expect(await within(strip).findByText(/Automation is off on the backend/)).toBeInTheDocument();
+    await screen.findByRole('region', { name: 'Automation status' });
+    await user.click(within(header()).getByRole('button', { name: 'Run discovery now' }));
+    const alert = await within(header()).findByRole('alert');
+    expect(within(alert).getByText(/Automation is off on the backend/)).toBeInTheDocument();
+  });
+
+  it('keeps the page on screen when a background refresh of the status fails', async () => {
+    const { queryClient } = renderOverview();
+    await screen.findByRole('table', { name: 'Scoreboard' });
+    server.use(http.get('/api/automation/status', unavailable));
+    await act(() => queryClient.refetchQueries({ queryKey: automationKeys.status }));
+    expect(await screen.findByText(/Couldn.t refresh/)).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Automation status' })).toBeInTheDocument();
+    expect(screen.getByRole('table', { name: 'Scoreboard' })).toBeInTheDocument();
+    expect(screen.queryByText('Automation status unavailable')).toBeNull();
   });
 
   it('explains how to turn automation on when its endpoints are absent', async () => {
@@ -196,6 +229,25 @@ describe('AutomationDaysPage', () => {
       await screen.findByText('At most 62 days at a time; this range has 92.'),
     ).toBeInTheDocument();
   });
+
+  it('refuses a date that does not exist', async () => {
+    renderPage(<AutomationDaysPage />, {
+      path: '/automation/days',
+      url: '/automation/days?range=custom&from=2026-02-31&to=2026-03-02',
+    });
+    expect(await screen.findByText('2026-02-31 is not a real date.')).toBeInTheDocument();
+    expect(screen.queryByRole('table', { name: 'Trading days' })).toBeNull();
+  });
+
+  it('says a day discovery never covered is not scanned yet, not that it had no buys', async () => {
+    renderPage(<AutomationDaysPage />, {
+      path: '/automation/days',
+      url: '/automation/days?range=custom&from=2026-10-10&to=2026-10-16',
+    });
+    const table = await screen.findByRole('table', { name: 'Trading days' });
+    expect(within(table).getAllByText('Not scanned yet').length).toBeGreaterThan(0);
+    expect(within(table).queryByText('No buys')).toBeNull();
+  });
 });
 
 describe('AutomationDayPage', () => {
@@ -207,9 +259,15 @@ describe('AutomationDayPage', () => {
   }
 
   it("shows a complete day's coverage, sessions, buys, a failed buy and the scoreboard", async () => {
-    renderDay('2026-10-31');
+    const { router } = renderDay('2026-10-31');
     expect(await screen.findByRole('heading', { name: 'Sat 31 Oct' })).toBeInTheDocument();
-    expect(screen.getByText('Fully covered by discovery · complete')).toBeInTheDocument();
+    expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(1);
+    const crumbs = screen.getByRole('navigation', { name: 'Breadcrumb' });
+    expect(within(crumbs).getByRole('link', { name: 'Days' })).toHaveAttribute(
+      'href',
+      '/automation/days',
+    );
+    expect(await screen.findByText('Fully covered by discovery · complete')).toBeInTheDocument();
     const sessions = screen.getByRole('table', { name: 'Sessions this day' });
     expect(within(sessions).getByText('Live')).toBeInTheDocument();
     expect(within(sessions).queryByRole('button', { name: 'Close session now' })).toBeNull();
@@ -223,6 +281,55 @@ describe('AutomationDayPage', () => {
         .getAllByRole('row')
         .slice(1),
     ).toHaveLength(10);
+    // The default buy is pinned in the URL, so a refresh cannot move the selection.
+    await waitFor(() => expect(router.state.location.search).toMatch(/^\?item=/));
+  });
+
+  it('rejects a date that does not exist', async () => {
+    renderDay('2026-02-31');
+    expect(await screen.findByText('Not a trading day')).toBeInTheDocument();
+    expect(screen.getByText(/2026-02-31 is not a real date/)).toBeInTheDocument();
+  });
+
+  it('keeps the close dialog open while sending and opens it again without the old error', async () => {
+    let calls = 0;
+    let release: () => void = () => {};
+    server.use(
+      http.post('/api/automation/sessions/:id/close', async () => {
+        calls += 1;
+        if (calls > 1) await new Promise<void>((resolve) => (release = resolve));
+        return unavailable();
+      }),
+    );
+    const { user } = renderDay('2026-11-02');
+    await user.click(await screen.findByRole('button', { name: 'Close session now' }));
+    let dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Close session' }));
+    expect(await within(dialog).findByText('Close failed')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    await user.click(screen.getByRole('button', { name: 'Close session now' }));
+    dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByText('Close failed')).toBeNull();
+    await user.click(within(dialog).getByRole('button', { name: 'Close session' }));
+    await waitFor(() =>
+      expect(within(dialog).getByRole('button', { name: 'Cancel' })).toBeDisabled(),
+    );
+    await user.keyboard('{Escape}');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    release();
+    expect(await within(dialog).findByText('Close failed')).toBeInTheDocument();
+  });
+
+  it('keeps an open dialog when a background refresh of the status fails', async () => {
+    const { user, queryClient } = renderDay('2026-11-02');
+    await user.click(await screen.findByRole('button', { name: 'Close session now' }));
+    await screen.findByRole('dialog');
+    server.use(http.get('/api/automation/status', unavailable));
+    await act(() => queryClient.refetchQueries({ queryKey: automationKeys.status }));
+    expect(await screen.findByText(/Couldn.t refresh/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   it('closes an open session only after confirmation, with one request id', async () => {
@@ -347,9 +454,26 @@ describe('BackfillsPage', () => {
     renderBackfills(`/automation/backfills?from=2026-10-10&to=2026-10-16&dryRun=false&budget=3150`);
     expect(await screen.findByLabelText('Request budget')).toHaveValue('3150');
     expect(screen.getByRole('checkbox', { name: /Dry run/ })).not.toBeChecked();
-    expect(
-      screen.getByRole('button', { name: 'Start capture backfill (spends up to 3,150 requests)' }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start capture backfill' })).toBeInTheDocument();
+    expect(screen.getByText('Spends up to 3,150 requests.')).toBeInTheDocument();
+  });
+
+  it('ignores pre-fill values in the link that are not valid', async () => {
+    renderBackfills(`/automation/backfills?from=2026-02-31&to=2026-10-16&dryRun=false&budget=abc`);
+    expect(await screen.findByLabelText('Request budget')).toHaveValue('1222');
+    expect(screen.getByLabelText('From day')).toHaveValue('2026-10-10');
+    expect(screen.getByLabelText('To day')).toHaveValue('2026-10-16');
+    expect(screen.getByText(/first day, budget were not valid/)).toBeInTheDocument();
+  });
+
+  it('keeps the page number in the URL', async () => {
+    const seen: URL[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.url.includes('/api/automation/backfills?')) seen.push(new URL(request.url));
+    });
+    renderBackfills('/automation/backfills?page=2');
+    expect(await screen.findByText('No backfills on this page')).toBeInTheDocument();
+    expect(seen.at(-1)?.searchParams.get('page')).toBe('1');
   });
 });
 
@@ -389,6 +513,45 @@ describe('BackfillDetailPage', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Cancel backfill' }));
     expect(await screen.findByText('Cancelled')).toBeInTheDocument();
     expect(bodies).toHaveLength(1);
+  });
+
+  it('keeps the page and the open cancel dialog when a background refresh of the backfill fails', async () => {
+    const { user, queryClient } = renderDetail(activeBackfill.id);
+    expect(await screen.findByText(/Read back to/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel backfill' }));
+    await screen.findByRole('dialog');
+    server.use(http.get('/api/automation/backfills/:id', unavailable));
+    await act(() =>
+      queryClient.refetchQueries({ queryKey: automationKeys.backfill(activeBackfill.id) }),
+    );
+    expect(await screen.findByText(/Couldn.t refresh/)).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/Read back to/)).toBeInTheDocument();
+  });
+
+  it('opens the days of a backfill on the Days list', async () => {
+    renderDetail(activeBackfill.id);
+    expect(await screen.findByRole('link', { name: 'Open these days' })).toHaveAttribute(
+      'href',
+      `/automation/days?range=custom&from=${activeBackfill.fromDay}&to=${activeBackfill.toDay}`,
+    );
+  });
+});
+
+describe('AutomationSweepRunsPage URL input', () => {
+  it('reads a page that is not a number as the first page, and never sends an invalid mint', async () => {
+    const seen: URL[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.url.includes('/api/automation/sweep-runs')) seen.push(new URL(request.url));
+    });
+    renderPage(<AutomationSweepRunsPage />, {
+      path: '/automation/sweep-runs',
+      url: '/automation/sweep-runs?page=abc&mint=not-a-mint',
+    });
+    await screen.findByRole('table', { name: 'Sweep runs' });
+    expect(seen.at(-1)?.searchParams.get('page')).toBe('0');
+    expect(seen.at(-1)?.searchParams.has('mint')).toBe(false);
+    expect(await screen.findByText('Not a valid mint address')).toBeInTheDocument();
   });
 });
 

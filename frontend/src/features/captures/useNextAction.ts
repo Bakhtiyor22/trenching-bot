@@ -8,6 +8,7 @@ import {
   type NextActionKind,
 } from '../../api/captures';
 import { actionLabels } from '../../lib/codes';
+import { formatCount } from '../../lib/format';
 import { paths } from '../../paths';
 import { captureKeys, useCaptureCommand } from './captureQueries';
 
@@ -16,7 +17,7 @@ export function nextActionHint(summary: CaptureSummary, minRequestIntervalMillis
   if (kind === 'WAIT' || summary.status === 'RUNNING')
     return 'Pause or cancel from the capture page';
   if (maxRequests !== null) {
-    const base = `At most ${maxRequests.toLocaleString('en-US')} requests`;
+    const base = `At most ${formatCount(maxRequests)} requests`;
     return minRequestIntervalMillis && minRequestIntervalMillis > 0
       ? `${base} · about ${Math.ceil((maxRequests * minRequestIntervalMillis) / 1000)} s at ${1000 / minRequestIntervalMillis} requests/s`
       : base;

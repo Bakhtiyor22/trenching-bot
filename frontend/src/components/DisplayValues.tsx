@@ -1,7 +1,7 @@
 import { ActionIcon, Badge, CopyButton, Group, Text, Tooltip, type TextProps } from '@mantine/core';
 import type { Pair } from '../api/types';
 import { useEffect, useState } from 'react';
-import { formatDecimal, pnlColor } from '../lib/decimal';
+import { formatDecimal, formatSignedDecimal, pnlColor } from '../lib/decimal';
 import { formatLocalTime, formatRelative, mintLabel, shortId } from '../lib/format';
 import { IconCheck, IconCopy } from './Icons';
 
@@ -62,12 +62,23 @@ export function Decimal({ value, ...textProps }: { value: string | null | undefi
   );
 }
 
-/** Exact P&L string, colored by sign. */
-export function Pnl({ value, ...textProps }: { value: string } & TextProps) {
-  return (
-    <Text span ff="monospace" size="sm" fw={600} c={pnlColor(value)} {...textProps}>
-      {formatDecimal(value)}
+/**
+ * Exact P&L, signed ("+" gain, "−" loss) and coloured by sign, so the direction reads without colour.
+ * `trim` drops trailing zeros for a headline and keeps the stored string in a tooltip.
+ */
+export function Pnl({ value, trim = false, unit, ...textProps }: { value: string; trim?: boolean; unit?: string } & TextProps) {
+  const text = formatSignedDecimal(value, { trim });
+  const shown = (
+    <Text span ff="monospace" size="sm" fw={500} c={pnlColor(value)} style={{ whiteSpace: 'nowrap' }} {...textProps}>
+      {text}
+      {unit && <span className="console-unit">{unit}</span>}
     </Text>
+  );
+  if (!trim || text === formatSignedDecimal(value)) return shown;
+  return (
+    <Tooltip label={`${formatSignedDecimal(value)}${unit ? ` ${unit}` : ''} (exact)`} withArrow events={{ hover: true, focus: true, touch: true }}>
+      {shown}
+    </Tooltip>
   );
 }
 
@@ -89,7 +100,8 @@ export function Timestamp({ iso, ...textProps }: { iso: string | null | undefine
   );
 }
 
-export function RelativeTime({ iso }: { iso: string | null | undefined }) {
+/** "3 min ago", with the local time on hover; text props (size, weight) pass through. */
+export function RelativeTime({ iso, ...textProps }: { iso: string | null | undefined } & TextProps) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -97,12 +109,12 @@ export function RelativeTime({ iso }: { iso: string | null | undefined }) {
   }, []);
   if (!iso)
     return (
-      <Text span size="sm" c="dimmed">
+      <Text span size="sm" c="dimmed" {...textProps}>
         —
       </Text>
     );
   return (
-    <Text component="time" dateTime={iso} title={formatLocalTime(iso)} size="sm">
+    <Text component="time" dateTime={iso} title={formatLocalTime(iso)} size="sm" {...textProps}>
       {formatRelative(iso, now)}
     </Text>
   );

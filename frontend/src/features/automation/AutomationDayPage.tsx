@@ -1,10 +1,7 @@
 import {
   Anchor,
-  Badge,
   Box,
-  Breadcrumbs,
   Button,
-  Card,
   Group,
   Modal,
   ScrollArea,
@@ -14,6 +11,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
+import { useEffect } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import {
   STEPS,
@@ -28,31 +26,38 @@ import {
 } from '../../api/automation';
 import { Mint, ShortId } from '../../components/DisplayValues';
 import { Kpi, KpiStrip, Section } from '../../components/Panels';
-import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
-import { formatDecimal } from '../../lib/decimal';
+import { CodeText } from '../../components/PlainLanguage';
+import { QueryView } from '../../components/QueryView';
+import { EmptyState, ErrorState } from '../../components/StateViews';
+import { StatusChip, type StatusTone } from '../../components/StatusChip';
+import { codeLabel } from '../../lib/codes';
+import { decimalSign, formatDecimal } from '../../lib/decimal';
+import { formatCount, formatSlot } from '../../lib/format';
 import { paths } from '../../paths';
 import { reasonText } from '../captures/captureReasons';
 import {
   addDays,
   bucketOf,
-  stepMarks,
-  type StepMark,
   compareWorstDesc,
+  dateProblem,
   dayInfo,
   itemStateLabels,
   lamportsToSol,
+  stepMarks,
   tradingDayOf,
-  outcomeExplanation,
-  outcomeLabel,
   variationChange,
   zoneDateTime,
   zoneLabel,
   zoneTime,
+  type BuyBucket,
+  type StepMark,
 } from './automationModel';
 import {
   AutomationFrame,
   BestOfDay,
   BuyStateBar,
+  OutcomeText,
+  RunLink,
   SolValue,
   StatusAlerts,
   ZoneTime,
@@ -77,6 +82,11 @@ const STEP_COLOR: Record<StepMark, string | undefined> = {
   pending: undefined,
 };
 const MAX_COMPARED = 3;
+/** The selected row: the raised tone with the accent edge. */
+const SELECTED_ROW = {
+  background: 'var(--console-raised)',
+  boxShadow: 'inset 3px 0 0 var(--mantine-primary-color-filled)',
+} as const;
 
 function StepStrip({ item }: { item: AutomationItem }) {
   const marks = stepMarks(item);
@@ -100,8 +110,7 @@ function StepStrip({ item }: { item: AutomationItem }) {
               borderRadius: '50%',
               boxSizing: 'border-box',
               background: STEP_COLOR[mark],
-              border:
-                mark === 'pending' ? '1.5px solid var(--mantine-color-default-border)' : undefined,
+              border: mark === 'pending' ? '1.5px solid var(--console-line-strong)' : undefined,
             }}
           />
         ))}
@@ -110,19 +119,30 @@ function StepStrip({ item }: { item: AutomationItem }) {
   );
 }
 
-const STATE_COLOR: Record<ReturnType<typeof bucketOf>, string> = {
-  replayed: 'blue',
-  inProgress: 'amber',
-  issues: 'red',
-  skipped: 'gray',
+const BUCKET_CHIP: Record<BuyBucket, { tone: StatusTone; glyph?: string }> = {
+  replayed: { tone: 'success', glyph: '✓' },
+  inProgress: { tone: 'running' },
+  issues: { tone: 'failure', glyph: '✕' },
+  skipped: { tone: 'neutral', glyph: '–' },
 };
+
+function ItemStateChip({ item }: { item: AutomationItem }) {
+  const chip = BUCKET_CHIP[bucketOf(item.state)];
+  return (
+    <StatusChip tone={chip.tone} glyph={chip.glyph}>
+      {itemStateLabels[item.state]}
+    </StatusChip>
+  );
+}
 
 function ItemNote({ item, zone }: { item: AutomationItem; zone: string }) {
   if (item.state === 'SIMULATED') return <>Every variation replayed</>;
   if (item.state === 'SKIPPED_NOT_FIRST_BUY') return <>Decu held this token before; never scored</>;
   if (item.state === 'BLOCKED_BUDGET') return <>Waiting for the 24 h request cap to free up</>;
   if (item.state === 'FAILED' || item.state === 'ABANDONED') {
-    const reason = item.failureCode ? (reasonText(item.failureCode) ?? item.failureCode) : null;
+    const reason = item.failureCode
+      ? (reasonText(item.failureCode) ?? codeLabel(item.failureCode))
+      : null;
     return (
       <>
         {item.step ? `${STEP_NAMES[item.step]} step` : 'Pipeline'}
@@ -142,19 +162,40 @@ function ItemNote({ item, zone }: { item: AutomationItem; zone: string }) {
 
 const TERMINAL = ['SIMULATED', 'FAILED', 'ABANDONED', 'SKIPPED_NOT_FIRST_BUY'];
 
+/** Close a session now, after confirmation. The dialog stays open while the request is sending. */
 function CloseSession({ session, items }: { session: AutomationSession; items: AutomationItem[] }) {
   const [opened, { open, close }] = useDisclosure(false);
   const mutation = useCloseSession(session.id);
+  const sending = mutation.isPending;
   const unfinished = items.filter(
     (i) => i.sessionId === session.id && !TERMINAL.includes(i.state),
   ).length;
   if (session.state === 'CLOSED') return null;
+  const dismiss = () => {
+    if (!sending) close();
+  };
   return (
     <>
-      <Button variant="default" color="red" size="xs" onClick={open}>
+      <Button
+        variant="outline"
+        color="red"
+        size="xs"
+        onClick={() => {
+          mutation.reset();
+          open();
+        }}
+      >
         Close session now
       </Button>
-      <Modal opened={opened} onClose={close} title="Close this session now?" centered>
+      <Modal
+        opened={opened}
+        onClose={dismiss}
+        closeOnClickOutside={!sending}
+        closeOnEscape={!sending}
+        withCloseButton={!sending}
+        title="Close this session now?"
+        centered
+      >
         <Stack gap="md">
           <Text size="sm">
             The session ends now instead of 60 minutes after its last buy.{' '}
@@ -165,12 +206,12 @@ function CloseSession({ session, items }: { session: AutomationSession; items: A
           </Text>
           {mutation.isError && <ErrorState error={mutation.error} title="Close failed" />}
           <Group justify="flex-end">
-            <Button variant="default" onClick={close} disabled={mutation.isPending}>
+            <Button variant="default" onClick={dismiss} disabled={sending}>
               Cancel
             </Button>
             <Button
               color="red"
-              loading={mutation.isPending}
+              loading={sending}
               onClick={() => mutation.mutate(undefined, { onSuccess: close })}
             >
               Close session
@@ -182,19 +223,19 @@ function CloseSession({ session, items }: { session: AutomationSession; items: A
   );
 }
 
-const SESSION_STATE = {
-  OPEN: { text: 'Open', color: 'teal' },
-  CLOSING: { text: 'Closing', color: 'amber' },
-  CLOSED: { text: 'Closed', color: 'gray' },
-} as const;
+const SESSION_STATE: Record<AutomationSession['state'], { text: string; tone: StatusTone }> = {
+  OPEN: { text: 'Open', tone: 'running' },
+  CLOSING: { text: 'Closing', tone: 'running' },
+  CLOSED: { text: 'Closed', tone: 'neutral' },
+};
 
 function Sessions({ detail, status }: { detail: AutomationDayDetail; status: AutomationStatus }) {
   return (
     <ScrollArea type="auto">
-      <Table miw={760} aria-label="Sessions this day">
+      <Table miw={760} verticalSpacing="xs" aria-label="Sessions this day">
         <Table.Thead>
           <Table.Tr>
-            <Table.Th>Session ({zoneLabel(status.zone)})</Table.Th>
+            <Table.Th className="console-sticky">Session ({zoneLabel(status.zone)})</Table.Th>
             <Table.Th>Source</Table.Th>
             <Table.Th>State</Table.Th>
             <Table.Th>Buys</Table.Th>
@@ -205,7 +246,7 @@ function Sessions({ detail, status }: { detail: AutomationDayDetail; status: Aut
         <Table.Tbody>
           {detail.sessions.map((s) => (
             <Table.Tr key={s.id}>
-              <Table.Th scope="row" fw={400} ff="monospace">
+              <Table.Th scope="row" fw={400} ff="monospace" className="console-sticky">
                 {zoneTime(s.firstBuyAt, status.zone)} → {zoneTime(s.lastBuyAt, status.zone)}
               </Table.Th>
               <Table.Td>
@@ -218,16 +259,16 @@ function Sessions({ detail, status }: { detail: AutomationDayDetail; status: Aut
                 )}
               </Table.Td>
               <Table.Td>
-                <Badge variant="light" color={SESSION_STATE[s.state].color} tt="none">
+                <StatusChip tone={SESSION_STATE[s.state].tone}>
                   {SESSION_STATE[s.state].text}
                   {s.closeReason === 'MANUAL' ? ' by hand' : ''}
-                </Badge>
+                </StatusChip>
               </Table.Td>
               <Table.Td>
                 <BuyStateBar counts={s.itemCounts} captureEnabled={status.captureEnabled} />
               </Table.Td>
               <Table.Td ta="right" ff="monospace">
-                {s.requestsUsed.toLocaleString('en-US')}
+                {formatCount(s.requestsUsed)}
               </Table.Td>
               <Table.Td ta="right">
                 <CloseSession session={s} items={detail.items} />
@@ -240,146 +281,164 @@ function Sessions({ detail, status }: { detail: AutomationDayDetail; status: Aut
   );
 }
 
-function SelectedBuy({ itemId, status }: { itemId: string; status: AutomationStatus }) {
-  const detail = useAutomationItem(itemId);
-  if (detail.isPending) return <LoadingState label="Loading the buy…" />;
-  if (detail.isError) return <ErrorState error={detail.error} title="Buy unavailable" />;
-  const { item, sweepRuns } = detail.data;
-  const runs = [...sweepRuns].sort((a, b) => a.label.localeCompare(b.label));
-  const comparable = [...sweepRuns.filter((r) => r.runId)].sort(compareWorstDesc);
-  const baseline = comparable.find((r) => r.label === 'V00');
-  const compared = [baseline, ...comparable.filter((r) => r !== baseline)]
-    .filter((r): r is NonNullable<typeof r> => r != null)
-    .slice(0, MAX_COMPARED)
-    .map((r) => r.runId!);
+function SelectedBuy({
+  itemId,
+  status,
+  live,
+}: {
+  itemId: string;
+  status: AutomationStatus;
+  /** True while the day can still change; the buy then refreshes with the day's list. */
+  live: boolean;
+}) {
+  const detail = useAutomationItem(itemId, { poll: live });
   return (
-    <Section
-      title={
-        <>
-          Selected buy · {zoneTime(item.blockTime, status.zone, true)} · <Mint mint={item.mint} /> ·{' '}
-          {formatDecimal(lamportsToSol(item.curvePaymentLamports))} SOL
-        </>
-      }
-      hint={[
-        itemStateLabels[item.state],
-        item.classification
-          ? `verdict ${item.classification.toLowerCase().replaceAll('_', ' ')}`
-          : null,
-        item.requestsUsed != null ? `${item.requestsUsed} requests` : null,
-        `slot ${item.slot.toLocaleString('en-US')}`,
-      ]
-        .filter(Boolean)
-        .join(' · ')}
-      actions={
-        <Group gap="xs" wrap="wrap">
-          {item.captureSessionId && (
-            <Button
-              component={Link}
-              to={paths.capture(item.captureSessionId)}
-              variant="default"
-              size="xs"
-            >
-              Open capture
-            </Button>
-          )}
-          {item.datasetId && (
-            <Button component={Link} to={paths.dataset(item.datasetId)} variant="default" size="xs">
-              Open dataset
-            </Button>
-          )}
-          {compared.length >= 2 && (
-            <Button component={Link} to={paths.compareRuns(compared)} variant="default" size="xs">
-              Compare {compared.length} runs
-            </Button>
-          )}
-        </Group>
-      }
-    >
-      <Stack gap="sm">
-        <Group gap="lg" wrap="wrap">
-          <Text size="sm">
-            Signature <ShortId value={item.signature} />
-          </Text>
-          <Text size="sm">
-            Block time <ZoneTime iso={item.blockTime} zone={status.zone} withDate />{' '}
-            {zoneLabel(status.zone)}
-          </Text>
-          <Text size="sm" c="dimmed">
-            Paid to the curve, fees excluded
-          </Text>
-        </Group>
-        {runs.length === 0 ? (
-          <Text size="sm" c="dimmed">
-            Not replayed yet
-            {item.state === 'SKIPPED_NOT_FIRST_BUY'
-              ? ': this was not Decu’s first buy of the token, so it is never replayed.'
-              : '.'}
-          </Text>
-        ) : (
-          <ScrollArea type="auto">
-            <Table miw={820} aria-label="Sweep runs of this buy">
-              <Table.Thead>
-                <Table.Tr>
-                  <Table.Th>Variation</Table.Th>
-                  <Table.Th>What happened</Table.Th>
-                  <Table.Th>Counts as a signal</Table.Th>
-                  <Table.Th ta="right">Realized</Table.Th>
-                  <Table.Th ta="right">Worst case</Table.Th>
-                  <Table.Th>Run</Table.Th>
-                </Table.Tr>
-              </Table.Thead>
-              <Table.Tbody>
-                {runs.map((r) => (
-                  <Table.Tr key={r.label}>
-                    <Table.Th scope="row" fw={400}>
-                      <Text span ff="monospace" fw={600} size="sm">
-                        {r.label}
-                      </Text>{' '}
-                      <Text span size="xs" c="dimmed">
-                        {variationChange(r.planId, r.label)}
-                      </Text>
-                    </Table.Th>
-                    <Table.Td>
-                      <Tooltip label={outcomeExplanation(r.outcome) ?? r.outcome} multiline w={320}>
-                        <Text span size="sm">
-                          {outcomeLabel(r.outcome)}
-                        </Text>
-                      </Tooltip>
-                    </Table.Td>
-                    <Table.Td>
-                      <Text size="sm" c={r.signal ? undefined : 'dimmed'}>
-                        {r.signal
-                          ? Number(r.realizedPnl) === 0 && Number(r.worstCasePnl) === 0
-                            ? 'Yes, 0 P&L'
-                            : 'Yes'
-                          : 'No'}
-                      </Text>
-                    </Table.Td>
-                    <Table.Td ta="right">
-                      <SolValue value={r.realizedPnl} />
-                    </Table.Td>
-                    <Table.Td ta="right">
-                      <SolValue value={r.worstCasePnl} strong />
-                    </Table.Td>
-                    <Table.Td>
-                      {r.runId ? (
-                        <Anchor component={Link} to={paths.run(r.runId)} size="sm" ff="monospace">
-                          {r.runId.slice(0, 12)}…
-                        </Anchor>
-                      ) : (
-                        <Text size="sm" c="dimmed">
-                          no run
-                        </Text>
-                      )}
-                    </Table.Td>
-                  </Table.Tr>
-                ))}
-              </Table.Tbody>
-            </Table>
-          </ScrollArea>
-        )}
-      </Stack>
-    </Section>
+    <QueryView query={detail} loadingLabel="Loading the buy…" errorTitle="Buy unavailable">
+      {({ item, sweepRuns }) => {
+        const runs = [...sweepRuns].sort((a, b) => a.label.localeCompare(b.label));
+        const comparable = [...sweepRuns.filter((r) => r.runId)].sort(compareWorstDesc);
+        const baseline = comparable.find((r) => r.label === 'V00');
+        const compared = [baseline, ...comparable.filter((r) => r !== baseline)]
+          .filter((r): r is NonNullable<typeof r> => r != null)
+          .slice(0, MAX_COMPARED)
+          .map((r) => r.runId!);
+        return (
+          <Section
+            title={
+              <>
+                Selected buy · {zoneTime(item.blockTime, status.zone, true)} ·{' '}
+                <Mint mint={item.mint} /> ·{' '}
+                {formatDecimal(lamportsToSol(item.curvePaymentLamports))} SOL
+              </>
+            }
+            hint={[
+              itemStateLabels[item.state],
+              item.classification
+                ? `verdict ${codeLabel(item.classification).toLowerCase()}`
+                : null,
+              item.requestsUsed != null ? `${formatCount(item.requestsUsed)} requests` : null,
+              `slot ${formatSlot(item.slot)}`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            actions={
+              <Group gap="xs" wrap="wrap">
+                {item.captureSessionId && (
+                  <Button
+                    component={Link}
+                    to={paths.capture(item.captureSessionId)}
+                    variant="default"
+                    size="xs"
+                  >
+                    Open capture
+                  </Button>
+                )}
+                {item.datasetId && (
+                  <Button
+                    component={Link}
+                    to={paths.dataset(item.datasetId)}
+                    variant="default"
+                    size="xs"
+                  >
+                    Open dataset
+                  </Button>
+                )}
+                {compared.length >= 2 && (
+                  <Button
+                    component={Link}
+                    to={paths.compareRuns(compared)}
+                    variant="default"
+                    size="xs"
+                  >
+                    Compare {compared.length} runs
+                  </Button>
+                )}
+              </Group>
+            }
+          >
+            <Stack gap="sm">
+              <Group gap="lg" wrap="wrap">
+                <Text size="sm" component="div">
+                  Signature <ShortId value={item.signature} />
+                </Text>
+                <Text size="sm" component="div">
+                  Block time <ZoneTime iso={item.blockTime} zone={status.zone} withDate />{' '}
+                  {zoneLabel(status.zone)}
+                </Text>
+                <Text size="sm" c="dimmed">
+                  Paid to the curve, fees excluded
+                </Text>
+              </Group>
+              {(item.classification || item.failureCode) && (
+                <Group gap="lg" wrap="wrap">
+                  <CodeText code={item.classification} />
+                  <CodeText code={item.failureCode} />
+                </Group>
+              )}
+              {runs.length === 0 ? (
+                <Text size="sm" c="dimmed">
+                  Not replayed yet
+                  {item.state === 'SKIPPED_NOT_FIRST_BUY'
+                    ? ': this was not Decu’s first buy of the token, so it is never replayed.'
+                    : '.'}
+                </Text>
+              ) : (
+                <ScrollArea type="auto">
+                  <Table miw={820} verticalSpacing="xs" aria-label="Sweep runs of this buy">
+                    <Table.Thead>
+                      <Table.Tr>
+                        <Table.Th className="console-sticky">Variation</Table.Th>
+                        <Table.Th>What happened</Table.Th>
+                        <Table.Th>Counts as a signal</Table.Th>
+                        <Table.Th ta="right">Realized</Table.Th>
+                        <Table.Th ta="right">Worst case</Table.Th>
+                        <Table.Th>Run</Table.Th>
+                      </Table.Tr>
+                    </Table.Thead>
+                    <Table.Tbody>
+                      {runs.map((r) => (
+                        <Table.Tr key={r.label}>
+                          <Table.Th scope="row" fw={400} className="console-sticky">
+                            <Text span ff="monospace" fw={600} size="sm">
+                              {r.label}
+                            </Text>{' '}
+                            <Text span size="xs" c="dimmed">
+                              {variationChange(r.planId, r.label)}
+                            </Text>
+                          </Table.Th>
+                          <Table.Td>
+                            <OutcomeText outcome={r.outcome} />
+                          </Table.Td>
+                          <Table.Td>
+                            <Text size="sm" c={r.signal ? undefined : 'dimmed'}>
+                              {r.signal
+                                ? decimalSign(r.realizedPnl) === 0 &&
+                                  decimalSign(r.worstCasePnl) === 0
+                                  ? 'Yes, 0 P&L'
+                                  : 'Yes'
+                                : 'No'}
+                            </Text>
+                          </Table.Td>
+                          <Table.Td ta="right">
+                            <SolValue value={r.realizedPnl} />
+                          </Table.Td>
+                          <Table.Td ta="right">
+                            <SolValue value={r.worstCasePnl} strong />
+                          </Table.Td>
+                          <Table.Td>
+                            <RunLink runId={r.runId} />
+                          </Table.Td>
+                        </Table.Tr>
+                      ))}
+                    </Table.Tbody>
+                  </Table>
+                </ScrollArea>
+              )}
+            </Stack>
+          </Section>
+        );
+      }}
+    </QueryView>
   );
 }
 
@@ -425,44 +484,48 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
       },
       { replace: true },
     );
+  // The default buy is picked from live data; pin it in the URL so a refresh does not move the selection.
+  useEffect(() => {
+    if (selectedId && requested !== selectedId)
+      setParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('item', selectedId);
+          return next;
+        },
+        { replace: true },
+      );
+  }, [selectedId, requested, setParams]);
   const skipped = items.filter((i) => i.state === 'SKIPPED_NOT_FIRST_BUY').length;
   const inProgress = items.filter((i) => !TERMINAL.includes(i.state)).length;
+  const unscored = summary.failed + summary.abandoned;
   return (
     <Stack gap="lg">
       <KpiStrip label="Day totals" min={170}>
         <Kpi
           label="Buys"
           hint={[
-            summary.simulated && `${summary.simulated} replayed`,
-            inProgress && `${inProgress} in progress`,
-            skipped && `${skipped} not first`,
-            summary.failed + summary.abandoned &&
-              `${summary.failed + summary.abandoned} failed or abandoned`,
+            summary.simulated && `${formatCount(summary.simulated)} replayed`,
+            inProgress && `${formatCount(inProgress)} in progress`,
+            skipped && `${formatCount(skipped)} not first`,
+            unscored && `${formatCount(unscored)} failed or abandoned`,
           ]
             .filter(Boolean)
             .join(' · ')}
         >
-          <Text fz="xl" fw={600}>
-            {summary.buys}
-          </Text>
+          {formatCount(summary.buys)}
         </Kpi>
         <Kpi label="Below the filter" hint="buys too small to capture, fees included">
-          <Text fz="xl" fw={600}>
-            {summary.belowFilter}
-          </Text>
+          {formatCount(summary.belowFilter)}
         </Kpi>
         <Kpi label="Best variation" hint="over the 7 trading days ending here">
           <BestOfDay day={summary} planId={status.sweepPlanId} />
         </Kpi>
         <Kpi label="Unscored" hint="failed or abandoned buys, kept out of P&L">
-          <Text fz="xl" fw={600}>
-            {summary.failed + summary.abandoned}
-          </Text>
+          {formatCount(unscored)}
         </Kpi>
         <Kpi label="Requests" hint="provider calls for these captures">
-          <Text fz="xl" fw={600} ff="monospace">
-            {summary.requestsUsed.toLocaleString('en-US')}
-          </Text>
+          {formatCount(summary.requestsUsed)}
         </Kpi>
       </KpiStrip>
 
@@ -472,8 +535,9 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
       >
         {detail.sessions.length === 0 ? (
           <Text size="sm" c="dimmed">
-            No buys this day
-            {summary.covered ? '. It counts toward the 7-day window with zero signals.' : '.'}
+            {summary.covered
+              ? 'No buys this day. It counts toward the 7-day window with zero signals.'
+              : 'Not scanned yet: discovery has not covered this day, so its buys are unknown.'}
           </Text>
         ) : (
           <Sessions detail={detail} status={status} />
@@ -486,10 +550,10 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
           hint="Steps: session · wallet · market · rates · export · qualify · register · sweep. Choose a buy to see its 10 sweep runs."
         >
           <ScrollArea type="auto">
-            <Table miw={900} aria-label="Buys this day">
+            <Table miw={900} verticalSpacing="xs" aria-label="Buys this day">
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>Buy ({zoneLabel(status.zone)})</Table.Th>
+                  <Table.Th className="console-sticky">Buy ({zoneLabel(status.zone)})</Table.Th>
                   <Table.Th>Token</Table.Th>
                   <Table.Th ta="right">Paid to curve</Table.Th>
                   <Table.Th>Progress</Table.Th>
@@ -503,16 +567,22 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
                   return (
                     <Table.Tr
                       key={item.id}
-                      bg={selected ? 'var(--mantine-primary-color-light)' : undefined}
+                      style={selected ? SELECTED_ROW : undefined}
                       aria-selected={selected}
                     >
-                      <Table.Th scope="row" fw={400}>
+                      <Table.Th
+                        scope="row"
+                        fw={400}
+                        className="console-sticky"
+                        style={selected ? SELECTED_ROW : undefined}
+                      >
                         <Anchor
                           component="button"
                           size="sm"
                           ff="monospace"
                           onClick={() => select(item.id)}
                           aria-label={`Show buy at ${zoneTime(item.blockTime, status.zone, true)}`}
+                          aria-current={selected || undefined}
                         >
                           {zoneTime(item.blockTime, status.zone, true)}
                         </Anchor>
@@ -527,9 +597,7 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
                         <StepStrip item={item} />
                       </Table.Td>
                       <Table.Td>
-                        <Badge variant="light" color={STATE_COLOR[bucketOf(item.state)]} tt="none">
-                          {itemStateLabels[item.state]}
-                        </Badge>
+                        <ItemStateChip item={item} />
                       </Table.Td>
                       <Table.Td maw={360}>
                         <Text size="sm" c="dimmed">
@@ -545,7 +613,7 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
         </Section>
       )}
 
-      {selectedId && <SelectedBuy itemId={selectedId} status={status} />}
+      {selectedId && <SelectedBuy itemId={selectedId} status={status} live={!summary.complete} />}
 
       <Section
         title="Scoreboard for the 7 trading days ending here"
@@ -563,85 +631,88 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
   );
 }
 
-function DayBreadcrumb({ title }: { title: string }) {
+/** Where the day stands, as the header chip. */
+function DayChip({ detail, today }: { detail: AutomationDayDetail; today: string }) {
+  const { summary } = detail;
+  if (summary.complete)
+    return (
+      <StatusChip tone="neutral" glyph="✓">
+        Complete
+      </StatusChip>
+    );
+  if (summary.day > today) return <StatusChip tone="neutral">Not started</StatusChip>;
+  if (summary.day === today) return <StatusChip tone="running">Today · in progress</StatusChip>;
   return (
-    <Breadcrumbs separator="›">
-      <Anchor component={Link} to={paths.automation} size="sm">
-        Automation
-      </Anchor>
-      <Anchor component={Link} to={paths.automationDays} size="sm">
-        Days
-      </Anchor>
-      <Text size="sm">{title}</Text>
-    </Breadcrumbs>
+    <StatusChip tone="pending" glyph="◷">
+      Not complete
+    </StatusChip>
   );
 }
 
-const DATE = /^\d{4}-\d{2}-\d{2}$/;
+function todayOf(status: AutomationStatus): string {
+  return tradingDayOf(new Date().toISOString(), status.zone, status.tradingDayStart);
+}
 
 export function AutomationDayPage() {
   const { date = '' } = useParams();
-  const valid = DATE.test(date);
+  const problem = dateProblem(date);
+  const valid = problem == null;
   const detail = useAutomationDay(valid ? date : null);
+  const title = valid ? dayInfo(date).label : 'Day';
   return (
-    <AutomationFrame description="">
-      {(status) => {
-        if (!valid)
-          return <EmptyState title="Not a trading day" description="Days are named YYYY-MM-DD." />;
-        if (detail.isPending) return <LoadingState label="Loading the day…" />;
-        if (detail.isError)
-          return <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />;
-        const { summary } = detail.data;
-        const title = dayInfo(summary.day).label;
-        const today = tradingDayOf(new Date().toISOString(), status.zone, status.tradingDayStart);
-        return (
-          <Stack gap="lg">
-            <DayBreadcrumb title={title} />
-            <Card padding="md">
-              <Group justify="space-between" wrap="wrap" gap="md">
-                <Stack gap={4}>
-                  <Text fz="xl" fw={700} component="h2" m={0}>
-                    {title}
-                    {summary.day === today && (
-                      <Text span c="dimmed" fz="md" fw={400}>
-                        {' '}
-                        · today
-                      </Text>
-                    )}
-                  </Text>
-                  <Text size="sm" c="dimmed">
-                    {zoneDateTime(summary.from, status.zone)} →{' '}
-                    {zoneDateTime(summary.to, status.zone)} {zoneLabel(status.zone)}
-                  </Text>
-                  <Text size="sm">{coverageText(detail.data, status.zone)}</Text>
-                </Stack>
-                <Group gap="xs" wrap="wrap">
-                  <Button
-                    component={Link}
-                    to={paths.automationDay(addDays(summary.day, -1))}
-                    variant="default"
-                    size="xs"
-                  >
-                    ← {dayInfo(addDays(summary.day, -1)).short}
-                  </Button>
-                  {summary.day < today && (
-                    <Button
-                      component={Link}
-                      to={paths.automationDay(addDays(summary.day, 1))}
-                      variant="default"
-                      size="xs"
-                    >
-                      {dayInfo(addDays(summary.day, 1)).short} →
-                    </Button>
-                  )}
-                </Group>
-              </Group>
-            </Card>
-            <StatusAlerts status={status} />
-            <Day detail={detail.data} status={status} />
-          </Stack>
-        );
-      }}
+    <AutomationFrame
+      title={title}
+      breadcrumbs={[
+        { label: 'Automation', to: paths.automation },
+        { label: 'Days', to: paths.automationDays },
+        { label: title },
+      ]}
+      status={(status) =>
+        detail.data ? <DayChip detail={detail.data} today={todayOf(status)} /> : null
+      }
+      description={(status) =>
+        detail.data ? (
+          <>
+            <span style={{ display: 'block' }}>
+              {zoneDateTime(detail.data.summary.from, status.zone)} →{' '}
+              {zoneDateTime(detail.data.summary.to, status.zone)} {zoneLabel(status.zone)}
+            </span>
+            <span style={{ display: 'block' }}>{coverageText(detail.data, status.zone)}</span>
+          </>
+        ) : null
+      }
+      actions={(status) =>
+        valid ? (
+          <>
+            <Button component={Link} to={paths.automationDay(addDays(date, -1))} variant="default">
+              ← {dayInfo(addDays(date, -1)).short}
+            </Button>
+            {date < todayOf(status) && (
+              <Button component={Link} to={paths.automationDay(addDays(date, 1))} variant="default">
+                {dayInfo(addDays(date, 1)).short} →
+              </Button>
+            )}
+          </>
+        ) : null
+      }
+    >
+      {(status) =>
+        !valid ? (
+          <EmptyState
+            title="Not a trading day"
+            description={`${problem} Days are named YYYY-MM-DD.`}
+          />
+        ) : (
+          <QueryView query={detail} loadingLabel="Loading the day…" errorTitle="Day unavailable">
+            {(data) => (
+              <Stack gap="lg">
+                <StatusAlerts status={status} />
+                <Day detail={data} status={status} />
+              </Stack>
+            )}
+          </QueryView>
+        )
+      }
     </AutomationFrame>
   );
 }

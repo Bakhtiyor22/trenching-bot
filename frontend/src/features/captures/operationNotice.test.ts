@@ -26,7 +26,7 @@ describe('operationNotice', () => {
       detail:
         'A market window has not ended on chain yet. The capture retries on its own after the estimated end, or resume it then.',
       code: 'HORIZON_NOT_ELAPSED',
-      color: 'amber',
+      color: 'orange',
     });
   });
 

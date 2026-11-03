@@ -1,12 +1,11 @@
 import {
   ActionIcon,
   Anchor,
-  Badge,
   Box,
+  Button,
   Card,
   Group,
   MultiSelect,
-  Paper,
   ScrollArea,
   SegmentedControl,
   SimpleGrid,
@@ -18,16 +17,19 @@ import {
 } from '@mantine/core';
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
+import { errorMessage } from '../../api/client';
 import { useRuns, useRunsById } from '../../api/queries';
 import type { RunDetail, Scenario } from '../../api/types';
+import { useChartTokens } from '../../charts/chartTokens';
 import { Pnl, Timestamp } from '../../components/DisplayValues';
 import { IconX } from '../../components/Icons';
-import { PageHeader, Section } from '../../components/Panels';
-import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
-import { decimalSign, formatDecimal, pnlColor, toChartNumber } from '../../lib/decimal';
+import { Kpi, KpiStrip, PageHeader, Section } from '../../components/Panels';
+import { StatusChip } from '../../components/StatusChip';
+import { EmptyState, LoadingState } from '../../components/StateViews';
+import { codeLabel } from '../../lib/codes';
+import { formatSignedDecimal, toChartNumber } from '../../lib/decimal';
 import { formatCount, formatLocalTime, mintLabel, shortId } from '../../lib/format';
 import { COMPARE_PARAM, MAX_COMPARED_RUNS, paths } from '../../paths';
-import { terminal } from '../../theme';
 import { scenarioOutcome } from '../runs/scenarioOutcome';
 import {
   alignByMint,
@@ -38,22 +40,24 @@ import {
   sharedRows,
 } from './compareRuns';
 
-/** Each compared run keeps one letter and color everywhere on the page. */
-const SLOTS = [
-  { letter: 'A', color: terminal.info },
-  { letter: 'B', color: terminal.violet },
-  { letter: 'C', color: terminal.accent },
-] as const;
+/** Each compared run keeps one letter everywhere on the page; its colour is the scheme's series slot. */
+const LETTERS = ['A', 'B', 'C'] as const;
 
 /** Runs offered in the picker. */
 const PICKER_RUNS = 50;
 
-function slot(index: number) {
-  return SLOTS[index % SLOTS.length]!;
+function letter(slot: number): string {
+  return LETTERS[slot % LETTERS.length]!;
 }
 
-function Letter({ index }: { index: number }) {
-  const { letter, color } = slot(index);
+/** The identity colour of a run slot (blue, orange, aqua), from the scheme in use. */
+function useSlotColor() {
+  const { series } = useChartTokens();
+  return (slot: number) => series[slot % series.length]!;
+}
+
+function Letter({ slot }: { slot: number }) {
+  const color = useSlotColor()(slot);
   return (
     <Box
       component="span"
@@ -68,97 +72,145 @@ function Letter({ index }: { index: number }) {
         justifyContent: 'center',
         borderRadius: 4,
         background: color,
-        color: terminal.ground,
+        color: 'var(--console-panel)',
         flex: 'none',
       }}
     >
-      {letter}
+      {letter(slot)}
     </Box>
   );
 }
 
-function RunCard({
-  detail,
-  index,
+function CardHeader({
+  slot,
+  id,
+  link,
   onRemove,
 }: {
-  detail: RunDetail;
-  index: number;
+  slot: number;
+  id: string;
+  link: boolean;
   onRemove: () => void;
 }) {
-  const { run } = detail;
   return (
-    <Card padding="md" style={{ borderTop: `3px solid ${slot(index).color}` }}>
-      <Group gap={8} wrap="nowrap">
-        <Letter index={index} />
-        <Anchor component={Link} to={paths.run(run.id)} ff="monospace" fw={600} style={{ flex: 1 }}>
-          {shortId(run.id)}
+    <Group gap={8} wrap="nowrap">
+      <Letter slot={slot} />
+      {link ? (
+        <Anchor component={Link} to={paths.run(id)} ff="monospace" fw={600} style={{ flex: 1 }}>
+          {shortId(id)}
         </Anchor>
-        <Tooltip label="Remove from the comparison">
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            onClick={onRemove}
-            aria-label={`Remove run ${shortId(run.id)} from the comparison`}
-          >
-            <IconX size={16} />
-          </ActionIcon>
-        </Tooltip>
-      </Group>
-      <Group gap={6} align="baseline" mt="sm">
-        <Pnl value={run.realizedPnl} fz={26} fw={500} />
-        <Text size="sm" c="dimmed">
-          {mintLabel(run.quoteMint)}
+      ) : (
+        <Text ff="monospace" fw={600} style={{ flex: 1 }}>
+          {shortId(id)}
         </Text>
-      </Group>
-      <Text size="xs" c="dimmed" mt={4}>
-        <Timestamp iso={run.createdAt} size="xs" c="dimmed" /> · {formatCount(run.closedCount)}{' '}
-        closed · {formatCount(run.openCount)} open · {formatCount(run.rejectedCount)} no entry
-      </Text>
+      )}
+      <Tooltip label="Remove from the comparison">
+        <ActionIcon
+          variant="subtle"
+          color="gray"
+          onClick={onRemove}
+          aria-label={`Remove run ${shortId(id)} from the comparison`}
+        >
+          <IconX size={16} />
+        </ActionIcon>
+      </Tooltip>
+    </Group>
+  );
+}
+
+/**
+ * One compared run in its slot. A run that could not be loaded keeps its slot and letter, with the reason and a
+ * retry, and the others still compare. One card per slot whatever its state, so its controls stay put while it loads.
+ */
+function RunCard({
+  id,
+  slot,
+  detail,
+  error,
+  onRetry,
+  onRemove,
+}: {
+  id: string;
+  slot: number;
+  detail: RunDetail | undefined;
+  /** Set when the run never loaded. */
+  error: unknown;
+  onRetry: () => void;
+  onRemove: () => void;
+}) {
+  const color = useSlotColor()(slot);
+  const failed = !detail && error != null;
+  return (
+    <Card padding="md" role={failed ? 'alert' : undefined} style={{ borderTop: `3px solid ${color}` }}>
+      <CardHeader slot={slot} id={id} link={!!detail} onRemove={onRemove} />
+      {detail ? (
+        <>
+          <Box mt="sm">
+            <Pnl value={detail.run.realizedPnl} trim unit={mintLabel(detail.run.quoteMint)} size="lg" fw={500} />
+          </Box>
+          <Text size="xs" c="dimmed" mt={4}>
+            <Timestamp iso={detail.run.createdAt} size="xs" c="dimmed" /> ·{' '}
+            {formatCount(detail.run.closedCount)} closed · {formatCount(detail.run.openCount)} open ·{' '}
+            {formatCount(detail.run.rejectedCount)} no entry
+          </Text>
+        </>
+      ) : failed ? (
+        <>
+          <Group gap="xs" mt="sm">
+            <StatusChip tone="failure" glyph="✕">
+              Could not load this run
+            </StatusChip>
+          </Group>
+          <Text size="sm" mt="xs" style={{ overflowWrap: 'anywhere' }}>
+            {errorMessage(error)}
+          </Text>
+          <Button size="xs" variant="default" mt="sm" onClick={onRetry}>
+            Retry
+          </Button>
+        </>
+      ) : (
+        <LoadingState label="Loading run…" />
+      )}
     </Card>
   );
 }
 
-function Verdict({ details }: { details: RunDetail[] }) {
+function Verdict({ details, slots }: { details: RunDetail[]; slots: number[] }) {
   const deltas = pnlDeltas(details);
+  const unit = mintLabel(details[0]!.run.quoteMint);
   return (
-    <Paper withBorder p="md" component="section" aria-label="P&L difference">
-      <Group gap="xl" wrap="wrap" align="center">
-        {deltas.map((delta, i) => (
-          <Group key={i} gap={8} wrap="nowrap" align="baseline">
-            <Text size="xs" c="dimmed" tt="uppercase" style={{ letterSpacing: '0.08em' }}>
-              Δ P&amp;L
+    <KpiStrip label="P&L difference">
+      {deltas.map((delta, i) => (
+        <Kpi
+          key={i}
+          label={`Δ P&L ${letter(slots[0]!)} − ${letter(slots[i + 1]!)}`}
+          hint={delta == null ? undefined : `Run ${letter(slots[0]!)} minus run ${letter(slots[i + 1]!)}`}
+        >
+          {delta == null ? (
+            <Text span size="sm" c="dimmed">
+              Not comparable: different quote mints
             </Text>
-            <Text ff="monospace" fz={18}>
-              {slot(0).letter} − {slot(i + 1).letter} ={' '}
-            </Text>
-            {delta == null ? (
-              <Text size="sm" c="dimmed">
-                not comparable: different quote mints
-              </Text>
-            ) : (
-              <Text ff="monospace" fz={18} fw={600} c={pnlColor(delta)}>
-                {decimalSign(delta) > 0 ? '+' : ''}
-                {formatDecimal(delta)} {mintLabel(details[0]!.run.quoteMint)}
-              </Text>
-            )}
-          </Group>
-        ))}
-        <Text size="sm" c="dimmed" style={{ flex: '1 1 280px' }} ta="right">
+          ) : (
+            <Pnl value={delta} trim unit={unit} fz="inherit" fw={500} />
+          )}
+        </Kpi>
+      ))}
+      <Kpi label="What differs" size="sm">
+        <Text span inherit style={{ fontFamily: 'var(--mantine-font-family)' }}>
           {differenceSummary(details)}
         </Text>
-      </Group>
-    </Paper>
+      </Kpi>
+    </KpiStrip>
   );
 }
 
-function Inputs({ details }: { details: RunDetail[] }) {
+function Inputs({ details, slots }: { details: RunDetail[]; slots: number[] }) {
   const [onlyDifferences, setOnlyDifferences] = useState(false);
   const rows = inputRows(details).filter((row) => !onlyDifferences || row.differs);
   return (
     <Section
       title="Inputs"
-      hint="Everything that decides a run's result. Highlighted rows differ."
+      hint="Everything that decides a run's result. Rows that differ are raised and marked."
       actions={
         <Switch
           label="Only differences"
@@ -173,13 +225,13 @@ function Inputs({ details }: { details: RunDetail[] }) {
         </Text>
       ) : (
         <ScrollArea type="auto">
-          <Table highlightOnHover={false} miw={480} aria-label="Inputs side by side">
+          <Table highlightOnHover={false} verticalSpacing="xs" miw={480} aria-label="Inputs side by side">
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Input</Table.Th>
                 {details.map((d, i) => (
                   <Table.Th key={d.run.id}>
-                    <Letter index={i} />
+                    <Letter slot={slots[i]!} />
                   </Table.Th>
                 ))}
               </Table.Tr>
@@ -188,17 +240,23 @@ function Inputs({ details }: { details: RunDetail[] }) {
               {rows.map((row) => (
                 <Table.Tr
                   key={row.label}
-                  style={{ background: row.differs ? 'rgba(242,180,60,0.07)' : undefined }}
+                  data-differs={row.differs || undefined}
+                  style={{ background: row.differs ? 'var(--console-raised)' : undefined }}
                 >
                   <Table.Th fw={400} c="dimmed" style={{ whiteSpace: 'nowrap' }}>
                     {row.label}
+                    {row.differs && (
+                      <Text span size="xs" c="var(--console-text-2)" fw={500} ml={6}>
+                        differs
+                      </Text>
+                    )}
                   </Table.Th>
                   {row.values.map((value, i) => (
                     <Table.Td
                       key={i}
                       ff="monospace"
                       fz="sm"
-                      c={row.differs && i > 0 && value !== row.values[0] ? 'amber' : undefined}
+                      fw={row.differs && i > 0 && value !== row.values[0] ? 600 : undefined}
                     >
                       <Tooltip label={value} disabled={value.length <= 24}>
                         <span>{value.length > 24 ? shortId(value) : value}</span>
@@ -220,13 +278,16 @@ function MetricBars({
   label,
   values,
   details,
+  slots,
   exact,
 }: {
   label: string;
   values: number[];
   details: RunDetail[];
+  slots: number[];
   exact?: string[];
 }) {
+  const colorOf = useSlotColor();
   const largest = Math.max(0, ...values.map(Math.abs));
   return (
     <Stack gap={4}>
@@ -243,11 +304,11 @@ function MetricBars({
             alignItems: 'center',
           }}
         >
-          <Letter index={i} />
+          <Letter slot={slots[i]!} />
           <Box
             h={10}
             style={{
-              background: 'var(--mantine-color-default-hover)',
+              background: 'var(--console-raised)',
               borderRadius: 3,
               overflow: 'hidden',
             }}
@@ -255,7 +316,7 @@ function MetricBars({
             <Box
               h="100%"
               w={largest > 0 ? `${(Math.abs(value) / largest) * 100}%` : 0}
-              style={{ background: slot(i).color, transition: 'width 400ms ease' }}
+              style={{ background: colorOf(slots[i]!), transition: 'width 400ms ease' }}
             />
           </Box>
           {exact ? (
@@ -271,9 +332,10 @@ function MetricBars({
   );
 }
 
-function Results({ details }: { details: RunDetail[] }) {
+function Results({ details, slots }: { details: RunDetail[]; slots: number[] }) {
   const pick = (f: (d: RunDetail) => number) => details.map(f);
   const sameMint = new Set(details.map((d) => d.run.quoteMint)).size === 1;
+  const bars = { details, slots };
   return (
     <Section
       title="Results"
@@ -288,13 +350,13 @@ function Results({ details }: { details: RunDetail[] }) {
           label={`Realized P&L${sameMint ? ` (${mintLabel(details[0]!.run.quoteMint)})` : ''}`}
           values={details.map((d) => toChartNumber(d.run.realizedPnl) ?? 0)}
           exact={details.map((d) => d.run.realizedPnl)}
-          details={details}
+          {...bars}
         />
-        <MetricBars label="Tokens" values={pick((d) => d.run.scenarioCount)} details={details} />
-        <MetricBars label="Entered" values={pick((d) => d.run.filledCount)} details={details} />
-        <MetricBars label="No entry" values={pick((d) => d.run.rejectedCount)} details={details} />
-        <MetricBars label="Closed" values={pick((d) => d.run.closedCount)} details={details} />
-        <MetricBars label="Still open" values={pick((d) => d.run.openCount)} details={details} />
+        <MetricBars label="Tokens" values={pick((d) => d.run.scenarioCount)} {...bars} />
+        <MetricBars label="Entered" values={pick((d) => d.run.filledCount)} {...bars} />
+        <MetricBars label="No entry" values={pick((d) => d.run.rejectedCount)} {...bars} />
+        <MetricBars label="Closed" values={pick((d) => d.run.closedCount)} {...bars} />
+        <MetricBars label="Still open" values={pick((d) => d.run.openCount)} {...bars} />
       </Stack>
     </Section>
   );
@@ -309,23 +371,24 @@ function OutcomeCell({ scenario }: { scenario: Scenario | null }) {
     );
   }
   const outcome = scenarioOutcome(scenario);
+  const reason = scenario.position ? scenario.exitUnavailableReason : scenario.rejectionReason;
   return (
     <Group gap={8} wrap="nowrap">
-      <Badge color={outcome.color} variant="light" size="sm" ff="monospace" title={outcome.label}>
+      <StatusChip tone={outcome.tone} glyph={outcome.glyph} title={outcome.label}>
         {outcome.tag}
-      </Badge>
+      </StatusChip>
       {outcome.pnl ? (
         <Pnl value={outcome.pnl} />
-      ) : (
-        <Text size="xs" c="dimmed">
-          {scenario.position ? scenario.exitUnavailableReason : scenario.rejectionReason}
+      ) : reason ? (
+        <Text size="xs" c="dimmed" title={reason}>
+          {codeLabel(reason)}
         </Text>
-      )}
+      ) : null}
     </Group>
   );
 }
 
-function ScenarioAlignment({ details }: { details: RunDetail[] }) {
+function ScenarioAlignment({ details, slots }: { details: RunDetail[]; slots: number[] }) {
   const [scope, setScope] = useState<'shared' | 'all'>('shared');
   const all = alignByMint(details);
   const shared = sharedRows(all);
@@ -354,14 +417,14 @@ function ScenarioAlignment({ details }: { details: RunDetail[] }) {
         />
       ) : (
         <ScrollArea type="auto">
-          <Table miw={560} aria-label="Tokens side by side">
+          <Table miw={560} verticalSpacing="xs" aria-label="Tokens side by side">
             <Table.Thead>
               <Table.Tr>
-                <Table.Th>Token</Table.Th>
+                <Table.Th className="console-sticky">Token</Table.Th>
                 {details.map((d, i) => (
                   <Table.Th key={d.run.id}>
                     <Group gap={6} wrap="nowrap">
-                      <Letter index={i} />
+                      <Letter slot={slots[i]!} />
                       <Text span ff="monospace" size="xs" c="dimmed">
                         {shortId(d.run.id)}
                       </Text>
@@ -373,7 +436,7 @@ function ScenarioAlignment({ details }: { details: RunDetail[] }) {
             <Table.Tbody>
               {rows.map((row) => (
                 <Table.Tr key={row.mint}>
-                  <Table.Td ff="monospace" fz="sm">
+                  <Table.Td ff="monospace" fz="sm" className="console-sticky">
                     <Tooltip label={row.mint}>
                       <span>{shortId(row.mint)}</span>
                     </Tooltip>
@@ -397,7 +460,7 @@ function RunPicker({ ids, onChange }: { ids: string[]; onChange: (ids: string[])
   const runs = useRuns(0, PICKER_RUNS, null);
   const options = (runs.data?.items ?? []).map((r) => ({
     value: r.id,
-    label: `${shortId(r.id)} · ${formatDecimal(r.realizedPnl)} ${mintLabel(r.quoteMint)} · ${formatLocalTime(r.createdAt)}`,
+    label: `${shortId(r.id)} · ${formatSignedDecimal(r.realizedPnl)} ${mintLabel(r.quoteMint)} · ${formatLocalTime(r.createdAt)}`,
   }));
   // Keep chosen ids that fell off the newest page selectable, so the field never drops them.
   for (const id of ids)
@@ -430,10 +493,13 @@ export function ComparePage() {
     else updated.delete(COMPARE_PARAM);
     setParams(updated, { replace: true });
   };
+  const remove = (id: string) => setIds(ids.filter((item) => item !== id));
 
-  const failed = queries.find((q) => q.isError);
-  const pending = queries.some((q) => q.isPending);
-  const details = queries.flatMap((q) => (q.data ? [q.data] : []));
+  // Each run keeps its slot (letter and colour) from its place in the URL, so a failed run never shifts the others.
+  const loaded = queries.flatMap((q, slot) => (q.data ? [{ detail: q.data, slot }] : []));
+  const details = loaded.map((item) => item.detail);
+  const slots = loaded.map((item) => item.slot);
+  const pending = queries.some((q) => q.data === undefined && !q.isError);
 
   return (
     <Stack gap="lg">
@@ -455,32 +521,41 @@ export function ComparePage() {
             </>
           }
         />
-      ) : failed ? (
-        <ErrorState
-          error={failed.error}
-          title="Could not load a run"
-          onRetry={() => void failed.refetch()}
-        />
-      ) : pending ? (
-        <LoadingState label="Loading runs…" />
       ) : (
         <>
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: details.length }}>
-            {details.map((detail, i) => (
-              <RunCard
-                key={detail.run.id}
-                detail={detail}
-                index={i}
-                onRemove={() => setIds(ids.filter((id) => id !== detail.run.id))}
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: ids.length }}>
+            {ids.map((id, slot) => {
+              const query = queries[slot]!;
+              return (
+                <RunCard
+                  key={id}
+                  id={id}
+                  slot={slot}
+                  detail={query.data}
+                  error={query.isError ? query.error : null}
+                  onRetry={() => void query.refetch()}
+                  onRemove={() => remove(id)}
+                />
+              );
+            })}
+          </SimpleGrid>
+          {details.length >= 2 ? (
+            <>
+              <Verdict details={details} slots={slots} />
+              <SimpleGrid cols={{ base: 1, lg: 2 }}>
+                <Inputs details={details} slots={slots} />
+                <Results details={details} slots={slots} />
+              </SimpleGrid>
+              <ScenarioAlignment details={details} slots={slots} />
+            </>
+          ) : (
+            !pending && (
+              <EmptyState
+                title="Not enough runs to compare"
+                description="At least two runs must load. Retry the failed run, or remove it and add another."
               />
-            ))}
-          </SimpleGrid>
-          <Verdict details={details} />
-          <SimpleGrid cols={{ base: 1, lg: 2 }}>
-            <Inputs details={details} />
-            <Results details={details} />
-          </SimpleGrid>
-          <ScenarioAlignment details={details} />
+            )
+          )}
         </>
       )}
     </Stack>

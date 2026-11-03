@@ -11,9 +11,14 @@ import {
   dayItemCounts,
   dayRange,
   daysBetween,
+  dateProblem,
   dayStartInstant,
   defaultScoredDay,
   isFilteredBackfill,
+  isRealDate,
+  parseBackfillPrefill,
+  parseEvaluationStatus,
+  parsePage,
   lamportsToSol,
   outcomeLabel,
   parseMints,
@@ -299,5 +304,61 @@ describe('backfills', () => {
     expect(captureBudgetFor(400)).toBe(1222);
     expect(captureBudgetFor(null)).toBe(1222);
     expect(captureBudgetFor(50_000)).toBe(20_000);
+  });
+});
+
+describe('URL input', () => {
+  it('accepts real dates only', () => {
+    expect(isRealDate('2026-11-01')).toBe(true);
+    expect(isRealDate('2028-02-29')).toBe(true);
+    expect(isRealDate('2026-02-29')).toBe(false);
+    expect(isRealDate('2026-02-31')).toBe(false);
+    expect(isRealDate('2026-13-01')).toBe(false);
+    expect(isRealDate('2026-1-01')).toBe(false);
+    expect(isRealDate(null)).toBe(false);
+    expect(dateProblem('2026-02-31')).toBe('2026-02-31 is not a real date.');
+    expect(dateProblem('yesterday')).toBe('yesterday is not a date written YYYY-MM-DD.');
+    expect(dateProblem('2026-11-01')).toBeNull();
+  });
+
+  it('reads a page number, falling back to the first page', () => {
+    expect(parsePage('3')).toBe(3);
+    expect(parsePage(null)).toBe(1);
+    expect(parsePage('abc')).toBe(1);
+    expect(parsePage('0')).toBe(1);
+    expect(parsePage('-2')).toBe(1);
+    expect(parsePage('1.5')).toBe(1);
+  });
+
+  it('reads a verdict filter, ignoring unknown values', () => {
+    expect(parseEvaluationStatus('NO_SUCCESS')).toBe('NO_SUCCESS');
+    expect(parseEvaluationStatus('BOGUS')).toBeNull();
+    expect(parseEvaluationStatus(null)).toBeNull();
+  });
+
+  it('keeps only valid backfill pre-fill values', () => {
+    const ok = parseBackfillPrefill(
+      new URLSearchParams('from=2026-10-10&to=2026-10-16&dryRun=false&budget=3150&min=2'),
+    );
+    expect(ok).toEqual({
+      fromDay: '2026-10-10',
+      toDay: '2026-10-16',
+      dryRun: false,
+      budget: '3150',
+      minSignalSol: '2',
+      ignored: [],
+    });
+    const bad = parseBackfillPrefill(
+      new URLSearchParams('from=2026-02-31&dryRun=maybe&budget=500&min=1.2'),
+    );
+    expect(bad.fromDay).toBeNull();
+    expect(bad.dryRun).toBe(true);
+    // 500 is a valid dry-run budget; the capture minimum would not apply.
+    expect(bad.budget).toBe('500');
+    expect(bad.minSignalSol).toBeNull();
+    expect(bad.ignored).toEqual(['dryRun', 'from', 'min']);
+    expect(parseBackfillPrefill(new URLSearchParams('dryRun=false&budget=500')).ignored).toEqual([
+      'budget',
+    ]);
   });
 });

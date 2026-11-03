@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RunSummary } from '../../api/types';
 import { edgeRun, sampleRun } from '../../mocks/fixtures';
-import { DEFAULT_SORT, filterRuns, sortRuns, toggleSort } from './runList';
+import { DEFAULT_SORT, filterRuns, parseOutcome, parseSort, serializeSort, sortRuns, toggleSort } from './runList';
 
 const run = (
   id: string,
@@ -68,5 +68,23 @@ describe('sortRuns', () => {
   it('flips the active column and starts a new one descending', () => {
     expect(toggleSort(DEFAULT_SORT, 'created')).toEqual({ key: 'created', descending: false });
     expect(toggleSort(DEFAULT_SORT, 'pnl')).toEqual({ key: 'pnl', descending: true });
+  });
+});
+
+describe('run list URL state', () => {
+  it('reads and writes the sort, falling back to the default', () => {
+    expect(parseSort(null)).toEqual(DEFAULT_SORT);
+    expect(parseSort('nonsense')).toEqual(DEFAULT_SORT);
+    expect(parseSort('pnl')).toEqual({ key: 'pnl', descending: true });
+    expect(parseSort('scenarios-asc')).toEqual({ key: 'scenarios', descending: false });
+    expect(serializeSort(DEFAULT_SORT)).toBeNull();
+    expect(serializeSort({ key: 'created', descending: false })).toBe('created-asc');
+    expect(serializeSort({ key: 'pnl', descending: true })).toBe('pnl');
+  });
+
+  it('reads the outcome, falling back to all', () => {
+    expect(parseOutcome('loss')).toBe('loss');
+    expect(parseOutcome('LOSS')).toBe('all');
+    expect(parseOutcome(null)).toBe('all');
   });
 });

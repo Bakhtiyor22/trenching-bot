@@ -1,0 +1,31 @@
+/* Run timeline lane: token, track and result on one row; on a phone the token and result share a line above the track. */
+.lane {
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr) 150px;
+  grid-template-areas: 'token track result';
+  gap: 12px;
+  align-items: center;
+}
+
+.token {
+  grid-area: token;
+}
+
+.track {
+  grid-area: track;
+}
+
+.result {
+  grid-area: result;
+  text-align: right;
+}
+
+@media (max-width: 36em) {
+  .lane {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'token result'
+      'track track';
+    row-gap: 4px;
+  }
+}

@@ -8,11 +8,14 @@ import {
   type MarkerAnchor,
   type MarkerPosition,
 } from '../charts/marketMarkers';
-import { terminal } from '../theme';
 import { toChartNumber } from '../lib/decimal';
 import type { ChartResponse } from '../api/types';
 import { plotTime, unrecordedStart } from '../charts/priceChart';
 import { chartContainsPoint, chartGeometryReady } from '../charts/chartGeometry';
+
+const DECU_COLOR = 'var(--console-accent)';
+const PAPER_COLOR = 'var(--console-info)';
+const SURFACE = 'var(--console-panel)';
 
 export interface MarketMarkerOverlayProps {
   actions: MarketAction[];
@@ -133,14 +136,14 @@ export function MarketMarkerOverlay({
               y1={a[1]}
               x2={b[0]}
               y2={b[1]}
-              stroke={terminal.dimmed}
+              stroke="var(--console-dimmed)"
               strokeWidth={1}
               strokeDasharray="3 3"
             />
             <text
               x={((a[0] ?? 0) + (b[0] ?? 0)) / 2 + 6}
               y={((a[1] ?? 0) + (b[1] ?? 0)) / 2}
-              fill={terminal.dimmed}
+              fill="var(--console-dimmed)"
               fontSize={10}
             >
               unrecorded
@@ -155,7 +158,8 @@ export function MarketMarkerOverlay({
         const paper = action.kind === 'PAPER';
         const sell = action.side === 'SELL';
         const selected = group.actions.some((item) => actionKey(item) === selectedKey);
-        const color = terminal.accent;
+        // Decu's B/S pins are amber; our paper fills are blue diamonds.
+        const color = group.actions.every((item) => item.kind === 'PAPER') ? PAPER_COLOR : DECU_COLOR;
         return (
           <button
             key={key}
@@ -214,9 +218,9 @@ export function MarketMarkerOverlay({
                     width: 7,
                     height: 7,
                     boxSizing: 'border-box',
-                    border: `2px solid ${color}`,
+                    borderWidth: 2, borderStyle: 'solid', borderColor: color,
                     borderRadius: '50%',
-                    background: terminal.panel,
+                    background: SURFACE,
                   }}
                 />
               </>
@@ -230,16 +234,17 @@ export function MarketMarkerOverlay({
                   top: 6,
                   width: 26,
                   height: 26,
-                  border: `2px solid ${color}`,
+                  borderWidth: 2, borderStyle: 'solid', borderColor: color,
                   boxSizing: 'border-box',
                   borderRadius: '50%',
-                  background: terminal.panel,
+                  background: SURFACE,
                 }}
               />
             )}
             <span
               aria-hidden="true"
               data-testid={`market-pin-${key}`}
+              data-marker-color={color === PAPER_COLOR ? 'paper' : 'decu'}
               style={{
                 position: 'relative',
                 display: 'grid',
@@ -248,14 +253,14 @@ export function MarketMarkerOverlay({
                 height: paper ? 11 : 26,
                 boxSizing: 'border-box',
                 borderRadius: paper ? 0 : '50%',
-                border: `2px solid ${color}`,
-                background: paper || (sell && !stacked) ? terminal.panel : color,
-                color: sell && !stacked ? color : terminal.ground,
+                borderWidth: 2, borderStyle: 'solid', borderColor: color,
+                background: paper ? color : sell && !stacked ? SURFACE : color,
+                color: sell && !stacked ? color : 'var(--console-accent-ink)',
                 transform: paper ? 'rotate(45deg)' : undefined,
                 fontSize: 12,
                 fontWeight: 700,
                 boxShadow: selected
-                  ? `0 0 0 3px ${terminal.panel}, 0 0 0 5px ${terminal.text}`
+                  ? `0 0 0 3px ${SURFACE}, 0 0 0 5px var(--console-text)`
                   : undefined,
               }}
             >

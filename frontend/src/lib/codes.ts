@@ -1,5 +1,6 @@
 import type { CaptureSummaryStatus, NextActionKind } from '../api/captures';
 import type { PresetFieldStatus, UsageProvider, UsagePurpose, UsageTask } from '../api/setup';
+import type { StatusTone } from '../components/StatusChip';
 import { reasonText } from '../features/captures/captureReasons';
 import { humanizeCode } from './format';
 
@@ -15,29 +16,34 @@ export const statusLabels: Record<CaptureSummaryStatus, string> = {
   DONE: 'Done',
   CANCELLED: 'Cancelled',
 };
-export const statusTones = {
-  NOT_STARTED: 'idle',
+/** The {@link StatusChip} tone of each capture status: what it means, never a hue of its own. */
+export const statusTones: Record<CaptureSummaryStatus, StatusTone> = {
+  NOT_STARTED: 'neutral',
   RUNNING: 'running',
   WAITING_RETRY: 'running',
-  PAUSED: 'stopped',
-  STOPPED_LIMIT: 'stopped',
-  STOPPED_DEADLINE: 'stopped',
-  NEEDS_ATTENTION: 'attention',
+  PAUSED: 'attention',
+  STOPPED_LIMIT: 'attention',
+  STOPPED_DEADLINE: 'attention',
+  NEEDS_ATTENTION: 'failure',
   READY_TO_REPLAY: 'ready',
-  DONE: 'done',
-  CANCELLED: 'done',
-} as const satisfies Record<CaptureSummaryStatus, string>;
-export const statusColors: Record<CaptureSummaryStatus, string> = {
-  NOT_STARTED: 'violet',
-  RUNNING: 'blue',
-  WAITING_RETRY: 'blue',
-  PAUSED: 'amber',
-  STOPPED_LIMIT: 'amber',
-  STOPPED_DEADLINE: 'amber',
-  NEEDS_ATTENTION: 'red',
-  READY_TO_REPLAY: 'teal',
-  DONE: 'gray',
-  CANCELLED: 'gray',
+  DONE: 'neutral',
+  CANCELLED: 'neutral',
+};
+/** The glyph beside each capture status word; running statuses show the chip's dot instead. */
+export const statusGlyphs: Partial<Record<CaptureSummaryStatus, string>> = {
+  PAUSED: '▲',
+  STOPPED_LIMIT: '▲',
+  STOPPED_DEADLINE: '▲',
+  NEEDS_ATTENTION: '✕',
+  READY_TO_REPLAY: '✓',
+  DONE: '✓',
+  CANCELLED: '–',
+};
+/** How a capture finds the buys it follows (its wallet scope). */
+export const captureScopeLabels: Record<string, string> = {
+  'wallet-token': 'Wallet + token',
+  'pumpfun-user-buys': 'Pump.fun buys',
+  'wallet-references': 'Wallet references',
 };
 export const stageLabels = {
   WALLET: 'Wallet',

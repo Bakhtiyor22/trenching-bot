@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { useDatasets, useRuns } from '../api/queries';
 import type { Dataset, RunSummary } from '../api/types';
-import { formatDecimal, pnlColor } from '../lib/decimal';
+import { formatSignedDecimal, pnlColor } from '../lib/decimal';
 import { formatLocalTime, mintLabel, shortId } from '../lib/format';
 import { paths } from '../paths';
 import {
@@ -13,8 +13,9 @@ import {
   IconCompare,
   IconDashboard,
   IconDatabase,
-  IconList,
+  IconGauge,
   IconPlay,
+  IconRuns,
   IconSatellite,
   IconSearch,
 } from './Icons';
@@ -46,8 +47,8 @@ function runAction(run: RunSummary, open: (to: string) => void) {
     // The full ids make a pasted hash or a prefix of one match.
     keywords: [run.id, run.datasetId, run.configurationHash],
     rightSection: (
-      <Text size="sm" ff="monospace" fw={600} c={pnlColor(run.realizedPnl)}>
-        {formatDecimal(run.realizedPnl)} {mintLabel(run.quoteMint)}
+      <Text size="sm" ff="monospace" fw={600} c={pnlColor(run.realizedPnl)} style={{ whiteSpace: 'nowrap' }}>
+        {formatSignedDecimal(run.realizedPnl)} {mintLabel(run.quoteMint)}
       </Text>
     ),
     onClick: () => open(paths.run(run.id)),
@@ -88,8 +89,14 @@ export function CommandPalette() {
         {
           id: 'go-runs',
           label: 'Runs',
-          leftSection: <IconList size={16} />,
+          leftSection: <IconRuns size={16} />,
           onClick: () => open(paths.runs),
+        },
+        {
+          id: 'go-new-run',
+          label: 'New run',
+          leftSection: <IconPlay size={16} />,
+          onClick: () => open(paths.newRun),
         },
         {
           id: 'go-compare',
@@ -114,6 +121,13 @@ export function CommandPalette() {
           label: 'Automation: nightly sweep scoreboard',
           leftSection: <IconAutomation size={16} />,
           onClick: () => open(paths.automation),
+        },
+        {
+          id: 'go-usage',
+          label: 'API usage',
+          keywords: ['requests', 'rate limit', 'provider'],
+          leftSection: <IconGauge size={16} />,
+          onClick: () => open(paths.usage),
         },
         {
           id: 'go-solana',

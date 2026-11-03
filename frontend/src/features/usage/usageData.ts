@@ -44,17 +44,3 @@ export function aggregateUsage(points: UsagePoint[], seconds: number): UsagePoin
     (a, b) => a.bucketStart.localeCompare(b.bucketStart) || a.provider.localeCompare(b.provider),
   );
 }
-
-const DATA_UNITS = ['B', 'KB', 'MB', 'GB'] as const;
-
-/** Response size in decimal units (1 KB = 1,000 bytes), so small totals never round to "0 MB". */
-export function dataSize(bytes: number): string {
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1000 && unit < DATA_UNITS.length - 1) {
-    value /= 1000;
-    unit += 1;
-  }
-  const digits = unit === 0 ? 0 : value < 10 ? 2 : 1;
-  return `${value.toLocaleString('en-US', { maximumFractionDigits: digits })} ${DATA_UNITS[unit]}`;
-}

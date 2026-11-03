@@ -17,6 +17,7 @@ import {
   TextInput,
   Tooltip,
   UnstyledButton,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { useRef, useState, type ReactNode } from 'react';
@@ -25,14 +26,32 @@ import { useDatasets, useRuns } from '../../api/queries';
 import type { Dataset, RunSummary } from '../../api/types';
 import { Mint, Pnl, ShortId, Timestamp } from '../../components/DisplayValues';
 import { IconCompare, IconPlay, IconSearch } from '../../components/Icons';
-import { PageHeader } from '../../components/Panels';
+import { PageHeader, Section } from '../../components/Panels';
+import { RefreshNotice } from '../../components/QueryView';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
 import { formatCount, shortId } from '../../lib/format';
 import { MAX_COMPARED_RUNS, paths } from '../../paths';
-import { terminal } from '../../theme';
-import { DEFAULT_SORT, filterRuns, sortRuns, toggleSort, type Outcome, type Sort, type SortKey } from './runList';
+import {
+  filterRuns,
+  parseOutcome,
+  parseSort,
+  serializeSort,
+  sortRuns,
+  toggleSort,
+  type Outcome,
+  type Sort,
+  type SortKey,
+} from './runList';
 
 const PAGE_SIZE = 20;
+const QUERY_PARAM = 'q';
+const OUTCOME_PARAM = 'outcome';
+const SORT_PARAM = 'sort';
+
+/** The compare checkbox and the run id stay in view while the table scrolls sideways. */
+const SELECT_COLUMN_WIDTH = 40;
+const STICKY_SELECT = { left: 0 } as const;
+const STICKY_RUN = { left: SELECT_COLUMN_WIDTH } as const;
 
 const OUTCOMES: Array<{ value: Outcome; label: string }> = [
   { value: 'all', label: 'All' },
@@ -45,7 +64,7 @@ function SortHeader({ label, column, sort, onSort, align }: { label: string; col
   const active = sort.key === column;
   return (
     <Table.Th ta={align} aria-sort={active ? (sort.descending ? 'descending' : 'ascending') : undefined}>
-      <UnstyledButton onClick={() => onSort(column)} fz="sm" fw={600} c={active ? 'amber' : undefined}>
+      <UnstyledButton onClick={() => onSort(column)} fz="sm" fw={600} c={active ? undefined : 'dimmed'}>
         {label} {active ? (sort.descending ? '↓' : '↑') : ''}
       </UnstyledButton>
     </Table.Th>
@@ -57,9 +76,14 @@ function ScenarioBar({ run }: { run: RunSummary }) {
   const total = run.filledCount + run.rejectedCount;
   return (
     <Group gap={8} wrap="nowrap" justify="flex-end">
-      <Box w={64} h={6} style={{ display: 'flex', borderRadius: 3, overflow: 'hidden', background: terminal.neutral }} aria-hidden>
-        {total > 0 && <Box style={{ flex: run.filledCount, background: terminal.info }} />}
-        {run.rejectedCount > 0 && <Box style={{ flex: run.rejectedCount, background: terminal.rejected }} />}
+      <Box
+        w={64}
+        h={6}
+        style={{ display: 'flex', gap: 2, borderRadius: 3, overflow: 'hidden', background: 'var(--console-raised)' }}
+        aria-hidden
+      >
+        {total > 0 && run.filledCount > 0 && <Box style={{ flex: run.filledCount, background: 'var(--console-info)' }} />}
+        {run.rejectedCount > 0 && <Box style={{ flex: run.rejectedCount, background: 'var(--console-rejected)' }} />}
       </Box>
       <Text size="sm" ff="monospace">
         <Text span c="teal" inherit fw={600}>
@@ -81,6 +105,7 @@ function RunsTable({
   onSort,
   selected,
   onToggle,
+  stale,
 }: {
   runs: RunSummary[];
   datasetNames: Map<string, string>;
@@ -88,21 +113,23 @@ function RunsTable({
   onSort: (key: SortKey) => void;
   selected: string[];
   onToggle: (id: string) => void;
+  /** True while a new page loads over the previous one. */
+  stale: boolean;
 }) {
   const navigate = useNavigate();
   const full = selected.length >= MAX_COMPARED_RUNS;
   return (
-    <ScrollArea type="auto">
-      <Table verticalSpacing="sm" miw={1000}>
+    <ScrollArea type="auto" style={{ opacity: stale ? 0.6 : 1, transition: 'opacity 120ms' }}>
+      <Table verticalSpacing="xs" miw={1000}>
         <Table.Thead>
           <Table.Tr>
-            <Table.Th w={40}>
-              <Text span style={{ position: 'absolute', left: -9999 }}>
-                Compare
-              </Text>
+            <Table.Th w={SELECT_COLUMN_WIDTH} className="console-sticky" style={STICKY_SELECT}>
+              <VisuallyHidden>Compare</VisuallyHidden>
+            </Table.Th>
+            <Table.Th className="console-sticky" style={STICKY_RUN}>
+              Run
             </Table.Th>
             <SortHeader label="Created" column="created" sort={sort} onSort={onSort} />
-            <Table.Th>Run</Table.Th>
             <Table.Th>Dataset</Table.Th>
             <SortHeader label="Scenarios" column="scenarios" sort={sort} onSort={onSort} align="right" />
             <Table.Th ta="right">Filled / rejected</Table.Th>
@@ -114,13 +141,14 @@ function RunsTable({
         <Table.Tbody>
           {runs.map((run) => {
             const checked = selected.includes(run.id);
+            const datasetName = datasetNames.get(run.datasetId);
             return (
               <Table.Tr
                 key={run.id}
-                style={{ cursor: 'pointer', background: checked ? 'rgba(242,180,60,0.06)' : undefined }}
+                style={{ cursor: 'pointer', background: checked ? 'var(--console-raised)' : undefined }}
                 onClick={() => void navigate(paths.run(run.id))}
               >
-                <Table.Td onClick={(e) => e.stopPropagation()}>
+                <Table.Td onClick={(e) => e.stopPropagation()} className="console-sticky" style={STICKY_SELECT}>
                   <Tooltip label={`Compare at most ${MAX_COMPARED_RUNS} runs`} disabled={checked || !full}>
                     <Checkbox
                       checked={checked}
@@ -130,10 +158,7 @@ function RunsTable({
                     />
                   </Tooltip>
                 </Table.Td>
-                <Table.Td style={{ whiteSpace: 'nowrap' }}>
-                  <Timestamp iso={run.createdAt} ff="monospace" c="dimmed" />
-                </Table.Td>
-                <Table.Td style={{ whiteSpace: 'nowrap' }}>
+                <Table.Td className="console-sticky" style={{ whiteSpace: 'nowrap', ...STICKY_RUN }}>
                   <Anchor component={Link} to={paths.run(run.id)} ff="monospace" size="sm" fw={600} onClick={(e) => e.stopPropagation()}>
                     {shortId(run.id)}
                   </Anchor>
@@ -142,7 +167,12 @@ function RunsTable({
                   </Text>
                 </Table.Td>
                 <Table.Td style={{ whiteSpace: 'nowrap' }}>
-                  <Text size="sm">{datasetNames.get(run.datasetId) ?? ''}</Text>
+                  <Timestamp iso={run.createdAt} ff="monospace" c="dimmed" />
+                </Table.Td>
+                <Table.Td style={{ whiteSpace: 'nowrap' }}>
+                  <Text size="sm" c={datasetName ? undefined : 'dimmed'}>
+                    {datasetName || '—'}
+                  </Text>
                   <ShortId value={run.datasetId} c="dimmed" size="xs" />
                 </Table.Td>
                 <Table.Td ta="right" ff="monospace">
@@ -172,18 +202,22 @@ function RunsTable({
 function CompareBar({ selected, onClear }: { selected: string[]; onClear: () => void }) {
   if (selected.length === 0) return null;
   return (
-    <Affix position={{ bottom: 20, left: '50%' }} style={{ transform: 'translateX(-50%)' }} zIndex={150}>
+    <Affix position={{ bottom: 20, left: '50%' }} style={{ transform: 'translateX(-50%)', maxWidth: 'calc(100vw - 32px)' }} zIndex={150}>
       <Paper
         role="region"
         aria-label="Selected runs"
         px="md"
         py="sm"
         withBorder
-        style={{ borderColor: terminal.accent, background: '#161A14', boxShadow: '0 12px 40px rgba(0,0,0,0.45)' }}
+        style={{
+          borderColor: 'var(--console-line-strong)',
+          background: 'var(--console-raised)',
+          boxShadow: '0 12px 40px rgba(0,0,0,0.35)',
+        }}
       >
-        <Group gap="md" wrap="nowrap">
+        <Group gap="md" wrap="wrap">
           <Text size="sm" style={{ whiteSpace: 'nowrap' }}>
-            <Text span ff="monospace" c="amber" fw={600}>
+            <Text span ff="monospace" fw={600}>
               {selected.length}
             </Text>{' '}
             selected · up to {MAX_COMPARED_RUNS}
@@ -215,6 +249,14 @@ function Shortcut({ keys, children }: { keys: string; children: ReactNode }) {
   );
 }
 
+interface ListUpdate {
+  datasetId?: string | null;
+  page?: number;
+  query?: string;
+  outcome?: Outcome;
+  sort?: Sort;
+}
+
 export function RunsPage() {
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
@@ -228,9 +270,10 @@ export function RunsPage() {
   const data = runs.data;
   const pages = data ? Math.max(1, Math.ceil(data.total / PAGE_SIZE)) : 1;
 
-  const [query, setQuery] = useState('');
-  const [outcome, setOutcome] = useState<Outcome>('all');
-  const [sort, setSort] = useState<Sort>(DEFAULT_SORT);
+  // Filter text, outcome and sort live in the URL so a shared link shows the same list.
+  const query = params.get(QUERY_PARAM) ?? '';
+  const outcome = parseOutcome(params.get(OUTCOME_PARAM));
+  const sort = parseSort(params.get(SORT_PARAM));
   const [selected, setSelected] = useState<string[]>([]);
   const filterInput = useRef<HTMLInputElement>(null);
 
@@ -242,22 +285,69 @@ export function RunsPage() {
     ['c', () => selected.length >= 2 && void navigate(paths.compareRuns(selected))],
   ]);
 
-  const update = (next: { datasetId?: string | null; page?: number }) => {
+  const update = (next: ListUpdate) => {
     const nextParams = new URLSearchParams(params);
+    const setOrDelete = (key: string, value: string | null) => {
+      if (value) nextParams.set(key, value);
+      else nextParams.delete(key);
+    };
     if (next.datasetId !== undefined) {
-      if (next.datasetId) nextParams.set('datasetId', next.datasetId);
-      else nextParams.delete('datasetId');
+      setOrDelete('datasetId', next.datasetId);
       nextParams.delete('page');
     }
-    if (next.page !== undefined) {
-      if (next.page > 0) nextParams.set('page', String(next.page));
-      else nextParams.delete('page');
-    }
-    setParams(nextParams);
+    if (next.page !== undefined) setOrDelete('page', next.page > 0 ? String(next.page) : null);
+    if (next.query !== undefined) setOrDelete(QUERY_PARAM, next.query);
+    if (next.outcome !== undefined) setOrDelete(OUTCOME_PARAM, next.outcome === 'all' ? null : next.outcome);
+    if (next.sort !== undefined) setOrDelete(SORT_PARAM, serializeSort(next.sort));
+    // Typing in the filter replaces the history entry instead of adding one per key stroke.
+    setParams(nextParams, { replace: next.query !== undefined });
   };
 
   const shown = data ? sortRuns(filterRuns(data.items, query, outcome, datasetNames), sort) : [];
   const narrowed = data ? shown.length !== data.items.length : false;
+  const newRunPath = datasetId ? paths.newRunFor(datasetId) : paths.newRun;
+
+  let body: ReactNode;
+  if (!data) {
+    body = runs.isError ? (
+      <ErrorState error={runs.error} title="Could not load runs" onRetry={() => void runs.refetch()} />
+    ) : (
+      <LoadingState label="Loading runs…" />
+    );
+  } else if (data.items.length === 0) {
+    body = (
+      <EmptyState
+        title={datasetId ? 'No runs for this dataset' : 'No runs yet'}
+        description="Start a run from a stored dataset to see it here."
+        action={
+          <Button component={Link} to={newRunPath} variant="default">
+            Start a run
+          </Button>
+        }
+      />
+    );
+  } else if (shown.length === 0) {
+    body = <EmptyState title="No runs match" description="Clear the filter or pick another outcome." />;
+  } else {
+    body = (
+      <RunsTable
+        runs={shown}
+        datasetNames={datasetNames}
+        sort={sort}
+        onSort={(key) => update({ sort: toggleSort(sort, key) })}
+        selected={selected}
+        onToggle={toggle}
+        stale={runs.isPlaceholderData}
+      />
+    );
+  }
+
+  const datasetName = datasetId ? datasetNames.get(datasetId) : undefined;
+  const countHint = data
+    ? narrowed
+      ? `${formatCount(shown.length)} of ${formatCount(data.items.length)} on this page`
+      : `${formatCount(data.total)} runs`
+    : undefined;
 
   return (
     <Stack gap="md">
@@ -265,7 +355,7 @@ export function RunsPage() {
         title="Runs"
         description="Every persisted replay run. Runs are immutable: the same dataset, configuration and engine always give the same run. Tick runs to compare them."
         actions={
-          <Button component={Link} to={datasetId ? paths.newRunFor(datasetId) : paths.newRun} leftSection={<IconPlay size={16} />}>
+          <Button component={Link} to={newRunPath} leftSection={<IconPlay size={16} />}>
             New run
           </Button>
         }
@@ -279,56 +369,37 @@ export function RunsPage() {
           leftSection={<IconSearch size={15} />}
           rightSection={<Kbd>F</Kbd>}
           value={query}
-          onChange={(e) => setQuery(e.currentTarget.value)}
+          onChange={(e) => update({ query: e.currentTarget.value })}
           onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.blur()}
-          w={320}
+          w={{ base: '100%', sm: 320 }}
         />
-        <SegmentedControl aria-label="Outcome" value={outcome} onChange={(value) => setOutcome(value as Outcome)} data={OUTCOMES} />
+        <SegmentedControl aria-label="Outcome" value={outcome} onChange={(value) => update({ outcome: parseOutcome(value) })} data={OUTCOMES} />
         <Select
           aria-label="Filter by dataset"
           placeholder="All datasets"
-          data={datasetList.map((d) => ({ value: d.id, label: `${d.name} · ${shortId(d.id)}` }))}
+          data={datasetList.map((d) => ({ value: d.id, label: `${d.name || '—'} · ${shortId(d.id)}` }))}
           value={datasetId}
           onChange={(value) => update({ datasetId: value })}
           clearable
           searchable
-          w={280}
+          w={{ base: '100%', sm: 280 }}
         />
-        <Box style={{ flex: 1 }} />
-        {data && (
-          <Text size="xs" c="dimmed">
-            {narrowed ? `${shown.length} of ${data.items.length} on this page` : `${formatCount(data.total)} runs`}
-          </Text>
-        )}
       </Group>
 
-      <Paper withBorder p={0}>
-        {runs.isPending ? (
-          <LoadingState label="Loading runs…" />
-        ) : runs.isError ? (
-          <Box p="md">
-            <ErrorState error={runs.error} title="Could not load runs" onRetry={() => void runs.refetch()} />
-          </Box>
-        ) : data && data.items.length === 0 ? (
-          <EmptyState
-            title={datasetId ? 'No runs for this dataset' : 'No runs yet'}
-            description="Start a run from a stored dataset to see it here."
-            action={
-              <Button component={Link} to={datasetId ? paths.newRunFor(datasetId) : paths.newRun} variant="light">
-                Start a run
-              </Button>
-            }
-          />
-        ) : data && shown.length === 0 ? (
-          <EmptyState title="No runs match" description="Clear the filter or pick another outcome." />
-        ) : data ? (
-          <RunsTable runs={shown} datasetNames={datasetNames} sort={sort} onSort={(key) => setSort((s) => toggleSort(s, key))} selected={selected} onToggle={toggle} />
-        ) : null}
-      </Paper>
+      <Section
+        title={datasetId ? `Runs on ${datasetName || shortId(datasetId)}` : 'All runs'}
+        hint={countHint}
+        padding="md"
+      >
+        {data && runs.isError && (
+          <RefreshNotice error={runs.error} updatedAt={runs.dataUpdatedAt} onRetry={() => void runs.refetch()} />
+        )}
+        {body}
+      </Section>
 
       {data && (
         <Group justify="space-between">
-          <Group gap="md">
+          <Group gap="md" visibleFrom="sm">
             <Shortcut keys="F">filter</Shortcut>
             <Shortcut keys="C">compare selected</Shortcut>
             <Shortcut keys="N">new run</Shortcut>

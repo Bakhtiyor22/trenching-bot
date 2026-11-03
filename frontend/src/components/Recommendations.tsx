@@ -155,7 +155,7 @@ export function Recommendations({
               </Text>
               {!action && item.setting && <Text size="sm">Sets {settingLabel(item)}</Text>}
               {item.caveatCode && (
-                <Alert color="yellow">
+                <Alert color="orange" variant="light">
                   {item.caveatCode === 'CUTOFF_USES_AGREED_STRATEGY'
                     ? cutoffUsesAgreedStrategy(
                         Number(
@@ -183,7 +183,7 @@ export function Recommendations({
                   item.setting && (
                     <Button
                       size="xs"
-                      variant="light"
+                      variant="default"
                       onClick={() => {
                         if (isApplied && onUndo) {
                           onUndo(item);

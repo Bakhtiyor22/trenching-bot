@@ -13,7 +13,7 @@ import {
 } from '../../charts/priceChart';
 import { compactDecimal, formatDecimal, toChartNumber } from '../../lib/decimal';
 import { formatSlot, humanizeCode, signedBps, usdtRateNote } from '../../lib/format';
-import { FONT_MONO, terminal } from '../../theme';
+import { FONT_MONO, terminal, type TerminalTokens } from '../../theme';
 
 export const ENTRY_COLOR = terminal.info;
 export const EXIT_COLOR = terminal.rejected;
@@ -22,12 +22,12 @@ export const SOURCE_COLOR = terminal.dimmed;
 /** Legend name shared by the level lines, so one click hides or shows them all. */
 export const LEVELS_SERIES = 'Levels';
 export const EXIT_START_SERIES = 'Exit start';
-export const LEVEL_COLORS = {
-  reference: '#C3CDD5',
-  dip: terminal.info,
-  takeProfit: terminal.gain,
-  stopLoss: terminal.loss,
-} as const;
+/** Level line colours of one scheme. */
+export function levelColors(t: TerminalTokens) {
+  return { reference: t.text2, dip: t.info, takeProfit: t.gain, stopLoss: t.loss };
+}
+export type LevelColors = ReturnType<typeof levelColors>;
+export const LEVEL_COLORS: LevelColors = levelColors(terminal);
 
 /** The short label of an exit marker, by close reason. */
 const EXIT_LABELS: Record<string, string> = {
@@ -126,6 +126,7 @@ export function usdtValues(view: RunUsdtView): TimelineValues {
 export function timelineMarkers(
   scenarios: Scenario[],
   values: TimelineValues = quoteValues(''),
+  colors: LevelColors = LEVEL_COLORS,
 ): TimelineMarkers {
   const unit = values.unit ? ` ${values.unit}` : '';
   const sourceSlots = [...new Set(scenarios.map((s) => s.sourceSlot))].sort((a, b) => a - b);
@@ -140,12 +141,12 @@ export function timelineMarkers(
   for (const s of scenarios) {
     // REFERENCE_UNAVAILABLE carries Decu's average as a placeholder: there is no reference or dip level to draw.
     if (s.watch !== 'REFERENCE_UNAVAILABLE') {
-      addLevel(s.referencePrice, 'P0', LEVEL_COLORS.reference);
-      addLevel(s.dipPrice, 'Dip', LEVEL_COLORS.dip);
+      addLevel(s.referencePrice, 'P0', colors.reference);
+      addLevel(s.dipPrice, 'Dip', colors.dip);
     }
     if (s.position) {
-      addLevel(s.position.takeProfitPrice, 'Take profit', LEVEL_COLORS.takeProfit);
-      addLevel(s.position.stopLossPrice, 'Stop loss', LEVEL_COLORS.stopLoss);
+      addLevel(s.position.takeProfitPrice, 'Take profit', colors.takeProfit);
+      addLevel(s.position.stopLossPrice, 'Stop loss', colors.stopLoss);
     }
     if (s.status === 'REJECTED' || !s.fill) {
       rejections.push(
@@ -350,7 +351,11 @@ export function scenarioPairs(scenarios: Scenario[]): string[] {
  * A dashed vertical line at each timed position's exit start, also when it closed earlier by take profit or stop loss,
  * so the chart shows how much time was left; none outside the axis range.
  */
-function exitStartLines(scenarios: Scenario[], axis: { min: number; max: number }): SeriesOption[] {
+function exitStartLines(
+  scenarios: Scenario[],
+  axis: { min: number; max: number },
+  color: string = SOURCE_COLOR,
+): SeriesOption[] {
   const times = scenarios.flatMap((s) => {
     const at = s.position?.exitStart ? Date.parse(s.position.exitStart) : NaN;
     return Number.isFinite(at) && at >= axis.min && at <= axis.max ? [at] : [];
@@ -368,10 +373,10 @@ function exitStartLines(scenarios: Scenario[], axis: { min: number; max: number 
         data: times.map((at) => ({
           xAxis: at,
           name: 'Exit start',
-          lineStyle: { color: SOURCE_COLOR, type: 'dashed' as const, width: 1 },
+          lineStyle: { color, type: 'dashed' as const, width: 1 },
           label: {
             formatter: 'Exit start',
-            color: SOURCE_COLOR,
+            color,
             position: 'insideEndTop' as const,
           },
         })),
@@ -389,6 +394,7 @@ export function chartTimelineOption(
   origin?: number | null,
   config?: MarketChartConfig,
 ): EChartsOption {
+  const t = config?.tokens ?? terminal;
   const base = chartCandleOption(response, view, style, origin, config);
   const axis = (Array.isArray(base.xAxis) ? base.xAxis[0] : base.xAxis) as {
     min: number;
@@ -396,10 +402,11 @@ export function chartTimelineOption(
   };
   const option: EChartsOption = {
     ...base,
-    series: [...(base.series as SeriesOption[]), ...exitStartLines(scenarios, axis)],
+    series: [...(base.series as SeriesOption[]), ...exitStartLines(scenarios, axis, t.dimmed)],
   };
   if (view === 'mcap' && response.valuationBasis.available) return option;
-  const levelMarkers = timelineMarkers(scenarios).levels;
+  const colors = levelColors(t);
+  const levelMarkers = timelineMarkers(scenarios, quoteValues(''), colors).levels;
   const levels: SeriesOption[] = levelMarkers.flatMap((level) => {
     const price = toChartNumber(level.price);
     return price == null
@@ -415,7 +422,7 @@ export function chartTimelineOption(
             showSymbol: false,
             silent: true,
             lineStyle: { color: level.color, type: 'dotted', width: 1.5 },
-            itemStyle: { color: LEVEL_COLORS.reference },
+            itemStyle: { color: colors.reference },
             endLabel: {
               show: true,
               formatter: `${level.label} ${compactDecimal(level.price)}`,

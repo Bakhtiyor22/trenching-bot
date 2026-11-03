@@ -11,7 +11,10 @@ import {
 } from '../../mocks/fixtures';
 import { server } from '../../mocks/server';
 import { renderPage } from '../../test/render';
+import { formatSignedDecimal } from '../../lib/decimal';
 import { RunsPage } from './RunsPage';
+
+const SIGNED_TOTAL_PNL = formatSignedDecimal(SAMPLE_TOTAL_PNL);
 
 function renderRuns(url = '/runs') {
   return renderPage(<RunsPage />, {
@@ -28,7 +31,7 @@ describe('RunsPage', () => {
   it('shows exact summaries and opens a run from its link', async () => {
     const { user, router } = renderRuns();
     const table = await screen.findByRole('table');
-    expect(within(table).getByText(SAMPLE_TOTAL_PNL)).toBeInTheDocument();
+    expect(within(table).getByText(SIGNED_TOTAL_PNL)).toBeInTheDocument();
     expect(within(table).getByText('0.000000000000')).toBeInTheDocument();
     await user.click(within(table).getByRole('link', { name: '4f0c…c5d6' }));
     await screen.findByText('Run detail');
@@ -39,10 +42,10 @@ describe('RunsPage', () => {
     const { user, router } = renderRuns();
     const table = await screen.findByRole('table');
     await user.type(screen.getByRole('textbox', { name: 'Filter runs on this page' }), '9a8b');
-    expect(within(table).queryByText(SAMPLE_TOTAL_PNL)).not.toBeInTheDocument();
+    expect(within(table).queryByText(SIGNED_TOTAL_PNL)).not.toBeInTheDocument();
     await user.clear(screen.getByRole('textbox', { name: 'Filter runs on this page' }));
     await user.click(screen.getByRole('radio', { name: 'Loss' }));
-    expect(within(table).getByText(SAMPLE_TOTAL_PNL)).toBeInTheDocument();
+    expect(within(table).getByText(SIGNED_TOTAL_PNL)).toBeInTheDocument();
     expect(within(table).queryByText('0.000000000000')).not.toBeInTheDocument();
     await user.click(screen.getByRole('radio', { name: 'All' }));
 
@@ -58,7 +61,7 @@ describe('RunsPage', () => {
     const table = await screen.findByRole('table');
     expect(within(table).getAllByRole('row')).toHaveLength(2);
     expect(within(table).getByText('0.000000000000')).toBeInTheDocument();
-    expect(within(table).queryByText(SAMPLE_TOTAL_PNL)).not.toBeInTheDocument();
+    expect(within(table).queryByText(SIGNED_TOTAL_PNL)).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'New run' })).toHaveAttribute(
       'href',
       `/runs/new?datasetId=${EDGE_DATASET_ID}`,
@@ -104,6 +107,39 @@ describe('RunsPage', () => {
       expect(requestedPage).toBe('0');
     },
   );
+
+  it('keeps the filter, outcome and sort in the URL and restores them from it', async () => {
+    const { user, router } = renderRuns();
+    const table = await screen.findByRole('table');
+    await user.type(screen.getByRole('textbox', { name: 'Filter runs on this page' }), '4f0c');
+    await user.click(screen.getByRole('radio', { name: 'Loss' }));
+    await user.click(within(table).getByRole('button', { name: /Realized P&L/ }));
+    const search = new URLSearchParams(router.state.location.search);
+    expect(search.get('q')).toBe('4f0c');
+    expect(search.get('outcome')).toBe('loss');
+    expect(search.get('sort')).toBe('pnl');
+  });
+
+  it('opens with the filter from the URL', async () => {
+    renderRuns('/runs?q=9a8b&outcome=flat');
+    const table = await screen.findByRole('table');
+    expect(screen.getByRole('textbox', { name: 'Filter runs on this page' })).toHaveValue('9a8b');
+    expect(within(table).queryByText(SIGNED_TOTAL_PNL)).not.toBeInTheDocument();
+    expect(within(table).getByText('0.000000000000')).toBeInTheDocument();
+  });
+
+  it('keeps the table when a refresh fails', async () => {
+    const { queryClient } = renderRuns();
+    const table = await screen.findByRole('table');
+    server.use(
+      http.get('/api/runs', () =>
+        HttpResponse.json({ code: 'FAILED', message: 'Runs unavailable', fields: {} }, { status: 500 }),
+      ),
+    );
+    await queryClient.refetchQueries();
+    expect(await screen.findByText(/Couldn.t refresh/)).toBeInTheDocument();
+    expect(within(table).getByText(SIGNED_TOTAL_PNL)).toBeInTheDocument();
+  });
 
   it('shows a failed list request with the backend message', async () => {
     server.use(

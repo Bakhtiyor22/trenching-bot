@@ -12,7 +12,8 @@ import * as echarts from 'echarts/core';
 import { CanvasRenderer } from 'echarts/renderers';
 import type { ECharts, EChartsOption } from 'echarts';
 import { useEffect, useRef } from 'react';
-import { FONT_MONO, terminal } from '../theme';
+import { chartTheme } from '../charts/chartTokens';
+import { terminal, terminalLight } from '../theme';
 import ReactEChartsCore from './chartComponent';
 
 // Register only what the console uses, to keep the bundle small.
@@ -31,47 +32,11 @@ echarts.use([
   CanvasRenderer,
 ]);
 
-const TERMINAL_THEME = 'terminal';
+const DARK_THEME = 'terminal-dark';
+const LIGHT_THEME = 'terminal-light';
 
-const axis = {
-  axisLine: { lineStyle: { color: terminal.line } },
-  axisTick: { lineStyle: { color: terminal.line } },
-  axisLabel: { color: terminal.dimmed, fontFamily: FONT_MONO, fontSize: 11 },
-  splitLine: { lineStyle: { color: '#161D23' } },
-  nameTextStyle: { color: terminal.dimmed },
-};
-
-// The dark console theme: the canvas palette, hairline axes and mono axis labels.
-echarts.registerTheme(TERMINAL_THEME, {
-  color: [
-    terminal.accent,
-    terminal.info,
-    terminal.gain,
-    terminal.loss,
-    terminal.violet,
-    terminal.dimmed,
-  ],
-  backgroundColor: 'transparent',
-  textStyle: { color: terminal.text },
-  categoryAxis: axis,
-  valueAxis: axis,
-  timeAxis: axis,
-  legend: { textStyle: { color: terminal.dimmed } },
-  tooltip: {
-    backgroundColor: terminal.ground,
-    borderColor: '#2A343D',
-    textStyle: { color: terminal.text, fontFamily: FONT_MONO, fontSize: 12 },
-    axisPointer: { lineStyle: { color: terminal.accent }, crossStyle: { color: terminal.accent } },
-  },
-  dataZoom: {
-    borderColor: terminal.line,
-    fillerColor: 'rgba(242,180,60,0.12)',
-    handleStyle: { color: terminal.accent, borderColor: terminal.accent },
-    moveHandleStyle: { color: terminal.raised },
-    dataBackground: { lineStyle: { color: '#2A343D' }, areaStyle: { color: terminal.raised } },
-    textStyle: { color: terminal.dimmed },
-  },
-});
+echarts.registerTheme(DARK_THEME, chartTheme(terminal));
+echarts.registerTheme(LIGHT_THEME, chartTheme(terminalLight));
 
 export type ChartEvents = Record<string, (params: unknown) => void>;
 
@@ -107,9 +72,12 @@ export function Chart({
   }, [onDispose]);
   useEffect(() => () => dispose.current?.(), []);
   const scheme = useComputedColorScheme('dark');
+  // No entry animation by default: options are rebuilt on every render of a polled page, and replaying
+  // the grow-in each time can leave bars invisible. A chart that wants motion sets `animation` itself.
   const themed: EChartsOption = {
     backgroundColor: 'transparent',
     textStyle: { fontFamily: 'inherit' },
+    animation: false,
     ...option,
   };
   return (
@@ -117,7 +85,7 @@ export function Chart({
       <ReactEChartsCore
         echarts={echarts}
         option={themed}
-        theme={scheme === 'dark' ? TERMINAL_THEME : undefined}
+        theme={scheme === 'dark' ? DARK_THEME : LIGHT_THEME}
         notMerge={notMerge}
         replaceMerge={replaceMerge}
         lazyUpdate

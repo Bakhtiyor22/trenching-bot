@@ -1,9 +1,9 @@
 import type { EChartsOption } from 'echarts';
 import type { RecentRun } from '../../api/types';
 import { INSIDE_ZOOM } from '../../charts/priceChart';
-import { addDecimals, decimalSign, formatDecimal, toChartNumber } from '../../lib/decimal';
+import { addDecimals, decimalSign, formatSignedDecimal, toChartNumber } from '../../lib/decimal';
 import { formatLocalTime, mintLabel, shortId } from '../../lib/format';
-import { terminal } from '../../theme';
+import { terminal, type TerminalTokens } from '../../theme';
 import type { GaugeSample } from './gaugeHistory';
 
 /** A step of the cumulative P&L line; keeps the exact strings for the tooltip. */
@@ -44,9 +44,9 @@ export function cumulativePnlSteps(recent: RecentRun[]): Map<string, CumulativeD
   return byMint;
 }
 
-function signColor(value: string): string {
+function signColor(value: string, t: TerminalTokens): string {
   const sign = decimalSign(value);
-  return sign > 0 ? terminal.gain : sign < 0 ? terminal.loss : terminal.dimmed;
+  return sign > 0 ? t.gain : sign < 0 ? t.loss : t.dimmed;
 }
 
 /** Anchors that make a line start from zero before its first run and hold its total until now. */
@@ -68,7 +68,16 @@ function anchored(steps: CumulativeDatum[], start: number, now: number): Array<C
   ];
 }
 
-export function cumulativePnlOption(recent: RecentRun[], now: number = Date.now()): EChartsOption {
+/**
+ * The cumulative P&L step chart. A line takes the colour of the sign of its latest total (loss red,
+ * gain teal); further quote mints use the identity slots. The zero line is the one emphasised gridline
+ * and each line ends with its exact signed total.
+ */
+export function cumulativePnlOption(
+  recent: RecentRun[],
+  now: number = Date.now(),
+  t: TerminalTokens = terminal,
+): EChartsOption {
   const byMint = cumulativePnlSteps(recent);
   const times = recent.map((r) => Date.parse(r.createdAt));
   const first = Math.min(...times);
@@ -77,7 +86,7 @@ export function cumulativePnlOption(recent: RecentRun[], now: number = Date.now(
   const mints = [...byMint.keys()];
   const points = recent.length;
   return {
-    grid: { left: 8, right: 16, top: mints.length > 1 ? 36 : 12, bottom: points >= SLIDER_MIN_POINTS ? 44 : 8, containLabel: true },
+    grid: { left: 8, right: 120, top: mints.length > 1 ? 36 : 16, bottom: points >= SLIDER_MIN_POINTS ? 44 : 8, containLabel: true },
     legend: mints.length > 1 ? { top: 0, data: mints.map(mintLabel) } : undefined,
     tooltip: {
       trigger: 'item',
@@ -86,11 +95,11 @@ export function cumulativePnlOption(recent: RecentRun[], now: number = Date.now(
         if (!d?.runId || !d.quoteMint || !d.createdAt || !d.step || !d.total) return '';
         const unit = mintLabel(d.quoteMint);
         return [
-          `<span style="color:${terminal.dimmed}">${formatLocalTime(d.createdAt)}</span>`,
+          `<span style="color:${t.dimmed}">${formatLocalTime(d.createdAt)}</span>`,
           `Run <b>${shortId(d.runId)}</b>`,
-          `Step <span style="color:${signColor(d.step)}">${formatDecimal(d.step)}</span> ${unit}`,
-          `Total <b style="color:${signColor(d.total)}">${formatDecimal(d.total)}</b> ${unit}`,
-          `<i style="color:${terminal.dimmed}">Click to open the run</i>`,
+          `Step <span style="color:${signColor(d.step, t)}">${formatSignedDecimal(d.step)}</span> ${unit}`,
+          `Total <b style="color:${signColor(d.total, t)}">${formatSignedDecimal(d.total)}</b> ${unit}`,
+          `<i style="color:${t.dimmed}">Click to open the run</i>`,
         ].join('<br/>');
       },
     },
@@ -100,19 +109,39 @@ export function cumulativePnlOption(recent: RecentRun[], now: number = Date.now(
       INSIDE_ZOOM,
       ...(points >= SLIDER_MIN_POINTS ? [{ type: 'slider' as const, filterMode: 'none' as const, height: 18, bottom: 8 }] : []),
     ],
-    series: mints.map((mint, index) => ({
-      type: 'line' as const,
-      name: mintLabel(mint),
-      step: 'end' as const,
-      cursor: 'pointer',
-      symbol: 'circle',
-      symbolSize: 8,
-      lineStyle: { width: 2, color: index === 0 ? terminal.gain : undefined },
-      itemStyle: index === 0 ? { color: terminal.gain } : undefined,
-      areaStyle: index === 0 ? { color: terminal.gain, opacity: 0.08 } : undefined,
-      markLine: { silent: true, symbol: 'none', data: [{ yAxis: 0 }], lineStyle: { color: '#3A4651', type: 'dashed' as const }, label: { show: false } },
-      data: anchored(byMint.get(mint) ?? [], start, end),
-    })),
+    series: mints.map((mint, index) => {
+      const steps = byMint.get(mint) ?? [];
+      const total = steps.at(-1)?.total ?? '0';
+      const color = index === 0 ? signColor(total, t) : t.series[(index - 1) % t.series.length]!;
+      return {
+        type: 'line' as const,
+        name: mintLabel(mint),
+        step: 'end' as const,
+        cursor: 'pointer',
+        symbol: 'circle',
+        symbolSize: 8,
+        animation: false,
+        lineStyle: { width: 2, color },
+        itemStyle: { color, borderColor: t.panel, borderWidth: 2 },
+        areaStyle: index === 0 ? { color, opacity: 0.08, origin: 0 } : undefined,
+        endLabel: {
+          show: true,
+          formatter: () => `${formatSignedDecimal(total, { trim: true })} ${mintLabel(mint)}`,
+          color: t.text,
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: 11,
+          distance: 6,
+        },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          data: [{ yAxis: 0 }],
+          lineStyle: { color: t.lineStrong, type: 'solid' as const, width: 1 },
+          label: { show: false },
+        },
+        data: anchored(steps, start, end),
+      };
+    }),
   };
 }
 
@@ -122,13 +151,16 @@ export function runIdFromClick(params: unknown): string | null {
   return datum?.runId ?? null;
 }
 
+/** A runtime sparkline: a quiet grey line, no axes, the latest point in the accent; the value itself is shown as text. */
 export function sparklineOption(
   samples: GaugeSample[],
   pick: (s: GaugeSample) => number | null,
-  { color, unit, digits = 1 }: { color: string; unit: string; digits?: number },
+  { color, unit, digits = 1, latest }: { color: string; unit: string; digits?: number; latest?: string },
 ): EChartsOption {
+  const points = samples.map((s) => [s.t, pick(s)] as [number, number | null]);
+  const last = [...points].reverse().find((p) => p[1] != null);
   return {
-    grid: { left: 4, right: 4, top: 6, bottom: 4, containLabel: false },
+    grid: { left: 4, right: 6, top: 6, bottom: 4, containLabel: false },
     tooltip: {
       trigger: 'axis',
       valueFormatter: (value) => (typeof value === 'number' ? `${value.toFixed(digits)} ${unit}` : '—'),
@@ -139,12 +171,25 @@ export function sparklineOption(
       {
         type: 'line',
         showSymbol: false,
-        smooth: true,
+        smooth: false,
         connectNulls: false,
+        animation: false,
         lineStyle: { width: 1.5, color },
-        areaStyle: { color, opacity: 0.1 },
-        data: samples.map((s) => [s.t, pick(s)]),
+        data: points,
       },
+      ...(latest && last
+        ? [
+            {
+              type: 'scatter' as const,
+              silent: true,
+              animation: false,
+              symbolSize: 7,
+              itemStyle: { color: latest },
+              tooltip: { show: false },
+              data: [last],
+            },
+          ]
+        : []),
     ],
   };
 }

@@ -49,6 +49,22 @@ describe('NewRunPage', () => {
     expect(screen.getByText('Changed · 2 settings')).toBeInTheDocument();
   });
 
+  it('keeps the form and its edits when a refresh of the datasets fails', async () => {
+    const { user, queryClient } = renderNewRun();
+    const stop = await screen.findByLabelText(/Stop loss/);
+    await user.clear(stop);
+    await user.type(stop, '41');
+    server.use(
+      http.get('/api/datasets', () =>
+        HttpResponse.json({ code: 'FAILED', message: 'Datasets unavailable', fields: {} }, { status: 500 }),
+      ),
+    );
+    await queryClient.refetchQueries({ queryKey: ['datasets'] });
+    expect(await screen.findByText(/Couldn.t refresh/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Stop loss/)).toHaveValue('41');
+    expect(screen.getByRole('button', { name: 'Start run' })).toBeInTheDocument();
+  });
+
   it('retries loading the agreed strategy before displaying the form', async () => {
     let requests = 0;
     server.use(

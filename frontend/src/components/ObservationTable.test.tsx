@@ -13,10 +13,13 @@ describe('ObservationTable action target', () => {
     }));
     renderPage(<ObservationTable observations={observations} selectedId="recorded:trade/55" />);
 
-    const row = (await screen.findByText('recorded:trade/55')).closest('tr');
+    // Ids are shortened in the table; the copy button carries the full value.
+    const row = (await screen.findByRole('button', { name: 'Copy full value: recorded:trade/55' })).closest('tr');
     expect(row).toHaveAttribute('id', 'observation-recorded%3Atrade%2F55');
     expect(row).toHaveAttribute('data-highlighted', 'true');
-    expect(screen.queryByText('recorded:trade/0')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Copy full value: recorded:trade/0' }),
+    ).not.toBeInTheDocument();
     await waitFor(() => expect(scroll).toHaveBeenCalled());
     scroll.mockRestore();
   });

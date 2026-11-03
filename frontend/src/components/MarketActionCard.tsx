@@ -13,7 +13,8 @@ import type { ChartResponse } from '../api/types';
 import { unrecordedStart } from '../charts/priceChart';
 import { marketValue } from '../charts/marketSummary';
 import { transactionLinks } from '../lib/marketLinks';
-import { FONT_MONO, terminal } from '../theme';
+import { codeLabel } from '../lib/codes';
+import { FONT_MONO } from '../theme';
 
 export interface MarketActionCardProps {
   action: MarketAction;
@@ -46,7 +47,8 @@ export function MarketActionCard({
 }: MarketActionCardProps) {
   const paper = action.kind === 'PAPER';
   const sell = action.side === 'SELL';
-  const color = paper ? terminal.info : terminal.accent;
+  // Paper fills are blue diamonds; Decu's own trades are amber pins.
+  const color = paper ? 'var(--console-info)' : 'var(--console-accent)';
   const transaction =
     action.kind === 'OBSERVED' && action.signature
       ? transactionLinks(action.signature)[0]
@@ -78,7 +80,7 @@ export function MarketActionCard({
     { width, height: size.plot },
   );
   const note = paper
-    ? action.reason
+    ? action.reason && codeLabel(action.reason)
     : firstBuy
       ? 'First buy · started this cycle'
       : positionClosed
@@ -106,11 +108,11 @@ export function MarketActionCard({
         width: cardWidth,
         left: position.x,
         top: position.y,
-        background: terminal.raised,
-        border: `1px solid ${terminal.neutral}`,
+        background: 'var(--console-raised)',
+        border: '1px solid var(--console-line-strong)',
         borderRadius: 10,
         boxShadow: '0 12px 36px rgba(0,0,0,.4)',
-        color: terminal.text,
+        color: 'var(--console-text)',
       }}
     >
       <Stack gap="xs">
@@ -123,8 +125,8 @@ export function MarketActionCard({
                 height: 26,
                 borderRadius: paper ? 0 : '50%',
                 border: `2px solid ${color}`,
-                color: !paper && !sell ? terminal.ground : color,
-                background: !paper && !sell ? color : terminal.panel,
+                color: !paper && !sell ? 'var(--console-accent-ink)' : color,
+                background: !paper && !sell ? color : 'var(--console-panel)',
                 display: 'grid',
                 placeItems: 'center',
                 fontWeight: 700,
@@ -205,7 +207,7 @@ export function MarketActionCard({
           </Stack>
         )}
         {note && (
-          <Text size="xs" c={color}>
+          <Text size="xs" c={paper ? 'dimmed' : color} title={paper ? (action.reason ?? undefined) : undefined}>
             {note}
           </Text>
         )}

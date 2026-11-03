@@ -13,6 +13,8 @@ import {
   SAMPLE_PNL,
   SAMPLE_RUN_ID,
   SAMPLE_TOTAL_PNL,
+  SOL_MINT,
+  STOP_LOSS_MINT,
   STOP_LOSS_EXIT_PRICE,
   STOP_LOSS_LEVEL,
   STOP_LOSS_PNL,
@@ -35,7 +37,8 @@ import {
   v4Observations,
   realRunDetail,
 } from '../../mocks/fixtures';
-import { formatDecimal } from '../../lib/decimal';
+import { codeLabel } from '../../lib/codes';
+import { formatDecimal, formatSignedDecimal } from '../../lib/decimal';
 import { server } from '../../mocks/server';
 import { renderPage } from '../../test/render';
 import { RunDetailPage } from './RunDetailPage';
@@ -59,6 +62,11 @@ async function plotted(): Promise<PlottedOption> {
 
 /** As the page shows a decimal: thousands grouped, every digit kept. */
 const grouped = (value: string) => formatDecimal(value);
+/** As a table or card shows P&L: signed, every digit kept. */
+const signed = (value: string) => formatSignedDecimal(value);
+/** The headline P&L: signed, trailing zeros trimmed, the unit right after it. */
+const heroPnl = (value: string, unit: string) => (_: string, element: Element | null) =>
+  element?.tagName === 'SPAN' && element.textContent === `${formatSignedDecimal(value, { trim: true })}${unit}`;
 
 function hrefs(name: string): string[] {
   return screen.queryAllByRole('link', { name }).map((link) => link.getAttribute('href') ?? '');
@@ -100,8 +108,8 @@ describe('RunDetailPage', () => {
     const { user } = renderRun(REAL_RUN_ID);
     await user.click(await screen.findByRole('button', { name: 'Valuation information' }));
     expect(await screen.findByText(v4Chart.valuationBasis.label)).toBeInTheDocument();
-    expect(screen.getByText(/pumpfun-standard-supply/)).toBeInTheDocument();
-    expect(screen.getByText(/recorded:SOLUSDT:1m:open/)).toBeInTheDocument();
+    expect(screen.getByText(/Pump.fun standard supply/)).toHaveAttribute('title', 'pumpfun-standard-supply');
+    expect(screen.getByText(/Recorded SOLUSDT 1-minute open · 1-minute/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Valuation information' }));
     await user.click(screen.getByRole('button', { name: 'Layers' }));
     await user.type(screen.getByRole('textbox', { name: 'Watchlist wallet' }), WATCHED_WALLET);
@@ -142,7 +150,7 @@ describe('RunDetailPage', () => {
     const [takeProfit, stopLoss, noDip] = cards;
 
     expect(within(takeProfit!).getByText('Take profit')).toBeInTheDocument();
-    expect(within(takeProfit!).getByText(SAMPLE_PNL)).toBeInTheDocument();
+    expect(within(takeProfit!).getByText(signed(SAMPLE_PNL))).toBeInTheDocument();
     expect(within(takeProfit!).getByText('0.0000001')).toBeInTheDocument();
     expect(within(takeProfit!).getByText('0.000000085')).toBeInTheDocument();
     expect(within(takeProfit!).getByText('$16,800.000000000000')).toBeInTheDocument();
@@ -152,12 +160,12 @@ describe('RunDetailPage', () => {
     expect(within(takeProfit!).getByText(TAKE_PROFIT_NET_PROCEEDS)).toBeInTheDocument();
 
     expect(within(stopLoss!).getByText('Stop loss')).toBeInTheDocument();
-    expect(within(stopLoss!).getByText(STOP_LOSS_PNL)).toBeInTheDocument();
+    expect(within(stopLoss!).getByText(signed(STOP_LOSS_PNL))).toBeInTheDocument();
     expect(within(stopLoss!).getByText(STOP_LOSS_EXIT_PRICE)).toBeInTheDocument();
 
     expect(within(noDip!).getAllByText('No entry').length).toBeGreaterThan(0);
-    expect(within(noDip!).getByText('NO_DIP')).toBeInTheDocument();
-    expect(screen.getByText(SAMPLE_TOTAL_PNL)).toBeInTheDocument();
+    expect(within(noDip!).getByText('Technical code: NO_DIP')).toBeInTheDocument();
+    expect(screen.getAllByText(heroPnl(SAMPLE_TOTAL_PNL, 'SOL'))[0]).toBeInTheDocument();
   });
 
   it('shows the fees, price impact and transaction cost of each fill and close', async () => {
@@ -215,7 +223,7 @@ describe('RunDetailPage', () => {
     await user.keyboard('k');
     const story = screen.getByRole('heading', { name: 'Event timeline' }).closest('section')!;
     expect(within(story).getByText('No entry')).toBeInTheDocument();
-    expect(within(story).getByText('NO_DIP')).toBeInTheDocument();
+    expect(within(story).getByText(codeLabel('NO_DIP'))).toBeInTheDocument();
   });
 
   it('shows cycles without an entry with their reason and an open position with why it never exited', async () => {
@@ -226,15 +234,15 @@ describe('RunDetailPage', () => {
     expect(
       within(lowCap!).getByText(/The dip happened below the minimum market cap/),
     ).toBeInTheDocument();
-    expect(within(lowCap!).getByText('DIP_BELOW_MIN_MARKET_CAP')).toBeInTheDocument();
-    expect(within(migrated!).getByText('MIGRATED_BEFORE_ENTRY')).toBeInTheDocument();
+    expect(within(lowCap!).getByText('Technical code: DIP_BELOW_MIN_MARKET_CAP')).toBeInTheDocument();
+    expect(within(migrated!).getByText('Technical code: MIGRATED_BEFORE_ENTRY')).toBeInTheDocument();
 
     expect(within(open!).getByText('Open')).toBeInTheDocument();
     expect(within(open!).getByText('Still open')).toBeInTheDocument();
     expect(
       within(open!).getByText(/The window ended with the position still open/),
     ).toBeInTheDocument();
-    expect(within(open!).getByText('HORIZON_REACHED')).toBeInTheDocument();
+    expect(within(open!).getByText('Technical code: HORIZON_REACHED')).toBeInTheDocument();
     // Tiny prices are displayed exactly, never in exponent form.
     expect(within(open!).getByText('0.0000000000124017')).toBeInTheDocument();
     // Open positions are counted by why they never exited, so migrated tokens stay apart.
@@ -265,7 +273,9 @@ describe('RunDetailPage', () => {
       'aria-selected',
       'true',
     );
-    const row = (await screen.findByText('v4-observation-2')).closest('tr');
+    const row = (
+      await screen.findByRole('button', { name: 'Copy full value: v4-observation-2' })
+    ).closest('tr');
     expect(row).toHaveAttribute('id', 'observation-v4-observation-2');
     expect(row).toHaveAttribute('data-highlighted', 'true');
   });
@@ -350,7 +360,7 @@ describe('RunDetailPage', () => {
     expect(within(orders).getByText('NO_DIP')).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Positions' }));
     const positions = screen.getByRole('tabpanel');
-    expect(await within(positions).findAllByText(SAMPLE_PNL)).toHaveLength(1);
+    expect(await within(positions).findAllByText(signed(SAMPLE_PNL))).toHaveLength(1);
     expect(within(positions).getByText(TAKE_PROFIT_NET_PROCEEDS)).toBeInTheDocument();
     expect(within(positions).getByText(TAKE_PROFIT_LEVEL)).toBeInTheDocument();
     expect(within(positions).getByText(STOP_LOSS_LEVEL)).toBeInTheDocument();
@@ -369,6 +379,42 @@ describe('RunDetailPage', () => {
     expect(within(positions).getByText('0.0000000000124017')).toBeInTheDocument();
   });
 
+  it('keeps the selected cycle and the records tab in the URL and reopens them from it', async () => {
+    const { user, router } = renderRun(SAMPLE_RUN_ID);
+    await screen.findAllByRole('article');
+    const cycles = screen.getByRole('navigation', { name: 'Cycles' });
+    await user.click(within(cycles).getByRole('button', { name: /Stop loss/ }));
+    await user.click(screen.getByRole('tab', { name: 'Positions' }));
+    const search = new URLSearchParams(router.state.location.search);
+    expect(search.get('pair')).toBe(`${STOP_LOSS_MINT}/${SOL_MINT}`);
+    await waitFor(() =>
+      expect(new URLSearchParams(router.state.location.search).get('records')).toBe('positions'),
+    );
+  });
+
+  it('opens the cycle and records tab named in the URL', async () => {
+    renderRun(`${SAMPLE_RUN_ID}?pair=${STOP_LOSS_MINT}/${SOL_MINT}&records=orders`);
+    await screen.findAllByRole('article');
+    expect(screen.getByRole('article', { current: true })).toHaveAccessibleName(/Cycle/);
+    expect(
+      within(screen.getByRole('navigation', { name: 'Cycles' })).getByRole('button', { name: /Stop loss/ }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('tab', { name: 'Orders & fills' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('keeps the run on screen when a refresh fails', async () => {
+    const { queryClient } = renderRun(SAMPLE_RUN_ID);
+    await screen.findAllByRole('article');
+    server.use(
+      http.get('/api/runs/:id', () =>
+        HttpResponse.json({ code: 'FAILED', message: 'Run unavailable', fields: {} }, { status: 500 }),
+      ),
+    );
+    await queryClient.refetchQueries({ queryKey: ['run', SAMPLE_RUN_ID], exact: true });
+    expect(await screen.findByText(/Couldn.t refresh/)).toBeInTheDocument();
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+  });
+
   it('shows an error for an unknown run', async () => {
     renderRun('does-not-exist');
     expect(await screen.findByText('Run does-not-exist not found')).toBeInTheDocument();
@@ -378,14 +424,14 @@ describe('RunDetailPage', () => {
     it('switches totals and cycle cards to USDT independently of the chart metric, keeping the choice in the URL', async () => {
       const { user, router } = renderRun(REAL_RUN_ID);
       await screen.findAllByRole('article');
-      expect(screen.getAllByText(SAMPLE_PNL).length).toBeGreaterThan(0);
+      expect(screen.getAllByText(signed(SAMPLE_PNL)).length).toBeGreaterThan(0);
 
       await user.click(screen.getByRole('radio', { name: 'USDT' }));
 
-      expect((await screen.findAllByText(grouped(USDT_TOTAL_PNL))).length).toBeGreaterThan(0);
+      expect((await screen.findAllByText(signed(USDT_TOTAL_PNL))).length).toBeGreaterThan(0);
       expect(screen.getByText('Realized P&L (USDT)')).toBeInTheDocument();
       const [first] = screen.getAllByRole('article');
-      expect(within(first!).getByText(grouped(USDT_PNL))).toBeInTheDocument();
+      expect(within(first!).getByText(signed(USDT_PNL))).toBeInTheDocument();
       expect(within(first!).getByText(USDT_COST_BASIS)).toBeInTheDocument();
       expect(within(first!).getByText(USDT_ENTRY_PRICE)).toBeInTheDocument();
       // The transaction cost converts on entry and on exit.
@@ -404,7 +450,7 @@ describe('RunDetailPage', () => {
     it('shows each observation price in USDT with the rate and minute it used', async () => {
       const { user } = renderRun(`${REAL_RUN_ID}?quote=usdt`);
       expect(await screen.findByRole('radio', { name: 'USDT' })).toBeChecked();
-      await screen.findAllByText(grouped(USDT_TOTAL_PNL));
+      await screen.findAllByText(signed(USDT_TOTAL_PNL));
       await user.click(screen.getByRole('tab', { name: 'Observations' }));
       const panel = screen.getByRole('tabpanel');
       expect(await within(panel).findByText('Price (USDT)')).toBeInTheDocument();
@@ -419,7 +465,7 @@ describe('RunDetailPage', () => {
       renderRun(`${SAMPLE_RUN_ID}?quote=usdt`);
       expect(await screen.findByRole('radio', { name: 'USDT' })).toBeChecked();
       expect(await screen.findByText(/NOT_CONFIGURED/)).toBeInTheDocument();
-      expect(screen.getByText(SAMPLE_TOTAL_PNL)).toBeInTheDocument();
+      expect(screen.getAllByText(heroPnl(SAMPLE_TOTAL_PNL, 'SOL'))[0]).toBeInTheDocument();
       expect((await plotted()).yAxis.name).toBe('Mcap (USDT)');
     });
 
@@ -490,7 +536,7 @@ describe('RunDetailPage', () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Positions' }));
     const positions = screen.getByRole('tabpanel');
-    expect(await within(positions).findByText(WALLET_SOLD_PNL)).toBeInTheDocument();
+    expect(await within(positions).findByText(signed(WALLET_SOLD_PNL))).toBeInTheDocument();
     expect(within(positions).getByText(/Sold because Decu sold/)).toBeInTheDocument();
     expect(within(positions).getByText('WALLET_SOLD')).toBeInTheDocument();
   });

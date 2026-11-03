@@ -614,3 +614,98 @@ export function isBackfillRefusal(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === 'string' && (code === 'BACKFILL_ACTIVE' || code in REFUSAL_TEXT);
 }
+
+const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** True for a real calendar date written `YYYY-MM-DD`: `2026-02-31` and `2026-13-01` are rejected. */
+export function isRealDate(value: string | null | undefined): value is string {
+  const match = value ? DATE_KEY.exec(value) : null;
+  if (!match) return false;
+  const [, year, month, day] = match.map(Number) as [number, number, number, number];
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
+}
+
+/** What is wrong with a date typed or linked, or null when it is a real `YYYY-MM-DD` date. */
+export function dateProblem(value: string | null | undefined): string | null {
+  if (!value) return 'Enter a date.';
+  if (!DATE_KEY.test(value)) return `${value} is not a date written YYYY-MM-DD.`;
+  return isRealDate(value) ? null : `${value} is not a real date.`;
+}
+
+/** A 1-based page number from the URL; anything that is not a whole number of at least 1 becomes 1. */
+export function parsePage(value: string | null | undefined): number {
+  if (!value || !/^\d+$/.test(value)) return 1;
+  const page = Number(value);
+  return Number.isSafeInteger(page) && page >= 1 ? page : 1;
+}
+
+const EVALUATION_STATUSES: readonly EvaluationStatus[] = [
+  'SUCCESS',
+  'NO_SUCCESS',
+  'NO_RESULT',
+  'PENDING',
+];
+
+/** A verdict filter from the URL, or null when it is missing or not a known status. */
+export function parseEvaluationStatus(value: string | null | undefined): EvaluationStatus | null {
+  return (EVALUATION_STATUSES as readonly string[]).includes(value ?? '')
+    ? (value as EvaluationStatus)
+    : null;
+}
+
+/** A backfill form pre-filled from a link (a finished dry run's "Capture this range"). */
+export interface BackfillPrefill {
+  fromDay: string | null;
+  toDay: string | null;
+  /** Only `dryRun=false` turns the dry run off; anything else keeps the safe default. */
+  dryRun: boolean;
+  budget: string | null;
+  minSignalSol: string | null;
+  /** URL keys that were present but not valid, so the form ignored them. */
+  ignored: string[];
+}
+
+/**
+ * Reads the backfill pre-fill keys (`from`, `to`, `dryRun`, `budget`, `min`) and keeps only valid values: real dates,
+ * a whole-number budget within the limits of the chosen kind, and a plain SOL decimal at least the capture filter.
+ */
+export function parseBackfillPrefill(params: URLSearchParams): BackfillPrefill {
+  const ignored: string[] = [];
+  const keep = <T>(
+    key: string,
+    valid: (value: string) => boolean,
+    map: (value: string) => T,
+  ): T | null => {
+    const raw = params.get(key);
+    if (raw == null) return null;
+    if (valid(raw)) return map(raw);
+    ignored.push(key);
+    return null;
+  };
+  const dryRunRaw = params.get('dryRun');
+  if (dryRunRaw != null && dryRunRaw !== 'true' && dryRunRaw !== 'false') ignored.push('dryRun');
+  const dryRun = dryRunRaw !== 'false';
+  const min = dryRun ? BACKFILL_LIMITS.minDryRunBudget : BACKFILL_LIMITS.minCaptureBudget;
+  return {
+    fromDay: keep('from', isRealDate, (v) => v),
+    toDay: keep('to', isRealDate, (v) => v),
+    dryRun,
+    budget: keep(
+      'budget',
+      (v) => /^\d+$/.test(v) && Number(v) >= min && Number(v) <= BACKFILL_LIMITS.maxBudget,
+      (v) => String(Number(v)),
+    ),
+    minSignalSol: keep(
+      'min',
+      (v) =>
+        isDecimalString(v) &&
+        !v.startsWith('-') &&
+        compareDecimals(v, BACKFILL_LIMITS.captureMinSol) >= 0,
+      (v) => v,
+    ),
+    ignored,
+  };
+}

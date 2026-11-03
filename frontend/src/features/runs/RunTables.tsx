@@ -1,4 +1,4 @@
-import { Badge, Code, ScrollArea, Table, Text } from '@mantine/core';
+import { Badge, Code, ScrollArea, Table, Text, Tooltip } from '@mantine/core';
 import { useEffect, useState, type ReactNode } from 'react';
 import type { Close, Fill, RunEvent, RunOrder, RunPosition } from '../../api/types';
 import { Decimal, PairLabel, Pnl, ShortId, Timestamp } from '../../components/DisplayValues';
@@ -6,10 +6,12 @@ import { MarketLinks } from '../../components/MarketLinks';
 import { PagingFooter } from '../../components/Panels';
 import { useClientPaging } from '../../components/useClientPaging';
 import { EmptyState } from '../../components/StateViews';
+import { StatusChip } from '../../components/StatusChip';
 import { formatSlot, humanizeCode, signedBps } from '../../lib/format';
 import { levelPercent } from '../../lib/percent';
 import { recordedEventSignature, transactionLinks } from '../../lib/marketLinks';
 import { closeReasonText, knownReasonText } from '../captures/captureReasons';
+import { commitmentLabel, sideLabel, sourceLabel } from './recordLabels';
 
 function Flag({ value, label }: { value: boolean; label: string }) {
   return (
@@ -22,7 +24,7 @@ function Flag({ value, label }: { value: boolean; label: string }) {
 function Wrap({ children, minWidth }: { children: ReactNode; minWidth: number }) {
   return (
     <ScrollArea type="auto">
-      <Table striped verticalSpacing={6} fz="sm" miw={minWidth}>
+      <Table striped verticalSpacing="xs" fz="sm" miw={minWidth}>
         {children}
       </Table>
     </ScrollArea>
@@ -82,13 +84,13 @@ export function EventsTable({ events }: { events: RunEvent[] }) {
               </Table.Td>
               <Table.Td>
                 {e.outcome === 'ACCEPTED' ? (
-                  <Badge color={e.side === 'SELL' ? 'grape' : 'teal'} variant="light">
-                    {e.side ?? 'ACCEPTED'}
-                  </Badge>
+                  <StatusChip tone="neutral" title={e.side ?? 'ACCEPTED'}>
+                    {e.side ? sideLabel(e.side) : 'Accepted'}
+                  </StatusChip>
                 ) : (
-                  <Badge color="gray" variant="light">
+                  <StatusChip tone="pending" glyph="–">
                     Ignored
-                  </Badge>
+                  </StatusChip>
                 )}
               </Table.Td>
               <Table.Td>
@@ -113,9 +115,11 @@ export function EventsTable({ events }: { events: RunEvent[] }) {
                 <Flag value={e.successful} label="success" />{' '}
                 <Flag value={e.supportedRoute} label="route" />{' '}
                 <Flag value={e.signer} label="signer" />
-                <Text size="xs" c="dimmed">
-                  {e.commitment} · {e.source}
-                </Text>
+                <Tooltip label={`${e.commitment} · ${e.source}`} withArrow>
+                  <Text size="xs" c="dimmed">
+                    {commitmentLabel(e.commitment)} · {sourceLabel(e.source)}
+                  </Text>
+                </Tooltip>
               </Table.Td>
               <Table.Td style={{ whiteSpace: 'nowrap' }}>
                 <Timestamp iso={e.blockTime} />
@@ -226,8 +230,9 @@ function useFillTarget<T extends { intentId: string }>(
 }
 
 const selectedRecordStyle = {
-  outline: '2px solid var(--mantine-color-blue-5)',
-  outlineOffset: -2,
+  background: 'var(--console-raised)',
+  outline: '1px solid var(--console-line-strong)',
+  outlineOffset: -1,
   scrollMarginTop: 24,
 };
 
@@ -270,9 +275,15 @@ export function OrdersTable({
               </Table.Td>
               <Table.Td ta="right">{formatSlot(o.targetSlot)}</Table.Td>
               <Table.Td>
-                <Badge color={o.status === 'FILLED' ? 'teal' : 'red'} variant="light">
-                  {o.status}
-                </Badge>
+                {o.status === 'FILLED' ? (
+                  <StatusChip tone="success" glyph="✓">
+                    Filled
+                  </StatusChip>
+                ) : (
+                  <StatusChip tone="attention" glyph="▲" title={o.status}>
+                    {o.status === 'REJECTED' ? 'Rejected' : humanizeCode(o.status)}
+                  </StatusChip>
+                )}
               </Table.Td>
               <Table.Td>
                 <ReasonText code={o.rejectionReason} describe={knownReasonText} />
@@ -344,9 +355,9 @@ export function PositionsTable({
                 <PairLabel pair={p.pair} />
               </Table.Td>
               <Table.Td>
-                <Badge color={p.state === 'OPEN' ? 'yellow' : 'gray'} variant="light">
-                  {p.state}
-                </Badge>
+                <StatusChip tone="neutral" glyph={p.state === 'OPEN' ? '◷' : undefined}>
+                  {p.state === 'OPEN' ? 'Open' : p.state === 'CLOSED' ? 'Closed' : humanizeCode(p.state)}
+                </StatusChip>
               </Table.Td>
               <Table.Td ta="right">{formatSlot(p.fill.actualSlot)}</Table.Td>
               <Table.Td ta="right">

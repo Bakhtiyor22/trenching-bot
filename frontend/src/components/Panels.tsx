@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Card,
   Group,
   Pagination,
@@ -9,29 +10,110 @@ import {
   type MantineSpacing,
 } from '@mantine/core';
 import { useState, type ReactNode } from 'react';
+import { Link, NavLink as RouterNavLink } from 'react-router';
+import { formatCount } from '../lib/format';
 
-/** Page title with optional description and right-aligned actions. */
+export interface Crumb {
+  label: ReactNode;
+  to?: string;
+}
+
+/**
+ * The one page header: optional breadcrumb, the title row (title, a status chip, short meta), a
+ * one-line description, actions on the right and optional underline tabs below.
+ */
 export function PageHeader({
   title,
   description,
   actions,
+  breadcrumbs,
+  status,
+  meta,
+  tabs,
 }: {
   title: ReactNode;
   description?: ReactNode;
   actions?: ReactNode;
+  breadcrumbs?: Crumb[];
+  status?: ReactNode;
+  meta?: ReactNode;
+  tabs?: ReactNode;
 }) {
   return (
-    <Group justify="space-between" align="flex-end" mb="lg" gap="md">
-      <Stack gap={4} style={{ minWidth: 0 }}>
-        <Title order={2}>{title}</Title>
-        {description && (
-          <Text c="dimmed" size="sm">
-            {description}
-          </Text>
+    <Stack gap="sm" mb="lg" component="header">
+      {breadcrumbs && breadcrumbs.length > 0 && (
+        <Group component="nav" aria-label="Breadcrumb" gap={6} wrap="wrap">
+          {breadcrumbs.map((crumb, index) => (
+            <Group key={index} gap={6} wrap="nowrap">
+              {index > 0 && (
+                <Text size="xs" c="dimmed" aria-hidden>
+                  /
+                </Text>
+              )}
+              {crumb.to ? (
+                <Anchor component={Link} to={crumb.to} size="xs">
+                  {crumb.label}
+                </Anchor>
+              ) : (
+                <Text size="xs" c="dimmed">
+                  {crumb.label}
+                </Text>
+              )}
+            </Group>
+          ))}
+        </Group>
+      )}
+      <Group justify="space-between" align="flex-start" gap="md">
+        <Stack gap={4} style={{ minWidth: 0, flex: '1 1 320px' }}>
+          <Group gap="sm" wrap="wrap" align="center">
+            <Title order={2} style={{ overflowWrap: 'anywhere' }}>
+              {title}
+            </Title>
+            {status}
+            {meta && (
+              <Text size="xs" c="dimmed">
+                {meta}
+              </Text>
+            )}
+          </Group>
+          {description && (
+            <Text c="dimmed" size="sm" maw={820}>
+              {description}
+            </Text>
+          )}
+        </Stack>
+        {actions && (
+          <Group gap="sm" wrap="wrap">
+            {actions}
+          </Group>
         )}
-      </Stack>
-      {actions && <Group gap="sm">{actions}</Group>}
-    </Group>
+      </Group>
+      {tabs}
+    </Stack>
+  );
+}
+
+/** Underline tabs that are real links (`aria-current="page"` on the active one); they scroll sideways on a phone. */
+export function SubNav({
+  label,
+  items,
+}: {
+  label: string;
+  items: Array<{ to: string; label: ReactNode; end?: boolean; active?: boolean }>;
+}) {
+  return (
+    <nav className="console-subnav" aria-label={label}>
+      {items.map((item) => (
+        <RouterNavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          aria-current={item.active === undefined ? undefined : item.active ? 'page' : undefined}
+        >
+          {item.label}
+        </RouterNavLink>
+      ))}
+    </nav>
   );
 }
 
@@ -69,27 +151,33 @@ export function Section({
   );
 }
 
-/** Font size for a headline figure: full size on wide screens, smaller where a cell gets narrow. */
-export const KPI_VALUE_SIZE = 'clamp(20px, 2.2vw, 28px)';
-
-/** One cell of a {@link KpiStrip}: an uppercase label, a large mono value and a footnote. */
+/** One cell of a {@link KpiStrip}: a sentence-case label, a mono figure and one line of context. */
 export function Kpi({
   label,
   children,
   hint,
+  size = 'md',
+  span,
+  text = false,
 }: {
   label: ReactNode;
   children: ReactNode;
   hint?: ReactNode;
+  /** `hero` for the page's one headline figure. */
+  size?: 'hero' | 'md' | 'sm';
+  /** `full` spans two columns on wide screens and the whole row on a phone. */
+  span?: 'full';
+  /** A value in words ("Always on", "19 h ago") rather than a figure: set in the sans, not mono. */
+  text?: boolean;
 }) {
   return (
-    <Stack gap={6} p="md" className="console-kpi">
-      <Text size="xs" c="dimmed" tt="uppercase" fw={500} style={{ letterSpacing: '0.08em' }}>
-        {label}
-      </Text>
-      <div className="console-kpi-value">{children}</div>
+    <Stack gap={4} p="md" className="console-kpi" data-span={span}>
+      <span className="console-label">{label}</span>
+      <div className="console-kpi-value" data-size={size} data-text={text || undefined}>
+        {children}
+      </div>
       {hint && (
-        <Text size="xs" c="dimmed" ff="monospace">
+        <Text size="xs" c="dimmed">
           {hint}
         </Text>
       )}
@@ -149,9 +237,7 @@ export function Stat({
 }) {
   return (
     <Stack gap={2} miw={0}>
-      <Text size="xs" c="dimmed" tt="uppercase" fw={600}>
-        {label}
-      </Text>
+      <span className="console-label">{label}</span>
       {/* Long exact decimals wrap inside their own grid column instead of overlapping the next one. */}
       <div style={{ overflowWrap: 'anywhere' }}>{value}</div>
       {hint && (
@@ -197,7 +283,7 @@ export function PagingFooter({
   return (
     <Group justify="space-between" mt="sm">
       <Text size="sm" c="dimmed">
-        {total.toLocaleString('en-US')} {noun}
+        {formatCount(total)} {noun}
       </Text>
       {pages > 1 && <Pagination value={page} total={pages} onChange={onChange} size="sm" />}
     </Group>

@@ -2,6 +2,7 @@ import { screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderPage } from '../test/render';
 import type { ObservedChartMarker, PaperChartFill } from '../api/types';
+import { codeLabel } from '../lib/codes';
 import { MarketActionCard } from './MarketActionCard';
 import { firstSlotGapChart } from '../mocks/fixtures';
 
@@ -114,7 +115,7 @@ describe('MarketActionCard', () => {
     expect(screen.getByText('Bot paper entry')).toBeInTheDocument();
     expect(screen.getByText('Simulated fill · not a real trade')).toBeInTheDocument();
     expect(screen.getByText('123.45 tokens')).toBeInTheDocument();
-    expect(screen.getByText('DIP_ENTRY')).toBeInTheDocument();
+    expect(screen.getByText(codeLabel('DIP_ENTRY'))).toHaveAttribute('title', 'DIP_ENTRY');
     expect(screen.getByRole('button', { name: 'Open fill →' })).toBeInTheDocument();
   });
   it('links a valid recorded signature through the transaction helper', () => {

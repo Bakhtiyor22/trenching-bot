@@ -42,7 +42,7 @@ export function ConfirmDelete({
   };
   return (
     <>
-      <Button color="red" variant={compact ? 'subtle' : 'light'} size={compact ? 'xs' : 'sm'} onClick={open} disabled={disabled}>
+      <Button color="red" variant={compact ? 'subtle' : 'outline'} size={compact ? 'xs' : 'sm'} onClick={open} disabled={disabled}>
         {label}
       </Button>
       <Modal opened={opened} onClose={close} title={title} centered>

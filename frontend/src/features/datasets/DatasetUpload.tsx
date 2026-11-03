@@ -1,4 +1,4 @@
-import { Alert, Button, Group, Stack, Text, TextInput } from '@mantine/core';
+import { Alert, Anchor, Button, Group, Stack, Text, TextInput } from '@mantine/core';
 import { Dropzone, type FileRejection } from '@mantine/dropzone';
 import { notifications } from '@mantine/notifications';
 import { useState } from 'react';
@@ -13,9 +13,9 @@ import { MAX_UPLOAD_BYTES, validateDatasetFile } from './datasetFile';
 
 function RegistrationNotice({ result }: { result: DatasetRegistration }) {
   const link = (
-    <Text span component={Link} to={paths.dataset(result.dataset.id)} c="blue" td="underline">
+    <Anchor component={Link} to={paths.dataset(result.dataset.id)}>
       {result.dataset.name}
-    </Text>
+    </Anchor>
   );
   return result.created ? (
     <Alert color="teal" variant="light" title="Dataset stored">
@@ -52,7 +52,9 @@ export function DatasetUpload() {
     upload.reset();
     setResult(null);
     setFile(null);
-    setClientError(first ? (validateDatasetFile(first.file) ?? 'This file cannot be uploaded.') : null);
+    setClientError(
+      first ? (validateDatasetFile(first.file) ?? 'This file cannot be uploaded.') : null,
+    );
   };
 
   const submit = () => {
@@ -102,10 +104,10 @@ export function DatasetUpload() {
       >
         <Group justify="center" gap="lg" mih={110} style={{ pointerEvents: 'none' }}>
           <Dropzone.Accept>
-            <IconUpload size={40} color="var(--mantine-color-blue-6)" />
+            <IconUpload size={40} color="var(--console-info)" />
           </Dropzone.Accept>
           <Dropzone.Reject>
-            <IconX size={40} color="var(--mantine-color-red-6)" />
+            <IconX size={40} color="var(--console-loss)" />
           </Dropzone.Reject>
           <Dropzone.Idle>
             <IconFile size={40} color="var(--mantine-color-dimmed)" />
@@ -115,14 +117,21 @@ export function DatasetUpload() {
               Drag a replay dataset here or click to choose
             </Text>
             <Text size="sm" c="dimmed">
-              Schema v3 or v4 JSON, up to 100 MB. The backend validates it fully, including the checksum.
+              Schema v3 or v4 JSON, up to 100 MB. The backend validates it fully, including the
+              checksum.
             </Text>
           </div>
         </Group>
       </Dropzone>
 
       {clientError && (
-        <Alert color="red" variant="light" icon={<IconAlert />} title="File not accepted" role="alert">
+        <Alert
+          color="red"
+          variant="light"
+          icon={<IconAlert />}
+          title="File not accepted"
+          role="alert"
+        >
           {clientError}
         </Alert>
       )}
@@ -145,19 +154,35 @@ export function DatasetUpload() {
             maxLength={128}
             style={{ flex: '1 1 220px' }}
           />
-          <Button onClick={submit} loading={upload.isPending} leftSection={<IconUpload size={16} />}>
+          <Button
+            onClick={submit}
+            loading={upload.isPending}
+            leftSection={<IconUpload size={16} />}
+          >
             Upload and validate
           </Button>
         </Group>
       )}
 
       {upload.isError && (
-        <Alert color="red" variant="light" icon={<IconAlert />} title="Upload rejected" role="alert">
+        <Alert
+          color="red"
+          variant="light"
+          icon={<IconAlert />}
+          title="Upload rejected"
+          role="alert"
+        >
           {errorMessage(upload.error)}
         </Alert>
       )}
       {sample.isError && (
-        <Alert color="red" variant="light" icon={<IconAlert />} title="Sample import failed" role="alert">
+        <Alert
+          color="red"
+          variant="light"
+          icon={<IconAlert />}
+          title="Sample import failed"
+          role="alert"
+        >
           {errorMessage(sample.error)}
         </Alert>
       )}
@@ -167,7 +192,7 @@ export function DatasetUpload() {
         <Text size="sm" c="dimmed">
           No dataset yet? Import the bundled synthetic sample (dip-sample-v3).
         </Text>
-        <Button variant="light" onClick={importSample} loading={sample.isPending}>
+        <Button variant="default" onClick={importSample} loading={sample.isPending}>
           Import sample dataset
         </Button>
       </Group>

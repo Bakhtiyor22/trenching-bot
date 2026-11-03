@@ -2,7 +2,7 @@ import type { EChartsOption, SeriesOption } from 'echarts';
 import type { ChartResponse, ChartTick, Observation, ObservedChartMarker } from '../api/types';
 import { compactDecimal, formatDecimal, toChartNumber } from '../lib/decimal';
 import { formatSlot, humanizeCode } from '../lib/format';
-import { terminal } from '../theme';
+import { terminal, type TerminalTokens } from '../theme';
 import { secondsFrom } from './marketSummary';
 
 export const QUALITY_STYLE: Record<string, { color: string; symbol: string }> = {
@@ -166,7 +166,6 @@ export function priceChartOption(observations: Observation[]): EChartsOption {
 
 export type ChartView = 'mcap' | 'price';
 const CAPTURED_TRADERS = 'Captured traders';
-const OTHER_TRADER_COLOR = '#5C6B78';
 export type MarketChartStyle = 'line' | 'candles';
 
 export interface MarketPoint {
@@ -181,6 +180,8 @@ export interface MarketChartConfig {
   extent?: { from: number; to: number };
   fullPage?: boolean;
   drawing?: boolean;
+  /** Colours of the scheme in use (`useChartTokens()`); the dark scheme when omitted. */
+  tokens?: TerminalTokens;
 }
 
 export function plotTime(item: { time: string; estimatedTime?: string }): number {
@@ -301,7 +302,11 @@ export function secondTicks(
 }
 
 /** Interactive Decu and paper markers are real buttons in the HTML overlay. */
-export function chartMarkerSeries(response: ChartResponse, view: ChartView): SeriesOption[] {
+export function chartMarkerSeries(
+  response: ChartResponse,
+  view: ChartView,
+  t: TerminalTokens = terminal,
+): SeriesOption[] {
   const series: SeriesOption[] = [
     {
       type: 'scatter',
@@ -322,8 +327,8 @@ export function chartMarkerSeries(response: ChartResponse, view: ChartView): Ser
                 {
                   value: [plotTime(marker), coordinate],
                   itemStyle: {
-                    color: marker.side === 'BUY' ? OTHER_TRADER_COLOR : terminal.ground,
-                    borderColor: OTHER_TRADER_COLOR,
+                    color: marker.side === 'BUY' ? t.neutral : t.ground,
+                    borderColor: t.neutral,
                     borderWidth: 1,
                     opacity: 1,
                   },
@@ -341,11 +346,11 @@ export function chartMarkerSeries(response: ChartResponse, view: ChartView): Ser
       yAxisIndex: 1,
       symbol: 'circle',
       symbolSize: 25,
-      itemStyle: { color: terminal.raised, borderColor: OTHER_TRADER_COLOR, borderWidth: 1 },
+      itemStyle: { color: t.raised, borderColor: t.neutral, borderWidth: 1 },
       label: {
         show: true,
         position: 'inside',
-        color: terminal.text,
+        color: t.text,
         formatter: (params: unknown) =>
           String((params as { data?: { cluster?: { count: number } } }).data?.cluster?.count ?? ''),
       },
@@ -379,6 +384,7 @@ export function chartCandleOption(
   origin?: number | null,
   config: MarketChartConfig = {},
 ): EChartsOption {
+  const t = config.tokens ?? terminal;
   const view =
     requestedView === 'mcap' && !response.valuationBasis.available ? 'price' : requestedView;
   const points = chartMarketPoints(response, view);
@@ -387,7 +393,7 @@ export function chartCandleOption(
   );
   const sparse = !response.ticks?.included && valid.length < 3;
   const color =
-    (valid.at(-1)?.value ?? 0) >= (valid[0]?.value ?? 0) ? terminal.gain : terminal.loss;
+    (valid.at(-1)?.value ?? 0) >= (valid[0]?.value ?? 0) ? t.gain : t.loss;
   const rail = response.markers.clusters.length > 0;
   const extent = config.extent ?? chartExtent(response);
   const extentMin = extent.from;
@@ -415,7 +421,7 @@ export function chartCandleOption(
     axisTick: { show: false },
     splitLine: { show: false },
     axisLabel: {
-      color: terminal.dimmed,
+      color: t.dimmed,
       customValues: ticks,
       formatter: (value: number) => secondsFrom(value, zero, fractional),
     },
@@ -423,7 +429,7 @@ export function chartCandleOption(
       show: true,
       triggerTooltip: false,
       snap: false,
-      lineStyle: { type: 'dashed' as const, color: terminal.dimmed },
+      lineStyle: { type: 'dashed' as const, color: t.dimmed },
       label: { show: false },
     },
   };
@@ -462,15 +468,15 @@ export function chartCandleOption(
     type: 'value' as const,
     position: 'right' as const,
     name: view === 'mcap' ? 'Mcap (USDT)' : 'Price (SOL)',
-    nameTextStyle: { color: terminal.dimmed },
+    nameTextStyle: { color: t.dimmed },
     scale: true,
     ...domain,
     interval: (domain.max - domain.min) / 3,
     splitNumber: 3,
-    axisLabel: { formatter: label, color: terminal.dimmed, margin: 12 },
+    axisLabel: { formatter: label, color: t.dimmed, margin: 12 },
     axisLine: { show: false },
     axisTick: { show: false },
-    splitLine: { show: true, lineStyle: { type: 'dashed' as const, color: terminal.line } },
+    splitLine: { show: true, lineStyle: { type: 'dashed' as const, color: t.line } },
   };
   let market: SeriesOption;
   const sparseLevels: SeriesOption[] = [];
@@ -521,10 +527,10 @@ export function chartCandleOption(
       encode: { x: 'time', y: ['open', 'close', 'low', 'high'] },
       barMaxWidth: 14,
       itemStyle: {
-        color: terminal.gain,
-        color0: terminal.loss,
-        borderColor: terminal.gain,
-        borderColor0: terminal.loss,
+        color: t.gain,
+        color0: t.loss,
+        borderColor: t.gain,
+        borderColor0: t.loss,
       },
       data: response.candles.flatMap((candle) => {
         const values = candle[view];
@@ -585,7 +591,7 @@ export function chartCandleOption(
             min: 0,
             max: 1,
             name: 'Trade times',
-            nameTextStyle: { color: terminal.dimmed },
+            nameTextStyle: { color: t.dimmed },
             axisLabel: { show: false },
             splitLine: { show: false },
           },
@@ -603,6 +609,6 @@ export function chartCandleOption(
         disabled: config.drawing ?? false,
       },
     ],
-    series: [market, ...sparseLevels, ...chartMarkerSeries(response, view)],
+    series: [market, ...sparseLevels, ...chartMarkerSeries(response, view, t)],
   };
 }

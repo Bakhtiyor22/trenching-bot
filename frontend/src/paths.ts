@@ -33,4 +33,10 @@ export const paths = {
   compare: '/compare',
   compareRuns: (ids: string[]) =>
     `/compare?${COMPARE_PARAM}=${ids.map(encodeURIComponent).join(',')}`,
+  /** The Days list on a custom range, both days included. */
+  automationDaysBetween: (from: string, to: string) =>
+    `/automation/days?${new URLSearchParams({ range: 'custom', from, to }).toString()}`,
+  /** The new-backfill form pre-filled (`from`, `to`, `dryRun`, `budget`, `min`), e.g. from a dry run's result. */
+  automationBackfillsPrefilled: (prefill: Record<string, string>) =>
+    `/automation/backfills?${new URLSearchParams(prefill).toString()}`,
 } as const;

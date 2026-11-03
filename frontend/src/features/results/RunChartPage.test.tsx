@@ -17,6 +17,7 @@ import {
   walletSoldScenario,
 } from '../../mocks/fixtures';
 import { withRunSetup } from '../../mocks/setupHandlers';
+import { formatLocalTime } from '../../lib/format';
 import { RunChartPage } from './RunChartPage';
 
 describe('results chart page', () => {
@@ -99,7 +100,7 @@ describe('results chart page', () => {
       expect(option.dataZoom[0]?.startValue).toBe(desired);
     });
     const back = new URL(
-      screen.getByRole('link', { name: '← Back to run' }).getAttribute('href') ?? '',
+      screen.getByRole('link', { name: 'Back to run' }).getAttribute('href') ?? '',
       'http://localhost',
     );
     expect(back.searchParams.get('from')).toBe(new Date(desired).toISOString());
@@ -136,12 +137,12 @@ describe('results chart page', () => {
   });
 
   it("places a Decu-sold exit at his sell, not at the exit trigger's slot", async () => {
-    const clock = (iso: string) => new Date(iso).toLocaleTimeString('en-GB', { hour12: false });
+    const clock = formatLocalTime;
     const { user, router } = renderPage(<RunChartPage />, {
       path: '/runs/:id/chart',
       url: `/runs/${WALLET_SELL_RUN_ID}/chart?pair=${STOP_LOSS_MINT}/${SOL_MINT}`,
     });
-    const sold = await screen.findByRole('button', { name: /^\S+ Decu sold/ });
+    const sold = await screen.findByRole('button', { name: /Decu sold the token/ });
     expect(sold).toHaveTextContent(clock(HOLDING_SELL_TIME));
     expect(sold).toHaveTextContent('Decu sold the token: our whole position is sold.');
     // The trigger is dated at our fill (slot 2003), a minute after his sell in this fixture.

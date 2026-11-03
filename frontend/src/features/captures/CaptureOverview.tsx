@@ -3,9 +3,10 @@ import { useQuery } from '@tanstack/react-query';
 import type { CaptureConfig, CaptureSession, CaptureSummary } from '../../api/captures';
 import { setupApi } from '../../api/setup';
 import { CodeText } from '../../components/PlainLanguage';
-import { stageLabels, statusColors } from '../../lib/codes';
-import { mintLabel } from '../../lib/format';
-import { CaptureStatusChip, CommandError } from './CaptureShared';
+import type { StatusTone } from '../../components/StatusChip';
+import { stageLabels, statusTones } from '../../lib/codes';
+import { formatCount, mintLabel } from '../../lib/format';
+import { CommandError } from './CaptureShared';
 import { nowCopy } from './captureNow';
 import { nextActionHint, useNextAction } from './useNextAction';
 
@@ -37,19 +38,19 @@ function marketDetail(session: CaptureSession) {
       : null;
   const progress = summaryProgress ?? operationProgress;
   if (progress?.processed != null && progress.selected != null) {
-    return `${progress.processed.toLocaleString('en-US')} of ${progress.selected.toLocaleString('en-US')} transactions`;
+    return `${formatCount(progress.processed)} of ${formatCount(progress.selected)} transactions`;
   }
   const windows = session.inspection?.marketWindows;
   if (!windows?.length) return 'Not downloaded yet';
   const selected = windows.reduce((sum, window) => sum + window.selected, 0);
   if (windows.some((window) => window.detailGaps === null)) {
-    return `${selected.toLocaleString('en-US')} transactions selected`;
+    return `${formatCount(selected)} transactions selected`;
   }
   const processed = windows.reduce(
     (sum, window) => sum + Math.max(0, window.selected - (window.detailGaps ?? 0)),
     0,
   );
-  return `${processed.toLocaleString('en-US')} of ${selected.toLocaleString('en-US')} transactions`;
+  return `${formatCount(processed)} of ${formatCount(selected)} transactions`;
 }
 
 export function CaptureStepper({ session }: { session: CaptureSession }) {
@@ -73,7 +74,7 @@ export function CaptureStepper({ session }: { session: CaptureSession }) {
             <Badge
               size="lg"
               circle
-              color={step.state === 'DONE' ? 'teal' : step.state === 'STOPPED' ? 'amber' : 'gray'}
+              color={step.state === 'DONE' ? 'teal' : step.state === 'STOPPED' ? 'orange' : 'gray'}
               variant="light"
             >
               {step.state === 'DONE' ? '✓' : index + 1}
@@ -93,6 +94,17 @@ export function CaptureStepper({ session }: { session: CaptureSession }) {
     </Card>
   );
 }
+
+/** The token colour of a status tone, for the edge of the "Now" card. */
+const toneColors: Record<StatusTone, string> = {
+  success: 'var(--console-gain)',
+  ready: 'var(--console-gain)',
+  failure: 'var(--console-loss)',
+  running: 'var(--console-info)',
+  attention: 'var(--console-rejected)',
+  pending: 'var(--console-line-strong)',
+  neutral: 'var(--console-line-strong)',
+};
 
 export function CaptureOverview({
   session,
@@ -115,24 +127,23 @@ export function CaptureOverview({
     (item) => item.provider === 'SOLANA_RPC',
   )?.minRequestIntervalMillis;
   const copy = nowCopy(summary, session.operation);
-  const color = statusColors[summary.status];
+  const color = toneColors[statusTones[summary.status]];
   return (
     <Card
       component="section"
       aria-label="Now"
+      padding="lg"
       style={{
-        borderColor: `var(--mantine-color-${color}-6)`,
-        background: `color-mix(in srgb, var(--mantine-color-${color}-6) 9%, var(--mantine-color-body))`,
+        borderColor: 'var(--console-line-strong)',
+        borderLeft: `3px solid ${color}`,
+        background: `color-mix(in srgb, ${color} 6%, var(--console-panel))`,
       }}
     >
       <Stack gap="md">
-        <Group justify="space-between">
-          <Text size="xs" fw={600} tt="uppercase">
-            Now
-          </Text>
-          <CaptureStatusChip status={summary.status} />
-        </Group>
-        <Title order={3}>{copy.headline}</Title>
+        <span className="console-label">Now</span>
+        <Title order={3} fz={22}>
+          {copy.headline}
+        </Title>
         <Text size="sm">{copy.body}</Text>
         <Group align="center">
           <Button
@@ -155,7 +166,7 @@ export function CaptureOverview({
           </Text>
         </Group>
         {next.unavailable && (
-          <Text size="sm" c="amber">
+          <Text size="sm" c="orange">
             {next.unavailable}
           </Text>
         )}

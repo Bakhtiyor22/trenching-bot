@@ -6,7 +6,6 @@ import { server } from '../mocks/server';
 import { renderPage } from '../test/render';
 import { TradeChart } from './TradeChart';
 import type { ChartProps } from './Chart';
-import { terminal } from '../theme';
 
 const renderedChart = vi.hoisted(() => ({ current: null as ChartProps | null }));
 vi.mock('./Chart', async () => {
@@ -242,7 +241,7 @@ describe('TradeChart', () => {
     expect(screen.queryByRole('button', { name: 'Exit full page · Esc' })).not.toBeInTheDocument();
   });
 
-  it('uses gold for simulated paper trade diamonds and their legend', async () => {
+  it('uses blue for simulated paper trade diamonds and their legend', async () => {
     server.use(
       http.get('/api/runs/test/chart', () =>
         HttpResponse.json({
@@ -266,10 +265,8 @@ describe('TradeChart', () => {
       ),
     );
     renderPage(<TradeChart kind="run" id="test" pair="base/quote" trackedWallet={wallet} />);
-    expect(await screen.findByTestId('market-pin-paper-entry:ENTRY')).toHaveStyle({
-      borderColor: terminal.accent,
-    });
-    expect(screen.getByText('◇')).toHaveStyle({ color: terminal.accent });
+    expect(await screen.findByTestId('market-pin-paper-entry:ENTRY')).toHaveAttribute('data-marker-color', 'paper');
+    expect(screen.getByText(/Bot paper fill/)).toBeInTheDocument();
   });
   it('reports the latest bucket size and offers range recovery when no trades are visible', async () => {
     const onData = vi.fn();
@@ -475,7 +472,7 @@ describe('TradeChart', () => {
       ),
     );
     renderPage(<TradeChart kind="dataset" id="test" pair="base/quote" trackedWallet={wallet} />);
-    expect(await screen.findByText(/RATES_UNAVAILABLE/)).toBeInTheDocument();
+    expect(await screen.findByText(/Market cap unavailable/)).toHaveAttribute('title', 'RATES_UNAVAILABLE');
     expect(screen.getByRole('radio', { name: 'Price (SOL)' })).toBeChecked();
     expect(
       screen.getByText(

@@ -1,8 +1,8 @@
 import { levelPercent } from '../../lib/percent';
 import type { Scenario } from '../../api/types';
-import { compactDecimal, formatDecimal } from '../../lib/decimal';
+import { codeLabel } from '../../lib/codes';
+import { compactDecimal, formatDecimal, formatSignedDecimal } from '../../lib/decimal';
 import { humanizeCode, shortId, signedBps } from '../../lib/format';
-import { terminal } from '../../theme';
 import { scenarioOutcome, type ScenarioOutcome } from './scenarioOutcome';
 import { watchEndOffset, type WatchConfig } from './watchEnd';
 
@@ -11,7 +11,24 @@ export interface StoryEvent {
   title: string;
   /** One line of exact detail; tiny prices use the compact subscript form. */
   detail: string;
+  /** CSS colour (a theme variable, so it follows the scheme) for the timeline dot. */
   color: string;
+}
+
+const STORY_COLORS = {
+  text: 'var(--console-text)',
+  info: 'var(--console-info)',
+  accent: 'var(--console-accent)',
+  dimmed: 'var(--console-dimmed)',
+  rejected: 'var(--console-rejected)',
+  gain: 'var(--console-gain)',
+  loss: 'var(--console-loss)',
+  neutral: 'var(--console-neutral)',
+} as const;
+
+/** A reason code in words; the code itself stays in the scenario card. */
+function reasonWords(code: string): string {
+  return codeLabel(code);
 }
 
 /** A cycle as the slot-by-slot events that make it up, from the wallet's first buy to the exit or the reason there was none. */
@@ -25,7 +42,7 @@ export function scenarioEvents(s: Scenario, unit: string): StoryEvent[] {
         s.watch === 'REFERENCE_UNAVAILABLE'
           ? 'P0 unknown · dip level unknown'
           : `P0 ${compactDecimal(s.referencePrice)} · dip level ${compactDecimal(s.dipPrice)}`,
-      color: terminal.text,
+      color: STORY_COLORS.text,
     },
   ];
   if (s.trigger) {
@@ -33,7 +50,7 @@ export function scenarioEvents(s: Scenario, unit: string): StoryEvent[] {
       slot: s.trigger.slot,
       title: 'Dip reached',
       detail: `${compactDecimal(s.trigger.price)} · market cap $${formatDecimal(s.trigger.marketCapUsd)}`,
-      color: terminal.info,
+      color: STORY_COLORS.info,
     });
   }
   if (s.fill) {
@@ -41,22 +58,22 @@ export function scenarioEvents(s: Scenario, unit: string): StoryEvent[] {
       slot: s.fill.actualSlot,
       title: 'Entry filled',
       detail: `${compactDecimal(s.fill.executionPrice)} · impact ${signedBps(s.fill.priceImpactBps, s.fill.priceImpactPercent)} · ${levelPercent(s.fill.feePercent, s.fill.feeBps)} fees`,
-      color: terminal.accent,
+      color: STORY_COLORS.accent,
     });
   } else if (s.walletSell) {
     events.push({
       slot: s.walletSell.slot,
       title: 'Decu sold before the dip',
-      detail: s.rejectionReason ?? s.watch,
-      color: terminal.dimmed,
+      detail: reasonWords(s.rejectionReason ?? s.watch),
+      color: STORY_COLORS.dimmed,
     });
     return events;
   } else {
     events.push({
       slot: s.horizonEndSlot,
       title: 'No entry',
-      detail: s.rejectionReason ?? s.watch,
-      color: terminal.dimmed,
+      detail: reasonWords(s.rejectionReason ?? s.watch),
+      color: STORY_COLORS.dimmed,
     });
     return events;
   }
@@ -67,7 +84,7 @@ export function scenarioEvents(s: Scenario, unit: string): StoryEvent[] {
       slot: position.exitTrigger.slot,
       title: 'Exit started: Decu sold',
       detail: 'sell the whole position',
-      color: terminal.rejected,
+      color: STORY_COLORS.rejected,
     });
   } else if (position?.exitTrigger) {
     const tp = position.exitTrigger.reason === 'TAKE_PROFIT';
@@ -77,7 +94,7 @@ export function scenarioEvents(s: Scenario, unit: string): StoryEvent[] {
       detail: tp
         ? `take profit at ${compactDecimal(position.takeProfitPrice)}`
         : `stop loss at ${compactDecimal(position.stopLossPrice)}`,
-      color: tp ? terminal.gain : terminal.loss,
+      color: tp ? STORY_COLORS.gain : STORY_COLORS.loss,
     });
   }
   const close = position?.close;
@@ -86,15 +103,15 @@ export function scenarioEvents(s: Scenario, unit: string): StoryEvent[] {
     events.push({
       slot: close.slot,
       title: 'Exit filled',
-      detail: `${compactDecimal(close.executionPrice)} · P&L ${formatDecimal(close.realizedPnl)} ${unit}`,
+      detail: `${compactDecimal(close.executionPrice)} · P&L ${formatSignedDecimal(close.realizedPnl)} ${unit}`,
       color: outcome.hex,
     });
   } else if (position) {
     events.push({
       slot: s.horizonEndSlot,
       title: 'Still open',
-      detail: s.exitUnavailableReason ?? 'no exit',
-      color: terminal.violet,
+      detail: s.exitUnavailableReason ? reasonWords(s.exitUnavailableReason) : 'no exit',
+      color: STORY_COLORS.neutral,
     });
   }
   return events;

@@ -20,13 +20,13 @@
   background: var(--mantine-color-body);
 }
 .plot:focus-visible {
-  outline: 1px solid var(--mantine-color-amber-5);
+  outline: 1px solid var(--console-accent);
   outline-offset: 2px;
 }
 .title span {
   font-family: var(--mantine-font-family-monospace);
   font-weight: 500;
-  color: #93a1ad;
+  color: var(--console-dimmed);
 }
 .value {
   font-size: 38px;
@@ -48,7 +48,7 @@
 }
 .rangeTrack {
   padding: 3px;
-  border: 1px solid var(--mantine-color-dark-4);
+  border: 1px solid var(--console-line);
   border-radius: 24px;
   overflow-x: auto;
   max-width: 100%;
@@ -66,11 +66,11 @@
   white-space: nowrap;
 }
 .rangePill[aria-pressed='true'] {
-  background: var(--mantine-color-dark-5);
+  background: var(--console-raised);
   color: var(--mantine-color-text);
 }
 .rangePill:focus-visible {
-  outline: 2px solid var(--mantine-color-amber-5);
+  outline: 2px solid var(--console-accent);
 }
 .legend {
   color: var(--mantine-color-dimmed);
@@ -81,28 +81,37 @@
   place-items: center;
   width: 16px;
   height: 16px;
-  border: 1px solid var(--mantine-color-amber-5);
+  border: 1px solid var(--console-accent);
   border-radius: 50%;
   font-size: 10px;
   font-weight: 700;
 }
 .buyLegend {
-  background: var(--mantine-color-amber-5);
-  color: var(--mantine-color-dark-7);
+  background: var(--console-accent);
+  color: var(--console-accent-ink);
 }
 .sellLegend {
-  color: var(--mantine-color-amber-5);
+  color: var(--console-accent);
+}
+/* Paper fills: blue diamonds, apart from Decu's amber pins. */
+.paperLegend {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin: 0 3px;
+  background: var(--console-info);
+  transform: rotate(45deg);
 }
 .status {
   color: var(--mantine-color-dimmed);
   padding-top: 8px;
-  border-top: 1px dashed var(--mantine-color-dark-4);
+  border-top: 1px dashed var(--console-line);
 }
 .stack {
   position: absolute;
   z-index: 6;
-  background: var(--mantine-color-dark-5);
-  border: 1px solid #2a343d;
+  background: var(--console-raised);
+  border: 1px solid var(--console-line-strong);
   border-radius: 10px;
   padding: 12px;
   box-shadow: 0 12px 36px #0006;
@@ -114,7 +123,7 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--mantine-color-dark-6);
+  background: var(--console-panel);
   border: 2px solid;
 }
 .timePill {
@@ -123,8 +132,8 @@
   bottom: 2px;
   transform: translateX(-50%);
   padding: 3px 6px;
-  background: var(--mantine-color-dark-5);
-  border: 1px solid var(--mantine-color-dark-4);
+  background: var(--console-raised);
+  border: 1px solid var(--console-line);
   border-radius: 4px;
   font-size: 11px;
   font-family: var(--mantine-font-family-monospace);
