@@ -11,14 +11,19 @@ import com.trenching.bot.strategy.domain.*
 import com.trenching.bot.walletactivity.domain.TradeSide
 import com.trenching.bot.walletactivity.domain.WalletTradeObserved
 import java.math.BigDecimal
+import java.math.BigInteger
 
 /**
- * WAIT_FIRST_BUY and WAIT_DIP of the dip-entry strategy. The tracked wallet's first buy of a mint sets P0 and must be
- * valued above the minimum market cap. The first eligible trade in a later slot within the horizon and the [DipWindow], at
- * or below the dip level and before the bonding curve completes, triggers the entry, whatever the market cap there. Prices are
+ * WAIT_FIRST_BUY and WAIT_DIP of the dip-entry strategy. The tracked wallet's first buy of a mint sets P0, must pay more than
+ * [SimulationConfig.minSignalSol] when one is set, and must be valued above the minimum market cap. The first eligible trade in
+ * a later slot within the horizon and the [DipWindow], at or below the dip level and before the bonding curve completes,
+ * triggers the entry, whatever the market cap there. Prices are
  * compared by [SimulationConfig.priceMeasure]. Under [SimulationConfig.followWalletSells] a sell of the mint by the buy's
  * wallet in the watched slots, from the buy's own through the trigger's, ends the cycle with no entry; inside a slot it is
  * read before any trigger, since the order of a slot's trades is not known.
+ *
+ * The buy's size and its post-trade reference are both read from the buy's own market observation; the size is checked after
+ * the reference is found and before the market cap (`docs/adr/20261102-fee-inclusive-signal-size.md`).
  */
 class DipEntryStrategy {
     fun plan(
@@ -46,10 +51,14 @@ class DipEntryStrategy {
         source: MarketDataSource,
         rates: ReferenceRates,
     ): TradeIntent {
+        val minimumSignal = config.minSignalSol
+        val observedBuy = if (config.priceMeasure == PriceMeasure.POST_TRADE || minimumSignal != null) buyObservation(buy, source, config) else null
         val referenceObservation = when (config.priceMeasure) {
             PriceMeasure.TRADE_AVERAGE -> null
-            PriceMeasure.POST_TRADE -> buyObservation(buy, source, config)
+            PriceMeasure.POST_TRADE -> observedBuy
         }
+        val signalLamports = minimumSignal?.let { observedBuy?.let(::signalLamports) }
+        val signalRefusal = signalRefusal(minimumSignal, signalLamports)
         val referencePrice = referenceObservation?.let(config.priceMeasure::of) ?: DecimalPolicy.swapPrice(buy.quoteAmount, buy.baseAmount)
         val dipPrice = DecimalPolicy.price(referencePrice.multiply(BigDecimal.ONE.subtract(DecimalPolicy.fraction(config.dipBps))))
         val horizonEnd = buy.slot.plus(config.horizonSlots)
@@ -57,6 +66,7 @@ class DipEntryStrategy {
         val result = when {
             !supported(buy) -> DipWatchResult(DipWatchOutcome.UNSUPPORTED_SUPPLY)
             config.priceMeasure == PriceMeasure.POST_TRADE && referenceObservation == null -> DipWatchResult(DipWatchOutcome.REFERENCE_UNAVAILABLE)
+            signalRefusal != null -> DipWatchResult(signalRefusal)
             belowMinMarketCap(buy, referencePrice, horizonEnd, config, source, rates) -> DipWatchResult(DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP)
             window is DipWindow.Closed -> DipWatchResult(DipWatchOutcome.NO_DIP)
             else -> watch(buy, dipPrice, horizonEnd, window, config, source, rates)
@@ -64,7 +74,7 @@ class DipEntryStrategy {
         val trigger = result.trigger
         return TradeIntent("$runId:${buy.id}", runId, buy.id, buy.wallet, buy.pair, config.strategyName, config.strategyVersion,
             configHash, ENTRY_OFFSET, buy.slot, buy.blockTime, trigger?.slot ?: buy.slot.plus(1), config.notional, referencePrice,
-            dipPrice, horizonEnd, result.outcome, trigger, referenceObservation?.id, result.walletSell)
+            dipPrice, horizonEnd, result.outcome, trigger, referenceObservation?.id, result.walletSell, signalLamports)
     }
 
     /**
@@ -74,6 +84,18 @@ class DipEntryStrategy {
     private fun buyObservation(buy: WalletTradeObserved, source: MarketDataSource, config: SimulationConfig): MarketObservation? =
         source.observations(buy.pair, buy.slot, buy.slot).filter { WalletObservations.recordsBuy(it, buy) }.singleOrNull()
             ?.takeIf { ObservationEligibility.issue(it, config.maxAgeSlots) == null }
+
+    /** Spec P3 on the buy's recorded trade; an observation recorded without its trade cannot size the buy. */
+    private fun signalLamports(observation: MarketObservation): BigInteger? =
+        observation.trade?.let { SignalSize.lamports(it.solLamports, observation.curve.feeBps, observation.curve.creatorFeeBps) }
+
+    /** Why the buy is no signal under [minimum], or null when it is one or no minimum is set. */
+    private fun signalRefusal(minimum: BigDecimal?, signalLamports: BigInteger?): DipWatchOutcome? = when {
+        minimum == null -> null
+        signalLamports == null -> DipWatchOutcome.SIGNAL_SIZE_UNAVAILABLE
+        SignalSize.exceeds(signalLamports, minimum) -> null
+        else -> DipWatchOutcome.SIGNAL_BELOW_MIN_SIZE
+    }
 
     /** Market cap assumes the fixed bonding-curve supply, so only Pump.fun buys with its decimals qualify. */
     private fun supported(buy: WalletTradeObserved): Boolean =

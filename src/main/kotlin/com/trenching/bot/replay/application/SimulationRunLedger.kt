@@ -21,10 +21,14 @@ class SimulationRunLedger(
 ) {
     private val log = LoggerFactory.getLogger(SimulationRunLedger::class.java)
 
-    fun persist(dataset: ReplayDataset, report: SimulationReport): SimulationRunRecord = persistWithOutcome(dataset, report).record
+    fun persist(dataset: ReplayDataset, report: SimulationReport): SimulationRunRecord =
+        persistWithOutcome(dataset, report, RunStorage.COPY).record
 
-    /** Refuses, before anything is stored, a report with a scenario decided beyond its dataset's coverage. */
-    fun persistWithOutcome(dataset: ReplayDataset, report: SimulationReport): RunPersistence {
+    /**
+     * Refuses, before anything is stored, a report with a scenario decided beyond its dataset's coverage. An existing run is
+     * returned as stored, whatever [storage] is asked for.
+     */
+    fun persistWithOutcome(dataset: ReplayDataset, report: SimulationReport, storage: RunStorage): RunPersistence {
         require(DatasetFingerprint.checksum(dataset) == report.datasetChecksum) { "Report does not belong to dataset" }
         require(StableHash.of(listOf(report.engineVersion, report.datasetChecksum, report.configurationHash)) == report.runId) {
             "Invalid simulation run identity"
@@ -36,8 +40,8 @@ class SimulationRunLedger(
         }
         val createdAt = clock.instant().truncatedTo(ChronoUnit.MICROS)
         val record = records.record(report.runId, report.engineVersion, report.datasetChecksum, report.configurationHash,
-            dataset.trackedWallet.value, json.writeValueAsString(report.configuration), json.writeValueAsString(dataset),
-            json.writeValueAsString(report), report.resultChecksum, RunTotals.of(report), createdAt)
+            dataset.trackedWallet.value, json.writeValueAsString(report.configuration), datasetSnapshot(dataset, storage),
+            json.writeValueAsString(report), report.resultChecksum, RunTotals.of(report), createdAt, storage)
         val datasetEntry = datasetEntries.entry(null, dataset, createdAt)
         val stored = try {
             transactions.insertWithOutcome(record, dataset, report, datasetEntry)
@@ -54,4 +58,9 @@ class SimulationRunLedger(
     }
 
     fun find(id: String): SimulationRunRecord? = transactions.find(id)
+
+    private fun datasetSnapshot(dataset: ReplayDataset, storage: RunStorage): String? = when (storage) {
+        RunStorage.COPY -> json.writeValueAsString(dataset)
+        RunStorage.DATASET_REFERENCE -> null
+    }
 }

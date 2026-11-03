@@ -4,6 +4,7 @@ import com.trenching.bot.common.DecimalPolicy
 import com.trenching.bot.marketdata.domain.CurveState
 import com.trenching.bot.papertrading.domain.CurveTrade
 import com.trenching.bot.protocol.pumpfun.BondingCurve
+import com.trenching.bot.protocol.pumpfun.PumpFunFees
 import com.trenching.bot.protocol.pumpfun.PumpFunLayout
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -16,8 +17,7 @@ import java.math.RoundingMode
 object CurveExecution {
     /** [lamports] traded for [rawTokens] against [state], with fees charged on [lamports] at the state's basis points. */
     fun trade(state: CurveState, lamports: BigInteger, rawTokens: BigInteger): CurveTrade {
-        val feeLamports = BondingCurve.fee(lamports, BigInteger.valueOf(state.feeBps.toLong()))
-            .add(BondingCurve.fee(lamports, BigInteger.valueOf(state.creatorFeeBps.toLong())))
+        val feeLamports = PumpFunFees.lamports(lamports, state.feeBps).add(PumpFunFees.lamports(lamports, state.creatorFeeBps))
         val executionPrice = BondingCurve.price(lamports, rawTokens)
         return CurveTrade(lamports, rawTokens, feeLamports, state.feeBps + state.creatorFeeBps, executionPrice,
             impactBps(executionPrice, BondingCurve.spotPrice(state.reserves)))

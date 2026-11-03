@@ -9,12 +9,11 @@ data class CurveBuy(val tokensOut: BigInteger)
 data class CurveSell(val lamportsOut: BigInteger)
 
 /**
- * Pump.fun's constant-product bonding curve in raw integer units, rounding outputs down and fees up like the program.
- * The only place curve arithmetic exists, per the bonding-curve-execution plan.
+ * Pump.fun's constant-product bonding curve in raw integer units, rounding outputs down like the program; its fees are
+ * [PumpFunFees]. The only place curve arithmetic exists, per the bonding-curve-execution plan.
  */
 object BondingCurve {
     const val MAX_BASIS_POINTS = 10_000
-    private val BASIS_POINTS_DENOMINATOR: BigInteger = BigInteger.valueOf(MAX_BASIS_POINTS.toLong())
 
     /** Tokens out for [lamportsIn], or null when the input is not positive or the curve's real tokens cannot cover it. */
     fun buy(reserves: CurveReserves, lamportsIn: BigInteger): CurveBuy? {
@@ -34,11 +33,6 @@ object BondingCurve {
         if (tokensIn.signum() <= 0) return null
         val lamportsOut = tokensIn.multiply(reserves.virtualSol).divide(reserves.virtualToken.add(tokensIn))
         return if (lamportsOut > reserves.realSol) null else CurveSell(lamportsOut)
-    }
-
-    fun fee(lamports: BigInteger, basisPoints: BigInteger): BigInteger {
-        require(lamports.signum() >= 0 && basisPoints.signum() >= 0) { "Negative fee input lamports=$lamports basisPoints=$basisPoints" }
-        return lamports.multiply(basisPoints).add(BASIS_POINTS_DENOMINATOR).subtract(BigInteger.ONE).divide(BASIS_POINTS_DENOMINATOR)
     }
 
     fun spotPrice(reserves: CurveReserves): BigDecimal = price(reserves.virtualSol, reserves.virtualToken)

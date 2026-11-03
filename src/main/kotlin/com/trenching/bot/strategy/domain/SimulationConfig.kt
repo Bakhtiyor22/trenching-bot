@@ -21,6 +21,10 @@ import java.math.BigDecimal
  * dip trigger's slot ends the cycle with no entry, and a later sell while we hold, before a take profit, stop loss or time exit
  * starts, exits 100% of the position as `WALLET_SOLD`, whatever amount the wallet sold. It needs a dataset whose observations
  * record trades (schema v4 or later). Their defaults keep the behaviour of engine dip-paper-v4.
+ *
+ * [minSignalSol] is spec P3: the wallet's buy, fee inclusive ([SignalSize]), must pay strictly more, read from the buy's own
+ * market observation, so it too needs a dataset whose observations record trades. Null applies no minimum, the behaviour of
+ * engine dip-paper-v5.
  */
 data class SimulationConfig private constructor(
     val strategyName: String,
@@ -40,6 +44,7 @@ data class SimulationConfig private constructor(
     val hardExitStartMs: Long?,
     val priceMeasure: PriceMeasure,
     val followWalletSells: Boolean,
+    val minSignalSol: BigDecimal?,
 ) {
     companion object {
         const val STRATEGY_NAME = "dip-entry"
@@ -52,6 +57,7 @@ data class SimulationConfig private constructor(
             quoteMint: MintAddress = MintAddress.WRAPPED_SOL,
             dipWindowMs: Long? = null, maxHoldMs: Long? = null, hardExitStartMs: Long? = null,
             priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE, followWalletSells: Boolean = false,
+            minSignalSol: BigDecimal? = null,
         ): SimulationConfig {
             require(notional.signum() > 0 && notional.stripTrailingZeros().scale() <= SimulationConfigBounds.NOTIONAL_DECIMALS) {
                 "Notional must be a positive whole number of lamports notional=$notional"
@@ -75,10 +81,14 @@ data class SimulationConfig private constructor(
             require(listOfNotNull(maxHoldMs, hardExitStartMs).all { it in SimulationConfigBounds.EXIT_CLOCK_MS }) {
                 "Invalid exit clock maxHoldMs=$maxHoldMs hardExitStartMs=$hardExitStartMs"
             }
+            require(minSignalSol == null || minSignalSol.stripTrailingZeros().scale() <= SimulationConfigBounds.MIN_SIGNAL_DECIMALS &&
+                minSignalSol in SimulationConfigBounds.MIN_SIGNAL_SOL) {
+                "Minimum signal must be a whole number of lamports between one lamport and 1000 SOL minSignalSol=$minSignalSol"
+            }
             require(strategyName.isNotBlank() && strategyVersion.isNotBlank()) { "Missing strategy identity" }
             return SimulationConfig(strategyName, strategyVersion, DecimalPolicy.scale(notional), maxAgeSlots, dipBps, takeProfitBps,
                 stopLossBps, normalizedMarketCap, horizonSlots, latencySlots, normalizedTransactionCost, quoteMint, dipWindowMs, maxHoldMs,
-                hardExitStartMs, priceMeasure, followWalletSells)
+                hardExitStartMs, priceMeasure, followWalletSells, minSignalSol?.let(DecimalPolicy::scale))
         }
 
         /**
@@ -92,13 +102,13 @@ data class SimulationConfig private constructor(
          * The agreed `decu-dip` v2 spec (`docs/strategy/decu-dip-v2-spec.md`): 0.1 SOL per entry, a 20% dip within 30 s of the
          * wallet's buy (P6, P7), $10k minimum market cap (P5), +55% take profit, -40% stop loss (P9, P10), and a time exit after
          * 3 minutes held or 4 minutes from the buy, whichever is first (P11). Prices are compared after each trade, the reference
-         * being the price after the wallet's buy (P4, Section 5), and no entry follows the wallet's own sell. The horizon only
-         * bounds the recording.
+         * being the price after the wallet's buy (P4, Section 5), and no entry follows the wallet's own sell. Only a buy paying
+         * more than 1.9 SOL, fees included, is a signal (P3). The horizon only bounds the recording.
          */
         fun agreed(): SimulationConfig =
             of(BigDecimal("0.1"), MAX_AGE_SLOTS, 2000, 5500, 4000, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"),
                 dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000, priceMeasure = PriceMeasure.POST_TRADE,
-                followWalletSells = true)
+                followWalletSells = true, minSignalSol = BigDecimal("1.9"))
 
         /** The engine's own choice: the spec sets no observation age. */
         private const val MAX_AGE_SLOTS = 2L

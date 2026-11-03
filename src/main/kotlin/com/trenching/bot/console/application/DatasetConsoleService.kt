@@ -61,7 +61,7 @@ class DatasetConsoleService(
         return DatasetDetail(dataset, datasetSources.of(dataset))
     }
 
-    /** Removes the dataset from the catalog; its runs stay, each with its own snapshot. */
+    /** Removes the dataset from the catalog; its copy runs stay, each with its own snapshot. Refused while reference runs read it. */
     fun delete(id: String) {
         if (!catalog.delete(id)) throw DatasetNotFoundException(id)
     }

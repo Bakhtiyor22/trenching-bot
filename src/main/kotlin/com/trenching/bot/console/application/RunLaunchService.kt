@@ -13,6 +13,8 @@ import com.trenching.bot.replay.domain.DatasetNotFoundException
 import com.trenching.bot.replay.domain.MarketCoverageEndedException
 import com.trenching.bot.replay.domain.RunStart
 import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
+import com.trenching.bot.replay.domain.SignalSizeNeedsTradesException
+import com.trenching.bot.replay.domain.TradesRequiredException
 import com.trenching.bot.strategy.domain.SimulationConfig
 import io.micrometer.core.instrument.MeterRegistry
 import io.micrometer.core.instrument.Timer
@@ -62,15 +64,19 @@ class RunLaunchService(
         log.warn("console run refused datasetId={} mint={} decidedAt={} throughSlot={} reason=MARKET_COVERAGE_ENDED",
             datasetId, shortfall.pair.base.value, shortfall.decidedAt.value, shortfall.throughSlot?.value)
         throw exception
-    } catch (exception: SellCheckNeedsTradesException) {
-        meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, ConsoleMetrics.SELL_CHECK_NEEDS_TRADES).increment()
-        log.warn("console run refused datasetId={} schemaVersion={} reason={}", datasetId, exception.schemaVersion,
-            SellCheckNeedsTradesException.CODE)
+    } catch (exception: TradesRequiredException) {
+        meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, refusalOutcome(exception)).increment()
+        log.warn("console run refused datasetId={} schemaVersion={} reason={}", datasetId, exception.schemaVersion, exception.code)
         throw exception
     } catch (exception: RuntimeException) {
         meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, ConsoleMetrics.FAILED).increment()
         log.error("console run failed datasetId={} strategyVersion={}", datasetId, config.strategyVersion, exception)
         throw exception
+    }
+
+    private fun refusalOutcome(exception: TradesRequiredException): String = when (exception) {
+        is SellCheckNeedsTradesException -> ConsoleMetrics.SELL_CHECK_NEEDS_TRADES
+        is SignalSizeNeedsTradesException -> ConsoleMetrics.SIGNAL_SIZE_NEEDS_TRADES
     }
 
     private fun <T> timed(call: () -> T): T {

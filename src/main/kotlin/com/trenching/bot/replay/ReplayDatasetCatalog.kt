@@ -16,6 +16,9 @@ interface ReplayDatasetCatalog {
     fun find(id: String): DatasetSummary?
     fun load(id: String): ReplayDataset
 
-    /** Removes the catalog entry; runs keep their own dataset snapshot. False when no dataset has [id]. */
+    /**
+     * Removes the catalog entry; copy runs keep their own dataset snapshot. False when no dataset has [id]. Throws
+     * `DatasetInUseException`, removing nothing, while dataset-referenced runs read it.
+     */
     fun delete(id: String): Boolean
 }

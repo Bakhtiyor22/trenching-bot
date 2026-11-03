@@ -17,7 +17,7 @@ import com.trenching.bot.walletactivity.domain.*
 /**
  * Replays a v3 to v6 dataset under the dip-entry strategy: one cycle per mint, from the tracked wallet's first buy of it. Each
  * position's exit is judged against how far the dataset proves its market recorded, per [DatasetCoverage.recordedThrough].
- * The wallet-sell rule is refused on a dataset whose observations record no trades.
+ * The wallet-sell rule and the minimum signal size are refused on a dataset whose observations record no trades.
  */
 class ReplayRunner(
     private val normalizer: WalletNormalizer = WalletNormalizer(),
@@ -27,8 +27,9 @@ class ReplayRunner(
 ) {
     fun run(dataset: ReplayDataset, config: SimulationConfig): SimulationReport {
         require(dataset.schemaVersion in ReplayDataset.SUPPORTED_SCHEMA_VERSIONS) { "Unsupported replay schema" }
-        if (config.followWalletSells && !ReplayDataset.recordsTrades(dataset.schemaVersion)) {
-            throw SellCheckNeedsTradesException(dataset.schemaVersion)
+        if (!ReplayDataset.recordsTrades(dataset.schemaVersion)) {
+            if (config.followWalletSells) throw SellCheckNeedsTradesException(dataset.schemaVersion)
+            if (config.minSignalSol != null) throw SignalSizeNeedsTradesException(dataset.schemaVersion)
         }
         val transactions = OrderedWalletTransactions.canonical(dataset.transactions)
         val source = OrderedMarketData(dataset.observations)
@@ -65,6 +66,8 @@ class ReplayRunner(
 
     companion object {
         /**
+         * dip-paper-v6: dip-paper-v5 with the optional minimum signal size (spec P3, fee inclusive), checked at the wallet's buy
+         * before the minimum market cap; without it its outcomes equal dip-paper-v5's.
          * dip-paper-v5: dip-paper-v4 with the optional post-trade price measure (spec Section 5: the reference is the price after
          * the wallet's buy, read from its own market observation) and the optional wallet-sell rule, which reads the tracked
          * wallet's sells from the market data. With both off its outcomes equal dip-paper-v4's. dip-paper-v4 added the optional
@@ -72,7 +75,7 @@ class ReplayRunner(
          * dip-paper-v3 checked the minimum market cap at the wallet's buy (strictly above) instead of at the dip; dip-paper-v2 was
          * dip-paper-v1's triggers with bonding-curve execution on schema v3 datasets.
          */
-        const val ENGINE_VERSION = "dip-paper-v5"
+        const val ENGINE_VERSION = "dip-paper-v6"
 
         /** Fills trade against the fill trade's post-trade curve, outputs rounded down and fees rounded up. */
         private const val CURVE_RULE = "curve-post-trade-floor-fees-ceil"
@@ -100,6 +103,7 @@ class ReplayRunner(
         private fun ruleParts(config: SimulationConfig): List<String> = listOfNotNull(
             config.priceMeasure.takeUnless { it == PriceMeasure.TRADE_AVERAGE }?.let { "priceMeasure=${it.name}" },
             "followWalletSells=true".takeIf { config.followWalletSells },
+            config.minSignalSol?.let { "minSignalSol=${it.toPlainString()}" },
         )
 
         /** The checksum a report of [scenarios] carries: every decision, price and provenance id, in scenario order. */
@@ -113,6 +117,7 @@ class ReplayRunner(
                 intent.trigger?.let { parts.addAll(listOf(it.observationId, it.slot.value.toString(), it.marketCapUsd.toPlainString(), it.rate.toPlainString())) }
                 intent.referenceObservationId?.let(parts::add)
                 intent.walletSell?.let { parts.addAll(listOf(it.eventId, it.slot.value.toString())) }
+                intent.signalLamports?.let { parts.add("signalLamports=$it") }
                 when (val outcome = scenario.outcome) {
                     is FillOutcome.Rejected -> parts.add(outcome.reason.name)
                     is FillOutcome.Filled -> {

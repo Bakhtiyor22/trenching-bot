@@ -18,6 +18,10 @@ interface ReplayDatasetRepository : JpaRepository<ReplayDatasetEntity, String> {
     @Query("delete from ReplayDatasetEntity d where d.id = :id")
     fun deleteDataset(@Param("id") id: String): Int
 
+    /** Share-locks the dataset row until the transaction ends; null when no dataset has the id. */
+    @Query(nativeQuery = true, value = "select id from replay_datasets where id = :id for share")
+    fun findIdLockedForShare(@Param("id") id: String): String?
+
     @Query("select d.snapshot from ReplayDatasetEntity d where d.id = :id")
     fun findSnapshotById(@Param("id") id: String): String?
 

@@ -2,6 +2,7 @@ package com.trenching.bot.replay
 
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.replay.application.PersistedReplayService
+import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.*
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetWriter
@@ -31,6 +32,7 @@ class SimulationRunsIntegrationTest {
     @Autowired private lateinit var persistedReplay: PersistedReplayService
     @Autowired private lateinit var json: ObjectMapper
     @Autowired private lateinit var dataSource: DataSource
+    @Autowired private lateinit var inputs: RunInputs
 
     private fun variant(tag: String): ReplayDataset =
         requireNotNull(javaClass.getResourceAsStream("/replay/samples/dip-sample-v3.json")).use { input ->
@@ -149,9 +151,80 @@ class SimulationRunsIntegrationTest {
         assertEquals(runsBefore + 1, runCount())
     }
 
+    @Test
+    fun `a dataset-referenced run stores no dataset copy and reads the same inputs as a copy run of that dataset`() {
+        val datasetId = catalog.register("reference", ReplayDatasetWriter(json).write(variant("reference")).byteInputStream()).dataset.id
+        val copy = runs.start(datasetId, SimulationConfig.mvp()).run
+        val started = runs.start(datasetId, REFERENCE_CONFIG, RunStorage.DATASET_REFERENCE)
+        val reference = started.run
+
+        assertTrue(started.created)
+        assertEquals(RunStorage.COPY, copy.storage)
+        assertEquals(RunStorage.DATASET_REFERENCE, reference.storage)
+        assertEquals(reference, runs.find(reference.id))
+        assertEquals(listOf(1, 11, 0), counts(reference.id).take(3))
+        assertEquals(reference.scenarioCount, counts(reference.id)[3])
+        assertEquals(1, count("select count(*) from simulation_runs where id = ? and dataset_snapshot is null", reference.id))
+        assertEquals(0, count("select count(*) from simulation_runs where id = ? and dataset_snapshot is null", copy.id))
+        assertEquals(31, inputs.observations(reference.id).size)
+        assertEquals(inputs.observations(copy.id), inputs.observations(reference.id))
+        assertEquals(inputs.transactions(copy.id), inputs.transactions(reference.id))
+        assertEquals(0, count("select count(*) from simulation_runs where id in (?, ?) and not ($STORAGE_CHECK)", copy.id, reference.id))
+    }
+
+    @Test
+    fun `run identity and result do not depend on storage, and a repeat start returns the run as stored`() {
+        val datasetId = catalog.register("storage-identity", ReplayDatasetWriter(json).write(variant("storage-identity")).byteInputStream()).dataset.id
+        val expected = ReplayRunner().run(catalog.load(datasetId), REFERENCE_CONFIG)
+        val reference = runs.start(datasetId, REFERENCE_CONFIG, RunStorage.DATASET_REFERENCE).run
+        val copy = runs.start(datasetId, SimulationConfig.mvp(), RunStorage.COPY).run
+        val stored = counts(reference.id)
+
+        val referenceAgain = runs.start(datasetId, REFERENCE_CONFIG, RunStorage.COPY)
+        val copyAgain = runs.start(datasetId, SimulationConfig.mvp(), RunStorage.DATASET_REFERENCE)
+
+        assertEquals(expected.runId, reference.id)
+        assertEquals(expected.resultChecksum, reference.resultChecksum)
+        assertFalse(referenceAgain.created)
+        assertEquals(reference, referenceAgain.run)
+        assertFalse(copyAgain.created)
+        assertEquals(copy, copyAgain.run)
+        assertEquals(stored, counts(reference.id))
+        assertEquals(1, count("select count(*) from simulation_runs where id = ? and dataset_snapshot is null", reference.id))
+    }
+
+    @Test
+    fun `a run stored before run storage existed reads as a copy`() {
+        val datasetId = catalog.register("legacy-storage", ReplayDatasetWriter(json).write(variant("legacy-storage")).byteInputStream()).dataset.id
+        val run = runs.start(datasetId, SimulationConfig.mvp()).run
+        dataSource.connection.use { connection ->
+            connection.prepareStatement("update simulation_runs set storage = null where id = ?").use { it.setString(1, run.id); it.executeUpdate() }
+        }
+
+        assertEquals(RunStorage.COPY, requireNotNull(runs.find(run.id)).storage)
+        assertEquals(31, inputs.observations(run.id).size)
+        assertEquals(0, count("select count(*) from simulation_runs where id = ? and not ($STORAGE_CHECK)", run.id))
+    }
+
+    private fun count(sql: String, vararg parameters: String): Int = dataSource.connection.use { connection ->
+        connection.prepareStatement(sql).use { statement ->
+            parameters.forEachIndexed { index, value -> statement.setString(index + 1, value) }
+            statement.executeQuery().use { rows -> assertTrue(rows.next()); rows.getInt(1) }
+        }
+    }
+
     private fun runCount(): Int = dataSource.connection.use { connection ->
         connection.prepareStatement("select count(*) from simulation_runs").use { statement ->
             statement.executeQuery().use { rows -> assertTrue(rows.next()); rows.getInt(1) }
         }
+    }
+
+    private companion object {
+        val REFERENCE_CONFIG: SimulationConfig =
+            SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.0013"))
+
+        /** `ck_simulation_runs_storage` from docs/schema/V20261102120000__automation.sql, which Hibernate does not create. */
+        const val STORAGE_CHECK = "(storage is null or storage = 'COPY') and dataset_snapshot is not null " +
+            "or storage = 'DATASET_REFERENCE' and dataset_snapshot is null"
     }
 }

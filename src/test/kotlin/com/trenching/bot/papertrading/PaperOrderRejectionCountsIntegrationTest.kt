@@ -33,7 +33,7 @@ class PaperOrderRejectionCountsIntegrationTest {
     private fun intent(runId: String, offset: Int): TradeIntent =
         TradeIntent("$runId:event:$offset", runId, "event:$offset", wallet, pair, "dip-entry", "1", "config-hash", 0,
             Slot.of(100), null, Slot.of(100L + offset), BigDecimal("100.000000000000"), BigDecimal("0.0000001"), BigDecimal("0.000000085"),
-            Slot.of(4600), DipWatchOutcome.NO_DIP, null, null, null)
+            Slot.of(4600), DipWatchOutcome.NO_DIP, null, null, null, null)
 
     private fun fill(intent: TradeIntent): PaperFill =
         PaperFill(intent.id, intent.targetSlot, intent.targetSlot, "observation-${intent.targetSlot.value}",

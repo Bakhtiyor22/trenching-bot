@@ -8,6 +8,7 @@ import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.marketdata.domain.OrderedMarketData
 import com.trenching.bot.protocol.pumpfun.BondingCurve
 import com.trenching.bot.protocol.pumpfun.CurveReserves
+import com.trenching.bot.protocol.pumpfun.PumpFunFees
 import com.trenching.bot.replay.domain.BuyCalibration
 import com.trenching.bot.replay.domain.BuyCosts
 import com.trenching.bot.replay.domain.CalibrationSummary
@@ -72,9 +73,9 @@ object ExecutionCalibration {
             tokenAmount = buy.tokenAmount,
             computedTokenAmount = computedTokens,
             feeLamports = buy.feeLamports,
-            computedFeeLamports = BondingCurve.fee(buy.solAmount, buy.feeBps),
+            computedFeeLamports = PumpFunFees.lamports(buy.solAmount, buy.feeBps),
             creatorFeeLamports = buy.creatorFeeLamports,
-            computedCreatorFeeLamports = BondingCurve.fee(buy.solAmount, buy.creatorFeeBps),
+            computedCreatorFeeLamports = PumpFunFees.lamports(buy.solAmount, buy.creatorFeeBps),
         )
     }
 

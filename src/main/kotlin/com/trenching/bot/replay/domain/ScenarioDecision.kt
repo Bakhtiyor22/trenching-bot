@@ -71,8 +71,8 @@ internal object ScenarioDecision {
         recorded: RecordedThrough,
     ): Slot =
         when (reason) {
-            RejectionReason.UNSUPPORTED_SUPPLY, RejectionReason.REFERENCE_BELOW_MIN_MARKET_CAP, RejectionReason.REFERENCE_UNAVAILABLE ->
-                intent.creationSlot
+            RejectionReason.UNSUPPORTED_SUPPLY, RejectionReason.REFERENCE_BELOW_MIN_MARKET_CAP, RejectionReason.REFERENCE_UNAVAILABLE,
+            RejectionReason.SIGNAL_BELOW_MIN_SIZE, RejectionReason.SIGNAL_SIZE_UNAVAILABLE -> intent.creationSlot
             RejectionReason.WALLET_SOLD -> checkNotNull(intent.walletSell) { "Wallet sold without its sell intentId=${intent.id}" }.slot
             RejectionReason.MIGRATED_BEFORE_ENTRY, RejectionReason.MIGRATED -> checkNotNull(firstCompletion(intent, watchedFrom, source)) {
                 "Migration without a completed curve intentId=${intent.id} reason=$reason"

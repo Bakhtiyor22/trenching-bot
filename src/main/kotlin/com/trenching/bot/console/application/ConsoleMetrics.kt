@@ -10,5 +10,6 @@ object ConsoleMetrics {
     const val FAILED = "failed"
     const val COVERAGE_ENDED = "coverage_ended"
     const val SELL_CHECK_NEEDS_TRADES = "sell_check_needs_trades"
+    const val SIGNAL_SIZE_NEEDS_TRADES = "signal_size_needs_trades"
     const val INVALID = "invalid"
 }

@@ -11,6 +11,7 @@ import com.trenching.bot.marketdata.domain.ObservedTrade
 import com.trenching.bot.marketdata.domain.TradeSide
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.replay.application.ReplayRunner
+import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.strategy.domain.SimulationConfig
@@ -48,6 +49,14 @@ class RunResponseMapperTest {
 
         assertEquals("""{"datasetId":"dataset-1","datasetName":"Decu case dataset","captureId":"s1","captureDisplayName":"Decu · 7mup…pump · 16 Oct 20:13","caseId":"case-1"}""",
             body["source"].toString())
+    }
+
+    @Test
+    fun `run detail and its summary name how the run stores its inputs`() {
+        val detail = detail(DatasetSource("dataset-1", null, null))
+
+        assertEquals("DATASET_REFERENCE", body(DatasetSource("dataset-1", null, null))["run"]["storage"].asString())
+        assertEquals("DATASET_REFERENCE", mapper.toResponse(detail.run).storage)
     }
 
     @Test
@@ -138,7 +147,8 @@ class RunResponseMapperTest {
                 ScenarioTimelines.of(result.intent, selected, result.position, firstBuyAt, observations))
         }
         val run = RunSummary(report.runId, "dataset-1", report.engineVersion, report.configurationHash, report.resultChecksum,
-            MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"))
+            MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"),
+            RunStorage.DATASET_REFERENCE)
         return SourcedRunDetail(run, SimulationConfig.mvp(), scenarios, source)
     }
 

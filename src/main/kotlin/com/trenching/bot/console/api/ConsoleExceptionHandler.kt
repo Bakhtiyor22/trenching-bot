@@ -9,12 +9,13 @@ import com.trenching.bot.console.domain.InvalidWalletAddressException
 import com.trenching.bot.console.domain.SampleDatasetNotFoundException
 import com.trenching.bot.console.domain.WalletActivityUnavailableException
 import com.trenching.bot.console.mapper.ConsoleErrorMapper
+import com.trenching.bot.replay.domain.DatasetInUseException
 import com.trenching.bot.replay.domain.DatasetInvalidException
 import com.trenching.bot.replay.domain.DatasetNotFoundException
 import com.trenching.bot.replay.domain.MarketCoverageEndedException
-import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
 import com.trenching.bot.replay.domain.SimulationRunConflictException
 import com.trenching.bot.replay.domain.SimulationRunNotFoundException
+import com.trenching.bot.replay.domain.TradesRequiredException
 import com.trenching.bot.walletactivity.WalletActivityUnavailable
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -48,6 +49,10 @@ class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper
     fun datasetNotFound(e: DatasetNotFoundException): ConsoleErrorResponse = error(DATASET_NOT_FOUND, e.message)
 
     @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun datasetInUse(e: DatasetInUseException): ConsoleErrorResponse = error(DATASET_IN_USE, e.message)
+
+    @ExceptionHandler
     @ResponseStatus(HttpStatus.NOT_FOUND)
     fun sampleNotFound(e: SampleDatasetNotFoundException): ConsoleErrorResponse = error(SAMPLE_NOT_FOUND, e.message)
 
@@ -65,7 +70,7 @@ class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper
 
     @ExceptionHandler
     @ResponseStatus(HttpStatus.CONFLICT)
-    fun sellCheckNeedsTrades(e: SellCheckNeedsTradesException): ConsoleErrorResponse = error(SellCheckNeedsTradesException.CODE, e.message)
+    fun tradesRequired(e: TradesRequiredException): ConsoleErrorResponse = error(e.code, e.message)
 
     @ExceptionHandler
     @ResponseStatus(HttpStatus.BAD_REQUEST)
@@ -127,6 +132,7 @@ class ConsoleExceptionHandler(private val consoleErrorMapper: ConsoleErrorMapper
     private companion object {
         const val DATASET_INVALID = "DATASET_INVALID"
         const val DATASET_NOT_FOUND = "DATASET_NOT_FOUND"
+        const val DATASET_IN_USE = "DATASET_IN_USE"
         const val SAMPLE_NOT_FOUND = "SAMPLE_NOT_FOUND"
         const val RUN_NOT_FOUND = "RUN_NOT_FOUND"
         const val RUN_CONFLICT = "RUN_CONFLICT"

@@ -5,6 +5,7 @@ import com.trenching.bot.replay.ReplayDatasetCatalog
 import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.domain.RunAggregates
 import com.trenching.bot.replay.domain.RunStart
+import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SimulationRunNotFoundException
 import com.trenching.bot.replay.mapper.SimulationRunMapper
@@ -22,13 +23,13 @@ class SimulationRunsService(
 ) : SimulationRuns {
     private val log = LoggerFactory.getLogger(SimulationRunsService::class.java)
 
-    override fun start(datasetId: String, config: SimulationConfig): RunStart {
+    override fun start(datasetId: String, config: SimulationConfig, storage: RunStorage): RunStart {
         val dataset = catalog.load(datasetId)
         val report = ReplayRunner().run(dataset, config)
-        val persisted = ledger.persistWithOutcome(dataset, report)
+        val persisted = ledger.persistWithOutcome(dataset, report, storage)
         val created = persisted.created
         val run = mapper.toSummary(persisted.record)
-        log.info("simulation run started runId={} datasetId={} created={}", run.id, datasetId, created)
+        log.info("simulation run started runId={} datasetId={} created={} storage={}", run.id, datasetId, created, run.storage)
         return RunStart(run, created)
     }
 

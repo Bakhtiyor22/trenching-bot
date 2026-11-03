@@ -42,7 +42,7 @@ class RunSetupControllerTest {
 
         assertEquals(listOf("id", "source", "engine", "config", "fields", "unsupportedRules"), body.propertyNames().toList())
         assertEquals("decu-dip-v2-on-dip-entry-v1", body["id"].asString())
-        assertEquals("""{"document":"docs/strategy/decu-dip-v2-spec.md","strategy":"decu-dip","version":2,"updated":"2026-10-24"}""",
+        assertEquals("""{"document":"docs/strategy/decu-dip-v2-spec.md","strategy":"decu-dip","version":2,"updated":"2026-11-02"}""",
             body["source"].toString())
         assertEquals("dip-entry v1", body["engine"].asString())
         val config = body["config"]
@@ -58,7 +58,7 @@ class RunSetupControllerTest {
     }
 
     @Test
-    fun `the preset marks the timed clocks and the spec's price and sell rules agreed, the horizon a recording bound, and lists the five unsupported spec rules`() {
+    fun `the preset marks the timed clocks and the spec's price and sell rules agreed, the horizon a recording bound, and P3 agreed, and lists the four unsupported spec rules`() {
         val body = body("/api/runs/preset", 200)
 
         val fields = body["fields"].associateBy { it["field"].asString() }
@@ -71,11 +71,13 @@ class RunSetupControllerTest {
             fields.getValue("priceMeasure").toString())
         assertEquals("""{"field":"followWalletSells","status":"AGREED","specRef":"Section 6 / Section 8","noteCode":null}""",
             fields.getValue("followWalletSells").toString())
-        assertEquals(15, body["fields"].size())
+        assertEquals("""{"field":"minSignalSol","status":"AGREED","specRef":"P3","noteCode":"CURVE_PAYMENT_FEES_ON_TOP"}""",
+            fields.getValue("minSignalSol").toString())
+        assertEquals(16, body["fields"].size())
         val rules = body["unsupportedRules"]
-        assertEquals(5, rules.size())
-        assertTrue(rules.none { it["code"].asString() == "POST_TRADE_PRICE" })
-        assertEquals("""{"specRef":"Section 8","code":"EXIT_RETRY_ECONOMICS"}""", rules[3].toString())
+        assertEquals(4, rules.size())
+        assertTrue(rules.none { it["code"].asString() in setOf("POST_TRADE_PRICE", "SIGNAL_OVER_1_9_SOL") || it["specRef"].asString() == "P3" })
+        assertEquals("""{"specRef":"Section 8","code":"EXIT_RETRY_ECONOMICS"}""", rules[2].toString())
     }
 
     @Test
@@ -85,7 +87,7 @@ class RunSetupControllerTest {
         assertEquals(listOf("USE_AGREED_STRATEGY", "ADD_LEGACY_COMPARISON", "SINGLE_TOKEN_DATASET"), body.items().map { it["id"].asString() })
         assertTrue(body.items().all { it["appliesTo"].asString() == "RUN" })
         assertEquals("""{"id":"USE_AGREED_STRATEGY","appliesTo":"RUN","setting":{"field":"presetId","value":"decu-dip-v2-on-dip-entry-v1"},""" +
-            """"facts":{"unsupportedRuleCount":5,"missingFieldCount":0},"caveatCode":null}""", body[0].toString())
+            """"facts":{"unsupportedRuleCount":4,"missingFieldCount":0},"caveatCode":null}""", body[0].toString())
         assertEquals("""{"dipPercent":"15","takeProfitPercent":"30","stopLossPercent":"15"}""", body[1]["facts"].toString())
         assertTrue(body[1]["setting"].isNull)
         assertEquals("""{"pairCount":1}""", body[2]["facts"].toString())

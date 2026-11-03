@@ -11,9 +11,13 @@ import com.trenching.bot.console.application.ConsoleMetrics
 import com.trenching.bot.console.application.RunLaunchService
 import com.trenching.bot.console.domain.PercentConversion
 import com.trenching.bot.papertrading.domain.RejectionReason
+import com.trenching.bot.replay.SimulationRuns
+import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
+import com.trenching.bot.replay.domain.SignalSizeNeedsTradesException
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV5
+import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import java.math.BigDecimal
 import com.trenching.bot.support.AdditionalClockConfiguration
@@ -51,6 +55,7 @@ class ConsoleApiIntegrationTest {
     @Autowired private lateinit var json: ObjectMapper
     @Autowired private lateinit var dataSource: DataSource
     @Autowired private lateinit var meterRegistry: MeterRegistry
+    @Autowired private lateinit var runs: SimulationRuns
 
     private val http by lazy { ConsoleHttp(port, json) }
 
@@ -158,6 +163,20 @@ class ConsoleApiIntegrationTest {
         assertEquals(Level.WARN, refusal.level)
         assertEquals(listOf(datasetId, "3", SellCheckNeedsTradesException.CODE), refusal.argumentArray.map(Any::toString))
         assertEquals(201, http.post("/api/runs", """{"datasetId":"$datasetId","config":{"followWalletSells":false}}""").status)
+    }
+
+    @Test
+    fun `the minimum signal size on a dataset whose observations record no trades is refused with 409 and stores nothing`() {
+        val datasetId = upload(variant(json, "no-trades-signal"), "no-trades-signal.json").path("dataset").path("id").asString()
+        val runsBefore = count("select count(*) from simulation_runs")
+        val refusedBefore = counter(ConsoleMetrics.RUNS, ConsoleMetrics.SIGNAL_SIZE_NEEDS_TRADES)
+
+        val refused = http.post("/api/runs", """{"datasetId":"$datasetId","config":{"minSignalSol":"1.9"}}""")
+
+        assertError(409, SignalSizeNeedsTradesException.CODE, refused)
+        assertTrue(refused.body.path("message").asString().contains("schemaVersion=3"), refused.raw)
+        assertEquals(runsBefore, count("select count(*) from simulation_runs"))
+        assertEquals(refusedBefore + 1, counter(ConsoleMetrics.RUNS, ConsoleMetrics.SIGNAL_SIZE_NEEDS_TRADES))
     }
 
     @Test
@@ -513,6 +532,39 @@ class ConsoleApiIntegrationTest {
     }
 
     @Test
+    fun `a dataset-referenced run reads like a copy run of its dataset, which then cannot be deleted`() {
+        val content = variant(json, "reference")
+        val copyRunId = startRun(content, "reference.json")
+        val datasetId = upload(content, "reference.json").path("dataset").path("id").asString()
+        val referenceRunId = runs.start(datasetId, REFERENCE_CONFIG, RunStorage.DATASET_REFERENCE).run.id
+        val pair = DipSample.pair(DipSample.TAKE_PROFIT).let { "${it.base.value}/${it.quote.value}" }
+
+        assertEquals(0, count("select count(*) from market_observations where run_id = ?", referenceRunId))
+        assertEquals("COPY", http.get("/api/runs/$copyRunId").body.path("run").path("storage").asString())
+        assertEquals("DATASET_REFERENCE", http.get("/api/runs/$referenceRunId").body.path("run").path("storage").asString())
+        assertEquals("DATASET_REFERENCE",
+            http.get("/api/runs?datasetId=$datasetId").body.path("items").items().single { it.path("id").asString() == referenceRunId }
+                .path("storage").asString())
+        val copyObservations = http.get("/api/runs/$copyRunId/observations")
+        assertEquals(200, copyObservations.status, copyObservations.raw)
+        assertEquals(31, copyObservations.body.size())
+        assertEquals(copyObservations.body, http.get("/api/runs/$referenceRunId/observations").body)
+        assertEquals(http.get("/api/runs/$copyRunId/events").body, http.get("/api/runs/$referenceRunId/events").body)
+        val copyChart = http.get("/api/runs/$copyRunId/chart?pair=$pair").body
+        val referenceChart = http.get("/api/runs/$referenceRunId/chart?pair=$pair").body
+        listOf("extent", "candles", "ticks", "coverage", "millisPerSlot").forEach { field ->
+            assertEquals(copyChart.path(field), referenceChart.path(field), field)
+        }
+
+        val refused = http.delete("/api/datasets/$datasetId")
+
+        assertError(409, "DATASET_IN_USE", refused)
+        assertTrue(refused.body.path("message").asString().contains("referenceRuns=1"), refused.raw)
+        assertEquals(200, http.get("/api/datasets/$datasetId").status)
+        assertEquals(copyObservations.body, http.get("/api/runs/$referenceRunId/observations").body)
+    }
+
+    @Test
     fun `config defaults are the mvp values with their allowed ranges`() {
         val defaults = http.get("/api/config/defaults").body
 
@@ -542,6 +594,9 @@ class ConsoleApiIntegrationTest {
         assertTrue(defaults.path("defaults").path("followWalletSells").isBoolean)
         assertFalse(defaults.path("defaults").path("followWalletSells").asBoolean())
         assertEquals(listOf("TRADE_AVERAGE", "POST_TRADE"), defaults.path("limits").path("priceMeasure").items().map { it.asString() })
+        assertTrue(defaults.path("defaults").path("minSignalSol").isNull)
+        assertEquals(listOf("0.000000001", "1000"), listOf("min", "max").map { defaults.path("limits").path("minSignalSol").path(it).asString() })
+        assertEquals(9, defaults.path("limits").path("minSignalSolScale").asInt())
     }
 
     @Test
@@ -615,5 +670,10 @@ class ConsoleApiIntegrationTest {
                 rows.getInt(1)
             }
         }
+    }
+
+    private companion object {
+        val REFERENCE_CONFIG: SimulationConfig =
+            SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.0013"))
     }
 }

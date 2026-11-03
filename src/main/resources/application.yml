@@ -19,6 +19,36 @@ trenching:
     suggested-wallets:
       - label: Decu
         address: 4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9
+  # Automated discovery, capture and sweep of one wallet's buys (README, Console → Automation). Off unless enabled, and only
+  # under the local profile with the console enabled; capture-enabled false is phase 0, discovery only.
+  automation:
+    enabled: false
+    capture-enabled: false
+    zone: "+05:00"
+    poll-from: "18:00"
+    poll-to: "05:00"
+    tick-interval: 1m
+    discovery-interval: 10m
+    initial-lookback: PT12H
+    max-discovery-pages: 5
+    session-idle: 60m
+    market-delay: 35m
+    capture-min-signal-sol: 1.5
+    capture-fee-margin-bps: 300
+    max-step-attempts: 2
+    max-requests-per-24h: 5000
+    operation-budget:
+      requests: 400
+      bytes: 100MB
+      timeout: 10m
+    recovery:
+      requests: 1200
+      bytes: 300MB
+      attempts: 3
+    sweep-plan: decu-sweep-1
+    evaluation-window-sessions: 7
+    min-signals: 10
+    min-net-pnl-sol: 0
 
 # Provider pacing is shared by every capture against the same RPC endpoint in this process. 4 requests in flight with
 # a start every 125 ms (8 per second) stays below the 10 requests per second free tier; 1 and 500ms reproduce the old pacing.

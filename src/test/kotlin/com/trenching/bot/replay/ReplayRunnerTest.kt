@@ -15,6 +15,7 @@ import com.trenching.bot.replay.domain.DatasetCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.domain.ScenarioResult
 import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
+import com.trenching.bot.replay.domain.SignalSizeNeedsTradesException
 import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.strategy.domain.DipWatchOutcome
@@ -22,6 +23,7 @@ import com.trenching.bot.strategy.domain.PriceMeasure
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.strategy.domain.TradeIntent
 import com.trenching.bot.strategy.domain.WalletSellSignal
+import com.trenching.bot.support.AgreedDipSample
 import com.trenching.bot.support.DipSample
 import com.trenching.bot.support.DipSampleV4
 import com.trenching.bot.support.DipSampleV6
@@ -255,6 +257,37 @@ class ReplayRunnerTest {
     }
 
     @Test
+    fun `the minimum signal size is refused on a dataset whose observations record no trades, after the wallet-sell rule`() {
+        val sized = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"),
+            minSignalSol = BigDecimal("1.9"))
+
+        val refused = assertFailsWith<SignalSizeNeedsTradesException> { ReplayRunner().run(DipSample.load(), sized) }
+
+        assertEquals(3, refused.schemaVersion)
+        assertEquals("SIGNAL_SIZE_NEEDS_TRADES", refused.code)
+        assertTrue(refused.message.orEmpty().contains("schemaVersion=3"), refused.message)
+        assertTrue(refused.message.orEmpty().contains(SignalSizeNeedsTradesException.CODE), refused.message)
+        assertFailsWith<SellCheckNeedsTradesException> { ReplayRunner().run(DipSample.load(), SimulationConfig.agreed()) }
+    }
+
+    @Test
+    fun `under the agreed configuration a buy paying exactly 1,9 SOL with its fees places no order, and one lamport more goes on`() {
+        fun takeProfit(curvePayment: BigInteger): ScenarioResult =
+            ReplayRunner().run(AgreedDipSample.shape(DipSampleV4.dataset(), curvePayment = curvePayment), SimulationConfig.agreed())
+                .scenarios.single { it.intent.pair == DipSample.pair(DipSample.TAKE_PROFIT) }
+
+        val atMinimum = takeProfit(BigInteger.valueOf(1_876_543_209))
+        val oneMore = takeProfit(BigInteger.valueOf(1_876_543_210))
+
+        assertEquals(DipWatchOutcome.SIGNAL_BELOW_MIN_SIZE, atMinimum.intent.watch)
+        assertEquals(FillOutcome.Rejected(atMinimum.intent.id, RejectionReason.SIGNAL_BELOW_MIN_SIZE), atMinimum.outcome)
+        assertNull(atMinimum.position)
+        assertEquals(BigInteger.valueOf(1_900_000_000), atMinimum.intent.signalLamports)
+        assertEquals(DipWatchOutcome.TRIGGERED, oneMore.intent.watch)
+        assertEquals(BigInteger.valueOf(1_900_000_001), oneMore.intent.signalLamports)
+    }
+
+    @Test
     fun `a post-trade run on a dataset without the wallet's buy observations has no reference for any supported cycle`() {
         val postTrade = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"),
             priceMeasure = PriceMeasure.POST_TRADE)
@@ -266,7 +299,7 @@ class ReplayRunnerTest {
     }
 
     @Test
-    fun `the result checksum covers the reference observation and the wallet's sell`() {
+    fun `the result checksum covers the reference observation, the wallet's sell and the signal size`() {
         fun checksum(change: (TradeIntent) -> TradeIntent) =
             ReplayRunner.resultChecksum(report.runId, report.scenarios.map { it.copy(intent = change(it.intent)) })
 
@@ -277,6 +310,8 @@ class ReplayRunnerTest {
             checksum { it.copy(walletSell = WalletSellSignal("sell:b", Slot.of(1001))) },
             checksum { it.copy(referenceObservationId = "buy:a") },
             checksum { it.copy(referenceObservationId = "buy:b") },
+            checksum { it.copy(signalLamports = BigInteger.valueOf(1_900_000_000)) },
+            checksum { it.copy(signalLamports = BigInteger.valueOf(1_900_000_001)) },
         )
 
         assertEquals(report.resultChecksum, checksums.first())
@@ -314,8 +349,8 @@ class ReplayRunnerTest {
     }
 
     @Test
-    fun `engine dip-paper-v5 hashes latency and transaction cost into the configuration and the run`() {
-        assertEquals("dip-paper-v5", report.engineVersion)
+    fun `engine dip-paper-v6 hashes latency and transaction cost into the configuration and the run`() {
+        assertEquals("dip-paper-v6", report.engineVersion)
         val slower = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 2, BigDecimal("0.001"))
         val dearer = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.002"))
         listOf(slower, dearer).map { ReplayRunner().run(DipSample.load(), it) }.forEach { other ->
@@ -329,29 +364,51 @@ class ReplayRunnerTest {
     fun `the configuration hash names a timed or rule field only when it is not the default, so the default's hash is unchanged`() {
         fun timed(
             dipWindowMs: Long? = null, maxHoldMs: Long? = null, hardExitStartMs: Long? = null,
-            priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE, followWalletSells: Boolean = false,
+            priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE, followWalletSells: Boolean = false, minSignalSol: String? = null,
         ) = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"),
             dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs, hardExitStartMs = hardExitStartMs, priceMeasure = priceMeasure,
-            followWalletSells = followWalletSells)
+            followWalletSells = followWalletSells, minSignalSol = minSignalSol?.let(::BigDecimal))
         val hashes = listOf(timed(), timed(dipWindowMs = 30_000), timed(dipWindowMs = 31_000),
             timed(maxHoldMs = 180_000, hardExitStartMs = 240_000), timed(maxHoldMs = 181_000, hardExitStartMs = 240_000),
             timed(maxHoldMs = 180_000, hardExitStartMs = 241_000), timed(priceMeasure = PriceMeasure.POST_TRADE),
             timed(followWalletSells = true), timed(priceMeasure = PriceMeasure.POST_TRADE, followWalletSells = true),
-            SimulationConfig.agreed()).map(ReplayRunner::configurationHash)
+            timed(minSignalSol = "1.9"), timed(minSignalSol = "1.5"), SimulationConfig.agreed()).map(ReplayRunner::configurationHash)
 
         assertEquals(PINNED_CONFIGURATION_HASH, hashes.first())
         assertEquals(PINNED_CONFIGURATION_HASH, ReplayRunner.configurationHash(SimulationConfig.mvp()))
+        assertEquals(ReplayRunner.configurationHash(timed(minSignalSol = "1.9")),
+            ReplayRunner.configurationHash(timed(minSignalSol = "1.900000000")))
         assertEquals(hashes.size, hashes.distinct().size)
     }
 
     @Test
-    fun `dip-sample-v3 and its v4 twin keep their pinned dip-paper-v5 run identity and result`() {
+    fun `the agreed configuration's hash changes with its minimum signal size, and without it is the dip-paper-v5 agreed hash`() {
+        val agreed = SimulationConfig.agreed()
+        val withoutMinimum = SimulationConfig.of(agreed.notional, agreed.maxAgeSlots, agreed.dipBps, agreed.takeProfitBps,
+            agreed.stopLossBps, agreed.minMarketCapUsd, agreed.horizonSlots, agreed.latencySlots, agreed.transactionCostSol,
+            dipWindowMs = agreed.dipWindowMs, maxHoldMs = agreed.maxHoldMs, hardExitStartMs = agreed.hardExitStartMs,
+            priceMeasure = agreed.priceMeasure, followWalletSells = agreed.followWalletSells)
+
+        assertEquals(DIP_PAPER_V5_AGREED_CONFIGURATION_HASH, ReplayRunner.configurationHash(withoutMinimum))
+        assertTrue(ReplayRunner.configurationHash(agreed) != DIP_PAPER_V5_AGREED_CONFIGURATION_HASH)
+    }
+
+    @Test
+    fun `dip-sample-v3 and its v4 twin keep their pinned dip-paper-v6 run identity and result`() {
         val v4 = ReplayRunner().run(DipSampleV4.dataset(), SimulationConfig.mvp())
 
         assertEquals(listOf(PINNED_V3_RUN_ID, PINNED_CONFIGURATION_HASH, PINNED_V3_RESULT_CHECKSUM),
             listOf(report.runId, report.configurationHash, report.resultChecksum))
         assertEquals(listOf(PINNED_V4_RUN_ID, PINNED_CONFIGURATION_HASH, PINNED_V4_RESULT_CHECKSUM),
             listOf(v4.runId, v4.configurationHash, v4.resultChecksum))
+    }
+
+    @Test
+    fun `without a minimum signal size every result equals dip-paper-v5's and only the run id differs`() {
+        val v4 = ReplayRunner().run(DipSampleV4.dataset(), SimulationConfig.mvp())
+
+        assertEquals(DIP_PAPER_V5_V3_RESULT_CHECKSUM, underRunId(report, DIP_PAPER_V5_V3_RUN_ID))
+        assertEquals(DIP_PAPER_V5_V4_RESULT_CHECKSUM, underRunId(v4, DIP_PAPER_V5_V4_RUN_ID))
     }
 
     @Test
@@ -463,10 +520,17 @@ class ReplayRunnerTest {
         val TIMED: SimulationConfig = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1,
             BigDecimal("0.001"), dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000)
         const val PINNED_CONFIGURATION_HASH = "be937336820a84b0af7482105efb9334ebb710c0ccf8e4d6bae88f2666a0a329"
-        const val PINNED_V3_RUN_ID = "63ecd15009948a7c7aaf00c81cc8d21894615998432ba0e63a46c731e8e4ea8a"
-        const val PINNED_V3_RESULT_CHECKSUM = "c314299e0a7ffb30c355723d3c171457c515c689a8062a0c1d5b29e097ff352a"
-        const val PINNED_V4_RUN_ID = "1ca8c24060beeaf0a348bf6785b45dca35692ef02a7a79ff7266ad12603bd3e5"
-        const val PINNED_V4_RESULT_CHECKSUM = "879135d003a42d6741837f40f02c3dca758e88effe8b5ceee7dd167a2bca52ea"
+        const val PINNED_V3_RUN_ID = "1dddf2b56992a326bccbe8822b3f71398949cb7d6e56f1329b16e42b52499cfa"
+        const val PINNED_V3_RESULT_CHECKSUM = "c3d2ce59e19f397ca959675ab88230ef14f602798132c7ba7c1a40288a16b78f"
+        const val PINNED_V4_RUN_ID = "ef89877d9fd31e0f4e688141486736e40b05319918048b12d97f1eb76eca2159"
+        const val PINNED_V4_RESULT_CHECKSUM = "3f8aa2bc9f784a20056ae61b866815be56a9b3ffed8ac1c037d6ed38f0a317b6"
+
+        /** The same runs' identity and result under engine dip-paper-v5, and the agreed configuration's hash then. */
+        const val DIP_PAPER_V5_V3_RUN_ID = "63ecd15009948a7c7aaf00c81cc8d21894615998432ba0e63a46c731e8e4ea8a"
+        const val DIP_PAPER_V5_V3_RESULT_CHECKSUM = "c314299e0a7ffb30c355723d3c171457c515c689a8062a0c1d5b29e097ff352a"
+        const val DIP_PAPER_V5_V4_RUN_ID = "1ca8c24060beeaf0a348bf6785b45dca35692ef02a7a79ff7266ad12603bd3e5"
+        const val DIP_PAPER_V5_V4_RESULT_CHECKSUM = "879135d003a42d6741837f40f02c3dca758e88effe8b5ceee7dd167a2bca52ea"
+        const val DIP_PAPER_V5_AGREED_CONFIGURATION_HASH = "193af27a1f58c86cdd3e4f5e674ce0798142d9e9b2e3880f66ac72f0f4bf772d"
 
         /** The same runs' identity and result under engine dip-paper-v4. */
         const val DIP_PAPER_V4_V3_RUN_ID = "9f56738063e32b99c8d7b98955704784ad7d9dd83fb9ee7cf6fa95dd8a7fdace"

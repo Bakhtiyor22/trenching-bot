@@ -29,6 +29,7 @@ class AgreedStrategyPresetTest {
         assertSameDecimal(spec.getValue("notionalSol"), preset.config.notional)
         assertSameDecimal(spec.getValue("minReferenceMcapUsdExclusive"), preset.config.minMarketCapUsd)
         assertSameDecimal(spec.getValue("entryPriorityFeeSol"), preset.config.transactionCostSol)
+        assertSameDecimal(spec.getValue("minSignalSolExclusive"), requireNotNull(preset.config.minSignalSol))
     }
 
     @Test
@@ -53,7 +54,7 @@ class AgreedStrategyPresetTest {
         assertEquals(SimulationConfig.agreed(), preset.config)
         assertEquals(SimulationConfig.of(BigDecimal("0.1"), mvp.maxAgeSlots, 2000, 5500, 4000, BigDecimal("10000"), mvp.horizonSlots, 1,
             BigDecimal("0.001"), quoteMint = MintAddress.WRAPPED_SOL, dipWindowMs = 30_000, maxHoldMs = 180_000, hardExitStartMs = 240_000,
-            priceMeasure = PriceMeasure.POST_TRADE, followWalletSells = true),
+            priceMeasure = PriceMeasure.POST_TRADE, followWalletSells = true, minSignalSol = BigDecimal("1.9")),
             preset.config)
         assertEquals(4500L, preset.config.horizonSlots)
     }
@@ -70,6 +71,7 @@ class AgreedStrategyPresetTest {
             PresetField("notional", PresetFieldStatus.AGREED, "P12", "CURVE_PAYMENT_FEES_ON_TOP"),
             PresetField("transactionCostSol", PresetFieldStatus.AGREED, "entryPriorityFeeSol", "NETWORK_FEE_NOT_ADDED"),
             PresetField("quoteMint", PresetFieldStatus.AGREED, "P15", null),
+            PresetField("minSignalSol", PresetFieldStatus.AGREED, "P3", "CURVE_PAYMENT_FEES_ON_TOP"),
             PresetField("minMarketCapUsd", PresetFieldStatus.AGREED, "P5", null),
             PresetField("priceMeasure", PresetFieldStatus.AGREED, "P4 / Section 5", null),
             PresetField("followWalletSells", PresetFieldStatus.AGREED, "Section 6 / Section 8", null),
@@ -80,10 +82,10 @@ class AgreedStrategyPresetTest {
     }
 
     @Test
-    fun `the five spec rules dip-entry v1 cannot apply are listed, and the post-trade price measure is no longer one of them`() {
-        assertEquals(listOf("P2", "P3", "P8", "Section 8", "P13"), preset.unsupportedRules.map { it.specRef })
-        assertEquals(listOf("FIRST_EVER_BUY", "SIGNAL_OVER_1_9_SOL", "ENTRY_SLIPPAGE_15_PERCENT", "EXIT_RETRY_ECONOMICS",
-            "ONE_POSITION_INCLUDING_IN_FLIGHT"), preset.unsupportedRules.map { it.code })
+    fun `the four spec rules dip-entry v1 cannot apply are listed, and neither the price measure nor the signal size is one of them`() {
+        assertEquals(listOf("P2", "P8", "Section 8", "P13"), preset.unsupportedRules.map { it.specRef })
+        assertEquals(listOf("FIRST_EVER_BUY", "ENTRY_SLIPPAGE_15_PERCENT", "EXIT_RETRY_ECONOMICS", "ONE_POSITION_INCLUDING_IN_FLIGHT"),
+            preset.unsupportedRules.map { it.code })
     }
 
     @Test

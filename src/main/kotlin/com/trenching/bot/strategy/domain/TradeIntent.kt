@@ -2,6 +2,7 @@ package com.trenching.bot.strategy.domain
 
 import com.trenching.bot.common.*
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Instant
 
 /**
@@ -14,6 +15,9 @@ import java.time.Instant
  * [referenceObservationId] that records it; without exactly one such observation [watch] is
  * [DipWatchOutcome.REFERENCE_UNAVAILABLE], no observation is named, and [referencePrice] keeps the buy's average for the record
  * only. [walletSell] is set exactly when [watch] is [DipWatchOutcome.WALLET_SOLD].
+ *
+ * [signalLamports] is the buy's fee-inclusive size ([SignalSize]), set when [SimulationConfig.minSignalSol] is set and the buy's
+ * market observation records its trade; null without a minimum, and whenever [watch] is [DipWatchOutcome.SIGNAL_SIZE_UNAVAILABLE].
  */
 data class TradeIntent(
     val id: String,
@@ -36,6 +40,7 @@ data class TradeIntent(
     val trigger: DipTrigger?,
     val referenceObservationId: String?,
     val walletSell: WalletSellSignal?,
+    val signalLamports: BigInteger?,
 )
 
 /** The tracked wallet's sell that ended a dip watch: [eventId] is the sell's market observation id. */
@@ -60,6 +65,8 @@ enum class DipWatchOutcome {
     UNSUPPORTED_SUPPLY,
     WALLET_SOLD,
     REFERENCE_UNAVAILABLE,
+    SIGNAL_BELOW_MIN_SIZE,
+    SIGNAL_SIZE_UNAVAILABLE,
 }
 
 /** The intents of a run, plus the source events of buys that started no cycle because an earlier buy of the mint did. */

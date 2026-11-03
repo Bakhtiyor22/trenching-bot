@@ -25,4 +25,8 @@ object SimulationConfigBounds {
 
     /** Spec P11's maximum hold and hard exit start: one second to an hour each. */
     val EXIT_CLOCK_MS: LongRange = 1_000L..3_600_000L
+
+    /** Spec P3's minimum signal size: one lamport to 1,000 SOL, in whole lamports. */
+    val MIN_SIGNAL_SOL: ClosedRange<BigDecimal> = BigDecimal("0.000000001")..BigDecimal("1000")
+    const val MIN_SIGNAL_DECIMALS = PumpFunLayout.SOL_AMOUNT_DECIMALS
 }

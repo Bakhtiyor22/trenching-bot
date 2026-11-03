@@ -75,7 +75,8 @@ internal class RecentWalletActivityService(
         val actions = read.filterIsInstance<WalletTradeEvents.Read>().flatMap { it.actions }.sortedWith(WalletActivitySignals.PAGE_ORDER)
         val listingEnded = entries.size < listingLimit && scanned.size == entries.size
         val nextBefore = scanned.lastOrNull()?.takeUnless { listingEnded }?.let { TransactionSignature.of(it.signature) }
-        return WalletActivityPage(request.wallet, actions, read.count { it == WalletTradeEvents.Unreadable }, scanned.size, nextBefore, budget.requestsUsed)
+        return WalletActivityPage(request.wallet, actions, read.count { it == WalletTradeEvents.Unreadable }, scanned.size, nextBefore, budget.requestsUsed,
+            oldestBlockTime = scanned.lastOrNull { it.blockTime != null }?.blockTime)
     }
 
     /** The listing entries up to and including the [limit]-th successful one, or all of them when fewer succeeded. */

@@ -36,6 +36,10 @@ enum class RejectionReason {
     WALLET_SOLD,
     /** The post-trade reference needs the wallet's buy in the market data, and exactly one observation did not record it. */
     REFERENCE_UNAVAILABLE,
+    /** The wallet's buy paid no more than the minimum signal size, fees included. */
+    SIGNAL_BELOW_MIN_SIZE,
+    /** The minimum signal size needs the wallet's buy in the market data, and exactly one observation did not record its trade. */
+    SIGNAL_SIZE_UNAVAILABLE,
     ;
 
     companion object {

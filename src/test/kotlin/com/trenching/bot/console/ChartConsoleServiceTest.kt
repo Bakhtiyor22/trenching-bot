@@ -48,6 +48,7 @@ import com.trenching.bot.replay.domain.DatasetRegistration
 import com.trenching.bot.replay.domain.DatasetSummary
 import com.trenching.bot.replay.domain.MarketCoverage
 import com.trenching.bot.replay.domain.ReplayDataset
+import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SampleDataset
 import com.trenching.bot.strategy.domain.SimulationConfig
@@ -510,7 +511,7 @@ class ChartConsoleServiceTest {
             RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable)
         }
         val run = RunSummary(report.runId, datasetId, report.engineVersion, report.configurationHash, report.resultChecksum,
-            MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"))
+            MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"), RunStorage.COPY)
         return RunDetail(run, SimulationConfig.mvp(), scenarios)
     }
 

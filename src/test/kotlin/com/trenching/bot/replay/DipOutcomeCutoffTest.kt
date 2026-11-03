@@ -274,10 +274,10 @@ class DipOutcomeCutoffTest {
     }
 
     @Test
-    fun `its identity is engine dip-paper-v5 and the configuration hash of the agreed replay`() {
+    fun `its identity is engine dip-paper-v6 and the configuration hash of the agreed replay`() {
         val report = ReplayRunner().run(sample, SimulationConfig.agreed())
 
-        assertEquals(CutoffIdentity("dip-paper-v5", report.configurationHash), DipOutcomeCutoff.IDENTITY)
+        assertEquals(CutoffIdentity("dip-paper-v6", report.configurationHash), DipOutcomeCutoff.IDENTITY)
         assertEquals(Duration.ofMinutes(4), ReplayMarketCaptureRequest.MINIMUM_DECIDED_RECORDING)
     }
 

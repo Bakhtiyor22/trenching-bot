@@ -36,7 +36,7 @@ class RunReportReaderTest {
     }
 
     @Test
-    fun `reads the agreed configuration back with its clocks, its price measure and its wallet-sell rule`() {
+    fun `reads the agreed configuration back with its clocks, its price measure, its wallet-sell rule and its minimum signal size`() {
         val config = SimulationConfig.agreed()
 
         val facts = reader.read(json.writeValueAsString(ReplayRunner().run(AgreedDipSample.dataset(), config)))
@@ -45,6 +45,7 @@ class RunReportReaderTest {
         assertEquals(listOf(30_000L, 180_000L, 240_000L), listOf(facts.config.dipWindowMs, facts.config.maxHoldMs, facts.config.hardExitStartMs))
         assertEquals(PriceMeasure.POST_TRADE, facts.config.priceMeasure)
         assertTrue(facts.config.followWalletSells)
+        assertEquals("1.900000000000", facts.config.minSignalSol?.toPlainString())
     }
 
     @Test

@@ -11,18 +11,32 @@ class SimulationRunNotFoundException(runId: String) :
 class DatasetNotFoundException(id: String) :
     ReplayException("Replay dataset not found datasetId=$id")
 
+/** Dataset-referenced runs read the dataset from the catalog, so it must stay while [runCount] of them exist. */
+class DatasetInUseException(datasetId: String, val runCount: Long) :
+    ReplayException("Replay dataset is read by dataset-referenced runs datasetId=$datasetId referenceRuns=$runCount")
+
 /** [message] is the loader's validation message, unchanged. */
 class DatasetInvalidException(message: String, cause: Throwable? = null) : ReplayException(message, cause)
 
 /**
- * A run asking for the wallet-sell rule on a dataset whose observations record no trades is refused, since it could not see the
- * wallet's sells and would read their absence as none.
+ * A run asking for a rule that reads the wallet's trades from the market data, on a dataset whose observations record none.
+ * [code] is the refusal's API error code and qualification failure category.
  */
-class SellCheckNeedsTradesException(val schemaVersion: Int) : ReplayException(
-    "The wallet-sell rule needs a dataset whose observations record trades schemaVersion=$schemaVersion " +
-        "minimumSchemaVersion=${ReplayDataset.SCHEMA_V4} ($CODE)") {
+sealed class TradesRequiredException(val schemaVersion: Int, val code: String, rule: String) : ReplayException(
+    "$rule needs a dataset whose observations record trades schemaVersion=$schemaVersion " +
+        "minimumSchemaVersion=${ReplayDataset.SCHEMA_V4} ($code)")
+
+/** The wallet-sell rule could not see the wallet's sells and would read their absence as none. */
+class SellCheckNeedsTradesException(schemaVersion: Int) : TradesRequiredException(schemaVersion, CODE, "The wallet-sell rule") {
     companion object {
         const val CODE = "SELL_CHECK_NEEDS_TRADES"
+    }
+}
+
+/** The minimum signal size could not read the curve payment of the wallet's buy, so no cycle could be sized. */
+class SignalSizeNeedsTradesException(schemaVersion: Int) : TradesRequiredException(schemaVersion, CODE, "The minimum signal size") {
+    companion object {
+        const val CODE = "SIGNAL_SIZE_NEEDS_TRADES"
     }
 }
 

@@ -2,7 +2,10 @@ package com.trenching.bot.console.api.dto
 
 import java.time.Instant
 
-/** [realizedPnl] is an exact decimal string in units of [quoteMint]. */
+/**
+ * [realizedPnl] is an exact decimal string in units of [quoteMint]. [storage] is `COPY` (the run keeps its own dataset copy)
+ * or `DATASET_REFERENCE` (it reads the catalog dataset).
+ */
 data class RunSummaryResponse(
     val id: String,
     val datasetId: String,
@@ -17,6 +20,7 @@ data class RunSummaryResponse(
     val closedCount: Int,
     val realizedPnl: String,
     val createdAt: Instant,
+    val storage: String,
 )
 
 data class RunStartResponse(

@@ -1,5 +1,6 @@
 package com.trenching.bot.replay.infrastructure.persistence
 
+import com.trenching.bot.replay.domain.RunStorage
 import jakarta.persistence.*
 import java.math.BigDecimal
 import java.time.Instant
@@ -13,6 +14,7 @@ import java.time.Instant
     indexes = [
         Index(name = "idx_simulation_runs_created_at", columnList = "created_at, id"),
         Index(name = "idx_simulation_runs_dataset", columnList = "dataset_checksum, created_at"),
+        Index(name = "idx_simulation_runs_storage_dataset", columnList = "dataset_checksum, storage"),
     ],
 )
 class SimulationRunEntity(
@@ -22,7 +24,9 @@ class SimulationRunEntity(
     @Column(name = "configuration_hash", nullable = false, length = 64) var configurationHash: String,
     @Column(name = "tracked_wallet", nullable = false, length = 44) var trackedWallet: String,
     @Column(name = "configuration_snapshot", nullable = false, columnDefinition = "text") var configurationSnapshot: String,
-    @Column(name = "dataset_snapshot", nullable = false, columnDefinition = "text") var datasetSnapshot: String,
+    @Column(name = "dataset_snapshot", nullable = true, columnDefinition = "text") var datasetSnapshot: String?,
+    /** Null on rows stored before run storage existed; they are copies. */
+    @Enumerated(EnumType.STRING) @Column(name = "storage", nullable = true, length = 20) var storage: RunStorage?,
     @Column(name = "report_snapshot", nullable = false, columnDefinition = "text") var reportSnapshot: String,
     @Column(name = "result_checksum", nullable = false, length = 64) var resultChecksum: String,
     @Column(name = "quote_mint", nullable = false, length = 44) var quoteMint: String,

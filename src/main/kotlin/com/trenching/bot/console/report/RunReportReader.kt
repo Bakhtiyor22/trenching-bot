@@ -20,7 +20,8 @@ class RunReportReader(private val json: ObjectMapper) {
             configuration.takeProfitBps, configuration.stopLossBps, configuration.minMarketCapUsd, configuration.horizonSlots,
             configuration.latencySlots, configuration.transactionCostSol, configuration.strategyName,
             configuration.strategyVersion, MintAddress.of(configuration.quoteMint.value), configuration.dipWindowMs,
-            configuration.maxHoldMs, configuration.hardExitStartMs, configuration.priceMeasure, configuration.followWalletSells)
+            configuration.maxHoldMs, configuration.hardExitStartMs, configuration.priceMeasure, configuration.followWalletSells,
+            configuration.minSignalSol)
         return StoredReportFacts(config)
     }
 }

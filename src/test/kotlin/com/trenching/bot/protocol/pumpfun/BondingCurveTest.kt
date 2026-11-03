@@ -22,8 +22,8 @@ class BondingCurveTest {
         assertEquals(BUY, event.isBuy)
 
         assertEquals(CurveBuy(event.tokenAmount), BondingCurve.buy(preTrade(event), event.solAmount))
-        assertEquals(event.feeLamports, BondingCurve.fee(event.solAmount, event.feeBasisPoints))
-        assertEquals(event.creatorFeeLamports, BondingCurve.fee(event.solAmount, event.creatorFeeBasisPoints))
+        assertEquals(event.feeLamports, PumpFunFees.lamports(event.solAmount, event.feeBasisPoints))
+        assertEquals(event.creatorFeeLamports, PumpFunFees.lamports(event.solAmount, event.creatorFeeBasisPoints))
     }
 
     @Test
@@ -35,15 +35,6 @@ class BondingCurveTest {
     }
 
     @Test
-    fun `fees round up to the next lamport`() {
-        assertEquals(BigInteger.ONE, BondingCurve.fee(BigInteger.ONE, BigInteger.ONE))
-        assertEquals(BigInteger.valueOf(95), BondingCurve.fee(BigInteger.valueOf(10_000), BigInteger.valueOf(95)))
-        assertEquals(BigInteger.valueOf(96), BondingCurve.fee(BigInteger.valueOf(10_001), BigInteger.valueOf(95)))
-        assertEquals(BigInteger.ZERO, BondingCurve.fee(BigInteger.ZERO, BigInteger.valueOf(95)))
-        assertEquals(BigInteger.ZERO, BondingCurve.fee(BigInteger.valueOf(10_001), BigInteger.ZERO))
-    }
-
-    @Test
     fun `u64 maximum reserves and inputs do not overflow`() {
         val max = BigInteger.ONE.shiftLeft(Long.SIZE_BITS).subtract(BigInteger.ONE)
         val reserves = CurveReserves(max, max, max, max)
@@ -51,7 +42,6 @@ class BondingCurveTest {
 
         assertEquals(CurveBuy(half), BondingCurve.buy(reserves, max))
         assertEquals(CurveSell(half), BondingCurve.sell(reserves, max))
-        assertEquals(max, BondingCurve.fee(max, BigInteger.valueOf(BondingCurve.MAX_BASIS_POINTS.toLong())))
     }
 
     @Test

@@ -6,6 +6,7 @@ import com.trenching.bot.marketdata.domain.ObservedTrade
 import com.trenching.bot.strategy.domain.DipWatchOutcome
 import jakarta.persistence.*
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.time.Instant
 
 @Entity
@@ -76,6 +77,8 @@ class TradeIntentEntity(
     var walletSellEventId: String?,
     @Column(name = "wallet_sell_slot", nullable = true)
     var walletSellSlot: Long?,
+    @Column(name = "signal_lamports", nullable = true, precision = 20, scale = 0)
+    var signalLamports: BigInteger?,
     @Version
     @Column(nullable = false)
     var version: Long? = null,

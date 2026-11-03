@@ -12,7 +12,8 @@ data class StoredRunReport(
 
 /**
  * The timed fields are absent from a snapshot stored before engine dip-paper-v4, so they default to null (untimed); the price
- * measure and the wallet-sell rule are absent before dip-paper-v5, so they default to the behaviour of dip-paper-v4.
+ * measure and the wallet-sell rule are absent before dip-paper-v5, so they default to the behaviour of dip-paper-v4; the minimum
+ * signal size is absent before dip-paper-v6, so it defaults to none.
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 data class StoredConfiguration(
@@ -33,6 +34,7 @@ data class StoredConfiguration(
     val hardExitStartMs: Long? = null,
     val priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE,
     val followWalletSells: Boolean = false,
+    val minSignalSol: BigDecimal? = null,
 )
 
 data class StoredAddress(val value: String)

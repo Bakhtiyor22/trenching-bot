@@ -9,7 +9,8 @@ import tools.jackson.databind.JsonNode
  * property, such as the removed `feeBps` and `slippageBps`, so each is reported instead of ignored. Each level may be sent
  * as basis points or as a percent string; when both are sent they must agree. The timed clocks are whole milliseconds, absent
  * or null for an untimed run; `maxHoldMs` and `hardExitStartMs` are sent together. `priceMeasure` is a `PriceMeasure` name and
- * `followWalletSells` a JSON boolean; absent or null, each keeps its `mvp()` value.
+ * `followWalletSells` a JSON boolean; absent or null, each keeps its `mvp()` value. `minSignalSol` is a plain decimal string of
+ * whole lamports; absent or null applies no minimum signal size.
  */
 data class ConsoleConfigRequest(
     val notional: JsonNode? = null,
@@ -30,6 +31,7 @@ data class ConsoleConfigRequest(
     val hardExitStartMs: JsonNode? = null,
     val priceMeasure: JsonNode? = null,
     val followWalletSells: JsonNode? = null,
+    val minSignalSol: JsonNode? = null,
     @param:JsonAnySetter
     val unknownFields: Map<String, JsonNode> = emptyMap(),
 )

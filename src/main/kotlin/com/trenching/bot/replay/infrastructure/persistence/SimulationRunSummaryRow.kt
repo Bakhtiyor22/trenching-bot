@@ -1,5 +1,6 @@
 package com.trenching.bot.replay.infrastructure.persistence
 
+import com.trenching.bot.replay.domain.RunStorage
 import java.math.BigDecimal
 import java.time.Instant
 
@@ -18,4 +19,6 @@ interface SimulationRunSummaryRow {
     val closedCount: Int
     val realizedPnl: BigDecimal
     val createdAt: Instant
+    /** Null on rows stored before run storage existed. */
+    val storage: RunStorage?
 }

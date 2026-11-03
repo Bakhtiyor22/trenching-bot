@@ -19,7 +19,8 @@ import tools.jackson.databind.JsonNode
  * Checks every field of a run's configuration and reports each bad one; absent fields take the `mvp()` value (the timed
  * clocks: unset) and a property that is not a configuration field is reported rather than ignored. A level sent as a percent is converted to
  * exact basis points here, before the run starts, so the stored and hashed configuration never sees the percent. The price
- * measure is one of its names and the wallet-sell rule a JSON boolean, never a string or a number coerced into one.
+ * measure is one of its names and the wallet-sell rule a JSON boolean, never a string or a number coerced into one. The minimum
+ * signal size is optional: absent, it applies no minimum, which is the `mvp()` value.
  */
 @Component
 class ConsoleConfigValidator {
@@ -49,11 +50,13 @@ class ConsoleConfigValidator {
         requirePair(HARD_EXIT_START_MS, hardExitStartMs, MAX_HOLD_MS, request.maxHoldMs, errors)
         val priceMeasure = priceMeasure(request.priceMeasure, defaults.priceMeasure, errors)
         val followWalletSells = boolean(FOLLOW_WALLET_SELLS, request.followWalletSells, defaults.followWalletSells, errors)
+        val minSignalSol = minSignal(request.minSignalSol, errors)
         request.unknownFields.keys.forEach { errors[it] = UNKNOWN_FIELD_MESSAGE }
         if (errors.isNotEmpty()) return ConfigValidation.Invalid(errors, errorCode(errors.keys, conflicts))
         return ConfigValidation.Valid(SimulationConfig.of(notional, maxAgeSlots, dipBps, takeProfitBps, stopLossBps, minMarketCapUsd,
             horizonSlots, latencySlots, transactionCostSol, quoteMint = quoteMint, dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs,
-            hardExitStartMs = hardExitStartMs, priceMeasure = priceMeasure, followWalletSells = followWalletSells))
+            hardExitStartMs = hardExitStartMs, priceMeasure = priceMeasure, followWalletSells = followWalletSells,
+            minSignalSol = minSignalSol))
     }
 
     /** A valid [field] whose pair was not sent reports the pair as missing; an invalid one is already reported on its own. */
@@ -127,6 +130,16 @@ class ConsoleConfigValidator {
             errors[TRANSACTION_COST_SOL] = "must be between ${range.min.toPlainString()} and ${range.max.toPlainString()} SOL"
         }
         return scaled
+    }
+
+    private fun minSignal(node: JsonNode?, errors: MutableMap<String, String>): BigDecimal? {
+        val value = decimal(MIN_SIGNAL_SOL, node, errors) ?: return null
+        val range = limits.minSignalSol
+        if (value.stripTrailingZeros().scale() > limits.minSignalSolScale || value !in range) {
+            errors[MIN_SIGNAL_SOL] = "must be a whole number of lamports between ${range.min.toPlainString()} and " +
+                "${range.max.toPlainString()} SOL"
+        }
+        return value
     }
 
     /** A plain decimal string, or null when absent or reported as malformed. */
@@ -207,6 +220,7 @@ class ConsoleConfigValidator {
         const val HARD_EXIT_START_MS = "hardExitStartMs"
         const val PRICE_MEASURE = "priceMeasure"
         const val FOLLOW_WALLET_SELLS = "followWalletSells"
+        const val MIN_SIGNAL_SOL = "minSignalSol"
         const val DECIMAL_FORMAT_MESSAGE = "must be a plain decimal string such as \"100\" or \"0.5\""
         const val UNKNOWN_FIELD_MESSAGE = "is not a configuration field"
         const val PERCENT_FORMAT_MESSAGE = "must be a percent string with at most 2 decimals, such as \"20\" or \"15.5\""

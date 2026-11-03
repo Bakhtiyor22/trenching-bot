@@ -38,6 +38,8 @@ enum class WalletActivityUnavailable { RPC_NOT_CONFIGURED, PROVIDER_RATE_LIMITED
  * [scanned] counts the listing entries the page covers, failed ones included; [unreadable] counts the successful ones that
  * yielded no decodable trade of the wallet. [nextBefore] is the last entry scanned, to pass as `before` for the next older
  * page, or null when the listing ended within this page. [requestsUsed] counts the provider requests actually sent.
+ * [oldestBlockTime] is the listing's block time of the oldest scanned entry that has one, null when none has; every older
+ * page lists older transactions, whether or not they hold a trade.
  */
 data class WalletActivityPage(
     val wallet: WalletAddress,
@@ -47,6 +49,7 @@ data class WalletActivityPage(
     val nextBefore: TransactionSignature?,
     val requestsUsed: Int,
     val source: String = WalletActivityLimits.SOURCE,
+    val oldestBlockTime: Instant? = null,
 )
 
 /**

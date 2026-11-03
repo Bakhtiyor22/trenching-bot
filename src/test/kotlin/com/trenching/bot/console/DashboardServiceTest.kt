@@ -16,6 +16,7 @@ import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.domain.RunAggregates
 import com.trenching.bot.replay.domain.RunStart
+import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.strategy.domain.TradeIntent
@@ -102,7 +103,7 @@ class DashboardServiceTest {
     }
 
     private fun run(id: String, createdAt: Instant) = RunSummary(id, "dataset", "engine", "config", "result",
-        MintAddress.WRAPPED_SOL, 3, 3, 0, 0, 3, BigDecimal("1.000000000000"), createdAt)
+        MintAddress.WRAPPED_SOL, 3, 3, 0, 0, 3, BigDecimal("1.000000000000"), createdAt, RunStorage.COPY)
 
     private class FakeSimulationRuns : SimulationRuns {
         var stored: List<RunSummary> = emptyList()
@@ -110,7 +111,7 @@ class DashboardServiceTest {
         val pageRequests = mutableListOf<Triple<Int, Int, String?>>()
         val totalsRequests = mutableListOf<Instant>()
 
-        override fun start(datasetId: String, config: SimulationConfig): RunStart = error("not used")
+        override fun start(datasetId: String, config: SimulationConfig, storage: RunStorage): RunStart = error("not used")
 
         override fun page(page: Int, size: Int, datasetId: String?): PageResult<RunSummary> {
             pageRequests += Triple(page, size, datasetId)

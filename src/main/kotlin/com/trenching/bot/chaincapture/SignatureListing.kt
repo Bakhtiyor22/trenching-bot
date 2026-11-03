@@ -1,9 +1,22 @@
 package com.trenching.bot.chaincapture
 
 import com.trenching.bot.common.TransactionSignature
+import java.time.Instant
+import java.util.Objects
 import tools.jackson.databind.JsonNode
 
-data class SignatureListingEntry(val signature: String, val slot: Long, val failed: Boolean)
+/**
+ * One listed transaction. [blockTime] is the listing's, null when the provider has none for the slot. It is not part of the
+ * entry's identity: scans compare an entry they read again with one rebuilt from a stored selection, which keeps no time.
+ */
+class SignatureListingEntry(val signature: String, val slot: Long, val failed: Boolean, val blockTime: Instant? = null) {
+    override fun equals(other: Any?): Boolean =
+        other is SignatureListingEntry && signature == other.signature && slot == other.slot && failed == other.failed
+
+    override fun hashCode(): Int = Objects.hash(signature, slot, failed)
+
+    override fun toString(): String = "SignatureListingEntry(signature=$signature, slot=$slot, failed=$failed, blockTime=$blockTime)"
+}
 
 /** Parses and checks one newest-first `getSignaturesForAddress` page; memo and other listing text is never kept. */
 object SignatureListing {
@@ -26,6 +39,12 @@ object SignatureListing {
         try { TransactionSignature.of(signature.asString()) } catch (_: IllegalArgumentException) {
             throw CaptureValidationException("SIGNATURE_ENCODING")
         }
-        return SignatureListingEntry(signature.asString(), slot.asLong(), failed = !node.path("err").isNull)
+        return SignatureListingEntry(signature.asString(), slot.asLong(), failed = !node.path("err").isNull, blockTime = blockTime(node.path("blockTime")))
+    }
+
+    private fun blockTime(node: JsonNode): Instant? {
+        if (node.isMissingNode || node.isNull) return null
+        if (!node.isIntegralNumber || !node.canConvertToLong()) throw CaptureValidationException("SIGNATURE_ENTRY")
+        return Instant.ofEpochSecond(node.asLong())
     }
 }

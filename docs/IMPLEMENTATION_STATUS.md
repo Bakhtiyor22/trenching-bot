@@ -18,6 +18,8 @@ Update 2026-10-10 (V3 buys): the approved [V3 decoder plan](plans/archive/202610
 
 Update 2026-10-10 (deletion): the approved [delete plan](plans/archive/20261010-delete-captures-and-datasets.md) is delivered. It adds local-only `DELETE /api/captures/{id}` (managed files only; attached evidence untouched) and `DELETE /api/datasets/{id}` (catalog row only; runs keep their snapshots), each behind a console confirmation.
 
+Update 2026-11-03 (automation): the approved [capture and sweep automation plan](plans/archive/20261102-decu-capture-sweep-automation.md) is delivered for the backend (units 1–6). Engine `dip-paper-v6` adds the fee-inclusive 1.9 SOL signal-size rule; runs can reference a dataset instead of copying it; and `console.automation` discovers Decu's buys overnight, groups them into idle-gap sessions, captures each one under a rolling 24-hour request cap, replays sweep plan `decu-sweep-1` and scores it over the last 7 sessions. It is off by default (`trenching.automation.enabled`, `capture-enabled`). The build ran 1842 tests with only the 5 known Windows failures. Production applies `docs/schema/V20261102120000__automation.sql` by hand. A real night against the wallet and the frontend Automation page remain.
+
 The original WEEKLY_EXECUTION_PLAN was copied unchanged from the primary checkout. The deterministic, curated-fixture flow now includes durable PostgreSQL persistence. The complete production/live-data roadmap is not finished.
 
 ## Baseline and roadmap audit

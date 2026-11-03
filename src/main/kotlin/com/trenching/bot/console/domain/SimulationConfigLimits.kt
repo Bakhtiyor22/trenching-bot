@@ -19,7 +19,8 @@ data class DecimalRange(val min: BigDecimal, val max: BigDecimal) {
  * Editable ranges sourced from strategy so each field can be reported separately. A notional has at most
  * [notionalScale] decimals (whole lamports) and [notionalPrecision] digits at that scale; a transaction cost is
  * rounded to [transactionCostScale] decimals. The timed clocks are optional; their ranges, in milliseconds, bound a value
- * only when it is set. [priceMeasure] is every measure a run may use.
+ * only when it is set. [priceMeasure] is every measure a run may use. A minimum signal size has at most [minSignalSolScale]
+ * decimals (whole lamports) and is optional.
  */
 data class SimulationConfigLimits(
     val notionalScale: Int,
@@ -37,6 +38,8 @@ data class SimulationConfigLimits(
     val maxHoldMs: NumberRange,
     val hardExitStartMs: NumberRange,
     val priceMeasure: List<PriceMeasure>,
+    val minSignalSolScale: Int,
+    val minSignalSol: DecimalRange,
 ) {
     companion object {
         private val LEVELS = range(SimulationConfigBounds.LEVEL_BASIS_POINTS)
@@ -57,6 +60,8 @@ data class SimulationConfigLimits(
             maxHoldMs = range(SimulationConfigBounds.EXIT_CLOCK_MS),
             hardExitStartMs = range(SimulationConfigBounds.EXIT_CLOCK_MS),
             priceMeasure = PriceMeasure.entries,
+            minSignalSolScale = SimulationConfigBounds.MIN_SIGNAL_DECIMALS,
+            minSignalSol = DecimalRange(SimulationConfigBounds.MIN_SIGNAL_SOL.start, SimulationConfigBounds.MIN_SIGNAL_SOL.endInclusive),
         )
 
         private fun range(values: IntRange) = NumberRange(values.first.toLong(), values.last.toLong())

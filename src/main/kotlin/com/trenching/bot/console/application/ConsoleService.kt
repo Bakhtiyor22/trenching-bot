@@ -10,12 +10,12 @@ import com.trenching.bot.console.domain.RunScenario
 import com.trenching.bot.console.domain.SourcedRunDetail
 import com.trenching.bot.console.domain.TimedRunScenario
 import com.trenching.bot.console.report.RunReportReader
-import com.trenching.bot.marketdata.MarketObservationStore
 import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.papertrading.PaperOrderStore
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.papertrading.domain.orderId
 import com.trenching.bot.portfolio.PositionStore
+import com.trenching.bot.replay.RunInputs
 import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SimulationRunNotFoundException
@@ -27,15 +27,16 @@ import com.trenching.bot.walletactivity.domain.WalletTradeObserved
 import org.springframework.stereotype.Service
 
 /**
- * Read views of stored runs, composed from the module store ports. Runs are immutable, so the
- * separate store reads of one view cannot disagree. Each store read is bounded by `ReplayLimits`.
+ * Read views of stored runs, composed from the module store ports and [RunInputs], which reads a run's market observations and
+ * wallet transactions whatever its storage. Runs are immutable, so the separate reads of one view cannot disagree. Each store
+ * read is bounded by `ReplayLimits`.
  */
 @Service
 class ConsoleService(
     private val runs: SimulationRuns,
     private val reports: RunReportReader,
     private val events: WalletEventStore,
-    private val observations: MarketObservationStore,
+    private val inputs: RunInputs,
     private val intents: TradeIntentStore,
     private val orders: PaperOrderStore,
     private val positions: PositionStore,
@@ -63,7 +64,7 @@ class ConsoleService(
 
     fun detailWithObservations(runId: String): RunObservations {
         val run = requireRun(runId)
-        val stored = observations.observations(runId)
+        val stored = inputs.observations(runId)
         return RunObservations(detail(run, stored), stored)
     }
 
@@ -71,7 +72,7 @@ class ConsoleService(
         requireRun(runId)
         val accepted = events.acceptedTrades(runId).associate { it.id to NormalizationOutcome.Accepted(it) }
         val ignored = events.ignored(runId).associateBy { it.sourceEventId }
-        return events.transactions(runId).map { transaction ->
+        return inputs.transactions(runId).map { transaction ->
             val eventId = WalletEventIdentity.of(transaction.signature, transaction.instructionIndex)
             val outcome = accepted[eventId] ?: ignored[eventId]
             RunEvent(eventId, transaction, checkNotNull(outcome) { "Missing ingestion outcome runId=$runId eventId=$eventId" })
@@ -86,7 +87,7 @@ class ConsoleService(
 
     fun observations(runId: String): List<MarketObservation> {
         requireRun(runId)
-        return observations.observations(runId)
+        return inputs.observations(runId)
     }
 
     fun orders(runId: String): List<RunOrder> {

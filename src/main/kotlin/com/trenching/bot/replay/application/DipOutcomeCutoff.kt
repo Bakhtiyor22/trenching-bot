@@ -38,7 +38,8 @@ import org.slf4j.LoggerFactory
  *
  * The agreed configuration compares post-trade prices and follows the wallet's sells, so a window planned before the
  * market-window lead, which cannot hold the wallet's own buy, is decided `REFERENCE_UNAVAILABLE` at that buy, and a wallet sell
- * decides the window at the sell, before an entry, or like a take profit or stop loss, while holding.
+ * decides the window at the sell, before an entry, or like a take profit or stop loss, while holding. A buy paying no more than
+ * the agreed minimum signal size is decided `SIGNAL_BELOW_MIN_SIZE` at that buy.
  *
  * The prefix is cut before the first trade of a minute without a SOL/USDT rate, so a trigger is never replayed without its
  * rate. Rates are looked up once per minute for one capture invocation and never stored: export and qualification replay

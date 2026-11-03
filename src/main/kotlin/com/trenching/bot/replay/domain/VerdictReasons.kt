@@ -1,6 +1,9 @@
 package com.trenching.bot.replay.domain
 
-/** The reasons and failure categories a [TargetTokenVerdict] reports where the replay gives no outcome of its own. */
+/**
+ * The reasons and failure categories a [TargetTokenVerdict] reports where the replay gives no outcome of its own; a refused
+ * replay reports its [TradesRequiredException.code].
+ */
 object VerdictReasons {
     /** Dip reason: the capture was not export ready, so nothing was replayed. */
     const val REPLAY_NOT_RUN = "REPLAY_NOT_RUN"
@@ -31,7 +34,8 @@ object VerdictReasons {
     /** The market data does not record the wallet's buy, so the agreed post-trade reference is unknown. */
     const val REFERENCE_UNAVAILABLE = "REFERENCE_UNAVAILABLE"
 
-    /** The dataset's observations record no trades, so the agreed wallet-sell rule cannot run on it. */
-    const val SELL_CHECK_NEEDS_TRADES = SellCheckNeedsTradesException.CODE
+    /** The market data does not record the trade of the wallet's buy, so its agreed minimum signal size cannot be checked. */
+    const val SIGNAL_SIZE_UNAVAILABLE = "SIGNAL_SIZE_UNAVAILABLE"
+
     const val REPLAY_ERROR = "REPLAY_ERROR"
 }

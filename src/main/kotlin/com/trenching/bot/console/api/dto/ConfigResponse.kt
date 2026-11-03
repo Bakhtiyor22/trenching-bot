@@ -3,7 +3,8 @@ package com.trenching.bot.console.api.dto
 /**
  * The timed clocks are whole milliseconds, null when the run is untimed. [priceMeasure] is the trade price the rules compare,
  * `TRADE_AVERAGE` or `POST_TRADE`; [followWalletSells] ends a cycle with no entry, or exits a position, when the tracked wallet
- * sells the mint.
+ * sells the mint. [minSignalSol] is the SOL the wallet's buy must pay more than, fees included, as a decimal string; null applies
+ * no minimum.
  */
 data class ConfigResponse(
     val strategyName: String,
@@ -26,6 +27,7 @@ data class ConfigResponse(
     val hardExitStartMs: Long?,
     val priceMeasure: String,
     val followWalletSells: Boolean,
+    val minSignalSol: String?,
 )
 
 data class ConfigDefaultsResponse(
@@ -37,7 +39,8 @@ data class ConfigDefaultsResponse(
  * Inclusive ranges; a null `max` is unbounded above. Each level's percent range is its basis point range as exact percent
  * strings. A notional has at most [notionalScale] decimals (whole lamports)
  * and [notionalPrecision] digits; a transaction cost is rounded to [transactionCostScale] decimals. The timed clocks' ranges
- * are milliseconds and bound a value only when it is set. [priceMeasure] lists every accepted price measure name.
+ * are milliseconds and bound a value only when it is set. [priceMeasure] lists every accepted price measure name. A minimum signal
+ * size has at most [minSignalSolScale] decimals (whole lamports) and bounds a run only when it is set.
  */
 data class ConfigLimitsResponse(
     val notionalScale: Int,
@@ -58,6 +61,8 @@ data class ConfigLimitsResponse(
     val maxHoldMs: RangeResponse,
     val hardExitStartMs: RangeResponse,
     val priceMeasure: List<String>,
+    val minSignalSolScale: Int,
+    val minSignalSol: DecimalRangeResponse,
 )
 
 data class RangeResponse(

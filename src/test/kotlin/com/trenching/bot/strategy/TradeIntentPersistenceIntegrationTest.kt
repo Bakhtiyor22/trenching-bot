@@ -10,6 +10,7 @@ import com.trenching.bot.strategy.domain.PriceMeasure
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.AgreedDipSample
 import com.trenching.bot.support.DipSample
+import com.trenching.bot.support.DipSampleV4
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -36,7 +37,7 @@ class TradeIntentPersistenceIntegrationTest {
     @Autowired private lateinit var dataSource: DataSource
 
     @Test
-    fun `a post-trade run with the wallet-sell rule stores the wallet, the reference observation, the sell and the new reasons`() {
+    fun `a post-trade run with the wallet-sell rule stores the wallet, the reference observation, the sell, the signal size and the new reasons`() {
         val dataset = dataset()
         val report = ReplayRunner().run(dataset, SimulationConfig.agreed())
 
@@ -53,6 +54,8 @@ class TradeIntentPersistenceIntegrationTest {
         assertNull(horizon["reference_observation_id"])
         assertNull(horizon["wallet_sell_event_id"])
         assertNull(horizon["wallet_sell_slot"])
+        assertEquals(0, BigDecimal("2025000000").compareTo(takeProfit["signal_lamports"] as BigDecimal))
+        assertNull(horizon["signal_lamports"])
         assertEquals(listOf("WALLET_SOLD", "REFERENCE_UNAVAILABLE"), listOf(DipSample.TAKE_PROFIT, DipSample.HORIZON).map { cycle ->
             jdbc.queryForObject("select o.rejection_reason from paper_orders o join trade_intents i on i.id = o.id where i.run_id = ? and i.base_mint = ?",
                 String::class.java, run.id, DipSample.mint(cycle).value)
@@ -63,6 +66,22 @@ class TradeIntentPersistenceIntegrationTest {
             listOf(stopLoss["close_reason"], stopLoss["exit_trigger_reason"], stopLoss["exit_trigger_observation_id"]))
         assertEquals(report.scenarios.map { it.intent }, intents.intents(run.id))
         assertEquals(report.scenarios.mapNotNull { it.position }, positions.positions(run.id))
+    }
+
+    @Test
+    fun `a buy at the minimum signal size stores its size and the below-minimum reason and reads back as replayed`() {
+        val dataset = AgreedDipSample.shape(DipSampleV4.dataset(), curvePayment = BigInteger.valueOf(1_876_543_209))
+        val report = ReplayRunner().run(dataset, SimulationConfig.agreed())
+
+        val run = application.execute(dataset, SimulationConfig.agreed())
+
+        val jdbc = JdbcTemplate(dataSource)
+        val takeProfit = intentRow(jdbc, run.id, DipSample.TAKE_PROFIT)
+        assertEquals("SIGNAL_BELOW_MIN_SIZE", takeProfit["watch"])
+        assertEquals(0, BigDecimal("1900000000").compareTo(takeProfit["signal_lamports"] as BigDecimal))
+        assertEquals("SIGNAL_BELOW_MIN_SIZE", jdbc.queryForObject("select o.rejection_reason from paper_orders o join trade_intents i " +
+            "on i.id = o.id where i.run_id = ? and i.base_mint = ?", String::class.java, run.id, DipSample.mint(DipSample.TAKE_PROFIT).value))
+        assertEquals(report.scenarios.map { it.intent }, intents.intents(run.id))
     }
 
     @Test
@@ -82,7 +101,7 @@ class TradeIntentPersistenceIntegrationTest {
     }
 
     private fun intentRow(jdbc: JdbcTemplate, runId: String, cycle: Int): Map<String, Any?> = jdbc.queryForMap("""
-        select watch, wallet, reference_observation_id, wallet_sell_event_id, wallet_sell_slot
+        select watch, wallet, reference_observation_id, wallet_sell_event_id, wallet_sell_slot, signal_lamports
         from trade_intents where run_id = ? and base_mint = ?""".trimIndent(), runId, DipSample.mint(cycle).value)
 
     /**

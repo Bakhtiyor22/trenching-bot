@@ -3,7 +3,7 @@
 This file is the single source of truth for the bot. It answers both question rounds: *"A Few Things to Clarify"* and *"A Few Remaining Details"*. If the code and this file disagree, this file wins.
 
 - Strategy name: `decu-dip`, version **2**. It runs as its own strategy with its own config and results. Existing capture modes stay unchanged.
-- Last updated: 2026-10-24
+- Last updated: 2026-11-02
 
 ### Changes from v1
 
@@ -17,6 +17,10 @@ This file is the single source of truth for the bot. It answers both question ro
 | Price measure | Mixed (trade prints vs. post-trade) | **Post-trade price** everywhere, in SOL per token (Section 5) |
 | Recording | Starts at detection | Backfills the missed beginning; coverage marked (Section 11) |
 
+### Changes on 2026-11-02
+
+- **Signal size:** P3 counts the SOL Decu's buy paid into the curve plus the protocol and creator fees on it, each rounded up to a whole lamport; it must be strictly more than 1.9 SOL. The paper engine applies it from `dip-paper-v6` on ([decision](../adr/20261102-fee-inclusive-signal-size.md)).
+
 ### Changes on 2026-10-24
 
 - **Decu sells:** no entry once Decu sells the token while we watch for the dip, including a sell in the dip's own slot (Section 6), and a full `WALLET_SOLD` exit when he sells while we hold (Section 8). Any sell amount counts.
@@ -29,7 +33,7 @@ This file is the single source of truth for the bot. It answers both question ro
 |---|---|---|
 | P1 | Wallet tracked | Decu (one wallet address) |
 | P2 | Trigger | Decu's **first-ever interaction** with a token, and it is a buy (Section 3) |
-| P3 | Signal size | **> 1.9 SOL**, strictly. Only SOL spent on tokens counts; network fees, tips and account rent are excluded |
+| P3 | Signal size | **> 1.9 SOL**, strictly. Only SOL spent on tokens counts: the curve payment plus the protocol and creator fees on it. Network fees, tips and account rent are excluded |
 | P4 | Reference price | Post-trade price **immediately after** Decu's buy |
 | P5 | Min reference mcap | **> $10,000 USD** at the reference price |
 | P6 | Entry level | Reference price × **0.80** (−20%) |
@@ -208,7 +212,7 @@ A full download of his entire history is **not required**. It can still be run o
 | # | Check | Fail → |
 |---|---|---|
 | 1 | Transaction is a buy by Decu's wallet | ignore |
-| 2 | SOL spent on tokens > 1.9 (excludes network fee, priority fee, tips, account rent) | `SKIP_SIZE` |
+| 2 | SOL spent on tokens > 1.9: curve payment plus protocol and creator fees (excludes network fee, priority fee, tips, account rent) | `SKIP_SIZE` |
 | 3 | First-ever (Section 3) | `SKIP_NOT_FIRST` / `SKIP_UNVERIFIED` |
 | 4 | Reference mcap > $10,000 USD | `SKIP_MCAP` |
 | 5 | No position or entry in flight (Section 9) | `SKIP_POSITION_OPEN` |

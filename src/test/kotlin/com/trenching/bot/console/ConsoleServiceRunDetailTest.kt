@@ -14,7 +14,6 @@ import com.trenching.bot.console.domain.CaptureSource
 import com.trenching.bot.console.domain.DatasetSource
 import com.trenching.bot.console.domain.StoredReportFacts
 import com.trenching.bot.console.report.RunReportReader
-import com.trenching.bot.marketdata.MarketObservationStore
 import com.trenching.bot.marketdata.RateLookup
 import com.trenching.bot.marketdata.RateUnavailableReason
 import com.trenching.bot.marketdata.SolUsdtRateSource
@@ -22,11 +21,13 @@ import com.trenching.bot.papertrading.PaperOrderStore
 import com.trenching.bot.portfolio.PositionStore
 import com.trenching.bot.portfolio.domain.StoredPosition
 import com.trenching.bot.replay.ReplayDatasetCatalog
+import com.trenching.bot.replay.RunInputs
 import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.DatasetRegistration
 import com.trenching.bot.replay.domain.DatasetSummary
 import com.trenching.bot.replay.domain.ReplayDataset
+import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SampleDataset
 import com.trenching.bot.strategy.TradeIntentStore
@@ -57,26 +58,26 @@ class ConsoleServiceRunDetailTest {
     private val runs: SimulationRuns = Mockito.mock(SimulationRuns::class.java)
     private val reports: RunReportReader = Mockito.mock(RunReportReader::class.java)
     private val events: WalletEventStore = Mockito.mock(WalletEventStore::class.java)
-    private val observations: MarketObservationStore = Mockito.mock(MarketObservationStore::class.java)
+    private val inputs: RunInputs = Mockito.mock(RunInputs::class.java)
     private val intents: TradeIntentStore = Mockito.mock(TradeIntentStore::class.java)
     private val orders: PaperOrderStore = Mockito.mock(PaperOrderStore::class.java)
     private val positions: PositionStore = Mockito.mock(PositionStore::class.java)
     private val run = RunSummary(report.runId, DATASET_ID, report.engineVersion, report.configurationHash, report.resultChecksum,
-        MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"))
+        MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"), RunStorage.COPY)
     private lateinit var store: CaptureFileStore
     private lateinit var service: ConsoleService
 
     @BeforeEach
     fun stub() {
         store = CaptureFileStore(CapturePathPolicy(root), JsonMapper.builder().addModule(kotlinModule()).build()).also { it.initialize() }
-        service = ConsoleService(runs, reports, events, observations, intents, orders, positions,
+        service = ConsoleService(runs, reports, events, inputs, intents, orders, positions,
             DatasetSourceService(DatasetCatalog(), CaptureFileSourceLookup(store)))
         val trades = report.ingestion.filterIsInstance<NormalizationOutcome.Accepted>().map { it.trade }
             .map { it.copy(blockTime = if (it.pair == DipSample.pair(DipSample.STOP_LOSS)) null else MIDNIGHT.plusSeconds(it.slot.value)) }
         Mockito.`when`(runs.find(run.id)).thenReturn(run)
         Mockito.`when`(runs.report(run.id)).thenReturn("{}")
         Mockito.`when`(reports.read("{}")).thenReturn(StoredReportFacts(SimulationConfig.mvp()))
-        Mockito.`when`(observations.observations(run.id)).thenReturn(sample.observations)
+        Mockito.`when`(inputs.observations(run.id)).thenReturn(sample.observations)
         Mockito.`when`(intents.intents(run.id)).thenReturn(report.scenarios.map { it.intent })
         Mockito.`when`(orders.outcomes(run.id)).thenReturn(report.scenarios.map { it.outcome })
         Mockito.`when`(positions.storedPositions(run.id))

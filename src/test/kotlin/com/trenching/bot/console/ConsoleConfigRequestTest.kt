@@ -169,6 +169,15 @@ class ConsoleConfigRequestTest {
             assertFailsWith<IllegalArgumentException> { build(range.min - 1) }
             assertFailsWith<IllegalArgumentException> { build(max + 1) }
         }
+        val signal = limits.minSignalSol
+        val lamport = BigDecimal.ONE.movePointLeft(limits.minSignalSolScale)
+        fun withSignal(value: BigDecimal) = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1,
+            BigDecimal("0.001"), minSignalSol = value)
+        withSignal(signal.min)
+        withSignal(signal.max)
+        assertFailsWith<IllegalArgumentException> { withSignal(signal.min.subtract(lamport)) }
+        assertFailsWith<IllegalArgumentException> { withSignal(signal.max.add(lamport)) }
+        assertFailsWith<IllegalArgumentException> { withSignal(signal.min.add(lamport.movePointLeft(1))) }
         val cost = limits.transactionCostSol
         val unit = BigDecimal.ONE.movePointLeft(limits.transactionCostScale)
         fun withCost(value: BigDecimal) = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, value)
@@ -247,6 +256,27 @@ class ConsoleConfigRequestTest {
     }
 
     @Test
+    fun `the minimum signal size is a decimal string of whole lamports, and absent or null applies none`() {
+        assertEquals("1.900000000000", config("""{"minSignalSol":"1.9"}""").minSignalSol?.toPlainString())
+        assertEquals("0.000000001000", config("""{"minSignalSol":"0.000000001"}""").minSignalSol?.toPlainString())
+        assertEquals(SimulationConfig.mvp(), config("""{"minSignalSol":null}"""))
+        assertEquals(null, config("{}").minSignalSol)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["\"0\"", "\"0.0000000001\"", "\"1.9000000001\"", "\"1000.000000001\""])
+    fun `a minimum signal size outside one lamport to 1000 SOL of whole lamports is rejected on its field only`(value: String) {
+        assertEquals(mapOf("minSignalSol" to "must be a whole number of lamports between 0.000000001 and 1000 SOL"),
+            fields("""{"minSignalSol":$value}"""))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["1.9", "true", "\"1e0\"", "\"-1.9\""])
+    fun `a minimum signal size that is not a plain decimal string is rejected on its field only`(value: String) {
+        assertEquals(setOf("minSignalSol"), fields("""{"minSignalSol":$value}""").keys)
+    }
+
+    @Test
     fun `the price measures offered are every measure the strategy has`() {
         assertEquals(PriceMeasure.entries, SimulationConfigLimits.CURRENT.priceMeasure)
     }
@@ -255,7 +285,7 @@ class ConsoleConfigRequestTest {
     fun `levels sent as percents build the same configuration as the same levels in basis points`() {
         val shared = """"notional":"0.1","minMarketCapUsd":"10000","latencySlots":1,"transactionCostSol":"0.001""""
         val clocks = """"dipWindowMs":30000,"maxHoldMs":180000,"hardExitStartMs":240000"""
-        val rules = """"priceMeasure":"POST_TRADE","followWalletSells":true"""
+        val rules = """"priceMeasure":"POST_TRADE","followWalletSells":true,"minSignalSol":"1.9""""
         val percents = config("""{$shared,$clocks,$rules,"dipPercent":"20","takeProfitPercent":"55","stopLossPercent":"40"}""")
 
         assertEquals(config("""{$shared,$clocks,$rules,"dipBps":2000,"takeProfitBps":5500,"stopLossBps":4000}"""), percents)

@@ -10,6 +10,7 @@ import com.trenching.bot.protocol.pumpfun.PumpFunLayout
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.walletactivity.domain.WalletTransaction
 import java.math.BigDecimal
+import java.math.BigInteger
 import java.math.RoundingMode
 
 /**
@@ -18,7 +19,9 @@ import java.math.RoundingMode
  * [PRICES] sets the trades that meet the agreed levels exactly, as both, keeping every trigger slot. Each mint's first wallet
  * buy is also recorded in its own slot as the tracked wallet's trade, whose post-trade price is the buy's own P0 (1e-7 SOL per
  * token, 1e-8 for the low cap token), so the post-trade reference and the minimum market cap are judged exactly as the average
- * reference was. The sample's traders never include the tracked wallet, so no wallet sell is recorded.
+ * reference was. That recorded trade pays [SIGNAL_CURVE_PAYMENT] into the curve, so every buy passes spec P3's 1.9 SOL
+ * minimum; the payment does not move its price. The sample's traders never include the tracked wallet, so no wallet sell is
+ * recorded.
  */
 object AgreedDipSample {
     /**
@@ -47,12 +50,15 @@ object AgreedDipSample {
     /** The v4 twin shaped for the agreed configuration. */
     fun dataset(): ReplayDataset = shape(DipSampleV4.dataset())
 
-    /** [dataset], one of the sample's v4 to v6 twins, with each first buy recorded and [prices] set. */
-    fun shape(dataset: ReplayDataset, prices: Map<String, String> = PRICES): ReplayDataset {
+    /** 2 SOL: with its 95 and 30 basis point fees the buy pays 2.025 SOL. */
+    val SIGNAL_CURVE_PAYMENT: BigInteger = BigInteger.valueOf(2_000_000_000)
+
+    /** [dataset], one of the sample's v4 to v6 twins, with each first buy recorded paying [curvePayment] and [prices] set. */
+    fun shape(dataset: ReplayDataset, prices: Map<String, String> = PRICES, curvePayment: BigInteger = SIGNAL_CURVE_PAYMENT): ReplayDataset {
         val firstBuys = dataset.transactions.groupBy { it.pair }.values
             .map { buys -> buys.minWith(compareBy({ it.slot.value }, { it.signature.value }, { it.instructionIndex })) }
         val priced = dataset.observations.map { observation -> prices[observation.id]?.let { atSpot(observation, it) } ?: observation }
-        return dataset.copy(observations = priced + firstBuys.map { buyObservation(dataset, it) })
+        return dataset.copy(observations = priced + firstBuys.map { buyObservation(dataset, it, curvePayment) })
     }
 
     /**
@@ -69,13 +75,13 @@ object AgreedDipSample {
     }
 
     /** [buy] as the market data records it: the mint's first open-curve trade moved to the buy's slot and time, signed by its wallet. */
-    private fun buyObservation(dataset: ReplayDataset, buy: WalletTransaction): MarketObservation {
+    private fun buyObservation(dataset: ReplayDataset, buy: WalletTransaction, curvePayment: BigInteger): MarketObservation {
         val template = dataset.observations.filter { it.pair == buy.pair && !it.curve.complete }.minWith(compareBy({ it.slot.value }, { it.id }))
         val sourceEventId = "${buy.signature.value}:${buy.instructionIndex}:-"
         val p0 = DecimalPolicy.swapPrice(TokenAmount.of(buy.quoteDelta.negate(), buy.quoteDecimals), TokenAmount.of(buy.baseDelta, buy.baseDecimals))
         val recorded = template.copy(id = "${PumpFunLayout.TRADE_SOURCE}:$sourceEventId:${buy.pair.base.value}", sourceEventId = sourceEventId,
             slot = buy.slot, priceSlot = buy.slot, observedTime = buy.blockTime ?: template.observedTime, curveComplete = false,
-            trade = ObservedTrade.of(buy.wallet.value, TradeSide.BUY, buy.quoteDelta.negate(), buy.baseDelta))
+            trade = ObservedTrade.of(buy.wallet.value, TradeSide.BUY, curvePayment, buy.baseDelta))
         return atSpot(recorded, p0.stripTrailingZeros().toPlainString())
     }
 

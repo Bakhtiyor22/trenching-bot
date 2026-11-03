@@ -15,10 +15,11 @@ class SimulationConfigTest {
         notional: String = "0.1", maxAgeSlots: Long = 2, dipBps: Int = 1500, takeProfitBps: Int = 3000, stopLossBps: Int = 1500,
         minMarketCapUsd: String = "10000", horizonSlots: Long = 4500, latencySlots: Long = 1, transactionCostSol: String = "0.001",
         dipWindowMs: Long? = null, maxHoldMs: Long? = null, hardExitStartMs: Long? = null,
-        priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE, followWalletSells: Boolean = false,
+        priceMeasure: PriceMeasure = PriceMeasure.TRADE_AVERAGE, followWalletSells: Boolean = false, minSignalSol: String? = null,
     ) = SimulationConfig.of(BigDecimal(notional), maxAgeSlots, dipBps, takeProfitBps, stopLossBps, BigDecimal(minMarketCapUsd),
         horizonSlots, latencySlots, BigDecimal(transactionCostSol), dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs,
-        hardExitStartMs = hardExitStartMs, priceMeasure = priceMeasure, followWalletSells = followWalletSells)
+        hardExitStartMs = hardExitStartMs, priceMeasure = priceMeasure, followWalletSells = followWalletSells,
+        minSignalSol = minSignalSol?.let(::BigDecimal))
 
     @Test
     fun `the default is the user's dip strategy with one slot of latency and a 0,001 SOL transaction cost`() {
@@ -37,14 +38,16 @@ class SimulationConfigTest {
         assertNull(mvp.hardExitStartMs)
         assertEquals(PriceMeasure.TRADE_AVERAGE, mvp.priceMeasure)
         assertFalse(mvp.followWalletSells)
+        assertNull(mvp.minSignalSol)
     }
 
     @Test
-    fun `the agreed configuration holds the spec's values with its dip window, timed exit, post-trade prices and wallet sells`() {
+    fun `the agreed configuration holds the spec's values with its dip window, timed exit, post-trade prices, wallet sells and signal size`() {
         val agreed = SimulationConfig.agreed()
 
         assertEquals(config(dipBps = 2000, takeProfitBps = 5500, stopLossBps = 4000, dipWindowMs = 30_000, maxHoldMs = 180_000,
-            hardExitStartMs = 240_000, priceMeasure = PriceMeasure.POST_TRADE, followWalletSells = true), agreed)
+            hardExitStartMs = 240_000, priceMeasure = PriceMeasure.POST_TRADE, followWalletSells = true, minSignalSol = "1.9"), agreed)
+        assertEquals("1.900000000000", agreed.minSignalSol?.toPlainString())
         assertEquals(SimulationConfig.mvp().maxAgeSlots, agreed.maxAgeSlots)
         assertEquals(MintAddress.WRAPPED_SOL, agreed.quoteMint)
     }
@@ -72,6 +75,15 @@ class SimulationConfigTest {
         assertEquals("1.000000000000", config(notional = "1.0000000000000").notional.toPlainString())
         listOf("0.0000000001", "1.0000000005", "0.0000000000001", "0", "-0.1")
             .forEach { assertFailsWith<IllegalArgumentException>(it) { config(notional = it) } }
+    }
+
+    @Test
+    fun `the minimum signal is a whole number of lamports above 0 and at most 1000 SOL`() {
+        assertEquals("0.000000001000", config(minSignalSol = "0.000000001").minSignalSol?.toPlainString())
+        assertEquals("1000.000000000000", config(minSignalSol = "1000").minSignalSol?.toPlainString())
+        assertEquals("1.900000000000", config(minSignalSol = "1.9000000000000").minSignalSol?.toPlainString())
+        listOf("0", "-1.9", "0.0000000001", "1.9000000001", "1000.000000001", "1001")
+            .forEach { assertFailsWith<IllegalArgumentException>(it) { config(minSignalSol = it) } }
     }
 
     @Test

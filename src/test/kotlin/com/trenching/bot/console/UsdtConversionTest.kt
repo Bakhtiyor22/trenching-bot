@@ -13,6 +13,7 @@ import com.trenching.bot.marketdata.domain.MarketObservation
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.replay.application.ReplayRunner
 import com.trenching.bot.replay.domain.ReplayDataset
+import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.strategy.domain.SimulationConfig
@@ -163,7 +164,7 @@ class UsdtConversionTest {
             RunScenario(result.intent, result.outcome, selected, result.position, result.exitUnavailable)
         }
         val run = RunSummary(report.runId, report.datasetChecksum, report.engineVersion, report.configurationHash, report.resultChecksum,
-            quote, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"))
+            quote, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"), RunStorage.COPY)
         return RunDetail(run, SimulationConfig.mvp(), scenarios)
     }
 

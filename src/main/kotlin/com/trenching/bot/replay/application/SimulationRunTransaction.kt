@@ -42,7 +42,12 @@ class SimulationRunTransaction(
         if (existing != null) return RunPersistence(mapper.toRecord(existing), created = false)
         val stored = repository.saveAndFlush(mapper.toEntity(record))
         wallets.record(record.id, dataset.trackedWallet, OrderedWalletTransactions.canonical(dataset.transactions), report.ingestion)
-        observations.record(record.id, OrderedMarketData.canonical(dataset.observations))
+        when (record.storage) {
+            RunStorage.COPY -> observations.record(record.id, OrderedMarketData.canonical(dataset.observations))
+            RunStorage.DATASET_REFERENCE -> if (!datasets.holdForReference(record.datasetChecksum)) {
+                throw DatasetNotFoundException(record.datasetChecksum)
+            }
+        }
         intents.record(report.scenarios.map { it.intent })
         orders.record(record.id, report.scenarios.map { it.intent }, report.scenarios.map { it.outcome })
         positions.record(report.scenarios.mapNotNull { it.position },

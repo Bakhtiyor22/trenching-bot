@@ -11,6 +11,7 @@ import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetLoader
 import com.trenching.bot.replay.infrastructure.fixture.ReplayDatasetWriter
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
+import java.math.BigDecimal
 import javax.sql.DataSource
 import kotlin.test.*
 import org.junit.jupiter.api.Tag
@@ -144,6 +145,24 @@ class ReplayDatasetCatalogIntegrationTest {
     }
 
     @Test
+    fun `a dataset that reference runs use cannot be deleted and stays loadable`() {
+        val dataset = variant("in-use")
+        val registered = catalog.register("in use", write(dataset).byteInputStream()).dataset
+        runs.start(registered.id, SimulationConfig.mvp())
+        runs.start(registered.id, referenceConfig(BigDecimal("0.0011")), RunStorage.DATASET_REFERENCE)
+        runs.start(registered.id, referenceConfig(BigDecimal("0.0012")), RunStorage.DATASET_REFERENCE)
+
+        val refused = assertFailsWith<DatasetInUseException> { catalog.delete(registered.id) }
+
+        assertEquals(2L, refused.runCount)
+        assertTrue(refused.message.orEmpty().contains("datasetId=${registered.id}"), refused.message)
+        assertTrue(refused.message.orEmpty().contains("referenceRuns=2"), refused.message)
+        assertEquals(registered, catalog.find(registered.id))
+        assertEquals(DatasetFingerprint.checksum(dataset), DatasetFingerprint.checksum(catalog.load(registered.id)))
+        assertEquals(3, count("select count(*) from simulation_runs where dataset_checksum = ?", registered.id))
+    }
+
+    @Test
     fun `unknown dataset is not found`() {
         val id = "0".repeat(64)
         assertNull(catalog.find(id))
@@ -161,6 +180,9 @@ class ReplayDatasetCatalogIntegrationTest {
         assertEquals(page.items.sortedWith(compareByDescending<DatasetSummary> { it.createdAt }.thenBy { it.id }), page.items)
         assertEquals(1, catalog.page(1, 1).items.size)
     }
+
+    private fun referenceConfig(transactionCostSol: BigDecimal): SimulationConfig =
+        SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1, transactionCostSol)
 
     private companion object {
         const val SAMPLE = "/replay/samples/dip-sample-v3.json"

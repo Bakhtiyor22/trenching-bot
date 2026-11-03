@@ -71,8 +71,9 @@ import tools.jackson.databind.node.ObjectNode
  * same-mint trades, one per slot and one second apart from the buy's block time t0: no dip until S+10, a fill at S+11, a
  * take-profit crossing at S+39 and its sale at S+40, then 300 more trades the outcome does not depend on. Each tape trade is a
  * copy of Decu's buy whose SOL amount and post-trade virtual SOL reserve are scaled by the same factor, so its average and its
- * post-trade price both move with it from Decu's own (the post-trade reference P0). Under `SimulationConfig.agreed()` the
- * window is still recorded until the first trade four minutes after t0, at S+240.
+ * post-trade price both move with it from Decu's own (the post-trade reference P0). Decu's buy itself is recorded paying
+ * [SIGNAL_FACTOR] times its SOL for as many times its tokens, so it passes the agreed minimum signal size at the same prices.
+ * Under `SimulationConfig.agreed()` the window is still recorded until the first trade four minutes after t0, at S+240.
  */
 class OutcomeBoundedCaptureTest {
     @TempDir lateinit var directory: Path
@@ -331,7 +332,9 @@ class OutcomeBoundedCaptureTest {
         val bytes = requireNotNull(Base58.decode(event.path("data").asString()))
         val virtualSol = u64(bytes, PumpFunLayout.EVENT_VIRTUAL_SOL_RESERVES_OFFSET)
         val scaledSol = virtualSol.multiply(solAmount).divide(NORMAL)
-        putU64(bytes, PumpFunLayout.EVENT_SOL_AMOUNT_OFFSET, solAmount)
+        val recorded = if (slot == SLOT) SIGNAL_FACTOR else BigInteger.ONE
+        putU64(bytes, PumpFunLayout.EVENT_SOL_AMOUNT_OFFSET, solAmount.multiply(recorded))
+        putU64(bytes, PumpFunLayout.EVENT_TOKEN_AMOUNT_OFFSET, u64(bytes, PumpFunLayout.EVENT_TOKEN_AMOUNT_OFFSET).multiply(recorded))
         putU64(bytes, PumpFunLayout.EVENT_VIRTUAL_SOL_RESERVES_OFFSET, scaledSol)
         putU64(bytes, PumpFunLayout.EVENT_REAL_SOL_RESERVES_OFFSET,
             u64(bytes, PumpFunLayout.EVENT_REAL_SOL_RESERVES_OFFSET).add(scaledSol).subtract(virtualSol))
@@ -383,6 +386,9 @@ class OutcomeBoundedCaptureTest {
 
         /** The tracked wallet's own buy paid 244444444 lamports for these tokens, so this keeps its average and post-trade price. */
         val NORMAL: BigInteger = BigInteger.valueOf(244_444_444)
+
+        /** Decu's recorded buy pays 2.44 SOL into the curve, about 2.475 SOL with its fees: above the agreed 1.9 SOL. */
+        val SIGNAL_FACTOR: BigInteger = BigInteger.TEN
         val DIP: BigInteger = BigInteger.valueOf(195_555_555)
         /** About 1.8 times the entry cost per token: above the agreed +55% take profit, below a +90% one. */
         val TAKE_PROFIT: BigInteger = BigInteger.valueOf(455_555_555)

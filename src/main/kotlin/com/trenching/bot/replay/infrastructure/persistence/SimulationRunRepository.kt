@@ -1,5 +1,6 @@
 package com.trenching.bot.replay.infrastructure.persistence
 
+import com.trenching.bot.replay.domain.RunStorage
 import java.time.Instant
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
@@ -28,4 +29,6 @@ interface SimulationRunRepository : JpaRepository<SimulationRunEntity, String> {
     fun sumByQuoteMint(): List<SimulationRunQuoteMintTotalsRow>
 
     fun countByCreatedAtGreaterThanEqual(createdAt: Instant): Long
+
+    fun countByDatasetChecksumAndStorage(datasetChecksum: String, storage: RunStorage): Long
 }

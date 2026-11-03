@@ -19,6 +19,7 @@ data class RunSummary(
     val closedCount: Int,
     val realizedPnl: BigDecimal,
     val createdAt: Instant,
+    val storage: RunStorage,
 )
 
 data class RunStart(val run: RunSummary, val created: Boolean)

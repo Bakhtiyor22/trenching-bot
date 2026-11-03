@@ -157,6 +157,8 @@ class FillModelTest {
             DipWatchOutcome.UNSUPPORTED_SUPPLY to RejectionReason.UNSUPPORTED_SUPPLY,
             DipWatchOutcome.WALLET_SOLD to RejectionReason.WALLET_SOLD,
             DipWatchOutcome.REFERENCE_UNAVAILABLE to RejectionReason.REFERENCE_UNAVAILABLE,
+            DipWatchOutcome.SIGNAL_BELOW_MIN_SIZE to RejectionReason.SIGNAL_BELOW_MIN_SIZE,
+            DipWatchOutcome.SIGNAL_SIZE_UNAVAILABLE to RejectionReason.SIGNAL_SIZE_UNAVAILABLE,
         ).forEach { (watch, reason) ->
             val outcome = FillModel().fill(intent.copy(watch = watch, trigger = null), OrderedMarketData(listOf(observation(1003))), config)
             assertEquals(reason, assertIs<FillOutcome.Rejected>(outcome).reason)
@@ -171,6 +173,11 @@ class FillModelTest {
     @Test
     fun `a wallet sold before the dip and an unavailable reference are entry rejections`() {
         assertTrue(RejectionReason.ENTRY.containsAll(listOf(RejectionReason.WALLET_SOLD, RejectionReason.REFERENCE_UNAVAILABLE)))
+    }
+
+    @Test
+    fun `a signal at or below the minimum size and an unsized signal are entry rejections`() {
+        assertTrue(RejectionReason.ENTRY.containsAll(listOf(RejectionReason.SIGNAL_BELOW_MIN_SIZE, RejectionReason.SIGNAL_SIZE_UNAVAILABLE)))
     }
 
     @Test

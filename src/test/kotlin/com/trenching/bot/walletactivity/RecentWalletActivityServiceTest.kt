@@ -140,6 +140,21 @@ class RecentWalletActivityServiceTest {
     }
 
     @Test
+    fun `a page carries the block time of the oldest entry it scanned that has one, and none when no entry has one`() {
+        val listing = listOf(
+            entry(signature(101), 1_000, blockTime = 1_791_049_700),
+            entry(signature(102), 999, failed = true, blockTime = 1_791_049_650),
+            entry(signature(103), 998),
+        )
+
+        val page = found(service(FakeActivityRpc(listing, emptyMap())).recent(request(20), usage))
+        val untimed = found(service(FakeActivityRpc(listOf(entry(signature(103), 998)), emptyMap())).recent(request(20), usage))
+
+        assertEquals(Instant.ofEpochSecond(1_791_049_650), page.oldestBlockTime)
+        assertNull(untimed.oldestBlockTime)
+    }
+
+    @Test
     fun `a before signature the provider does not know gives an empty page`() {
         val page = found(service(decuRpc()).recent(request(20, before = TransactionSignature.of(signature(42))), usage))
 

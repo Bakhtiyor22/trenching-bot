@@ -17,7 +17,7 @@ import com.trenching.bot.replay.domain.ExitVerdict
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.domain.ReplayVerdict
 import com.trenching.bot.replay.domain.ScenarioResult
-import com.trenching.bot.replay.domain.SellCheckNeedsTradesException
+import com.trenching.bot.replay.domain.TradesRequiredException
 import com.trenching.bot.replay.domain.SimulationReport
 import com.trenching.bot.replay.domain.TargetBuyRefusal
 import com.trenching.bot.replay.domain.TargetFirstBuyAssessment
@@ -46,7 +46,9 @@ import tools.jackson.core.JacksonException
  * from another buy than the proven actual first buy is a replay failure, since its P0 would not be the buy the strategy requires.
  * A replay decided beyond the dataset's market coverage is an incomplete market capture and is not interpreted. A cycle whose
  * post-trade reference is unavailable, because the dataset does not record the wallet's buy, is a replay failure too: the data
- * cannot tell whether the token qualified, so the capture must be made again with the market-window lead.
+ * cannot tell whether the token qualified, so the capture must be made again with the market-window lead. So is a cycle whose
+ * buy the market data records without its trade, which cannot be sized; a buy at or below the agreed minimum signal size is a
+ * negative case.
  */
 class TargetTokenQualificationService(
     private val loader: ReplayDatasetLoader,
@@ -63,10 +65,10 @@ class TargetTokenQualificationService(
             val loaded = load(dataset)
             val report = runner.run(loaded, SimulationConfig.agreed())
             DatasetCoverage.undecided(report, loaded).firstOrNull()?.let { coverageEnded(it, evidence) } ?: replayed(report, evidence)
-        } catch (exception: SellCheckNeedsTradesException) {
-            log.warn("target_token_qualification refused reason={} dataset={} schemaVersion={}", VerdictReasons.SELL_CHECK_NEEDS_TRADES,
-                dataset.fileName, exception.schemaVersion)
-            failed(VerdictReasons.SELL_CHECK_NEEDS_TRADES, VerdictProvenance(), evidence)
+        } catch (exception: TradesRequiredException) {
+            log.warn("target_token_qualification refused reason={} dataset={} schemaVersion={}", exception.code, dataset.fileName,
+                exception.schemaVersion)
+            failed(exception.code, VerdictProvenance(), evidence)
         } catch (exception: Exception) {
             val category = failureCategory(exception)
             log.error("target_token_qualification replay_failed category={} dataset={}", category, dataset.fileName, exception)
@@ -146,12 +148,18 @@ class TargetTokenQualificationService(
                     entry(scenario.outcome), exit(scenario), cycleProvenance, evidence)
             }
             DipWatchOutcome.NO_DIP, DipWatchOutcome.DIP_BELOW_MIN_MARKET_CAP, DipWatchOutcome.MIGRATED_BEFORE_ENTRY,
-            DipWatchOutcome.UNSUPPORTED_SUPPLY, DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP, DipWatchOutcome.WALLET_SOLD ->
+            DipWatchOutcome.UNSUPPORTED_SUPPLY, DipWatchOutcome.REFERENCE_BELOW_MIN_MARKET_CAP, DipWatchOutcome.WALLET_SOLD,
+            DipWatchOutcome.SIGNAL_BELOW_MIN_SIZE ->
                 ran(CaseClassification.NEGATIVE_CASE, DipVerdict.NotQualified(intent.watch), null, null, cycleProvenance, evidence)
             DipWatchOutcome.REFERENCE_UNAVAILABLE -> {
                 log.warn("target_token_qualification replay_failed category={} runId={} cycleBuy={}",
                     VerdictReasons.REFERENCE_UNAVAILABLE, report.runId, buy.signature.value)
                 failed(VerdictReasons.REFERENCE_UNAVAILABLE, cycleProvenance.copy(referencePrice = null), evidence)
+            }
+            DipWatchOutcome.SIGNAL_SIZE_UNAVAILABLE -> {
+                log.warn("target_token_qualification replay_failed category={} runId={} cycleBuy={}",
+                    VerdictReasons.SIGNAL_SIZE_UNAVAILABLE, report.runId, buy.signature.value)
+                failed(VerdictReasons.SIGNAL_SIZE_UNAVAILABLE, cycleProvenance, evidence)
             }
         }
     }

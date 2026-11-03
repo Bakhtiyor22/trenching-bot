@@ -110,11 +110,12 @@ internal object WalletActivityFixtures {
         value.toByteArray().reversedArray().copyOf(PumpFunLayout.U64_BYTES).copyInto(bytes, offset)
     }
 
-    fun entry(signature: String, slot: Long, failed: Boolean = false): ObjectNode = mapper.createObjectNode().apply {
+    fun entry(signature: String, slot: Long, failed: Boolean = false, blockTime: Long? = null): ObjectNode = mapper.createObjectNode().apply {
         put("signature", signature)
         put("slot", slot)
         if (failed) set("err", mapper.createObjectNode().put("InstructionError", "Custom")) else putNull("err")
         putNull("memo")
+        if (blockTime == null) putNull("blockTime") else put("blockTime", blockTime)
     }
 
     private fun fixture(name: String): ObjectNode =
