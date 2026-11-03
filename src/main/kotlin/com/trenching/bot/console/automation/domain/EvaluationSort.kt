@@ -1,9 +1,9 @@
 package com.trenching.bot.console.automation.domain
 
-/** Scoreboard orders by their HTTP [value]; [STATUS] (status rank, then worst-case P&L descending, then newest) is the default. */
+/** Day verdict orders by their HTTP [value]; [STATUS] (status rank, then worst-case P&L descending, then newest day) is the default. */
 enum class EvaluationSort(val value: String) {
     STATUS("status"),
-    EVALUATED_DESC("evaluatedAt,desc");
+    DAY_DESC("day,desc");
 
     companion object {
         const val DEFAULT_VALUE = "status"

@@ -14,8 +14,11 @@ data class SweepRunScore(
     val worstCasePnl: BigDecimal,
 )
 
-/** One item of an evaluation window: its state and its sweep runs under the evaluated plan, by label. */
-data class WindowItem(val id: String, val state: AutomationItemState, val runs: Map<String, SweepRunScore>)
+/**
+ * One item of an evaluation window: its state and its sweep runs under the evaluated plan, by label. [stoppedByBudget] is set for
+ * an item that ended `FAILED` because its backfill's request budget ran out, which a later backfill can fill.
+ */
+data class WindowItem(val id: String, val state: AutomationItemState, val runs: Map<String, SweepRunScore>, val stoppedByBudget: Boolean = false)
 
 /** One entry's counts over a window (plan Rule 24); the P&L sums run over its signals only. */
 data class EvaluationTally(val signals: Int, val scored: Int, val unscored: Int, val realizedPnl: BigDecimal, val worstCasePnl: BigDecimal)

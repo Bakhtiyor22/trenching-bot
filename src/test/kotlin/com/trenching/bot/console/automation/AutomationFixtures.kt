@@ -15,7 +15,13 @@ import com.trenching.bot.walletactivity.WalletActivityUnavailable
 import com.trenching.bot.walletactivity.domain.TradeSide
 import java.math.BigInteger
 import java.time.Clock
+import java.time.Duration
 import java.time.Instant
+import java.util.concurrent.Delayed
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
+import org.springframework.scheduling.TaskScheduler
+import org.springframework.scheduling.Trigger
 
 object AutomationFixtures {
     val WALLET: String = Base58.encode(ByteArray(32) { 9 })
@@ -30,7 +36,13 @@ object AutomationFixtures {
     fun properties(
         captureEnabled: Boolean = false,
         maxDiscoveryPages: Int = 5,
-    ): AutomationProperties = AutomationProperties(enabled = true, captureEnabled = captureEnabled, wallet = WALLET, maxDiscoveryPages = maxDiscoveryPages)
+        pollAlways: Boolean = false,
+        evaluationWindowSessions: Int = 7,
+        minSignals: Int = 10,
+    ): AutomationProperties = AutomationProperties(
+        enabled = true, captureEnabled = captureEnabled, wallet = WALLET, maxDiscoveryPages = maxDiscoveryPages, pollAlways = pollAlways,
+        evaluationWindowSessions = evaluationWindowSessions, minSignals = minSignals,
+    )
 
     fun mint(n: Int): MintAddress = MintAddress.of(Base58.encode(ByteArray(32) { (n + 20).toByte() }))
 
@@ -57,11 +69,20 @@ class FakeWalletActivityLookup(private val visibleAt: Clock? = null) : WalletAct
     val otherBlockTimes = mutableMapOf<TransactionSignature, Instant>()
     val requests = mutableListOf<Pair<WalletActivityRequest, ApiUsageContext>>()
     var unavailable: WalletActivityUnavailable? = null
+
+    /** From the n-th request on (1 is the first), the provider cannot be read, as a rate limit that starts mid-scan. */
+    var unavailableFromRequest: Int? = null
+
+    /** What each page reports as its provider requests, instead of one per transaction listed. */
+    var pageRequests: Int? = null
+    var failure: RuntimeException? = null
     var pageOrder: (List<WalletAction>) -> List<WalletAction> = { it }
 
     override fun recent(request: WalletActivityRequest, usage: ApiUsageContext): WalletActivityResult {
         requests += request to usage
+        failure?.let { throw it }
         unavailable?.let { return WalletActivityResult.Unavailable(it, null) }
+        unavailableFromRequest?.takeIf { requests.size >= it }?.let { return WalletActivityResult.Unavailable(WalletActivityUnavailable.PROVIDER_RATE_LIMITED, null) }
         val listing = (actions.filter(::visible).map { Listed(it.signature, it.slot.value, it.blockTime, it) } +
             otherTransactions.map { Listed(it.first, it.second, otherBlockTimes[it.first], null) })
             .sortedWith(compareByDescending<Listed> { it.slot }.thenByDescending { it.signature.value })
@@ -69,7 +90,7 @@ class FakeWalletActivityLookup(private val visibleAt: Clock? = null) : WalletAct
         val page = listing.drop(start).take(request.limit)
         val nextBefore = if (start + page.size < listing.size) page.last().signature else null
         val pageActions = page.mapNotNull { it.action }
-        return WalletActivityResult.Found(WalletActivityPage(request.wallet, pageOrder(pageActions), 0, page.size, nextBefore, page.size,
+        return WalletActivityResult.Found(WalletActivityPage(request.wallet, pageOrder(pageActions), 0, page.size, nextBefore, pageRequests ?: page.size,
             oldestBlockTime = page.lastOrNull { it.blockTime != null }?.blockTime))
     }
 
@@ -79,4 +100,47 @@ class FakeWalletActivityLookup(private val visibleAt: Clock? = null) : WalletAct
         val now = visibleAt?.instant() ?: return true
         return action.blockTime?.let { !it.isAfter(now) } ?: true
     }
+}
+
+/** A scheduler that keeps what it is given, so a test runs it as the scheduling thread would. */
+class RecordingTaskScheduler : TaskScheduler {
+    val tasks = ArrayDeque<Runnable>()
+    val starts = mutableListOf<Instant>()
+
+    fun runNext() = tasks.removeFirst().run()
+
+    override fun schedule(task: Runnable, startTime: Instant): ScheduledFuture<*> {
+        tasks += task
+        starts += startTime
+        return QueuedFuture
+    }
+
+    override fun schedule(task: Runnable, trigger: Trigger): ScheduledFuture<*>? = unused()
+
+    override fun scheduleAtFixedRate(task: Runnable, startTime: Instant, period: Duration): ScheduledFuture<*> = unused()
+
+    override fun scheduleAtFixedRate(task: Runnable, period: Duration): ScheduledFuture<*> = unused()
+
+    override fun scheduleWithFixedDelay(task: Runnable, startTime: Instant, delay: Duration): ScheduledFuture<*> = unused()
+
+    override fun scheduleWithFixedDelay(task: Runnable, delay: Duration): ScheduledFuture<*> = unused()
+
+    private fun unused(): Nothing = error("only a single start is used")
+}
+
+/** The handle [RecordingTaskScheduler] returns: the task runs only when the test says so, so nothing waits on it. */
+private object QueuedFuture : ScheduledFuture<Unit> {
+    override fun getDelay(unit: TimeUnit): Long = 0
+
+    override fun compareTo(other: Delayed): Int = 0
+
+    override fun cancel(mayInterruptIfRunning: Boolean): Boolean = false
+
+    override fun isCancelled(): Boolean = false
+
+    override fun isDone(): Boolean = false
+
+    override fun get() = error("a queued task has no result")
+
+    override fun get(timeout: Long, unit: TimeUnit) = error("a queued task has no result")
 }

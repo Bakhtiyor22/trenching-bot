@@ -2,6 +2,8 @@ package com.trenching.bot.console.automation.domain
 
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
@@ -10,7 +12,7 @@ import org.junit.jupiter.api.Test
 
 /** Plan Rule 10 with the 2026-11-03 fixes: where a buy fits a session by time, and when discovery shows a session idle. */
 class SessionIdleRuleTest {
-    private val rule = SessionIdleRule(Duration.ofMinutes(60))
+    private val rule = SessionIdleRule(Duration.ofMinutes(60), TradingCalendar(LocalTime.NOON, ZoneOffset.ofHours(5)))
     private val first = Instant.parse("2026-11-02T15:00:00Z")
     private val last = first.plus(Duration.ofMinutes(20))
 
@@ -33,6 +35,23 @@ class SessionIdleRuleTest {
 
         assertEquals(listOf(buys.take(2), buys.drop(2)), rule.runs(buys) { it })
         assertEquals(emptyList(), rule.runs(emptyList<Instant>()) { it })
+    }
+
+    @Test
+    fun `a buy never fits a session of another trading day, even within the idle time (11-50 and 12-10 are two days)`() {
+        val beforeNoon = Instant.parse("2026-11-03T06:50:00Z")
+        val afterNoon = Instant.parse("2026-11-03T07:10:00Z")
+
+        assertFalse(rule.fits(beforeNoon, beforeNoon, afterNoon), "a later day")
+        assertFalse(rule.fits(afterNoon, afterNoon, beforeNoon), "an earlier day")
+        assertTrue(rule.fits(beforeNoon, beforeNoon, beforeNoon.plus(Duration.ofMinutes(5))), "the same day")
+    }
+
+    @Test
+    fun `runs also split at a trading day boundary`() {
+        val buys = listOf("06:50", "07:10", "07:30").map { Instant.parse("2026-11-03T${it}:00Z") }
+
+        assertEquals(listOf(buys.take(1), buys.drop(1)), rule.runs(buys) { it })
     }
 
     @Test

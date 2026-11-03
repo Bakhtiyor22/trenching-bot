@@ -2,9 +2,12 @@ package com.trenching.bot.console.automation.config
 
 import com.trenching.bot.console.api.dto.CaptureBudget
 import com.trenching.bot.console.api.dto.CaptureRecoveryConfig
+import com.trenching.bot.console.automation.domain.DiscoveryMode
+import com.trenching.bot.console.automation.domain.PollWindow
 import com.trenching.bot.console.automation.domain.SweepEntry
 import com.trenching.bot.console.automation.domain.SweepPlan
 import com.trenching.bot.console.automation.domain.SweepPlans
+import com.trenching.bot.console.automation.domain.TradingCalendar
 import com.trenching.bot.strategy.domain.SimulationConfig
 import java.math.BigDecimal
 import java.time.Duration
@@ -49,6 +52,53 @@ class AutomationPropertiesTest {
         assertEquals(SweepPlans.DECU_SWEEP_1, properties.activePlan())
         assertEquals(listOf(7, 10), listOf(properties.evaluationWindowSessions, properties.minSignals))
         assertEquals(0, properties.minNetPnlSol.signum())
+        assertFalse(properties.pollAlways)
+        assertEquals(LocalTime.NOON, properties.tradingDayStart)
+        assertEquals(31, properties.backfillMaxDays)
+        assertEquals(20_000L, properties.backfillMaxRequests)
+        assertEquals(1400L, properties.backfillReserveRequests)
+    }
+
+    @Test
+    fun `the backfill rules follow the properties, and the capture minimum is the filter's`() {
+        val rules = bind(mapOf("backfill-max-days" to "10", "backfill-max-requests" to "3000", "capture-min-signal-sol" to "1.2")).backfillRules()
+
+        assertEquals(10, rules.maxDays)
+        assertEquals(3000L, rules.maxRequests)
+        assertEquals(java.math.BigInteger.valueOf(1_200_000_000), rules.captureMinLamports)
+        assertEquals(TradingCalendar(LocalTime.NOON, ZoneOffset.ofHours(5)), rules.calendar)
+    }
+
+    @Test
+    fun `the reserve must cover one recovery allowance and one discovery tick, and stay below the cap`() {
+        assertEquals(1310L, bind(mapOf("backfill-reserve-requests" to "1310")).backfillReserveRequests, "1,200 + 5 pages of 22")
+        assertTrue(failure(mapOf("backfill-reserve-requests" to "1309")).contains("backfill-reserve-requests"))
+        assertEquals(1332L, bind(mapOf("max-discovery-pages" to "6", "backfill-reserve-requests" to "1332")).backfillReserveRequests)
+        assertTrue(failure(mapOf("max-discovery-pages" to "6", "backfill-reserve-requests" to "1331")).contains("backfill-reserve-requests"))
+        assertTrue(failure(mapOf("backfill-reserve-requests" to "5000")).contains("backfill-reserve-requests"))
+    }
+
+    @Test
+    fun `the largest backfill budget must pay for a capturing backfill's first operation and discovery page`() {
+        assertEquals(1222L, bind(mapOf("backfill-max-requests" to "1222")).backfillRules().captureMinBudget, "1,200 recovery + one page of 22")
+        assertTrue(failure(mapOf("backfill-max-requests" to "1221")).contains("backfill-max-requests"))
+    }
+
+    @Test
+    fun `window mode is the default and always-on replaces the window`() {
+        val window = bind(emptyMap()).discoveryMode()
+        val always = bind(mapOf("poll-always" to "true")).discoveryMode()
+
+        assertEquals(DiscoveryMode.Window(PollWindow(LocalTime.of(18, 0), LocalTime.of(5, 0), ZoneOffset.ofHours(5))), window)
+        assertEquals(DiscoveryMode.Always, always)
+    }
+
+    @Test
+    fun `the trading calendar and the idle rule use the day start and the zone`() {
+        val properties = bind(mapOf("trading-day-start" to "06:30", "zone" to "+03:00"))
+
+        assertEquals(TradingCalendar(LocalTime.of(6, 30), ZoneOffset.ofHours(3)), properties.tradingCalendar())
+        assertEquals(properties.tradingCalendar(), properties.idleRule().calendar)
     }
 
     @Test
@@ -133,7 +183,8 @@ class AutomationPropertiesTest {
             "max-discovery-pages" to "21", "session-idle" to "9m", "market-delay" to "30m", "capture-fee-margin-bps" to "2001",
             "max-step-attempts" to "6", "max-requests-per-24h" to "99", "operation-budget.requests" to "1001",
             "operation-budget.timeout" to "90s", "recovery.attempts" to "9", "evaluation-window-sessions" to "61", "min-signals" to "0", "min-net-pnl-sol" to "-0.1",
-            "capture-min-signal-sol" to "0",
+            "capture-min-signal-sol" to "0", "backfill-max-days" to "0", "backfill-max-days" to "63", "backfill-max-requests" to "99",
+            "backfill-max-requests" to "500001", "backfill-reserve-requests" to "-1", "backfill-reserve-requests" to "5000",
         ).forEach { (key, value) ->
             assertFailsWith<BindException>("$key=$value") { bind(mapOf(key to value)) }
         }
@@ -148,7 +199,8 @@ class AutomationPropertiesTest {
         properties.initialLookback, properties.maxDiscoveryPages, properties.sessionIdle, properties.marketDelay,
         properties.captureMinSignalSol.stripTrailingZeros(), properties.captureFeeMarginBps, properties.maxStepAttempts,
         properties.maxRequestsPer24h, properties.captureBudget(), properties.captureRecovery(), properties.sweepPlan,
-        properties.evaluationWindowSessions, properties.minSignals, properties.minNetPnlSol.signum(),
+        properties.evaluationWindowSessions, properties.minSignals, properties.minNetPnlSol.signum(), properties.pollAlways,
+        properties.tradingDayStart, properties.backfillMaxDays, properties.backfillMaxRequests, properties.backfillReserveRequests,
     )
 
     private fun failure(values: Map<String, String>): String =

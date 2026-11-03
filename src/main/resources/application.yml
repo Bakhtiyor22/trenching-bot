@@ -1,6 +1,11 @@
 spring:
   application:
     name: trenching-bot
+  task:
+    scheduling:
+      # One thread: automation's discovery, pipeline, sweep, session ticks and "run now" rely on never running at the same time.
+      pool:
+        size: 1
   profiles:
     active: local
   servlet:
@@ -27,6 +32,8 @@ trenching:
     zone: "+05:00"
     poll-from: "18:00"
     poll-to: "05:00"
+    poll-always: false
+    trading-day-start: "12:00"
     tick-interval: 1m
     discovery-interval: 10m
     initial-lookback: PT12H
@@ -49,6 +56,9 @@ trenching:
     evaluation-window-sessions: 7
     min-signals: 10
     min-net-pnl-sol: 0
+    backfill-max-days: 31
+    backfill-max-requests: 20000
+    backfill-reserve-requests: 1400
 
 # Provider pacing is shared by every capture against the same RPC endpoint in this process. 4 requests in flight with
 # a start every 125 ms (8 per second) stays below the 10 requests per second free tier; 1 and 500ms reproduce the old pacing.

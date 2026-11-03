@@ -5,8 +5,6 @@ import com.trenching.bot.console.automation.AutomationFixtures.mint
 import com.trenching.bot.console.automation.AutomationFixtures.signature
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionState
-import com.trenching.bot.console.automation.domain.EvaluationStatus
-import com.trenching.bot.console.automation.infrastructure.persistence.AutomationEvaluationEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunEntity
@@ -46,17 +44,5 @@ object AutomationRows {
     ) = AutomationSweepRunEntity(
         id, itemId, sessionId, "decu-sweep-1", label, runId, runId?.let { "hash" }, runId?.let { "dip-paper-v6" }, outcome, null, signal,
         BigDecimal(worstCasePnl), BigDecimal(worstCasePnl), Instant.EPOCH,
-    )
-
-    fun evaluation(
-        id: String,
-        sessionId: String,
-        label: String,
-        status: EvaluationStatus,
-        worstCasePnl: String = "0",
-        planId: String = "decu-sweep-1",
-        evaluatedAt: Instant = Instant.EPOCH,
-    ) = AutomationEvaluationEntity(
-        id, sessionId, planId, label, "[\"$sessionId\"]", 1, 10, 10, 0, BigDecimal(worstCasePnl), BigDecimal(worstCasePnl), status, evaluatedAt,
     )
 }

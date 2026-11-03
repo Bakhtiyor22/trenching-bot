@@ -6,7 +6,9 @@ import com.trenching.bot.console.automation.domain.AutomationItemNotFoundExcepti
 import com.trenching.bot.console.automation.domain.AutomationItemProgress
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationItemTransitions
-import com.trenching.bot.console.automation.domain.AutomationSessionState
+import com.trenching.bot.console.automation.domain.BackfillBudget
+import com.trenching.bot.console.automation.domain.BackfillState
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemRepository
 import com.trenching.bot.console.automation.mapper.AutomationRecordMapper
 import java.time.Instant
@@ -24,14 +26,26 @@ import org.springframework.transaction.annotation.Transactional
 @ConditionalOnAutomationConsole
 class AutomationPipelineTransaction(
     private val items: AutomationItemRepository,
+    private val backfills: AutomationBackfillRepository,
     private val mapper: AutomationRecordMapper,
 ) {
     private val log = LoggerFactory.getLogger(AutomationPipelineTransaction::class.java)
 
-    /** Items in capture whose next action has come, in sessions still open or closing, oldest buy first. */
+    /**
+     * Items in capture whose next action has come, in any session, in priority order (plan Rule 40, amended 2026-11-03): live items of sessions
+     * still open or closing, then the live phase 0 backlog of closed sessions (items discovered while capture was off), then those
+     * of a backfill whose scan is over, each oldest buy first.
+     */
     @Transactional(readOnly = true)
     fun due(now: Instant): List<AutomationDueItem> =
-        items.findDue(AutomationItemState.IN_CAPTURE, ACTIVE_SESSIONS, now, BATCH).map(mapper::toDueItem)
+        items.findDue(AutomationItemState.IN_CAPTURE, BackfillState.CAPTURING_STATES, now, BATCH).map(mapper::toDueItem)
+
+    /** The spend of [backfillId] against its request budget (plan Rule 39): its discovery requests plus its items' captures so far. */
+    @Transactional(readOnly = true)
+    fun budget(backfillId: String): BackfillBudget {
+        val backfill = checkNotNull(backfills.findOneById(backfillId)) { "Item of an unknown backfill backfillId=$backfillId" }
+        return BackfillBudget(backfill.requestBudget, backfill.discoveryRequests, items.sumRequestsByBackfillId(backfillId))
+    }
 
     /**
      * Stores [next] on the item if it still stands at [expected], with its capture's [requestsUsed] when given. Returns false,
@@ -57,6 +71,5 @@ class AutomationPipelineTransaction(
     private companion object {
         const val MAX_ITEMS_PER_TICK = 100
         val BATCH: PageRequest = PageRequest.of(0, MAX_ITEMS_PER_TICK)
-        val ACTIVE_SESSIONS: Set<AutomationSessionState> = setOf(AutomationSessionState.OPEN, AutomationSessionState.CLOSING)
     }
 }

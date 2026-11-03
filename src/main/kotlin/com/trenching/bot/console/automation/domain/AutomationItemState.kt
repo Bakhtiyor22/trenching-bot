@@ -18,6 +18,9 @@ enum class AutomationItemState(val terminal: Boolean) {
     companion object {
         val TERMINAL: Set<AutomationItemState> = entries.filter { it.terminal }.toSet()
 
+        /** The states of an item whose capture finished, the sample a dry run's estimate is taken from. */
+        val CAPTURE_FINISHED: Set<AutomationItemState> = setOf(CAPTURED, SIMULATED)
+
         /** The states the capture pipeline drives; a `CAPTURED` item waits for the sweep. */
         val IN_CAPTURE: Set<AutomationItemState> = setOf(DISCOVERED, WAITING, BLOCKED_BUDGET, CAPTURING)
 

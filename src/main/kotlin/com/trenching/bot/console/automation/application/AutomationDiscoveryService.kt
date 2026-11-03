@@ -10,6 +10,7 @@ import com.trenching.bot.console.automation.config.ConditionalOnAutomationEnable
 import com.trenching.bot.console.automation.domain.DiscoveryBatch
 import com.trenching.bot.console.automation.domain.DiscoveryBound
 import com.trenching.bot.console.automation.domain.DiscoveryCursor
+import com.trenching.bot.console.automation.domain.DiscoveryMode
 import com.trenching.bot.console.automation.domain.DiscoveryOutcome
 import com.trenching.bot.console.automation.domain.DiscoveryRecord
 import com.trenching.bot.console.automation.domain.DiscoveryScan
@@ -31,8 +32,8 @@ import org.springframework.stereotype.Service
  * cap cuts short leaves a cursor the next scan continues from, so a backlog of any size is reached. A provider that cannot be
  * read skips the tick and stores nothing.
  *
- * Outside the window it scans only while an open session whose last buy is before the window's end has had its idle time pass
- * without a complete scan covering it, so the night's last session closes the same morning; once none waits, it reads nothing
+ * In window mode, outside the window it scans only while an open session whose last buy is before the window's end has had its
+ * idle time pass without a complete scan covering it, so the night's last session closes the same morning; once none waits, it reads nothing
  * until the window opens again. A morning scan can still extend such a session with a buy just after the window closed; its last
  * buy is then after the window's end and it waits for the evening, like any session the daytime buys open.
  */
@@ -47,13 +48,11 @@ class AutomationDiscoveryService(
 ) {
     private val log = LoggerFactory.getLogger(AutomationDiscoveryService::class.java)
 
-    fun discover(): DiscoveryOutcome {
+    /** One scan; with [ignoreWindow], as a manual pass has it, whatever the mode and the time of day. */
+    fun discover(ignoreWindow: Boolean = false): DiscoveryOutcome {
         val now = clock.instant()
         val wallet = properties.walletAddress()
-        val window = properties.pollWindow()
-        if (!window.contains(now) && !transaction.closeAwaitsScan(wallet.value, properties.idleRule(), window, now)) {
-            return DiscoveryOutcome.OutsideWindow
-        }
+        if (!ignoreWindow && !scansNow(wallet, now)) return DiscoveryOutcome.OutsideWindow
         val watermark = transaction.watermark(wallet.value)
         val bound = watermark?.bound() ?: DiscoveryBound.Since(now.minus(properties.initialLookback))
         return when (val scan = scan(wallet, bound, watermark?.resumeBefore?.let(TransactionSignature::of))) {
@@ -66,8 +65,15 @@ class AutomationDiscoveryService(
         }
     }
 
+    /** Always-on scans every interval. The window scans inside it, and outside it only while a session's close awaits a scan. */
+    private fun scansNow(wallet: WalletAddress, now: Instant): Boolean = when (val mode = properties.discoveryMode()) {
+        DiscoveryMode.Always -> true
+        is DiscoveryMode.Window ->
+            mode.scansAt(now) || transaction.closeAwaitsScan(wallet.value, properties.idleRule(), mode.window, now)
+    }
+
     private fun recorded(batch: DiscoveryBatch, now: Instant): DiscoveryOutcome {
-        val record = transaction.record(batch, properties.captureFilter(), properties.idleRule(), now)
+        val record = transaction.record(batch, properties.captureFilter(), properties.idleRule(), properties.initialLookback, now)
         runtime.discovered(now)
         logRecord(batch, record)
         return DiscoveryOutcome.Recorded(record)

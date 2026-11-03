@@ -3,29 +3,35 @@ package com.trenching.bot.console.automation
 import com.trenching.bot.apiusage.ApiUsageReports
 import com.trenching.bot.console.automation.application.AutomationDiscoveryService
 import com.trenching.bot.console.automation.application.AutomationDiscoveryTransaction
-import com.trenching.bot.console.automation.application.AutomationEvaluationService
-import com.trenching.bot.console.automation.application.AutomationEvaluationTransaction
+import com.trenching.bot.console.automation.application.AutomationCoverage
+import com.trenching.bot.console.automation.application.AutomationDayService
 import com.trenching.bot.console.automation.application.AutomationPipelineTransaction
 import com.trenching.bot.console.automation.application.AutomationQueryService
 import com.trenching.bot.console.automation.application.AutomationRuntime
+import com.trenching.bot.console.automation.application.AutomationSessionRows
 import com.trenching.bot.console.automation.application.AutomationSessionService
 import com.trenching.bot.console.automation.application.AutomationRunCycles
 import com.trenching.bot.console.automation.application.AutomationSessionTransaction
 import com.trenching.bot.console.automation.application.AutomationSweepTransaction
 import com.trenching.bot.console.automation.config.AutomationProperties
-import com.trenching.bot.console.automation.infrastructure.persistence.AutomationEvaluationRepository
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkRepository
 import com.trenching.bot.console.automation.mapper.AutomationRecordMapper
-import com.trenching.bot.console.automation.mapper.EvaluationWindowMapper
 import com.trenching.bot.console.config.SolanaRpcProperties
 import com.trenching.bot.papertrading.PaperOrderStore
 import com.trenching.bot.portfolio.PositionStore
 import com.trenching.bot.strategy.TradeIntentStore
 import com.trenching.bot.walletactivity.WalletEventStore
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
+import com.trenching.bot.console.automation.application.AutomationBackfillDiscoveryService
+import com.trenching.bot.console.automation.application.AutomationBackfillQueryService
+import com.trenching.bot.console.automation.application.AutomationBackfillRecorder
+import com.trenching.bot.console.automation.application.AutomationBackfillService
+import com.trenching.bot.console.automation.application.AutomationBackfillTransaction
+import com.trenching.bot.console.automation.application.AutomationScanWriter
 import com.trenching.bot.console.automation.application.AutomationCaptureCancellation
 import com.trenching.bot.console.capture.CaptureOperationService
 import java.nio.file.Path
@@ -52,17 +58,20 @@ import org.springframework.test.context.ActiveProfiles
 @Import(PostgresTestDatabaseConfiguration::class, AutomationDatabaseTest.Transactions::class)
 abstract class AutomationDatabaseTest {
     @Autowired protected lateinit var watermarks: AutomationWatermarkRepository
+    @Autowired protected lateinit var backfills: AutomationBackfillRepository
     @Autowired protected lateinit var sessions: AutomationSessionRepository
     @Autowired protected lateinit var items: AutomationItemRepository
     @Autowired protected lateinit var sweepRuns: AutomationSweepRunRepository
-    @Autowired protected lateinit var evaluations: AutomationEvaluationRepository
     @Autowired protected lateinit var records: AutomationRecordMapper
     @Autowired protected lateinit var discoveryTransaction: AutomationDiscoveryTransaction
     @Autowired protected lateinit var sessionTransaction: AutomationSessionTransaction
     @Autowired protected lateinit var pipelineTransaction: AutomationPipelineTransaction
     @Autowired protected lateinit var sweepTransaction: AutomationSweepTransaction
-    @Autowired protected lateinit var evaluationTransaction: AutomationEvaluationTransaction
     @Autowired protected lateinit var runCycles: AutomationRunCycles
+    @Autowired protected lateinit var backfillTransaction: AutomationBackfillTransaction
+    @Autowired protected lateinit var backfillRecorder: AutomationBackfillRecorder
+    @Autowired protected lateinit var scanWriter: AutomationScanWriter
+    @Autowired protected lateinit var coverage: AutomationCoverage
 
     protected val runtime = AutomationRuntime()
 
@@ -72,7 +81,7 @@ abstract class AutomationDatabaseTest {
 
     @BeforeEach
     fun emptyAutomationTables() {
-        listOf(evaluations, sweepRuns, items, sessions, watermarks).forEach { it.deleteAllInBatch() }
+        listOf(sweepRuns, items, sessions, backfills, watermarks).forEach { it.deleteAllInBatch() }
     }
 
     @AfterEach
@@ -84,14 +93,29 @@ abstract class AutomationDatabaseTest {
         AutomationDiscoveryService(lookup, discoveryTransaction, properties, runtime, clock)
 
     protected fun query(properties: AutomationProperties, clock: Clock, usage: ApiUsageReports = ApiUsageReports { _, _ -> error("unused") }): AutomationQueryService =
-        AutomationQueryService(sessions, items, sweepRuns, evaluations, watermarks, records, properties, runtime, usage, SolanaRpcProperties(), clock)
+        AutomationQueryService(sessions, items, sweepRuns, watermarks, backfills, records, sessionRows(properties), properties, runtime, usage, SolanaRpcProperties(), clock)
 
-    protected fun evaluationService(properties: AutomationProperties, clock: Clock): AutomationEvaluationService =
-        AutomationEvaluationService(evaluationTransaction, properties, clock)
+    protected fun sessionRows(properties: AutomationProperties): AutomationSessionRows = AutomationSessionRows(items, records, properties)
+
+    protected fun dayService(properties: AutomationProperties, clock: Clock): AutomationDayService =
+        AutomationDayService(sessions, items, sweepRuns, coverage, sessionRows(properties), records, properties, clock)
 
     protected fun sessionService(properties: AutomationProperties, clock: Clock, operations: CaptureOperationService = idleOperations(clock)): AutomationSessionService =
         AutomationSessionService(sessionTransaction, discoveryTransaction, sessions, AutomationCaptureCancellation(operations), query(properties, clock),
-            evaluationService(properties, clock), properties, runtime, clock)
+            properties, runtime, clock)
+
+    protected fun backfillQuery(properties: AutomationProperties): AutomationBackfillQueryService =
+        AutomationBackfillQueryService(backfills, items, records, properties)
+
+    protected fun backfillService(properties: AutomationProperties, clock: Clock, operations: CaptureOperationService = idleOperations(clock)): AutomationBackfillService =
+        AutomationBackfillService(backfillTransaction, backfillQuery(properties), AutomationCaptureCancellation(operations), properties, clock)
+
+    protected fun backfillDiscovery(
+        lookup: FakeWalletActivityLookup,
+        properties: AutomationProperties,
+        clock: Clock,
+        usage: ApiUsageReports = FakeApiUsageReports(),
+    ): AutomationBackfillDiscoveryService = AutomationBackfillDiscoveryService(lookup, backfillTransaction, backfillRecorder, properties, usage, clock)
 
     private fun idleOperations(clock: Clock): CaptureOperationService =
         (idleCapture ?: CaptureHarness(idleCaptureRoot, clock).also { idleCapture = it }).operations
@@ -99,35 +123,55 @@ abstract class AutomationDatabaseTest {
     @TestConfiguration(proxyBeanMethods = false)
     class Transactions {
         @Bean
-        fun automationDiscoveryTransaction(
-            watermarks: AutomationWatermarkRepository,
+        fun automationScanWriter(
             sessions: AutomationSessionRepository,
             items: AutomationItemRepository,
             sweepRuns: AutomationSweepRunRepository,
             mapper: AutomationRecordMapper,
-        ) = AutomationDiscoveryTransaction(watermarks, sessions, items, sweepRuns, mapper)
+        ) = AutomationScanWriter(sessions, items, sweepRuns, mapper)
+
+        @Bean
+        fun automationCoverage(watermarks: AutomationWatermarkRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper) =
+            AutomationCoverage(watermarks, backfills, mapper)
+
+        @Bean
+        fun automationDiscoveryTransaction(
+            watermarks: AutomationWatermarkRepository,
+            sessions: AutomationSessionRepository,
+            items: AutomationItemRepository,
+            mapper: AutomationRecordMapper,
+            writer: AutomationScanWriter,
+        ) = AutomationDiscoveryTransaction(watermarks, sessions, items, mapper, writer)
+
+        @Bean
+        fun automationBackfillTransaction(
+            backfills: AutomationBackfillRepository,
+            sessions: AutomationSessionRepository,
+            items: AutomationItemRepository,
+            watermarks: AutomationWatermarkRepository,
+            sessionTransaction: AutomationSessionTransaction,
+            coverage: AutomationCoverage,
+        ) = AutomationBackfillTransaction(backfills, sessions, items, watermarks, sessionTransaction, coverage)
+
+        @Bean
+        fun automationBackfillRecorder(
+            backfills: AutomationBackfillRepository,
+            sessions: AutomationSessionRepository,
+            items: AutomationItemRepository,
+            writer: AutomationScanWriter,
+        ) = AutomationBackfillRecorder(backfills, sessions, items, writer)
 
         @Bean
         fun automationSessionTransaction(sessions: AutomationSessionRepository, items: AutomationItemRepository) =
             AutomationSessionTransaction(sessions, items)
 
         @Bean
-        fun automationPipelineTransaction(items: AutomationItemRepository, mapper: AutomationRecordMapper) =
-            AutomationPipelineTransaction(items, mapper)
+        fun automationPipelineTransaction(items: AutomationItemRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper) =
+            AutomationPipelineTransaction(items, backfills, mapper)
 
         @Bean
         fun automationSweepTransaction(items: AutomationItemRepository, sweepRuns: AutomationSweepRunRepository, mapper: AutomationRecordMapper) =
             AutomationSweepTransaction(items, sweepRuns, mapper)
-
-        @Bean
-        fun automationEvaluationTransaction(
-            sessions: AutomationSessionRepository,
-            items: AutomationItemRepository,
-            sweepRuns: AutomationSweepRunRepository,
-            evaluations: AutomationEvaluationRepository,
-            mapper: AutomationRecordMapper,
-            window: EvaluationWindowMapper,
-        ) = AutomationEvaluationTransaction(sessions, items, sweepRuns, evaluations, mapper, window)
 
         @Bean
         fun automationRunCycles(intents: TradeIntentStore, orders: PaperOrderStore, positions: PositionStore, events: WalletEventStore) =

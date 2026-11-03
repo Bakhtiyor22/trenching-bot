@@ -96,6 +96,9 @@ data class AutomationItemProgress(
 fun AutomationItemProgress.started(operationId: String): AutomationItemProgress =
     onCurrentStep(AutomationItemState.CAPTURING).copy(operationId = operationId, nextActionAt = null)
 
+/** The item's backfill has no budget left for the current step's operation (plan Rule 39): the item fails at once, unscored. */
+fun AutomationItemProgress.outOfBudget(message: String?): AutomationItemProgress = lost(AutomationFailures.BACKFILL_BUDGET, message)
+
 /** The current step may not start before [at]. */
 fun AutomationItemProgress.waitingUntil(at: Instant): AutomationItemProgress =
     onCurrentStep(AutomationItemState.WAITING).copy(nextActionAt = at)

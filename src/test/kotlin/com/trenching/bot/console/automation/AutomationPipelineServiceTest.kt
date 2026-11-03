@@ -18,7 +18,10 @@ import com.trenching.bot.console.automation.domain.AutomationItemProgress
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.AutomationStep
+import com.trenching.bot.console.automation.domain.BackfillState
 import com.trenching.bot.console.automation.domain.IllegalItemTransitionException
+import com.trenching.bot.console.automation.domain.SessionCloseReason
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEntity
 import com.trenching.bot.console.automation.mapper.AutomationCaptureRequestMapperImpl
 import com.trenching.bot.console.capture.CaptureNames
@@ -30,8 +33,10 @@ import com.trenching.bot.walletactivity.WalletAction
 import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.AfterEach
@@ -280,15 +285,28 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
-    fun `items of a closed session are never picked up`() {
+    fun `an item of a closed session, discovered while capture was off, is captured once capture is on, and its session stays closed`() {
         discover(buy(1, 100, EVENING))
-        sessions.findAll().forEach { it.state = AutomationSessionState.CLOSED; sessions.save(it) }
+        sessions.findAll().forEach { it.state = AutomationSessionState.CLOSED; it.closeReason = SessionCloseReason.IDLE; sessions.save(it) }
 
-        ticks(3)
+        ticks(5)
+        sessionService(properties, clock, capture.operations).closeIdleSessions()
 
-        assertEquals(AutomationItemState.DISCOVERED, item(1).state)
-        assertNull(item(1).captureSessionId)
-        assertTrue(capture.store.sessions().none { it.startsWith("auto-") })
+        assertEquals(1, operations(item(1)).count { it.step == CaptureNames.WALLET }, "the phase 0 backlog is captured like any item")
+        assertNotNull(item(1).captureSessionId)
+        assertEquals(AutomationSessionState.CLOSED, sessions.findAll().single().state, "a session never reopens")
+    }
+
+    @Test
+    fun `tonight's live items go before the phase 0 backlog of closed sessions, which goes before a backfill's items`() {
+        discover(buy(1, 100, EVENING))
+        sessions.save(AutomationRows.session("old-night", AutomationSessionState.CLOSED, EVENING.minus(Duration.ofDays(2))))
+        items.save(AutomationRows.item(60, "old-night", blockTime = EVENING.minus(Duration.ofDays(2)), nextActionAt = EVENING))
+        backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(5)))
+
+        val due = pipelineTransaction.due(EVENING).map { it.id }
+
+        assertEquals(listOf(item(1).id, "item-60", "item-50"), due)
     }
 
     @Test
@@ -314,7 +332,7 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
         assertEquals(80, item(2).requestsUsed)
         val query = query(properties, clock, usage)
         assertEquals(120, query.item(item(1).id).item.requestsUsed)
-        assertEquals(200L, query.sessions(0, 10, null, null, null, null, "status").items.single().requestsUsed)
+        assertEquals(200L, query.sessions(0, 10, null, null, null, "createdAt,desc").items.single().requestsUsed)
         assertEquals(200L, query.session(item(1).sessionId).session.requestsUsed)
     }
 
@@ -398,7 +416,7 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     fun `an operation started for an item a manual close abandoned meanwhile is cancelled at once`() {
         discover(buy(1, 100, EVENING))
         ticks(1)
-        val closingDuringTick = object : AutomationPipelineTransaction(items, records) {
+        val closingDuringTick = object : AutomationPipelineTransaction(items, backfills, records) {
             override fun due(now: Instant): List<AutomationDueItem> =
                 pipelineTransaction.due(now).onEach { sessionTransaction.closeManually(it.sessionId, now) }
 
@@ -415,6 +433,118 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
         assertEquals(listOf("cancel:auto-cancel-wallet-${item(1).id.take(24)}-1"), started.controlRequestIds)
     }
 
+    @Test
+    fun `a live item is captured before an older item of a backfill whose scan is over`() {
+        discover(buy(1, 100, EVENING))
+        backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)))
+
+        ticks(2)
+
+        assertEquals(1, operations(item(1)).count { it.step == CaptureNames.WALLET })
+        assertNotNull(item(50).captureSessionId, "its capture session is made, which needs no capture operation")
+        assertEquals(0, operations(item(50)).count { it.step == CaptureNames.WALLET }, "the single capture worker went to the live item first")
+    }
+
+    @Test
+    fun `a backfill's items are captured oldest buy first once no live item is due`() {
+        val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(2)))
+        backfillItem(51, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), backfillId = backfill)
+
+        ticks(2)
+
+        assertEquals(1, operations(item(51)).count { it.step == CaptureNames.WALLET })
+        assertEquals(0, operations(item(50)).count { it.step == CaptureNames.WALLET })
+    }
+
+    @Test
+    fun `an item of a backfill that is still scanning waits, since an earlier buy of its mint may still replace it`() {
+        backfillItem(50, BackfillState.SCANNING, EVENING.minus(Duration.ofDays(3)))
+
+        ticks(4)
+
+        assertEquals(AutomationItemState.DISCOVERED, item(50).state)
+        assertNull(item(50).captureSessionId)
+    }
+
+    @Test
+    fun `a backfill's capture step waits blocked while the day's total plus one allowance would eat into the reserve, and starts once it fits`() {
+        backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)))
+        usage.lastDay = properties.maxRequestsPer24h - properties.backfillReserveRequests - properties.recovery.requests + 1
+
+        ticks(3)
+        val blocked = item(50)
+        val walletsWhileBlocked = operations(blocked).count { it.step == CaptureNames.WALLET }
+        usage.lastDay -= 1
+        ticks(2)
+
+        assertEquals(AutomationItemState.BLOCKED_BUDGET, blocked.state)
+        assertEquals(0, walletsWhileBlocked)
+        assertEquals(1, operations(item(50)).count { it.step == CaptureNames.WALLET })
+    }
+
+    @Test
+    fun `a live item at the total that blocks a backfill's step still starts, since the reserve is kept for it`() {
+        discover(buy(1, 100, EVENING))
+        usage.lastDay = properties.maxRequestsPer24h - properties.backfillReserveRequests - properties.recovery.requests + 1
+
+        ticks(3)
+
+        assertEquals(1, operations(item(1)).count { it.step == CaptureNames.WALLET })
+    }
+
+    @Test
+    fun `an operation is started while the backfill's spend plus one recovery allowance stays within its budget`() {
+        backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 2000, discoveryRequests = 800)
+
+        ticks(2)
+
+        assertEquals(1, operations(item(50)).count { it.step == CaptureNames.WALLET })
+        assertEquals(AutomationItemState.CAPTURING, item(50).state)
+    }
+
+    @Test
+    fun `an item whose backfill cannot pay another operation fails unscored with the backfill budget code, and the backfill stops once nothing is left`() {
+        val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 2000, discoveryRequests = 801)
+        backfillItem(51, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(2)), backfillId = backfill, requestBudget = 2000, discoveryRequests = 801)
+
+        ticks(4)
+        backfillService(properties, clock, capture.operations).settle()
+
+        listOf(50, 51).forEach {
+            assertEquals(AutomationItemState.FAILED, item(it).state)
+            assertEquals(AutomationFailures.BACKFILL_BUDGET, item(it).failureCode)
+            assertEquals(AutomationStep.WALLET, item(it).step)
+            assertEquals(0, operations(item(it)).count { op -> op.step == CaptureNames.WALLET })
+        }
+        assertEquals(BackfillState.STOPPED_BUDGET, backfills.findById(backfill).orElseThrow().state)
+        assertNull(backfills.findById(backfill).orElseThrow().activeWallet)
+    }
+
+    @Test
+    fun `cancelling a backfill abandons its item and cancels the capture operation the item had started`() {
+        val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)))
+        ticks(1)
+        pipeline().advance()
+        val started = capture.store.operations(item(50).captureSessionId ?: error("created")).single { it.step == CaptureNames.WALLET }
+
+        backfillService(properties, clock, capture.operations).cancel(backfill, "cancel-1")
+
+        assertEquals(AutomationItemState.ABANDONED, item(50).state)
+        assertEquals(CaptureNames.CANCEL_REQUESTED, capture.store.operations(item(50).captureSessionId ?: error("created")).single { it.id == started.id }.control)
+        assertEquals(BackfillState.CANCELLED, backfills.findById(backfill).orElseThrow().state)
+    }
+
+    @Test
+    fun `the spend counts the captures the backfill's items have used so far`() {
+        val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 2500)
+        backfillItem(51, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(2)), backfillId = backfill, requestBudget = 2500)
+        items.findAll().single { it.id == "item-50" }.let { items.save(it.also { done -> done.state = AutomationItemState.SIMULATED; done.requestsUsed = 1301 }) }
+
+        ticks(3)
+
+        assertEquals(AutomationFailures.BACKFILL_BUDGET, item(51).failureCode, "1,301 spent plus the 1,200 allowance passes 2,500")
+    }
+
     private fun pipeline(settings: AutomationProperties = properties, transaction: AutomationPipelineTransaction = pipelineTransaction) =
         AutomationPipelineService(transaction, discoveryTransaction, capture.sessions, capture.operations, capture.datasets, AutomationCaptureCancellation(capture.operations),
             AutomationCaptureRequestMapperImpl(), usage, settings, clock)
@@ -423,6 +553,25 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     private fun ticks(count: Int) = repeat(count) {
         pipeline().advance()
         capture.work()
+    }
+
+    /** An item of a backfill in [state] with the budget given, in a closing session of its own; returns the backfill's id. */
+    private fun backfillItem(
+        n: Int,
+        state: BackfillState,
+        blockTime: Instant,
+        backfillId: String = "bf-$n",
+        requestBudget: Long = 20_000,
+        discoveryRequests: Long = 0,
+    ): String {
+        if (!backfills.existsById(backfillId)) {
+            backfills.save(AutomationBackfillEntity(backfillId, "req-$backfillId", WALLET, if (state.active) WALLET else null, LocalDate.parse("2026-10-29"),
+                LocalDate.parse("2026-10-30"), blockTime.minusSeconds(3600), blockTime.plusSeconds(3600), false, null, null, requestBudget, state, EVENING, EVENING)
+                .also { it.discoveryRequests = discoveryRequests })
+        }
+        sessions.save(AutomationRows.session("session-$n", AutomationSessionState.CLOSING, blockTime).also { it.backfillId = backfillId })
+        items.save(AutomationRows.item(n, "session-$n", blockTime = blockTime, nextActionAt = EVENING).also { it.backfillId = backfillId })
+        return backfillId
     }
 
     private fun discover(vararg buys: WalletAction) {

@@ -8,8 +8,9 @@ import com.trenching.bot.console.automation.infrastructure.persistence.Automatio
 import java.time.Instant
 
 /**
- * A wallet's open sessions while one discovery scan is stored (plan Rule 10, amended 2026-11-03). A session is a run of buys
- * with no gap longer than the idle time. A buy joins the open session it fits by time ([SessionIdleRule.fits]), whichever scan
+ * A wallet's open sessions while one discovery scan is stored (plan Rules 10 and 31, amended 2026-11-03). A session is a run of
+ * buys with no gap longer than the idle time, inside one trading day: [SessionIdleRule.fits] and [SessionIdleRule.runs] never join
+ * buys of two days, so a buy fits, merges and regroups only within its own day. A buy joins the open session it fits by time ([SessionIdleRule.fits]), whichever scan
  * found that session, so a catch-up extends a session backwards or opens an earlier one. A buy that fits two sessions closes the
  * gap between them, so they become one: the session discovered first (then the one with the earlier first buy, then the smaller
  * id) absorbs the others and keeps its id. A replaced buy can open a gap again, and [regroup] then splits the session there. So
@@ -20,10 +21,18 @@ import java.time.Instant
  * A buy without a block time cannot be placed in time: it joins the latest open session without changing its span, or, with
  * none open, a session of its own that starts `CLOSING`, so it never takes or bridges a buy.
  *
- * Built inside the discovery transaction from [stored], the wallet's open sessions. The transaction then saves [opened], and
- * moves the items of each session in [absorbed] to the one it now belongs to ([current]).
+ * Built inside the discovery transaction from [stored], the open sessions of the wallet's live discovery, or of one backfill when
+ * [backfillId] is given: a backfill's buys are placed among its own sessions only, and the sessions it opens carry its id (plan
+ * Rule 38). The transaction then saves [opened], and moves the items of each session in [absorbed] to the one it now belongs to
+ * ([current]).
  */
-class OpenSessions(private val wallet: String, stored: List<AutomationSessionEntity>, private val idle: SessionIdleRule, private val now: Instant) {
+class OpenSessions(
+    private val wallet: String,
+    stored: List<AutomationSessionEntity>,
+    private val idle: SessionIdleRule,
+    private val now: Instant,
+    private val backfillId: String? = null,
+) {
     private val storedById = stored.associateBy { it.id }.toMutableMap()
     private val open = stored.sortedWith(SURVIVOR_FIRST).toMutableList()
     private val created = mutableListOf<AutomationSessionEntity>()
@@ -106,6 +115,7 @@ class OpenSessions(private val wallet: String, stored: List<AutomationSessionEnt
     private fun openNew(firstItemId: String, buyAt: Instant, state: AutomationSessionState): AutomationSessionEntity = AutomationSessionEntity(
         AutomationIds.session(wallet, firstItemId), wallet, firstItemId, buyAt, buyAt, state, null, null, 0, now,
     ).also {
+        it.backfillId = backfillId
         created += it
         if (state == AutomationSessionState.OPEN) open += it
     }

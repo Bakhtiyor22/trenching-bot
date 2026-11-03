@@ -229,6 +229,40 @@ class AutomationSessionServiceTest : AutomationDatabaseTest() {
         assertEquals(AutomationSessionState.OPEN, session().state)
     }
 
+    @Test
+    fun `a live closing session closes though more than a hundred older closing sessions of a backfill still wait for their items`() {
+        val properties = properties(captureEnabled = true)
+        val waiting = (1..CLOSING_BACKFILL_SESSIONS).map { n ->
+            AutomationRows.session("bf-$n", AutomationSessionState.CLOSING, EVENING.minus(Duration.ofDays(5)).plusSeconds(n.toLong())).also { it.backfillId = "bf" }
+        }
+        sessions.saveAll(waiting + AutomationRows.session("live", AutomationSessionState.CLOSING, EVENING.minus(Duration.ofHours(2))))
+        items.saveAll(waiting.mapIndexed { index, session ->
+            AutomationRows.item(index + 1, session.id, AutomationItemState.DISCOVERED, blockTime = session.firstBuyAt).also { it.backfillId = "bf" }
+        })
+        items.save(AutomationRows.item(1000, "live", AutomationItemState.SIMULATED, blockTime = EVENING.minus(Duration.ofHours(2))))
+
+        sessionService(properties, clock).closeIdleSessions()
+
+        assertEquals(AutomationSessionState.CLOSED, sessions.findById("live").orElseThrow().state)
+        assertEquals(CLOSING_BACKFILL_SESSIONS, sessions.findAll().count { it.state == AutomationSessionState.CLOSING })
+    }
+
+    @Test
+    fun `a manual close abandons the non-terminal items of a session that is already closed, and leaves it closed as it was`() {
+        val properties = properties(captureEnabled = true)
+        sessions.save(AutomationRows.session("phase-0", AutomationSessionState.CLOSED, EVENING).also { it.closeReason = SessionCloseReason.IDLE; it.closedAt = EVENING })
+        items.save(AutomationRows.item(1, "phase-0", AutomationItemState.DISCOVERED, blockTime = EVENING))
+        items.save(AutomationRows.item(2, "phase-0", AutomationItemState.SIMULATED, blockTime = EVENING))
+
+        val closed = sessionService(properties, clock).close("phase-0", "close-1")
+        val again = sessionService(properties, clock).close("phase-0", "close-2")
+
+        assertEquals(AutomationItemState.ABANDONED, items.findById("item-1").orElseThrow().state)
+        assertEquals(AutomationItemState.SIMULATED, items.findById("item-2").orElseThrow().state)
+        assertEquals(SessionCloseReason.IDLE, closed.session.session.closeReason)
+        assertEquals(closed, again)
+    }
+
     private fun seed(properties: AutomationProperties, vararg buys: WalletAction) {
         lookup.actions += buys
         discovery(lookup, properties, clock).discover()
@@ -247,5 +281,6 @@ class AutomationSessionServiceTest : AutomationDatabaseTest() {
 
     private companion object {
         val IDLE_AND_MARGIN: Duration = Duration.ofMinutes(61)
+        const val CLOSING_BACKFILL_SESSIONS = 105
     }
 }

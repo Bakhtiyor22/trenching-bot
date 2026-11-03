@@ -17,6 +17,7 @@ import com.trenching.bot.console.automation.domain.AutomationRequests
 import com.trenching.bot.console.automation.domain.AutomationStep
 import com.trenching.bot.console.automation.domain.AutomationStepOutcome
 import com.trenching.bot.console.automation.domain.captured
+import com.trenching.bot.console.automation.domain.outOfBudget
 import com.trenching.bot.console.automation.domain.skipped
 import com.trenching.bot.console.automation.domain.started
 import com.trenching.bot.console.automation.domain.waitingUntil
@@ -46,8 +47,10 @@ import org.springframework.stereotype.Service
  * A tick first follows the operations its items started; one that ended moves its item on, and the item may take its next
  * step in the same tick. Then, oldest buy first, items take their next step. At most one capture operation is started per
  * tick, and only while the capture worker is idle and no operation automation started is still running or waiting for its
- * own retry. The market step waits until the buy's block time plus `market-delay`; wallet and market operations start only
- * within the rolling request cap. Each item is handled on its own: an unexpected failure is logged and the tick goes on.
+ * own retry. Items take their steps in the order the database returns them ([AutomationPipelineTransaction.due]): live items of
+ * sessions still open or closing, then the phase 0 backlog of closed sessions, then a backfill's, each oldest buy first (plan Rule 40). The market step waits until the buy's
+ * block time plus `market-delay`; wallet and market operations start only within the rolling request cap (a backfill's item also
+ * leaves `backfill-reserve-requests` of it free) and, for a backfill's item, its backfill's own request budget: an item the budget cannot cover ends `FAILED` with `BACKFILL_BUDGET`. Each item is handled on its own: an unexpected failure is logged and the tick goes on.
  *
  * The capture console's refusals: `CAPTURE_BUSY` and `NOT_CONFIGURED` leave the item waiting with no attempt charged (the
  * latter logged once per tick); `CAPTURE_NOT_FOUND`, a capture session or operation deleted from the console, fails the item
@@ -73,13 +76,15 @@ class AutomationPipelineService(
     fun advance() {
         if (!properties.captureEnabled) return
         val now = clock.instant()
-        val (following, waiting) = transaction.due(now).partition { it.progress.operationId != null }
+        val due = transaction.due(now)
+        val priority = due.withIndex().associate { (index, item) -> item.id to index }
+        val (following, waiting) = due.partition { it.progress.operationId != null }
         val followed = following.mapNotNull { item -> isolated(item, now) { item to operation(item) } }
         var workerFree = followed.none { (_, operation) -> AutomationOperationOutcome.of(operation.state) == AutomationOperationOutcome.RUNNING }
         val moved = followed.mapNotNull { (item, operation) -> isolated(item, now) { settle(item, operation, now) } }
         val unconfigured = mutableListOf<AutomationStepOutcome.NotConfigured>()
         val catchingUp = discovery.catchingUp()
-        (moved.filter { it.progress.dueAt(now) } + waiting).sortedWith(OLDEST_BUY_FIRST).forEach { item ->
+        (moved.filter { it.progress.dueAt(now) } + waiting).sortedBy { priority.getValue(it.id) }.forEach { item ->
             when (val outcome = isolated(item, now) { proceed(item, workerFree, item.wallet in catchingUp, now) }) {
                 AutomationStepOutcome.OperationStarted -> workerFree = false
                 is AutomationStepOutcome.NotConfigured -> unconfigured += outcome
@@ -128,16 +133,39 @@ class AutomationPipelineService(
             return AutomationStepOutcome.NoOperation
         }
         if (!canStart(workerFree)) return AutomationStepOutcome.NoOperation
+        if (!withinBackfillBudget(item, step)) {
+            change(item, item.progress.outOfBudget("The backfill's request budget cannot cover another operation"), capturedRequests(item), now)
+            return AutomationStepOutcome.NoOperation
+        }
         val requestsLastDay = usage.report(ApiUsagePeriod.LAST_24_HOURS, null).totals.requests
-        if (!properties.requestCap().admits(requestsLastDay)) {
+        if (!withinRequestCap(item, requestsLastDay)) {
             if (item.progress.state != AutomationItemState.BLOCKED_BUDGET) {
-                log.warn("automation request cap reached itemId={} step={} requestsLast24h={} maxRequestsPer24h={}",
-                    item.id, step, requestsLastDay, properties.maxRequestsPer24h)
+                log.warn("automation request cap reached itemId={} step={} backfillId={} requestsLast24h={} maxRequestsPer24h={} reserveRequests={}",
+                    item.id, step, item.backfillId, requestsLastDay, properties.maxRequestsPer24h, properties.backfillReserveRequests)
             }
             change(item, item.progress.blocked(), null, now)
             return AutomationStepOutcome.NoOperation
         }
         return start(item, step, properties.captureRecovery(), now)
+    }
+
+    /** A live step needs room under the cap; a backfill's step also leaves `backfill-reserve-requests` of it free for live capture (plan Rule 19, amended). */
+    private fun withinRequestCap(item: AutomationDueItem, requestsLastDay: Long): Boolean {
+        val cap = properties.requestCap()
+        return if (item.backfillId == null) cap.admits(requestsLastDay) else cap.admitsBackfill(requestsLastDay, properties.backfillReserveRequests)
+    }
+
+    /**
+     * Whether the item's backfill, if it has one, can pay for the operation: its spend plus one operation's recovery allowance
+     * must stay within its budget (plan Rule 39). A live item has no budget of its own.
+     */
+    private fun withinBackfillBudget(item: AutomationDueItem, step: AutomationStep): Boolean {
+        val backfillId = item.backfillId ?: return true
+        val budget = transaction.budget(backfillId)
+        if (budget.admits(properties.requestCap().operationRequests)) return true
+        log.warn("automation backfill budget reached itemId={} step={} backfillId={} requestBudget={} requestsSpent={}",
+            item.id, step, backfillId, budget.requestBudget, budget.spent)
+        return false
     }
 
     /** The export queues its own qualification; the first attempt follows that one, a later attempt starts its own. */
@@ -279,7 +307,5 @@ class AutomationPipelineService(
     private companion object {
         const val CAPTURE_BUSY = "CAPTURE_BUSY"
         const val NOT_CONFIGURED = "NOT_CONFIGURED"
-        val OLDEST_BUY_FIRST: Comparator<AutomationDueItem> =
-            compareBy<AutomationDueItem, Instant?>(nullsLast()) { it.blockTime }.thenBy { it.id }
     }
 }

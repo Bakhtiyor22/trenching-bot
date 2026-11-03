@@ -3,6 +3,7 @@ package com.trenching.bot.console.automation
 import com.trenching.bot.apiusage.ApiTask
 import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.console.automation.AutomationFixtures.EVENING
+import com.trenching.bot.console.automation.AutomationFixtures.SKIPPED_LAMPORTS
 import com.trenching.bot.console.automation.AutomationFixtures.WALLET
 import com.trenching.bot.console.automation.AutomationFixtures.buy
 import com.trenching.bot.console.automation.AutomationFixtures.properties
@@ -17,6 +18,7 @@ import com.trenching.bot.console.automation.domain.DiscoveryCursor
 import com.trenching.bot.console.automation.domain.DiscoveryOutcome
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionEntity
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkEntity
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.console.capture.MutableClock
 import com.trenching.bot.walletactivity.WalletAction
@@ -24,6 +26,8 @@ import com.trenching.bot.walletactivity.WalletActivityUnavailable
 import java.math.BigInteger
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -716,6 +720,173 @@ class AutomationDiscoveryServiceTest : AutomationDatabaseTest() {
         assertEquals(DiscoveryOutcome.OutsideWindow, discovery(lookup, properties(), clock).discover())
         assertTrue(lookup.requests.isEmpty())
     }
+
+    @Test
+    fun `always-on scans at 14 00 local, where window mode reads nothing, and never consults the window`() {
+        lookup.actions += buy(1, 100, local(2, "13:55"))
+        clock.now = local(2, "14:00")
+
+        val outcome = discovery(lookup, properties(pollAlways = true), clock).discover()
+
+        assertTrue(outcome is DiscoveryOutcome.Recorded)
+        assertEquals(1, items.count())
+        assertEquals(DiscoveryOutcome.OutsideWindow, discovery(FakeWalletActivityLookup(), properties(), clock).discover())
+    }
+
+    @Test
+    fun `a manual pass ignores the window in window mode, scanning like a scheduled one`() {
+        lookup.actions += buy(1, 100, local(2, "13:55"))
+        clock.now = local(2, "14:00")
+        val service = discovery(lookup, properties(), clock)
+
+        assertEquals(DiscoveryOutcome.OutsideWindow, service.discover())
+        val outcome = service.discover(ignoreWindow = true)
+
+        assertTrue(outcome is DiscoveryOutcome.Recorded)
+        assertEquals(1, items.count())
+        assertEquals(local(2, "14:00"), runtime.heartbeat().lastDiscoveryAt)
+    }
+
+    @Test
+    fun `buys at 11 50 and 12 10 open two sessions on two trading days though 20 minutes apart`() {
+        lookup.actions += buy(1, 100, local(2, "11:50"))
+        lookup.actions += buy(2, 101, local(2, "12:10"))
+
+        discovery(lookup, properties(), clock).discover()
+
+        val byBuy = sessions.findAll().sortedBy { it.firstBuyAt }
+        assertEquals(listOf(local(2, "11:50"), local(2, "12:10")), byBuy.map { it.firstBuyAt })
+        assertEquals(byBuy.map { it.id }, listOf(signature(1), signature(2)).map { item(it.value).sessionId })
+    }
+
+    @Test
+    fun `a buy at exactly 12 00 starts the new day's session`() {
+        lookup.actions += buy(1, 100, local(2, "11:59:59"))
+        lookup.actions += buy(2, 101, local(2, "12:00"))
+
+        discovery(lookup, properties(), clock).discover()
+
+        assertEquals(2, sessions.count())
+    }
+
+    @Test
+    fun `a catch-up buy within the idle time of two sessions of different days joins only the one of its own day`() {
+        lookup.actions += buy(1, 100, local(2, "11:30"))
+        lookup.actions += buy(2, 200, local(2, "12:20"))
+        val capped = discovery(lookup, properties(), clock)
+        capped.discover()
+        val earlierDay = item(signature(1).value).sessionId
+        val laterDay = item(signature(2).value).sessionId
+        lookup.actions += buy(3, 300, local(2, "11:55"))
+        lookup.actions += buy(4, 301, local(2, "12:05"))
+        clock.now = EVENING.plusSeconds(600)
+
+        capped.discover()
+
+        assertEquals(2, sessions.count(), "no bridge between the days")
+        assertEquals(earlierDay, item(signature(3).value).sessionId)
+        assertEquals(laterDay, item(signature(4).value).sessionId)
+        assertEquals(listOf(local(2, "11:30"), local(2, "11:55")), sessions.findOneById(earlierDay)?.let { listOf(it.firstBuyAt, it.lastBuyAt) })
+        assertEquals(listOf(local(2, "12:05"), local(2, "12:20")), sessions.findOneById(laterDay)?.let { listOf(it.firstBuyAt, it.lastBuyAt) })
+    }
+
+    @Test
+    fun `a buy below the filter is counted on the session of its own trading day`() {
+        lookup.actions += buy(1, 100, local(2, "11:50"))
+        lookup.actions += buy(2, 101, local(2, "12:00"))
+        lookup.actions += buy(3, 102, local(2, "12:05"), lamports = SKIPPED_LAMPORTS)
+
+        discovery(lookup, properties(), clock).discover()
+
+        assertEquals(listOf(0, 1), sessions.findAll().sortedBy { it.firstBuyAt }.map { it.belowFilterCount })
+    }
+
+    @Test
+    fun `a replacement that leaves buys on two trading days splits the session at the boundary`() {
+        val legacy = AutomationRows.session("legacy", AutomationSessionState.OPEN, local(2, "11:50"), firstItemId = "item-1")
+            .apply { lastBuyAt = local(2, "12:30") }
+        sessions.save(legacy)
+        items.saveAll(listOf(
+            AutomationRows.item(1, "legacy", blockTime = local(2, "11:50"), mint = 1),
+            AutomationRows.item(2, "legacy", blockTime = local(2, "12:10"), mint = 2),
+            AutomationRows.item(3, "legacy", blockTime = local(2, "12:30"), mint = 7),
+        ))
+        lookup.actions += buy(30, 300, local(2, "10:30"), mint = 7)
+        clock.now = local(2, "22:00")
+
+        discovery(lookup, properties(), clock).discover()
+
+        assertEquals(listOf(local(2, "11:50"), local(2, "12:10")), listOf("item-1", "item-2").map { items.findOneById(it)?.blockTime })
+        val kept = sessions.findOneById("legacy") ?: error("kept")
+        assertEquals(listOf(local(2, "11:50"), local(2, "11:50")), listOf(kept.firstBuyAt, kept.lastBuyAt))
+        val split = sessions.findOneById(items.findOneById("item-2")?.sessionId ?: error("item")) ?: error("split")
+        assertTrue(split.id != kept.id)
+        assertEquals(listOf(local(2, "12:10"), local(2, "12:10")), listOf(split.firstBuyAt, split.lastBuyAt))
+        assertEquals(null, items.findOneById("item-3"), "the earlier buy took the item")
+        assertEquals(3, sessions.count(), "the earlier buy is a session of its own, on the day before")
+    }
+
+    @Test
+    fun `the first scan sets the coverage start to the clock less the initial lookback and later scans keep it`() {
+        lookup.actions += buy(1, 100, EVENING.minusSeconds(300))
+        val service = discovery(lookup, properties(), clock)
+
+        service.discover()
+        clock.now = EVENING.plusSeconds(600)
+        lookup.actions += buy(2, 101, EVENING.plusSeconds(300))
+        service.discover()
+
+        assertEquals(EVENING.minus(Duration.ofHours(12)), watermarks.findById(WALLET).orElseThrow().coveredFrom)
+    }
+
+    @Test
+    fun `a first scan cut short by the page limit also sets the coverage start, and the catch-up that completes it keeps it`() {
+        lookup.actions += (1..30).map { buy(it, 1000L + it, EVENING.minusSeconds(100L - it)) }
+        val capped = discovery(lookup, properties(maxDiscoveryPages = 1), clock)
+
+        capped.discover()
+        val atFirst = watermarks.findById(WALLET).orElseThrow().coveredFrom
+        clock.now = EVENING.plusSeconds(600)
+        capped.discover()
+
+        assertEquals(EVENING.minus(Duration.ofHours(12)), atFirst)
+        assertEquals(EVENING.minus(Duration.ofHours(12)), watermarks.findById(WALLET).orElseThrow().coveredFrom)
+    }
+
+    @Test
+    fun `a watermark stored without a coverage start gets one on the next scan, the earliest session's creation less the initial lookback`() {
+        watermarks.saveAndFlush(AutomationWatermarkEntity(WALLET, 1, "sig-0", 2, -1, EVENING.minusSeconds(3600)))
+        val firstSeen = EVENING.minus(Duration.ofHours(30))
+        sessions.save(AutomationRows.session("s-new", AutomationSessionState.CLOSED, EVENING.minus(Duration.ofHours(6))))
+        sessions.save(AutomationRows.session("s-old", AutomationSessionState.CLOSED, firstSeen.plusSeconds(60), createdAt = firstSeen))
+
+        discovery(lookup, properties(), clock).discover()
+
+        assertEquals(firstSeen.minus(Duration.ofHours(12)), watermarks.findById(WALLET).orElseThrow().coveredFrom)
+    }
+
+    @Test
+    fun `a watermark without a coverage start and without sessions takes its own update time less the initial lookback`() {
+        val updated = EVENING.minusSeconds(3600)
+        watermarks.saveAndFlush(AutomationWatermarkEntity(WALLET, 1, "sig-0", 2, -1, updated))
+
+        discovery(lookup, properties(), clock).discover()
+
+        assertEquals(updated.minus(Duration.ofHours(12)), watermarks.findById(WALLET).orElseThrow().coveredFrom, "the stored update time, before this scan moved it")
+    }
+
+    @Test
+    fun `a stored coverage start is never moved by a later scan`() {
+        val coveredFrom = EVENING.minus(Duration.ofDays(3))
+        watermarks.saveAndFlush(AutomationWatermarkEntity(WALLET, 1, "sig-0", 2, -1, EVENING.minusSeconds(3600)).also { it.coveredFrom = coveredFrom })
+        sessions.save(AutomationRows.session("s-old", AutomationSessionState.CLOSED, EVENING.minus(Duration.ofHours(30))))
+
+        discovery(lookup, properties(), clock).discover()
+
+        assertEquals(coveredFrom, watermarks.findById(WALLET).orElseThrow().coveredFrom)
+    }
+
+    private fun local(day: Int, time: String): Instant = LocalDateTime.parse("2026-11-0${day}T${if (time.length == 5) "$time:00" else time}").toInstant(ZoneOffset.ofHours(5))
 
     /** Transactions [range] with no Pump.fun action, listed at slot [slot] plus their number and at block time [at]. */
     private fun listed(range: IntRange, slot: Long, at: Instant) = range.forEach {

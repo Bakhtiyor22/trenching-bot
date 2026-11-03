@@ -25,6 +25,7 @@ import java.time.Instant
     indexes = [
         Index(name = "idx_automation_sessions_wallet_state", columnList = "wallet, state, last_buy_at"),
         Index(name = "idx_automation_sessions_first_buy", columnList = "wallet, first_buy_at"),
+        Index(name = "idx_automation_sessions_backfill", columnList = "backfill_id, state"),
     ],
 )
 class AutomationSessionEntity(
@@ -39,6 +40,10 @@ class AutomationSessionEntity(
     @Column(name = "below_filter_count", nullable = false) var belowFilterCount: Int,
     @Column(name = "created_at", nullable = false) var createdAt: Instant,
 ) {
+    /** The backfill whose buys the session groups (plan Rule 38), null for a session of live discovery. */
+    @Column(name = "backfill_id", nullable = true, length = 64)
+    var backfillId: String? = null
+
     @Version @Column(name = "version", nullable = false)
     var version: Long? = null
 }

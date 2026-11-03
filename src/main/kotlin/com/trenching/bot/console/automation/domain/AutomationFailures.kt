@@ -10,6 +10,9 @@ object AutomationFailures {
     /** Every sweep attempt of the item failed unexpectedly. */
     const val SWEEP_FAILED = "SWEEP_FAILED"
 
+    /** A backfill item's capture step would pass its backfill's request budget (plan Rule 39); the item is unscored. */
+    const val BACKFILL_BUDGET = "BACKFILL_BUDGET"
+
     /** The longest failure message an item stores (plan Rule 17); a longer one is cut. */
     const val MAX_MESSAGE_LENGTH = 512
 

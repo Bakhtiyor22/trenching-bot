@@ -21,7 +21,7 @@ interface AutomationSweepRunRepository : JpaRepository<AutomationSweepRunEntity,
     @Query("select r.label from AutomationSweepRunEntity r where r.itemId = :itemId and r.planId = :planId")
     fun findLabels(@Param("itemId") itemId: String, @Param("planId") planId: String): List<String>
 
-    /** The sweep runs of an evaluation window's sessions under a plan; bounded by the window's items and the plan's entries. */
+    /** The sweep runs of the sessions of a span of trading days under a plan; bounded by the span's items and the plan's entries. */
     fun findAllBySessionIdInAndPlanId(sessionIds: Collection<String>, planId: String): List<AutomationSweepRunEntity>
 
     /** Moves every sweep run of session [from] to [into]; entities already loaded are not refreshed. */

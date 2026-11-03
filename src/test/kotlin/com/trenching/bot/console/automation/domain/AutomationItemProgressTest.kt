@@ -100,6 +100,17 @@ class AutomationItemProgressTest {
     }
 
     @Test
+    fun `an item whose backfill has no budget left fails at once with the backfill budget code, on its current step`() {
+        val stopped = wallet.outOfBudget("Backfill budget would be passed")
+
+        assertEquals(AutomationItemState.FAILED, stopped.state)
+        assertEquals(AutomationStep.WALLET, stopped.step)
+        assertEquals(AutomationFailures.BACKFILL_BUDGET, stopped.failureCode)
+        assertNull(stopped.nextActionAt)
+        AutomationItemTransitions.require("item-1", wallet.state, stopped.state)
+    }
+
+    @Test
     fun `a failed sweep is tried again after a growing delay under its next attempt, then fails the item`() {
         val captured = AutomationItemProgress(AutomationItemState.CAPTURED, AutomationStep.REGISTER, 1, "capture", null, "dataset",
             "QUALIFYING_DIP", null, null, null)

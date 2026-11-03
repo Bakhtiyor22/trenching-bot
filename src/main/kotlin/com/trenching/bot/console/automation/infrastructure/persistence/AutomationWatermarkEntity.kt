@@ -13,7 +13,9 @@ import java.time.Instant
  * worked through, [resumeBefore] is where the next scan continues, [pending] the catch-up's newest action, which becomes the
  * watermark once a scan reaches it, and [catchUpStartedAt] the start of the scan from the newest transaction that began the
  * catch-up, which becomes [updatedAt] once it completes; [resumeSince] is the initial lookback of a first scan's catch-up,
- * which has no watermark to reach. All four are null otherwise. [updatedAt] is the start of the last complete scan.
+ * which has no watermark to reach. All four are null otherwise. [updatedAt] is the start of the last complete scan. [coveredFrom]
+ * is how far back live discovery covers the wallet without gaps (plan Rule 32): its first scan's lookback start, moved back
+ * only by a backfill; null means no coverage is known.
  */
 @Entity
 @Table(name = "automation_watermarks")
@@ -33,6 +35,9 @@ class AutomationWatermarkEntity(
 
     @Column(name = "catch_up_started_at", nullable = true)
     var catchUpStartedAt: Instant? = null
+
+    @Column(name = "covered_from", nullable = true)
+    var coveredFrom: Instant? = null
 
     @Embedded
     var pending: DiscoveryCursorColumns? = null

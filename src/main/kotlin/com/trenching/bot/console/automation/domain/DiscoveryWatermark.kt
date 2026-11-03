@@ -12,7 +12,8 @@ import java.time.Instant
  * provisional ([DiscoveryCursor.ORIGIN] while no action has been found). [updatedAt] is the start of the last complete scan:
  * one from the newest transaction down to its bound, or the scan from the newest transaction that began the catch-up a later
  * scan completed (during the first catch-up, that catch-up's start). [discoveredThrough] is what that scan covers, the instant
- * up to which every buy has been discovered, or null while the first catch-up runs.
+ * up to which every buy has been discovered, or null while the first catch-up runs. [coveredFrom] is where that coverage starts
+ * (plan Rule 32), so the wallet's buys are discovered without gaps from [coveredFrom] through [discoveredThrough].
  */
 data class DiscoveryWatermark(
     val cursor: DiscoveryCursor,
@@ -20,6 +21,7 @@ data class DiscoveryWatermark(
     val resumeSince: Instant?,
     val pending: DiscoveryCursor?,
     val updatedAt: Instant,
+    val coveredFrom: Instant? = null,
 ) {
     val discoveredThrough: Instant? get() = updatedAt.takeIf { resumeSince == null }?.let(::coveredBy)
 

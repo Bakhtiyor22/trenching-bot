@@ -18,11 +18,11 @@ import org.springframework.stereotype.Service
  * Ends sessions (plan Rule 10, amended 2026-11-03): on each tick an open session starts closing once a complete discovery scan
  * covers more than `session-idle` after its last buy ([AutomationDiscoveryTransaction.discoveredThrough], the scan's start less
  * the indexing margin), so a buy discovery has not reached yet can still join it; the clock alone never closes one. A closing session closes once its items
- * are settled. With capture off, a `DISCOVERED` item counts as settled, so phase 0 sessions close. Each session changes in its
+ * are settled; only closing sessions whose items are all settled are read, so sessions still waiting for items never crowd them out. With capture off, a `DISCOVERED` item counts as settled, so phase 0 sessions close. Each session changes in its
  * own transaction; one that fails is logged and the tick goes on.
  *
- * A session closed by hand has the operations of its abandoned items cancelled, then is evaluated at once, or on a later tick
- * while an earlier session of its wallet is still open.
+ * A session closed by hand has the operations of its abandoned items cancelled. Its trading day is scored when it is read
+ * ([AutomationDayService]); nothing is stored for it.
  */
 @Service
 @ConditionalOnAutomationConsole
@@ -32,7 +32,6 @@ class AutomationSessionService(
     private val sessions: AutomationSessionRepository,
     private val cancellation: AutomationCaptureCancellation,
     private val query: AutomationQueryService,
-    private val evaluation: AutomationEvaluationService,
     private val properties: AutomationProperties,
     private val runtime: AutomationRuntime,
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
@@ -49,20 +48,19 @@ class AutomationSessionService(
             }
         }
         val settled = AutomationItemState.settled(properties.captureEnabled)
-        sessions.findIdsByState(AutomationSessionState.CLOSING, BATCH).forEach { id ->
+        sessions.findIdsByStateSettledIn(AutomationSessionState.CLOSING, settled, BATCH).forEach { id ->
             isolated(id) { transaction.closeIfSettled(id, settled, now) }
         }
     }
 
     /**
      * Closes a session by hand now, abandoning its pending items, captured ones included, and cancelling the capture operations
-     * they started; then evaluates it. Closing a closed session again returns it unchanged.
+     * they started. Closing a closed session again returns it unchanged.
      */
     fun close(sessionId: String, requestId: String?): AutomationSessionDetail {
         val validRequestId = AutomationRequests.requireRequestId(requestId)
         log.info("automation session close requested sessionId={} requestId={}", sessionId, validRequestId)
         transaction.closeManually(sessionId, clock.instant()).forEach(cancellation::cancel)
-        evaluation.evaluate(sessionId)
         return query.session(sessionId)
     }
 

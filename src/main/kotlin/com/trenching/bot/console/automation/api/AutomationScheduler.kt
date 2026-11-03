@@ -1,7 +1,8 @@
 package com.trenching.bot.console.automation.api
 
+import com.trenching.bot.console.automation.application.AutomationBackfillDiscoveryService
+import com.trenching.bot.console.automation.application.AutomationBackfillService
 import com.trenching.bot.console.automation.application.AutomationDiscoveryService
-import com.trenching.bot.console.automation.application.AutomationEvaluationService
 import com.trenching.bot.console.automation.application.AutomationPipelineService
 import com.trenching.bot.console.automation.application.AutomationSessionService
 import com.trenching.bot.console.automation.application.AutomationSweepService
@@ -20,7 +21,8 @@ class AutomationScheduler(
     private val sessions: AutomationSessionService,
     private val pipeline: AutomationPipelineService,
     private val sweep: AutomationSweepService,
-    private val evaluation: AutomationEvaluationService,
+    private val backfillDiscovery: AutomationBackfillDiscoveryService,
+    private val backfills: AutomationBackfillService,
 ) {
     @Scheduled(fixedDelayString = TICK_INTERVAL)
     fun tick() {
@@ -38,8 +40,13 @@ class AutomationScheduler(
     }
 
     @Scheduled(fixedDelayString = TICK_INTERVAL)
-    fun evaluateSessions() {
-        evaluation.evaluateClosedSessions()
+    fun scanBackfill() {
+        backfillDiscovery.scan()
+    }
+
+    @Scheduled(fixedDelayString = TICK_INTERVAL)
+    fun settleBackfills() {
+        backfills.settle()
     }
 
     @Scheduled(fixedDelayString = DISCOVERY_INTERVAL)

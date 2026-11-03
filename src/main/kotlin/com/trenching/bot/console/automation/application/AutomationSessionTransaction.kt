@@ -45,13 +45,13 @@ class AutomationSessionTransaction(
     }
 
     /**
-     * The manual end: every item not yet terminal is abandoned and the session closes `MANUAL`; a closed session is left as it
-     * is. Returns the capture operations the abandoned items had started, which the caller cancels once this has committed.
+     * The manual end: every item not yet terminal is abandoned and the session closes `MANUAL`. A session that is already closed
+     * keeps its state and reason, but its non-terminal items (the phase 0 backlog) are abandoned all the same. Returns the capture
+     * operations the abandoned items had started, which the caller cancels once this has committed.
      */
     @Transactional
     fun closeManually(sessionId: String, now: Instant): List<AutomationOperationRef> {
         val session = sessions.findOneById(sessionId) ?: throw AutomationSessionNotFoundException(sessionId)
-        if (session.state == AutomationSessionState.CLOSED) return emptyList()
         val started = items.findAllBySessionIdAndStateNotIn(sessionId, AutomationItemState.TERMINAL).mapNotNull { item ->
             AutomationItemTransitions.require(item.id, item.state, AutomationItemState.ABANDONED)
             item.state = AutomationItemState.ABANDONED
@@ -60,7 +60,7 @@ class AutomationSessionTransaction(
             log.info("automation item advanced itemId={} step={} state={}", item.id, item.step, item.state)
             startedOperation(item)
         }
-        close(session, SessionCloseReason.MANUAL, now)
+        if (session.state != AutomationSessionState.CLOSED) close(session, SessionCloseReason.MANUAL, now)
         return started
     }
 

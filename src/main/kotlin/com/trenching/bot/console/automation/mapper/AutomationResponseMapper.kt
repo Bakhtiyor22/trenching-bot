@@ -1,16 +1,26 @@
 package com.trenching.bot.console.automation.mapper
 
 import com.trenching.bot.common.PageResult
+import com.trenching.bot.console.automation.api.dto.AutomationBackfillPageResponse
+import com.trenching.bot.console.automation.api.dto.AutomationBackfillResponse
+import com.trenching.bot.console.automation.api.dto.AutomationDayDetailResponse
+import com.trenching.bot.console.automation.api.dto.AutomationDayListResponse
 import com.trenching.bot.console.automation.api.dto.AutomationEvaluationPageResponse
+import com.trenching.bot.console.automation.api.dto.AutomationEvaluationResponse
 import com.trenching.bot.console.automation.api.dto.AutomationItemDetailResponse
+import com.trenching.bot.console.automation.api.dto.AutomationManualRunResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSessionDetailResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSessionPageResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSessionResponse
 import com.trenching.bot.console.automation.api.dto.AutomationStatusResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSweepRunPageResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSweepRunRowResponse
-import com.trenching.bot.console.automation.domain.AutomationEvaluationView
+import com.trenching.bot.console.automation.domain.AutomationBackfillRow
 import com.trenching.bot.console.automation.domain.AutomationItemDetail
+import com.trenching.bot.console.automation.domain.DayDetail
+import com.trenching.bot.console.automation.domain.DayList
+import com.trenching.bot.console.automation.domain.DayVerdict
+import com.trenching.bot.console.automation.domain.ManualRunResult
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionDetail
 import com.trenching.bot.console.automation.domain.AutomationSessionRow
@@ -38,7 +48,26 @@ interface AutomationResponseMapper {
 
     fun toItemCounts(counts: Map<AutomationItemState, Long>): Map<String, Long>
 
-    fun toEvaluationPage(page: PageResult<AutomationEvaluationView>): AutomationEvaluationPageResponse
+    fun toEvaluationPage(page: PageResult<DayVerdict>): AutomationEvaluationPageResponse
+
+    @Mapping(target = "signals", source = "tally.signals")
+    @Mapping(target = "scored", source = "tally.scored")
+    @Mapping(target = "unscored", source = "tally.unscored")
+    @Mapping(target = "realizedPnl", source = "tally.realizedPnl")
+    @Mapping(target = "worstCasePnl", source = "tally.worstCasePnl")
+    fun toEvaluation(verdict: DayVerdict): AutomationEvaluationResponse
+
+    @Mapping(target = "items", source = "days")
+    fun toDayList(list: DayList): AutomationDayListResponse
+
+    fun toDayDetail(detail: DayDetail): AutomationDayDetailResponse
+
+    fun toManualRun(result: ManualRunResult): AutomationManualRunResponse
+
+    fun toBackfillPage(page: PageResult<AutomationBackfillRow>): AutomationBackfillPageResponse
+
+    @Mapping(target = ".", source = "backfill")
+    fun toBackfill(row: AutomationBackfillRow): AutomationBackfillResponse
 
     fun toSweepRunPage(page: PageResult<AutomationSweepRunRow>): AutomationSweepRunPageResponse
 

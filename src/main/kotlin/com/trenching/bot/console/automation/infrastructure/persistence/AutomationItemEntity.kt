@@ -28,6 +28,7 @@ import java.time.Instant
     indexes = [
         Index(name = "idx_automation_items_due", columnList = "state, next_action_at, block_time"),
         Index(name = "idx_automation_items_session", columnList = "session_id, block_time"),
+        Index(name = "idx_automation_items_backfill", columnList = "backfill_id, state"),
     ],
 )
 class AutomationItemEntity(
@@ -57,6 +58,10 @@ class AutomationItemEntity(
     /** The provider requests of the item's capture session so far, refreshed whenever a capture step ends; null before any. */
     @Column(name = "requests_used", nullable = true)
     var requestsUsed: Int? = null
+
+    /** The backfill that found the buy (plan Rule 38), null for a buy live discovery found. */
+    @Column(name = "backfill_id", nullable = true, length = 64)
+    var backfillId: String? = null
 
     @Version @Column(name = "version", nullable = false)
     var version: Long? = null

@@ -5,13 +5,17 @@ import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.console.api.dto.CaptureBudget
 import com.trenching.bot.console.api.dto.CaptureRecoveryConfig
 import com.trenching.bot.console.application.ConsoleAddresses
+import com.trenching.bot.console.automation.domain.AutomationLimits
 import com.trenching.bot.console.automation.domain.AutomationRequestCap
+import com.trenching.bot.console.automation.domain.BackfillRules
 import com.trenching.bot.console.automation.domain.CaptureFilter
+import com.trenching.bot.console.automation.domain.DiscoveryMode
 import com.trenching.bot.console.automation.domain.EvaluationRule
 import com.trenching.bot.console.automation.domain.PollWindow
 import com.trenching.bot.console.automation.domain.SessionIdleRule
 import com.trenching.bot.console.automation.domain.SweepPlan
 import com.trenching.bot.console.automation.domain.SweepPlans
+import com.trenching.bot.console.automation.domain.TradingCalendar
 import com.trenching.bot.console.automation.domain.UnknownSweepPlanException
 import com.trenching.bot.console.capture.CaptureNames
 import com.trenching.bot.console.capture.CaptureRequestException
@@ -30,6 +34,13 @@ import org.springframework.util.unit.DataSize
  * Nothing runs unless [enabled] and the console is enabled under the local profile; [captureEnabled] false is phase 0,
  * discovery only. [operationBudget] and [recovery] are sent with each wallet and market operation automation starts and must
  * pass the capture console's own bounds for both. Startup fails on any value out of bounds, naming the property.
+ *
+ * [pollAlways] makes scheduled discovery scan at every interval; otherwise it scans inside [pollFrom]-[pollTo] only. A trading day
+ * starts at [tradingDayStart] in [zone]. [evaluationWindowSessions], kept under its original name, is the number of trading days
+ * a day's verdict covers, the day itself included. A backfill spans at most [backfillMaxDays] trading days and asks for a request
+ * budget of at most [backfillMaxRequests]; its discovery pauses while the rolling request total is within
+ * [backfillReserveRequests] of [maxRequestsPer24h], and so does the start of a backfill's capture step (its allowance included),
+ * which keeps that headroom for live capture; it covers at least one recovery allowance and one discovery tick.
  */
 @ConfigurationProperties(AutomationProperties.PREFIX)
 class AutomationProperties(
@@ -39,6 +50,8 @@ class AutomationProperties(
     val zone: ZoneId = ZoneOffset.ofHours(5),
     val pollFrom: LocalTime = LocalTime.of(18, 0),
     val pollTo: LocalTime = LocalTime.of(5, 0),
+    val pollAlways: Boolean = false,
+    val tradingDayStart: LocalTime = LocalTime.NOON,
     val tickInterval: Duration = Duration.ofMinutes(1),
     val discoveryInterval: Duration = Duration.ofMinutes(10),
     val initialLookback: Duration = Duration.ofHours(12),
@@ -55,6 +68,9 @@ class AutomationProperties(
     val evaluationWindowSessions: Int = 7,
     val minSignals: Int = 10,
     val minNetPnlSol: BigDecimal = BigDecimal.ZERO,
+    val backfillMaxDays: Int = 31,
+    val backfillMaxRequests: Long = 20_000,
+    val backfillReserveRequests: Long = 1400,
 ) {
     init {
         require(!enabled || wallet != null) { "$PREFIX.wallet is required when $PREFIX.enabled is true" }
@@ -81,7 +97,16 @@ class AutomationProperties(
         }
         requireCaptureBounds("recovery") { CaptureValidation.recovery(captureRecovery(), CaptureNames.WALLET) }
         activePlan().requireCaptureMinimumWithin(captureMinSignalSol)
-        require(evaluationWindowSessions in 1..MAX_WINDOW_SESSIONS) { "$PREFIX.evaluation-window-sessions must be between 1 and $MAX_WINDOW_SESSIONS" }
+        require(evaluationWindowSessions in 1..MAX_WINDOW_SESSIONS) { "$PREFIX.evaluation-window-sessions (trading days) must be between 1 and $MAX_WINDOW_SESSIONS" }
+        require(backfillMaxDays in 1..MAX_BACKFILL_DAYS) { "$PREFIX.backfill-max-days must be between 1 and $MAX_BACKFILL_DAYS" }
+        require(backfillMaxRequests in backfillCaptureMinBudget()..MAX_BACKFILL_REQUESTS) {
+            "$PREFIX.backfill-max-requests must be between ${backfillCaptureMinBudget()} (one recovery allowance and a discovery page, " +
+                "what a capturing backfill needs to start an operation) and $MAX_BACKFILL_REQUESTS"
+        }
+        require(backfillReserveRequests in backfillMinReserve() until maxRequestsPer24h) {
+            "$PREFIX.backfill-reserve-requests must be between ${backfillMinReserve()} (one recovery allowance and a discovery tick of " +
+                "$maxDiscoveryPages pages) and ${maxRequestsPer24h - 1}, below $PREFIX.max-requests-per-24h"
+        }
         require(minSignals in 1..MAX_MIN_SIGNALS) { "$PREFIX.min-signals must be between 1 and $MAX_MIN_SIGNALS" }
         require(minNetPnlSol.signum() >= 0 && minNetPnlSol.stripTrailingZeros().scale() <= DecimalPolicy.SCALE) {
             "$PREFIX.min-net-pnl-sol must be at least 0 with at most ${DecimalPolicy.SCALE} decimals"
@@ -95,9 +120,28 @@ class AutomationProperties(
 
     fun pollWindow(): PollWindow = PollWindow(pollFrom, pollTo, zone)
 
+    /** Scheduled discovery's mode (plan Key Decision 1): every interval with [pollAlways], else inside the polling window. */
+    fun discoveryMode(): DiscoveryMode = if (pollAlways) DiscoveryMode.Always else DiscoveryMode.Window(pollWindow())
+
+    /** The trading day boundary (plan Key Decision 3): days start at [tradingDayStart] in [zone]. */
+    fun tradingCalendar(): TradingCalendar = TradingCalendar(tradingDayStart, zone)
+
+    /**
+     * What a backfill request must satisfy (plan Rule 35): at most [backfillMaxDays] days and [backfillMaxRequests] requests, a
+     * capturing budget that pays for [backfillCaptureMinBudget], and no minimum signal below the capture filter's.
+     */
+    fun backfillRules(): BackfillRules =
+        BackfillRules(tradingCalendar(), backfillMaxDays, backfillMaxRequests, captureFilter().minSignalLamports, backfillCaptureMinBudget())
+
+    /** The least budget a capturing backfill can use: one operation's [recovery] allowance, which a step needs to start, and one discovery page. */
+    fun backfillCaptureMinBudget(): Long = recovery.requests + AutomationLimits.DISCOVERY_PAGE_REQUESTS
+
+    /** The least reserve that keeps live capture its headroom: one operation's [recovery] allowance and one discovery tick of [maxDiscoveryPages] pages. */
+    fun backfillMinReserve(): Long = recovery.requests + maxDiscoveryPages * AutomationLimits.DISCOVERY_PAGE_REQUESTS
+
     fun captureFilter(): CaptureFilter = CaptureFilter.of(captureMinSignalSol, captureFeeMarginBps)
 
-    fun idleRule(): SessionIdleRule = SessionIdleRule(sessionIdle)
+    fun idleRule(): SessionIdleRule = SessionIdleRule(sessionIdle, tradingCalendar())
 
     fun evaluationRule(): EvaluationRule = EvaluationRule(minSignals, minNetPnlSol)
 
@@ -152,6 +196,8 @@ class AutomationProperties(
         private const val MAX_STEP_ATTEMPTS = 5
         private const val MIN_REQUESTS_PER_24H = 100L
         private const val MAX_REQUESTS_PER_24H = 1_000_000L
+        private const val MAX_BACKFILL_DAYS = 62
+        private const val MAX_BACKFILL_REQUESTS = 500_000L
         private const val MAX_WINDOW_SESSIONS = 60
         private const val MAX_MIN_SIGNALS = 1000
     }

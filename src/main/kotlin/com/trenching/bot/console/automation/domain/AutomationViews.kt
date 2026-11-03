@@ -5,9 +5,11 @@ import com.trenching.bot.walletactivity.WalletActivityUnavailable
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 
+/** [backfillId] is the backfill whose buys the session groups, null for a session of live discovery. */
 data class AutomationSessionView(
     val id: String,
     val wallet: String,
@@ -19,21 +21,24 @@ data class AutomationSessionView(
     val closeReason: SessionCloseReason?,
     val belowFilterCount: Int,
     val createdAt: Instant,
+    val backfillId: String?,
 )
 
 /**
- * A session with its item counts for every state (zeros included), the provider requests its items' captures used, and its best
- * evaluation under the active plan, if any.
+ * A session with its item counts for every state (zeros included), the provider requests its items' captures used, and the
+ * trading day it belongs to (named by its start date, plan Rule 30).
  */
 data class AutomationSessionRow(
     val session: AutomationSessionView,
     val itemCounts: Map<AutomationItemState, Long>,
     val requestsUsed: Long,
-    val bestStatus: EvaluationStatus?,
-    val bestLabel: String?,
+    val tradingDay: LocalDate,
 )
 
-/** [requestsUsed] is the provider requests of the item's capture session so far, refreshed whenever a capture step ends. */
+/**
+ * [requestsUsed] is the provider requests of the item's capture session so far, refreshed whenever a capture step ends;
+ * [backfillId] is the backfill that found the buy, null for a live one.
+ */
 data class AutomationItemView(
     val id: String,
     val sessionId: String,
@@ -58,6 +63,7 @@ data class AutomationItemView(
     val requestsUsed: Int?,
     val createdAt: Instant,
     val updatedAt: Instant,
+    val backfillId: String?,
 )
 
 /** One sweep entry replayed on an item: its run, or in [outcome] the refusal code of an entry that got none. P&L is SOL at scale 12. */
@@ -82,29 +88,7 @@ data class AutomationItemDetail(val item: AutomationItemView, val sweepRuns: Lis
 /** A sweep run in the sweep run list, with the buy it replayed. */
 data class AutomationSweepRunRow(val run: AutomationSweepRunView, val mint: String, val signature: String, val blockTime: Instant?)
 
-/**
- * One sweep entry's score over the window of [sessionId] (plan Rules 24–26): [windowSessionIds] oldest first buy first, ending
- * with the session itself. P&L is SOL at scale 12, summed over the signals.
- */
-data class AutomationEvaluationView(
-    val sessionId: String,
-    val planId: String,
-    val label: String,
-    val windowSessionIds: List<String>,
-    val signals: Int,
-    val scored: Int,
-    val unscored: Int,
-    val realizedPnl: BigDecimal,
-    val worstCasePnl: BigDecimal,
-    val status: EvaluationStatus,
-    val evaluatedAt: Instant,
-)
-
-data class AutomationSessionDetail(
-    val session: AutomationSessionRow,
-    val items: List<AutomationItemView>,
-    val evaluations: List<AutomationEvaluationView>,
-)
+data class AutomationSessionDetail(val session: AutomationSessionRow, val items: List<AutomationItemView>)
 
 /** [resumeBefore] is set while discovery works through a backlog larger than one scan: the next scan continues from it. */
 data class AutomationWatermarkView(
@@ -128,8 +112,11 @@ data class AutomationHeartbeat(
 }
 
 /**
- * Automation's settings and state for the console. [requestsLast24h] counts every provider request of the rolling day, manual
- * captures included, against [maxRequestsPer24h]. [nextTickAt] is null until the scheduler has ticked.
+ * Automation's settings and state for the console. [mode] is how scheduled discovery decides to scan, and [inPollWindow] whether
+ * it scans now by that rule. [manualRunQueued] is true while a "run now" pass is queued or running. [coveredFrom] is where live
+ * coverage starts (plan Rule 32), and [tradingDayStart] the local time in [zone] at which a trading day starts.
+ * [requestsLast24h] counts every provider request of the rolling day, manual captures included, against [maxRequestsPer24h].
+ * [nextTickAt] is null until the scheduler has ticked. [activeBackfillId] is the wallet's queued, scanning or capturing backfill, if any.
  */
 data class AutomationStatus(
     val enabled: Boolean,
@@ -139,7 +126,11 @@ data class AutomationStatus(
     val zone: ZoneId,
     val pollFrom: LocalTime,
     val pollTo: LocalTime,
+    val mode: DiscoveryMode,
     val inPollWindow: Boolean,
+    val manualRunQueued: Boolean,
+    val tradingDayStart: LocalTime,
+    val coveredFrom: Instant?,
     val watermark: AutomationWatermarkView?,
     val requestsLast24h: Long,
     val maxRequestsPer24h: Long,
@@ -149,4 +140,45 @@ data class AutomationStatus(
     val lastDiscoveryAt: Instant?,
     val discoveryProblem: WalletActivityUnavailable?,
     val openSessionId: String?,
+    val activeBackfillId: String?,
+)
+
+/**
+ * One trading day at a glance (plan Rules 32-34). [buys] are the items of its sessions, [belowFilter] the buys the capture filter
+ * skipped, [captured] the items whose capture finished (captured or simulated), and [requestsUsed] their captures' provider
+ * requests. [bestStatus] and [bestLabel] are the day's best row under the active plan, or `PENDING` with [pendingDay] and no
+ * label while a day of its window is incomplete.
+ */
+data class DaySummary(
+    val day: LocalDate,
+    val from: Instant,
+    val to: Instant,
+    val covered: Boolean,
+    val complete: Boolean,
+    val sessions: Int,
+    val buys: Int,
+    val belowFilter: Int,
+    val captured: Int,
+    val simulated: Int,
+    val failed: Int,
+    val abandoned: Int,
+    val requestsUsed: Long,
+    val bestStatus: String?,
+    val bestLabel: String?,
+    val pendingDay: LocalDate?,
+)
+
+/** The days from [from] to [to], newest first. */
+data class DayList(val from: LocalDate, val to: LocalDate, val days: List<DaySummary>)
+
+/** Whether live discovery (and, later, finished backfills) covered all of a day, and the ranges that are covered. */
+data class DayCoverage(val covered: Boolean, val ranges: List<TimeRange>)
+
+/** One trading day: its summary and coverage, its sessions and items, and its row for every entry of the active plan. */
+data class DayDetail(
+    val summary: DaySummary,
+    val coverage: DayCoverage,
+    val sessions: List<AutomationSessionRow>,
+    val items: List<AutomationItemView>,
+    val evaluations: List<DayVerdict>,
 )

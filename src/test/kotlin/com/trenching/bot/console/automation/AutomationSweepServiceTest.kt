@@ -278,6 +278,20 @@ class AutomationSweepServiceTest : AutomationDatabaseTest() {
         assertEquals(AutomationItemState.CAPTURED, items.findOneById("item-1")?.state)
     }
 
+    @Test
+    fun `a tick sweeps live captured buys before those of a backfill, however old the backfill's are`() {
+        val datasetId = register("take-profit", takeProfit())
+        captured(1, datasetId, blockOffsetSeconds = -86_400)
+        items.findOneById("item-1")?.let { items.save(it.also { backfillItem -> backfillItem.backfillId = "backfill" }) }
+        (2..AutomationLimits.SWEEP_ITEMS_PER_TICK + 1).forEach { n -> captured(n, datasetId, blockOffsetSeconds = 100L + n) }
+
+        service().sweep()
+
+        val simulated = items.findAll().filter { it.state == AutomationItemState.SIMULATED }.map { it.id }.toSet()
+        assertEquals((2..AutomationLimits.SWEEP_ITEMS_PER_TICK + 1).map { "item-$it" }.toSet(), simulated)
+        assertEquals(AutomationItemState.CAPTURED, items.findOneById("item-1")?.state, "the backfill's item waits for a tick with a free slot")
+    }
+
     private fun service(runs: SimulationRuns = simulationRuns, properties: AutomationProperties = properties(captureEnabled = true)) =
         AutomationSweepService(sweepTransaction, pipelineTransaction, runs, runCycles, properties, clock)
 
