@@ -1,4 +1,4 @@
-import { createSetupHandlers, withRunSetup, datasetSource } from './setupHandlers';
+import { createSetupHandlers, withRunSetup, datasetSource, runPreset } from './setupHandlers';
 import { mockState } from './previewState';
 import { delay, http, HttpResponse } from 'msw';
 import type {
@@ -8,15 +8,17 @@ import type {
   ChartResponse,
   Dataset,
   Observation,
+  Range,
   RunStartRequest,
   SolanaCheck,
   SolanaStatus,
 } from '../api/types';
 import { SAMPLE_DATASET } from '../api/endpoints';
-import { isSolanaAddress } from '../lib/base58';
+import { base58ByteLength, isSolanaAddress } from '../lib/base58';
 import { SELL_CHECK_NEEDS_TRADES, SIGNAL_SIZE_NEEDS_TRADES } from '../lib/codes';
 import { recordsTrades, TRADES_SCHEMA_VERSION } from '../lib/datasetSchema';
-import { compareDecimals } from '../lib/decimal';
+import { compareDecimals, decimalSign } from '../lib/decimal';
+import { bpsToPercent } from '../lib/percent';
 import { createCaptureHandlers, resetCaptureMocks } from './captureHandlers';
 import { createAutomationHandlers, resetAutomationMocks } from './automationHandlers';
 import {
@@ -77,6 +79,18 @@ export function resetMockDb(): void {
 function error(status: number, code: string, message: string, fields: Record<string, string> = {}) {
   const body: ApiErrorBody = { code, message, fields };
   return HttpResponse.json(body, { status });
+}
+
+/** `InvalidConsoleRequestException` as `ConsoleExceptionHandler` answers it: a 400 naming the one bad field. */
+function invalidRequest(field: string, reason: string) {
+  return error(400, 'INVALID_REQUEST', `Invalid request field=${field} reason=${reason}`, {
+    [field]: reason,
+  });
+}
+
+/** `DatasetNotFoundException`, which every dataset endpoint and the run start answer with. */
+function datasetNotFound(id: string) {
+  return error(404, 'DATASET_NOT_FOUND', `Replay dataset not found datasetId=${id}`);
 }
 
 /** A catalog dataset by id, or the v4 chart fixture, which the catalog does not list but serves by id. */
@@ -388,8 +402,27 @@ function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
   } satisfies ChartResponse);
 }
 
-const PLAIN_DECIMAL = /^[0-9]+(\.[0-9]+)?$/;
+// ConsoleConfigValidator, field by field: the same checks, in its order, with its messages and error codes.
+const PLAIN_DECIMAL = /^[0-9]{1,64}(\.[0-9]{1,64})?$/;
+const PERCENT = /^[0-9]+(\.[0-9]{1,2})?$/;
 const DECIMAL_FORMAT_MESSAGE = 'must be a plain decimal string such as "100" or "0.5"';
+const PERCENT_FORMAT_MESSAGE =
+  'must be a percent string with at most 2 decimals, such as "20" or "15.5"';
+/** `DecimalPolicy.SCALE`: the market cap and transaction cost are rounded to it before their range is checked. */
+const STORAGE_SCALE = 12;
+/** Each level's basis point field and its percent twin: either may be sent, and both must then agree. */
+const LEVELS = [
+  ['dipBps', 'dipPercent'],
+  ['takeProfitBps', 'takeProfitPercent'],
+  ['stopLossBps', 'stopLossPercent'],
+] as const;
+const PERCENT_FIELDS: ReadonlySet<string> = new Set(LEVELS.map(([, percent]) => percent));
+/** `ConfigErrorCode`'s messages. */
+const CONFIG_ERROR_MESSAGES = {
+  CONFIG_INVALID: 'Simulation configuration is invalid',
+  INVALID_PERCENT: 'A percent setting is invalid',
+  CONFLICTING_FIELDS: 'A percent setting disagrees with its basis point field',
+} as const;
 /** Every property the backend's config request accepts; any other is reported, as the backend does. */
 const CONFIG_FIELDS = new Set([
   'notional',
@@ -413,99 +446,192 @@ const CONFIG_FIELDS = new Set([
   'minSignalSol',
 ]);
 
-function validateConfig(config: RunStartRequest['config']): Record<string, string> {
-  const fields: Record<string, string> = {};
-  if (!config) return fields;
+type FieldErrors = Record<string, string>;
+
+/** JSON null or a missing property: the field keeps its default. */
+function isAbsent(value: unknown): value is null | undefined {
+  return value == null;
+}
+
+/** A plain decimal string, or null when absent or reported as malformed. */
+function decimalOrNull(field: string, value: unknown, errors: FieldErrors): string | null {
+  if (isAbsent(value)) return null;
+  if (typeof value === 'string' && PLAIN_DECIMAL.test(value)) return value;
+  errors[field] = DECIMAL_FORMAT_MESSAGE;
+  return null;
+}
+
+/** A JSON integer within [range], or null when absent or reported as invalid. */
+function integerOrNull(
+  field: string,
+  value: unknown,
+  range: Range,
+  errors: FieldErrors,
+): number | null {
+  if (isAbsent(value)) return null;
+  if (
+    typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= range.min &&
+    (range.max === null || value <= range.max)
+  )
+    return value;
+  errors[field] =
+    range.max === null
+      ? `must be an integer of at least ${range.min}`
+      : `must be an integer between ${range.min} and ${range.max}`;
+  return null;
+}
+
+/** A percent string as exact basis points within [range], or null when absent or reported as invalid. */
+function percentBpsOrNull(
+  field: string,
+  value: unknown,
+  range: Range,
+  errors: FieldErrors,
+): number | null {
+  if (isAbsent(value)) return null;
+  if (typeof value !== 'string' || !PERCENT.test(value)) {
+    errors[field] = PERCENT_FORMAT_MESSAGE;
+    return null;
+  }
+  const [whole = '', fraction = ''] = value.split('.');
+  const bps = BigInt(whole + fraction.padEnd(2, '0'));
+  if (bps < BigInt(range.min) || (range.max !== null && bps > BigInt(range.max))) {
+    const min = bpsToPercent(range.min);
+    errors[field] =
+      range.max === null
+        ? `must be at least ${min} percent`
+        : `must be between ${min} and ${bpsToPercent(range.max)} percent`;
+    return null;
+  }
+  return Number(bps);
+}
+
+/** Decimals left once trailing zeros are dropped: `stripTrailingZeros().scale()` for a value with a fraction. */
+function significantDecimals(value: string): number {
+  return (value.split('.')[1] ?? '').replace(/0+$/, '').length;
+}
+
+/** `DecimalPolicy.scale`: a plain decimal rounded half to even to `STORAGE_SCALE` decimals. */
+function storageScaled(value: string): string {
+  const [whole = '', fraction = ''] = value.split('.');
+  if (fraction.length <= STORAGE_SCALE) return value;
+  const kept = BigInt(whole + fraction.slice(0, STORAGE_SCALE));
+  const dropped = fraction.slice(STORAGE_SCALE);
+  const half = '5'.padEnd(dropped.length, '0');
+  // Digit strings of the same length compare like the numbers they spell.
+  const up = dropped > half || (dropped === half && kept % 2n === 1n);
+  const digits = String(kept + (up ? 1n : 0n)).padStart(STORAGE_SCALE + 1, '0');
+  return `${digits.slice(0, -STORAGE_SCALE)}.${digits.slice(-STORAGE_SCALE)}`;
+}
+
+/** True when the plain decimal [value] lies outside [range]; a null maximum is unbounded. */
+function outside(
+  value: string,
+  { min, max }: { min: string | number; max: string | number | null },
+): boolean {
+  return (
+    compareDecimals(value, String(min)) < 0 ||
+    (max !== null && compareDecimals(value, String(max)) > 0)
+  );
+}
+
+/** A valid [field] whose pair was not sent reports the pair as missing; an invalid one is already reported on its own. */
+function requirePair(
+  field: string,
+  value: number | null,
+  pairField: string,
+  pair: unknown,
+  errors: FieldErrors,
+) {
+  if (value !== null && isAbsent(pair)) errors[pairField] = `must be set together with ${field}`;
+}
+
+/**
+ * `ConsoleConfigValidator.validate` as the backend answers it: a 400 naming every bad field under the most specific
+ * `ConfigErrorCode` (a conflict, then a bad percent, then any other error), or null for a valid configuration.
+ */
+function configRefusal(config: RunStartRequest['config']) {
+  if (isAbsent(config)) return null;
   const { limits } = configDefaults;
-  if (config.notional !== undefined) {
-    if (typeof config.notional !== 'string' || !PLAIN_DECIMAL.test(config.notional)) {
-      fields.notional = DECIMAL_FORMAT_MESSAGE;
-    } else if (
-      (config.notional.split('.')[1] ?? '').replace(/0+$/, '').length > limits.notionalScale
-    ) {
-      fields.notional = `must be a whole number of lamports: at most ${limits.notionalScale} decimals`;
-    } else if (!/[1-9]/.test(config.notional)) {
-      fields.notional = 'must be at least one lamport';
+  const errors: FieldErrors = {};
+  const conflicts = new Set<string>();
+  const notional = decimalOrNull('notional', config.notional, errors);
+  if (notional !== null) {
+    const [whole = ''] = notional.split('.');
+    const integerDigits = limits.notionalPrecision - limits.notionalScale;
+    if (significantDecimals(notional) > limits.notionalScale)
+      errors.notional = `must be a whole number of lamports: at most ${limits.notionalScale} decimals`;
+    else if (decimalSign(notional) === 0) errors.notional = 'must be at least one lamport';
+    else if (whole.replace(/^0+/, '').length > integerDigits)
+      errors.notional = `must have at most ${integerDigits} integer digits`;
+  }
+  integerOrNull('maxAgeSlots', config.maxAgeSlots, limits.maxAgeSlots, errors);
+  for (const [bpsField, percentField] of LEVELS) {
+    const range = limits[bpsField];
+    const bps = integerOrNull(bpsField, config[bpsField], range, errors);
+    const percent = percentBpsOrNull(percentField, config[percentField], range, errors);
+    if (bps !== null && percent !== null && bps !== percent) {
+      errors[percentField] =
+        `must equal ${bpsField} when both are sent: ${bpsField} ${bps} is ${bpsToPercent(bps)} percent`;
+      conflicts.add(percentField);
     }
   }
-  if (config.transactionCostSol !== undefined) {
+  const marketCap = decimalOrNull('minMarketCapUsd', config.minMarketCapUsd, errors);
+  if (marketCap !== null && outside(storageScaled(marketCap), limits.minMarketCapUsd)) {
+    const { min, max } = limits.minMarketCapUsd;
+    errors.minMarketCapUsd = `must be between ${min} and ${max} US dollars`;
+  }
+  integerOrNull('horizonSlots', config.horizonSlots, limits.horizonSlots, errors);
+  integerOrNull('latencySlots', config.latencySlots, limits.latencySlots, errors);
+  const cost = decimalOrNull('transactionCostSol', config.transactionCostSol, errors);
+  if (cost !== null && outside(storageScaled(cost), limits.transactionCostSol)) {
     const { min, max } = limits.transactionCostSol;
-    if (
-      typeof config.transactionCostSol !== 'string' ||
-      !PLAIN_DECIMAL.test(config.transactionCostSol)
-    ) {
-      fields.transactionCostSol = DECIMAL_FORMAT_MESSAGE;
-    } else if (
-      compareDecimals(config.transactionCostSol, min) < 0 ||
-      compareDecimals(config.transactionCostSol, max) > 0
-    ) {
-      fields.transactionCostSol = `must be between ${min} and ${max} SOL`;
-    }
+    errors.transactionCostSol = `must be between ${min} and ${max} SOL`;
   }
-  const ranges = {
-    maxAgeSlots: limits.maxAgeSlots,
-    dipBps: limits.dipBps,
-    takeProfitBps: limits.takeProfitBps,
-    stopLossBps: limits.stopLossBps,
-    horizonSlots: limits.horizonSlots,
-    latencySlots: limits.latencySlots,
-  } as const;
-  for (const [field, range] of Object.entries(ranges)) {
-    const value = (config as Record<string, unknown>)[field];
-    if (value === undefined) continue;
-    const ok =
-      typeof value === 'number' &&
-      Number.isInteger(value) &&
-      value >= range.min &&
-      (range.max === null || value <= range.max);
-    if (!ok) {
-      fields[field] =
-        range.max === null
-          ? `must be an integer of at least ${range.min}`
-          : `must be an integer between ${range.min} and ${range.max}`;
-    }
-  }
+  // `MintAddress.of`, which unlike isSolanaAddress does not trim.
   if (
-    config.minMarketCapUsd !== undefined &&
-    (typeof config.minMarketCapUsd !== 'string' || !PLAIN_DECIMAL.test(config.minMarketCapUsd))
-  ) {
-    fields.minMarketCapUsd = DECIMAL_FORMAT_MESSAGE;
-  }
-  if (config.quoteMint !== undefined && !isSolanaAddress(String(config.quoteMint))) {
-    fields.quoteMint = 'must be a 32-byte base58 address';
-  }
-  // The optional clocks: whole milliseconds or null; the exit pair is set together, and an invalid clock is
-  // reported alone, never also as a missing pair (the backend's messages).
-  const clocks = ['dipWindowMs', 'maxHoldMs', 'hardExitStartMs'] as const;
-  for (const field of clocks) {
-    const value = config[field];
-    if (value === undefined || value === null) continue;
-    const range = limits[field];
-    if (
-      typeof value !== 'number' ||
-      !Number.isInteger(value) ||
-      value < range.min ||
-      (range.max !== null && value > range.max)
-    )
-      fields[field] = `must be an integer between ${range.min} and ${range.max}`;
-  }
-  const holdSet = config.maxHoldMs !== undefined && config.maxHoldMs !== null;
-  const hardSet = config.hardExitStartMs !== undefined && config.hardExitStartMs !== null;
-  if (holdSet && !hardSet && !fields.maxHoldMs)
-    fields.hardExitStartMs = 'must be set together with maxHoldMs';
-  if (hardSet && !holdSet && !fields.hardExitStartMs)
-    fields.maxHoldMs = 'must be set together with hardExitStartMs';
+    !isAbsent(config.quoteMint) &&
+    (typeof config.quoteMint !== 'string' || base58ByteLength(config.quoteMint) !== 32)
+  )
+    errors.quoteMint = 'must be a 32-byte base58 address';
+  integerOrNull('dipWindowMs', config.dipWindowMs, limits.dipWindowMs, errors);
+  const maxHoldMs = integerOrNull('maxHoldMs', config.maxHoldMs, limits.maxHoldMs, errors);
+  const hardExitStartMs = integerOrNull(
+    'hardExitStartMs',
+    config.hardExitStartMs,
+    limits.hardExitStartMs,
+    errors,
+  );
+  requirePair('maxHoldMs', maxHoldMs, 'hardExitStartMs', config.hardExitStartMs, errors);
+  requirePair('hardExitStartMs', hardExitStartMs, 'maxHoldMs', config.maxHoldMs, errors);
   if (
-    config.priceMeasure != null &&
+    !isAbsent(config.priceMeasure) &&
     !(limits.priceMeasure as unknown[]).includes(config.priceMeasure)
   )
-    fields.priceMeasure = `must be one of ${limits.priceMeasure.join(', ')}`;
-  if (config.followWalletSells != null && typeof config.followWalletSells !== 'boolean')
-    fields.followWalletSells = 'must be true or false';
+    errors.priceMeasure = `must be one of ${limits.priceMeasure.join(', ')}`;
+  if (!isAbsent(config.followWalletSells) && typeof config.followWalletSells !== 'boolean')
+    errors.followWalletSells = 'must be true or false';
+  const minSignal = decimalOrNull('minSignalSol', config.minSignalSol, errors);
+  // The fixture's limits always carry the minimum signal size, which older backends left out.
+  const signalRange = limits.minSignalSol!;
+  if (
+    minSignal !== null &&
+    (significantDecimals(minSignal) > limits.minSignalSolScale! || outside(minSignal, signalRange))
+  )
+    errors.minSignalSol = `must be a whole number of lamports between ${signalRange.min} and ${signalRange.max} SOL`;
   for (const field of Object.keys(config)) {
-    if (!CONFIG_FIELDS.has(field)) fields[field] = 'is not a configuration field';
+    if (!CONFIG_FIELDS.has(field)) errors[field] = 'is not a configuration field';
   }
-  return fields;
+  if (Object.keys(errors).length === 0) return null;
+  const code =
+    conflicts.size > 0
+      ? 'CONFLICTING_FIELDS'
+      : Object.keys(errors).some((field) => PERCENT_FIELDS.has(field))
+        ? 'INVALID_PERCENT'
+        : 'CONFIG_INVALID';
+  return error(400, code, CONFIG_ERROR_MESSAGES[code], errors);
 }
 
 function solanaStatus(options: MockOptions): SolanaStatus {
@@ -603,14 +729,13 @@ export function createHandlers(options: MockOptions = {}) {
             ...dataset,
             source: { ...datasetSource, datasetId: dataset.id, datasetName: dataset.name },
           })
-        : error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
+        : datasetNotFound(String(params.id));
     }),
 
     http.delete('/api/datasets/:id', async ({ params }) => {
       await wait();
       const index = db.datasets.findIndex((d) => d.id === params.id);
-      if (index < 0)
-        return error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
+      if (index < 0) return datasetNotFound(String(params.id));
       db.datasets.splice(index, 1);
       return new HttpResponse(null, { status: 204 });
     }),
@@ -618,8 +743,7 @@ export function createHandlers(options: MockOptions = {}) {
     http.get('/api/datasets/:id/observations', async ({ params, request }) => {
       await wait();
       const dataset = findDataset(params.id);
-      if (!dataset)
-        return error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
+      if (!dataset) return datasetNotFound(String(params.id));
       const pair = new URL(request.url).searchParams.get('pair');
       const all =
         dataset.id === V4_DATASET_ID
@@ -633,8 +757,7 @@ export function createHandlers(options: MockOptions = {}) {
     http.get('/api/datasets/:id/chart', async ({ params, request }) => {
       await wait();
       const dataset = findDataset(params.id);
-      if (!dataset)
-        return error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
+      if (!dataset) return datasetNotFound(String(params.id));
       const url = new URL(request.url);
       const pair = url.searchParams.get('pair');
       if (!pair || !dataset.pairs.some((item) => `${item.base}/${item.quote}` === pair))
@@ -659,19 +782,18 @@ export function createHandlers(options: MockOptions = {}) {
     http.post('/api/runs', async ({ request }) => {
       await wait();
       const body = (await request.json()) as RunStartRequest;
-      if (!body?.datasetId)
-        return error(400, 'INVALID_REQUEST', 'datasetId is required', { datasetId: 'is required' });
-      const fields = validateConfig(body.config);
-      if (Object.keys(fields).length > 0) {
-        return error(400, 'CONFIG_INVALID', 'Simulation configuration is invalid', fields);
-      }
-      const dataset = findDataset(body.datasetId);
-      if (!dataset) {
-        return error(404, 'DATASET_NOT_FOUND', `Dataset ${body.datasetId} not found`);
-      }
+      // RunLaunchService.start's order: the dataset id, the preset, the configuration, then the dataset itself.
+      const datasetId = String(body?.datasetId ?? '').trim();
+      if (!datasetId) return invalidRequest('datasetId', 'is required');
+      if (body.presetId != null && body.presetId !== runPreset.id)
+        return invalidRequest('presetId', 'is not a known preset');
+      const configError = configRefusal(body.config);
+      if (configError) return configError;
+      const dataset = findDataset(datasetId);
+      if (!dataset) return datasetNotFound(datasetId);
       const refusal = tradesRefusal(dataset.schemaVersion, body.config);
       if (refusal) return refusal;
-      const runId = runForDataset[body.datasetId] ?? Object.keys(runRecords)[0]!;
+      const runId = runForDataset[datasetId] ?? Object.keys(runRecords)[0]!;
       const records = runRecords[runId]!;
       const created = !db.startedRuns.has(runId);
       db.startedRuns.add(runId);

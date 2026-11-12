@@ -179,6 +179,8 @@ describe('DatasetDetailPage', () => {
 
   it('shows an unknown dataset', async () => {
     renderDataset('missing');
-    expect(await screen.findByText('Dataset missing not found')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Replay dataset not found datasetId=missing'),
+    ).toBeInTheDocument();
   });
 });

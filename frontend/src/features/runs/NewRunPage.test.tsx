@@ -147,7 +147,9 @@ describe('NewRunPage', () => {
 
   it('shows an unknown linked dataset instead of choosing a different one', async () => {
     renderNewRun('/runs/new?datasetId=missing');
-    expect(await screen.findByText('Dataset missing not found')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Replay dataset not found datasetId=missing'),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Start run/ })).not.toBeInTheDocument();
   });
 
