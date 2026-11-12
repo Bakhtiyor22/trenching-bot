@@ -291,6 +291,21 @@ describe('NewRunPage', () => {
     expect(document.querySelectorAll('[aria-invalid="true"]')).toHaveLength(2);
   });
 
+  it('lets a long id in the refusal wrap inside the alert instead of being clipped', async () => {
+    const message = `Replay dataset not found datasetId=${SAMPLE_DATASET_ID}`;
+    server.use(
+      http.post('/api/runs', () =>
+        HttpResponse.json({ code: 'DATASET_NOT_FOUND', message, fields: {} }, { status: 404 }),
+      ),
+    );
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Fill delay/);
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+
+    const refusal = await screen.findByRole('alert', { name: NOT_STARTED });
+    expect(within(refusal).getByText(message)).toHaveStyle({ overflowWrap: 'anywhere' });
+  });
+
   it('highlights the fields a refused comparison run names, as a refused start does', async () => {
     refuseRunStarts('CONFIG_INVALID', CONFIG_INVALID_MESSAGE, {
       dipWindowMs: 'must be an integer between 1000 and 20000',

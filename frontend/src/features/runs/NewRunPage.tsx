@@ -763,7 +763,8 @@ function RunStartError({
       role="alert"
     >
       <Stack gap="xs">
-        <Text size="sm">
+        {/* Backend messages carry ids (a 64-character dataset id) that must wrap at 375 px, not be clipped. */}
+        <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
           {coverageEnded
             ? 'Its capture stopped recording the token once the outcome under the old default rules was decided, so a run with these settings would be cut short. Run the old defaults on it, or capture the token again with the market cutoff set to the whole window.'
             : (trades?.text ?? message)}
