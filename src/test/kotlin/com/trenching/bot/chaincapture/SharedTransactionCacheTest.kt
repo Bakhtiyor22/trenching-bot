@@ -4,6 +4,7 @@ import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
+import com.trenching.bot.support.DirectoryLinks
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicInteger
@@ -164,7 +165,7 @@ class SharedTransactionCacheTest {
     @Test
     fun `a cache directory that is a symbolic link is refused`() {
         val real = Files.createDirectory(directory.resolve("real"))
-        val link = Files.createSymbolicLink(directory.resolve("link"), real)
+        val link = DirectoryLinks.create(directory.resolve("link"), real)
         val failure = runCatching { SharedTransactionCache(link, testMapper) }.exceptionOrNull()
         assertTrue(failure is CaptureValidationException, failure.toString())
     }

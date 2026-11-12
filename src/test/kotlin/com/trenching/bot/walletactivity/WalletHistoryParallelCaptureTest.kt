@@ -11,6 +11,7 @@ import com.trenching.bot.walletactivity.application.WalletHistoryCaptureService
 import com.trenching.bot.walletactivity.infrastructure.capture.WalletHistoryArtifactStore
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -176,8 +177,13 @@ class WalletHistoryParallelCaptureTest {
             """"transaction":{"signatures":["$signature"],"message":{"accountKeys":[{"pubkey":"${wallet.value}","signer":true,"writable":true}],""" +
             """"instructions":[{"programId":"${wallet.value}","accounts":[],"data":""}],"recentBlockhash":"${wallet.value}"}}}"""
 
+    /**
+     * Entry [index]'s 64-byte signature: the base58 of a SHA-512 digest, as random as a real one. Artifacts are stored as
+     * `<signature>.json`, so on a case-insensitive file system (Windows, macOS) two signatures that differ only in letter case
+     * share one file. Zero bytes with the index at the end did that (entry 9 ends in `A`, entry 33 in `a`): 70 entries left 47 files.
+     */
     private fun signature(index: Int): String =
-        Base58.encode(ByteArray(64).also { bytes -> bytes[62] = (index shr 8).toByte(); bytes[63] = index.toByte() })
+        Base58.encode(MessageDigest.getInstance("SHA-512").digest("wallet-history-$index".toByteArray()))
 
     private val wallet = WalletAddress.of("1".repeat(32))
 

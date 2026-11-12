@@ -22,6 +22,21 @@ Update 2026-11-03 (automation): the approved [capture and sweep automation plan]
 
 Update 2026-11-03 (always-on and backfill): the approved [always-on, trading days and backfill plan](plans/archive/20261103-always-on-automation-trading-days-backfill.md) is delivered for the backend. Automation can run around the clock (`poll-always`), discovery can be started by hand, results are grouped into noon-to-noon UTC+5 trading days and scored over the last 7 on read, and date-range backfills (dry run, token list, minimum signal size, request budget) extend history before live coverage and are captured after live buys. The build ran 1997 tests with only the 5 known Windows failures. Production applies `docs/schema/V20261103120000__automation_backfill.sql` by hand. The frontend controls and day views remain.
 
+Update 2026-11-12 (green test suite on Windows): `./gradlew test` passes on Windows, 1999 tests with none failed or skipped. The "5 known Windows failures" each had their own cause, and a fresh Windows checkout showed a sixth:
+
+1. `WalletActivityConfigurationTest` registered its clock without the `simulationClock` name that `WalletActivityConfiguration` has required since `49700e8` (2026-10-19). The test now names it.
+2. `SharedTransactionCacheTest > a cache directory that is a symbolic link is refused` could not create a symbolic link: Windows grants that only with Developer Mode or administrator rights. Tried with a directory junction, which any account can create, it exposed a real gap. `CaptureArtifactStore` refused only symbolic links and Java reads a junction as a plain directory, so the shared transaction cache and every capture directory followed junctions. The store now refuses any reparse point, as the console's `CapturePathPolicy` already did.
+3. `TransactionCacheOptionTest` expected `/var/cache/tx` back unchanged. On Windows that path is drive-relative and is rightly made absolute (`D:\var\cache\tx`).
+4. and 5. `WalletHistoryParallelCaptureTest`'s fixture signatures were zero bytes ending in the entry number, so entry 9 ended in `A` and entry 33 in `a`. NTFS ignores letter case, so their `<signature>.json` artifacts overwrote each other: 70 entries left 47 files at concurrency 1 and 4 alike, and the sequential reference capture failed its own `ARTIFACT_HASH` check. The parallel capture is deterministic: both concurrencies lost the same files, and with signatures derived from SHA-512 each test passed 25 repeated runs with byte-identical manifests and artifacts. Real signatures are random 64-byte values, so a collision by letter case alone is not a practical risk, and inspection's hash check would reject one.
+6. `ReplayRunnerTest > datasets persistence would reject fail at load time` edited the sample dataset by matching an LF line break. Git for Windows checks files out with CRLF (`core.autocrlf=true`; the repository has no `.gitattributes`), so the edit matched nothing in a fresh checkout. It now matches any line break.
+
+Remaining OS-specific cases: no test is disabled on any OS. These four make their directory link with `support/DirectoryLinks`, which on Windows without the symbolic link privilege makes a junction instead, and skip only if neither link can be made:
+
+- `SharedTransactionCacheTest > a cache directory that is a symbolic link is refused`
+- `CaptureArtifactStoreTest > a transactions directory that is a link is refused and nothing is written through it`
+- `CaptureArtifactStoreTest > an artifact reached through a linked directory is never read`
+- `CaptureSessionServiceTest > deletion removes a link inside the session without following it`
+
 The original WEEKLY_EXECUTION_PLAN was copied unchanged from the primary checkout. The deterministic, curated-fixture flow now includes durable PostgreSQL persistence. The complete production/live-data roadmap is not finished.
 
 ## Baseline and roadmap audit

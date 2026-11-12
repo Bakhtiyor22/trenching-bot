@@ -10,6 +10,7 @@ import com.trenching.bot.console.api.dto.CaptureOperationRequest
 import com.trenching.bot.console.api.dto.CaptureRenameRequest
 import com.trenching.bot.console.api.dto.CaptureWalletSettings
 import com.trenching.bot.replay.CaptureStepCommand
+import com.trenching.bot.support.DirectoryLinks
 import com.trenching.bot.walletactivity.WalletHistoryCaptureLimits
 import java.nio.file.Files
 import java.nio.file.Path
@@ -22,7 +23,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -234,7 +234,7 @@ class CaptureSessionServiceTest {
         fixture.create()
         val outside = Files.writeString(Files.createDirectories(root.resolve("outside")).resolve("keep.json"), "keep")
         val link = root.resolve("console/session-1/linked")
-        link(link, root.resolve("outside"))
+        DirectoryLinks.create(link, root.resolve("outside"))
 
         fixture.sessions.delete("session-1")
 
@@ -294,14 +294,6 @@ class CaptureSessionServiceTest {
 
         assertFalse(Files.exists(root.resolve("console/.deleted-old-1")))
         assertTrue(Files.exists(root.resolve("console/session-1/session.json")))
-    }
-
-    /** A symbolic link, or on Windows without that privilege a directory junction, which needs none. */
-    private fun link(link: Path, target: Path) {
-        try { Files.createSymbolicLink(link, target); return } catch (_: Exception) { }
-        assumeTrue(System.getProperty("os.name").startsWith("Windows"), "links unavailable")
-        val process = ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toString()).redirectErrorStream(true).start()
-        assumeTrue(process.waitFor() == 0 && Files.exists(link.resolve("keep.json")), "junction unavailable")
     }
 
     /** Records a successful export, calibration and imported dataset against the current attempts. */

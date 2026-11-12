@@ -6,8 +6,11 @@ import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 
 class TransactionCacheOptionTest {
+    @TempDir lateinit var directory: Path
+
     private fun split(vararg args: String) = TransactionCacheOption.split(arrayOf(*args))
 
     @Test
@@ -19,8 +22,9 @@ class TransactionCacheOptionTest {
 
     @Test
     fun `the option is removed from the arguments the capture command parses`() {
-        val result = split("--wallet", "w", "--transaction-cache-directory", "/var/cache/tx", "--directory", "d") as CommandArguments.Valid
-        assertEquals(Path.of("/var/cache/tx"), result.value.directory)
+        val cache = directory.resolve("tx-cache")
+        val result = split("--wallet", "w", "--transaction-cache-directory", cache.toString(), "--directory", "d") as CommandArguments.Valid
+        assertEquals(cache.toAbsolutePath().normalize(), result.value.directory)
         assertEquals(listOf("--wallet", "w", "--directory", "d"), result.value.remaining.toList())
     }
 
