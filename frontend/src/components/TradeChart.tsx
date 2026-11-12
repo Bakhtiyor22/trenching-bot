@@ -738,7 +738,9 @@ function TradeChartView({
               </Text>
               <Text
                 size="xs"
-                title={[basis.rateSource, basis.rateGranularity].filter(Boolean).join(' · ') || undefined}
+                title={
+                  [basis.rateSource, basis.rateGranularity].filter(Boolean).join(' · ') || undefined
+                }
               >
                 Rate: {basis.rateSource ? rateSourceLabel(basis.rateSource) : 'unavailable'} ·{' '}
                 {basis.rateGranularity ? intervalLabel(basis.rateGranularity) : 'unavailable'}
@@ -789,14 +791,23 @@ function TradeChartView({
       {!basis.available && (
         <Text size="xs" c="orange" mb="xs" title={basis.unavailableReason ?? undefined}>
           ▲ Market cap unavailable
-          {basis.unavailableReason ? `: ${codeLabel(basis.unavailableReason)}` : ''}. Showing Price (SOL).
+          {basis.unavailableReason ? `: ${codeLabel(basis.unavailableReason)}` : ''}. Showing Price
+          (SOL).
         </Text>
       )}
       {full.isError && (
-        <RefreshNotice error={full.error} updatedAt={full.dataUpdatedAt} onRetry={() => void full.refetch()} />
+        <RefreshNotice
+          error={full.error}
+          updatedAt={full.dataUpdatedAt}
+          onRetry={() => void full.refetch()}
+        />
       )}
       {ranged.isError && (
-        <RefreshNotice error={ranged.error} updatedAt={ranged.dataUpdatedAt} onRetry={() => void ranged.refetch()} />
+        <RefreshNotice
+          error={ranged.error}
+          updatedAt={ranged.dataUpdatedAt}
+          onRetry={() => void ranged.refetch()}
+        />
       )}
       <Group justify="space-between" gap="sm" mt="sm" wrap="wrap" data-market-control>
         {

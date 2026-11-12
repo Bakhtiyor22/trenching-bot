@@ -15,7 +15,12 @@ describe('api client', () => {
     );
     const error = await getJson('/api/thing').catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
-    expect(error).toMatchObject({ status: 400, code: 'CONFIG_INVALID', message: 'bad config', fields: { latencySlots: 'too big' } });
+    expect(error).toMatchObject({
+      status: 400,
+      code: 'CONFIG_INVALID',
+      message: 'bad config',
+      fields: { latencySlots: 'too big' },
+    });
     expect((error as ApiError).isClientError).toBe(true);
   });
 
@@ -33,7 +38,9 @@ describe('api client', () => {
   });
 
   it('builds query strings without empty values', () => {
-    expect(withQuery('/api/runs', { page: 0, size: 20, datasetId: null })).toBe('/api/runs?page=0&size=20');
+    expect(withQuery('/api/runs', { page: 0, size: 20, datasetId: null })).toBe(
+      '/api/runs?page=0&size=20',
+    );
     expect(withQuery('/api/x', { pair: 'A/B' })).toBe('/api/x?pair=A%2FB');
   });
 });

@@ -47,7 +47,13 @@ function runAction(run: RunSummary, open: (to: string) => void) {
     // The full ids make a pasted hash or a prefix of one match.
     keywords: [run.id, run.datasetId, run.configurationHash],
     rightSection: (
-      <Text size="sm" ff="monospace" fw={600} c={pnlColor(run.realizedPnl)} style={{ whiteSpace: 'nowrap' }}>
+      <Text
+        size="sm"
+        ff="monospace"
+        fw={600}
+        c={pnlColor(run.realizedPnl)}
+        style={{ whiteSpace: 'nowrap' }}
+      >
         {formatSignedDecimal(run.realizedPnl)} {mintLabel(run.quoteMint)}
       </Text>
     ),

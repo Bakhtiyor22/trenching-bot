@@ -113,7 +113,9 @@ describe('MarketMarkerOverlay', () => {
     ]);
     await user.click(buttons[0]!);
     expect(select).toHaveBeenCalledWith(buy, { x: 100, y: 74 });
-    expect(screen.getByTestId('market-pin-buy')).toHaveStyle({ background: 'var(--console-accent)' });
+    expect(screen.getByTestId('market-pin-buy')).toHaveStyle({
+      background: 'var(--console-accent)',
+    });
     expect(screen.getByTestId('market-pin-sell')).toHaveAttribute('data-marker-color', 'decu');
   });
   it('opens a stack list and updates positions on chart completion and zoom', async () => {

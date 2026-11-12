@@ -356,7 +356,11 @@ export function PositionsTable({
               </Table.Td>
               <Table.Td>
                 <StatusChip tone="neutral" glyph={p.state === 'OPEN' ? '◷' : undefined}>
-                  {p.state === 'OPEN' ? 'Open' : p.state === 'CLOSED' ? 'Closed' : humanizeCode(p.state)}
+                  {p.state === 'OPEN'
+                    ? 'Open'
+                    : p.state === 'CLOSED'
+                      ? 'Closed'
+                      : humanizeCode(p.state)}
                 </StatusChip>
               </Table.Td>
               <Table.Td ta="right">{formatSlot(p.fill.actualSlot)}</Table.Td>

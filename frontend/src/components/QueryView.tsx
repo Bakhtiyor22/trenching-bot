@@ -40,12 +40,16 @@ export function RefreshNotice({
         background: 'var(--console-raised)',
       }}
     >
-      <span aria-hidden style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--console-rejected)' }} />
+      <span
+        aria-hidden
+        style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--console-rejected)' }}
+      />
       <Text size="sm" style={{ flex: '1 1 240px' }} title={errorMessage(error)}>
         Couldn&apos;t refresh.{' '}
         {time ? (
           <>
-            Showing data from <span style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>{time}</span>.
+            Showing data from{' '}
+            <span style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}>{time}</span>.
           </>
         ) : (
           'Showing the last data loaded.'
@@ -78,14 +82,20 @@ export function QueryView<T>({
 }) {
   if (query.data === undefined) {
     if (query.isError) {
-      return <ErrorState error={query.error} title={errorTitle} onRetry={() => void query.refetch()} />;
+      return (
+        <ErrorState error={query.error} title={errorTitle} onRetry={() => void query.refetch()} />
+      );
     }
     return <LoadingState label={loadingLabel} />;
   }
   return (
     <>
       {query.isError && (
-        <RefreshNotice error={query.error} updatedAt={query.dataUpdatedAt} onRetry={() => void query.refetch()} />
+        <RefreshNotice
+          error={query.error}
+          updatedAt={query.dataUpdatedAt}
+          onRetry={() => void query.refetch()}
+        />
       )}
       {children(query.data)}
     </>

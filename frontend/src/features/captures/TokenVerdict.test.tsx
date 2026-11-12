@@ -4,13 +4,27 @@ import { describe, expect, it } from 'vitest';
 import type { CaptureSession } from '../../api/captures';
 import { server } from '../../mocks/server';
 import { renderPage } from '../../test/render';
-import { captureSession, FIRST_BUY_SIGNATURE, OUTSIDE_SIGNATURE, PROVEN_CLAIM, REPLAY_FAILURE_CATEGORY, SAME_SLOT_BUY_SIGNATURE, TOKEN_ACCOUNT, TRIGGER_MARKET_CAP_USD, TRIGGER_PRICE, walletTokenSessions } from '../../mocks/captureFixtures';
+import {
+  captureSession,
+  FIRST_BUY_SIGNATURE,
+  OUTSIDE_SIGNATURE,
+  PROVEN_CLAIM,
+  REPLAY_FAILURE_CATEGORY,
+  SAME_SLOT_BUY_SIGNATURE,
+  TOKEN_ACCOUNT,
+  TRIGGER_MARKET_CAP_USD,
+  TRIGGER_PRICE,
+  walletTokenSessions,
+} from '../../mocks/captureFixtures';
 import { SAMPLE_PNL, TAKE_PROFIT_ENTRY_PRICE } from '../../mocks/fixtures';
 import { CaptureDetailPage } from './CaptureDetailPage';
 import { TokenVerdict } from './TokenVerdict';
 
 function show(session: CaptureSession) {
-  return renderPage(<CaptureDetailPage />, { path: '/captures/:id', url: `/captures/${session.id}` });
+  return renderPage(<CaptureDetailPage />, {
+    path: '/captures/:id',
+    url: `/captures/${session.id}`,
+  });
 }
 type Panel = ReturnType<typeof within> & { element: HTMLElement };
 async function verdictPanel(): Promise<Panel> {
@@ -20,7 +34,9 @@ async function verdictPanel(): Promise<Panel> {
 }
 /** The verdict row whose label starts with `label`. */
 function row(panel: Panel, label: RegExp) {
-  const header = [...panel.element.querySelectorAll('th')].find(cell => label.test(cell.textContent ?? ''));
+  const header = [...panel.element.querySelectorAll('th')].find((cell) =>
+    label.test(cell.textContent ?? ''),
+  );
   expect(header, `row ${label}`).toBeDefined();
   return within(header!.closest('tr')!);
 }
@@ -31,12 +47,20 @@ describe('Token verdict', () => {
     const panel = await verdictPanel();
     expect(panel.getByText('Qualifying dip')).toBeInTheDocument();
     expect(row(panel, /^Capture/).getByText('COMPLETE')).toBeInTheDocument();
-    expect(row(panel, /^Earliest buy through token account/).getByText('FOUND')).toBeInTheDocument();
-    expect(row(panel, /^Earliest buy through token account/).getByText(`${TOKEN_ACCOUNT.slice(0, 4)}…${TOKEN_ACCOUNT.slice(-4)}`)).toBeInTheDocument();
+    expect(
+      row(panel, /^Earliest buy through token account/).getByText('FOUND'),
+    ).toBeInTheDocument();
+    expect(
+      row(panel, /^Earliest buy through token account/).getByText(
+        `${TOKEN_ACCOUNT.slice(0, 4)}…${TOKEN_ACCOUNT.slice(-4)}`,
+      ),
+    ).toBeInTheDocument();
     const actual = row(panel, /^Actual first Pump\.fun curve buy/);
     expect(actual.getByText('PROVEN')).toBeInTheDocument();
     expect(actual.getByText(PROVEN_CLAIM)).toHaveStyle({ overflowWrap: 'anywhere' });
-    expect(actual.getByText(`${FIRST_BUY_SIGNATURE.slice(0, 4)}…${FIRST_BUY_SIGNATURE.slice(-4)}`)).toHaveStyle({ overflowWrap: 'anywhere' });
+    expect(
+      actual.getByText(`${FIRST_BUY_SIGNATURE.slice(0, 4)}…${FIRST_BUY_SIGNATURE.slice(-4)}`),
+    ).toHaveStyle({ overflowWrap: 'anywhere' });
     expect(actual.getByText('Creation')).toBeInTheDocument();
     const dip = row(panel, /^Dip condition/);
     expect(dip.getByText('QUALIFIED')).toBeInTheDocument();
@@ -85,8 +109,14 @@ describe('Token verdict', () => {
     expect(panel.getByText('First buy outside token account')).toBeInTheDocument();
     const actual = row(panel, /^Actual first Pump\.fun curve buy/);
     expect(actual.getByText('OUTSIDE TOKEN ACCOUNT')).toBeInTheDocument();
-    expect(actual.getByText(`${OUTSIDE_SIGNATURE.slice(0, 4)}…${OUTSIDE_SIGNATURE.slice(-4)}`)).toBeInTheDocument();
-    expect(actual.getByText('The wallet’s actual first buy went to another token account; this version does not adopt it, so market capture cannot proceed.')).toBeInTheDocument();
+    expect(
+      actual.getByText(`${OUTSIDE_SIGNATURE.slice(0, 4)}…${OUTSIDE_SIGNATURE.slice(-4)}`),
+    ).toBeInTheDocument();
+    expect(
+      actual.getByText(
+        'The wallet’s actual first buy went to another token account; this version does not adopt it, so market capture cannot proceed.',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('keeps a replay failure apart from strategy outcomes', async () => {
@@ -115,11 +145,21 @@ describe('Token verdict', () => {
 
   it('offers a manual qualification once the export succeeded', async () => {
     const requests: Array<Record<string, unknown>> = [];
-    server.use(http.post('/api/captures/:id/operations', async ({ request }) => {
-      const body = await request.json() as Record<string, unknown>;
-      requests.push(body);
-      return HttpResponse.json({ ...captureSession.operation, id: 'qualify-op', requestId: body.requestId, step: 'QUALIFY' }, { status: 202 });
-    }));
+    server.use(
+      http.post('/api/captures/:id/operations', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>;
+        requests.push(body);
+        return HttpResponse.json(
+          {
+            ...captureSession.operation,
+            id: 'qualify-op',
+            requestId: body.requestId,
+            step: 'QUALIFY',
+          },
+          { status: 202 },
+        );
+      }),
+    );
     const { user } = show(walletTokenSessions.replayFailed);
     const panel = await verdictPanel();
     await user.click(panel.getByRole('button', { name: 'Qualify' }));
@@ -130,7 +170,8 @@ describe('Token verdict', () => {
   it('explains an exported dataset awaiting qualification without calling it a negative case', async () => {
     show(walletTokenSessions.pendingQualification);
     const panel = await verdictPanel();
-    const guidance = 'Dataset exported; qualification has not run yet or did not finish. Use Qualify.';
+    const guidance =
+      'Dataset exported; qualification has not run yet or did not finish. Use Qualify.';
     expect(panel.getByText('Qualification pending')).toBeInTheDocument();
     expect(row(panel, /^Capture/).getByText(guidance)).toBeInTheDocument();
     expect(panel.getAllByText(guidance).length).toBeGreaterThan(1);
@@ -141,7 +182,15 @@ describe('Token verdict', () => {
 
   it('uses the backend readiness flag for pending qualification actions', async () => {
     const session = walletTokenSessions.pendingQualification;
-    renderPage(<TokenVerdict target={session.inspection?.targetToken} verdict={session.qualification} canQualify={false} disabled={false} onQualify={() => {}} />);
+    renderPage(
+      <TokenVerdict
+        target={session.inspection?.targetToken}
+        verdict={session.qualification}
+        canQualify={false}
+        disabled={false}
+        onQualify={() => {}}
+      />,
+    );
     const panel = await verdictPanel();
     expect(panel.queryByRole('button', { name: 'Qualify' })).not.toBeInTheDocument();
   });
@@ -150,10 +199,21 @@ describe('Token verdict', () => {
     show(walletTokenSessions.sameSlotBuy);
     const panel = await verdictPanel();
     const firstBuy = row(panel, /^Earliest buy through token account/);
-    expect(firstBuy.getByText('Another buy of this token by the wallet is in the same slot as its earliest buy, and the order within a slot is not recorded, so neither can be called the first.')).toBeInTheDocument();
-    expect(firstBuy.getByRole('link')).toHaveAttribute('href', `https://solscan.io/tx/${SAME_SLOT_BUY_SIGNATURE}`);
-    expect(firstBuy.getByRole('button', { name: `Copy full value: ${SAME_SLOT_BUY_SIGNATURE}` })).toBeInTheDocument();
-    expect(row(panel, /^Actual first Pump\.fun curve buy/).getByText('NOT VERIFIED')).toBeInTheDocument();
+    expect(
+      firstBuy.getByText(
+        'Another buy of this token by the wallet is in the same slot as its earliest buy, and the order within a slot is not recorded, so neither can be called the first.',
+      ),
+    ).toBeInTheDocument();
+    expect(firstBuy.getByRole('link')).toHaveAttribute(
+      'href',
+      `https://solscan.io/tx/${SAME_SLOT_BUY_SIGNATURE}`,
+    );
+    expect(
+      firstBuy.getByRole('button', { name: `Copy full value: ${SAME_SLOT_BUY_SIGNATURE}` }),
+    ).toBeInTheDocument();
+    expect(
+      row(panel, /^Actual first Pump\.fun curve buy/).getByText('NOT VERIFIED'),
+    ).toBeInTheDocument();
     expect(panel.queryByText(/negative case/i)).not.toBeInTheDocument();
   });
 
@@ -161,9 +221,18 @@ describe('Token verdict', () => {
     show(walletTokenSessions.firstBuyNotListed);
     const panel = await verdictPanel();
     const firstBuy = row(panel, /^Actual first Pump\.fun curve buy/);
-    expect(firstBuy.getByText("The wallet's Pump.fun accumulator listing did not include its known buy, so the provider's listing cannot be trusted to show earlier buys for this case.")).toBeInTheDocument();
-    expect(firstBuy.getByRole('link')).toHaveAttribute('href', `https://solscan.io/tx/${FIRST_BUY_SIGNATURE}`);
-    expect(firstBuy.getByRole('button', { name: `Copy full value: ${FIRST_BUY_SIGNATURE}` })).toBeInTheDocument();
+    expect(
+      firstBuy.getByText(
+        "The wallet's Pump.fun accumulator listing did not include its known buy, so the provider's listing cannot be trusted to show earlier buys for this case.",
+      ),
+    ).toBeInTheDocument();
+    expect(firstBuy.getByRole('link')).toHaveAttribute(
+      'href',
+      `https://solscan.io/tx/${FIRST_BUY_SIGNATURE}`,
+    );
+    expect(
+      firstBuy.getByRole('button', { name: `Copy full value: ${FIRST_BUY_SIGNATURE}` }),
+    ).toBeInTheDocument();
     expect(firstBuy.getByText('UNPROVEN')).toBeInTheDocument();
     expect(panel.queryByText(/negative case/i)).not.toBeInTheDocument();
   });
@@ -171,11 +240,26 @@ describe('Token verdict', () => {
   it('explains a replay first-buy mismatch as a data problem and retains its category', async () => {
     const session = walletTokenSessions.replayFailed;
     if (!session.qualification) throw new Error('Replay failure fixture must include a verdict');
-    renderPage(<TokenVerdict target={session.inspection?.targetToken} verdict={{ ...session.qualification, replay: { state: 'FAILED', category: 'FIRST_BUY_MISMATCH' } }} canQualify={true} disabled={false} onQualify={() => {}} />);
+    renderPage(
+      <TokenVerdict
+        target={session.inspection?.targetToken}
+        verdict={{
+          ...session.qualification,
+          replay: { state: 'FAILED', category: 'FIRST_BUY_MISMATCH' },
+        }}
+        canQualify={true}
+        disabled={false}
+        onQualify={() => {}}
+      />,
+    );
     const panel = await verdictPanel();
     const replay = row(panel, /^Replay/);
     expect(replay.getByText('FIRST_BUY_MISMATCH')).toBeInTheDocument();
-    expect(replay.getByText('The replay started from a different buy than the proven first buy; this is a data problem, not a strategy outcome.')).toBeInTheDocument();
+    expect(
+      replay.getByText(
+        'The replay started from a different buy than the proven first buy; this is a data problem, not a strategy outcome.',
+      ),
+    ).toBeInTheDocument();
     expect(panel.queryByText(/negative case/i)).not.toBeInTheDocument();
   });
 
@@ -183,22 +267,49 @@ describe('Token verdict', () => {
     const session = walletTokenSessions.replayFailed;
     if (!session.qualification) throw new Error('Replay failure fixture must include a verdict');
     const verdict = session.qualification;
-    const { unmount } = renderPage(<TokenVerdict target={session.inspection?.targetToken} verdict={{ ...verdict, replay: { state: 'FAILED', category: 'REFERENCE_UNAVAILABLE' } }} canQualify={true} disabled={false} onQualify={() => {}} />);
+    const { unmount } = renderPage(
+      <TokenVerdict
+        target={session.inspection?.targetToken}
+        verdict={{ ...verdict, replay: { state: 'FAILED', category: 'REFERENCE_UNAVAILABLE' } }}
+        canQualify={true}
+        disabled={false}
+        onQualify={() => {}}
+      />,
+    );
     let replay = row(await verdictPanel(), /^Replay/);
     expect(replay.getByText('REFERENCE_UNAVAILABLE')).toBeInTheDocument();
     expect(replay.getByText('Replay failed — this is not a strategy outcome')).toBeInTheDocument();
-    expect(replay.getByText("Decu's buy is not in the recorded market, so the reference is unknown.")).toBeInTheDocument();
-    expect(replay.getByText("Capture the token again so its window includes Decu's buy.")).toBeInTheDocument();
+    expect(
+      replay.getByText("Decu's buy is not in the recorded market, so the reference is unknown."),
+    ).toBeInTheDocument();
+    expect(
+      replay.getByText("Capture the token again so its window includes Decu's buy."),
+    ).toBeInTheDocument();
     unmount();
-    renderPage(<TokenVerdict target={session.inspection?.targetToken} verdict={{ ...verdict, replay: { state: 'FAILED', category: 'SELL_CHECK_NEEDS_TRADES' } }} canQualify={true} disabled={false} onQualify={() => {}} />);
+    renderPage(
+      <TokenVerdict
+        target={session.inspection?.targetToken}
+        verdict={{ ...verdict, replay: { state: 'FAILED', category: 'SELL_CHECK_NEEDS_TRADES' } }}
+        canQualify={true}
+        disabled={false}
+        onQualify={() => {}}
+      />,
+    );
     replay = row(await verdictPanel(), /^Replay/);
     expect(replay.getByText('SELL_CHECK_NEEDS_TRADES')).toBeInTheDocument();
-    expect(replay.getByText("The dataset does not record who traded (schema 3), so Decu's sells cannot be followed.")).toBeInTheDocument();
+    expect(
+      replay.getByText(
+        "The dataset does not record who traded (schema 3), so Decu's sells cannot be followed.",
+      ),
+    ).toBeInTheDocument();
     expect(replay.queryByText(/Capture the token again/)).not.toBeInTheDocument();
   });
 
   it('stays hidden for sessions of the other scopes', async () => {
-    renderPage(<CaptureDetailPage />, { path: '/captures/:id', url: `/captures/${captureSession.id}` });
+    renderPage(<CaptureDetailPage />, {
+      path: '/captures/:id',
+      url: `/captures/${captureSession.id}`,
+    });
     expect(await screen.findByRole('button', { name: 'Re-check saved files' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Token verdict' })).not.toBeInTheDocument();
   });

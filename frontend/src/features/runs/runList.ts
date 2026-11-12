@@ -67,7 +67,9 @@ export function parseOutcome(value: string | null): Outcome {
 export function parseSort(value: string | null): Sort {
   if (!value) return DEFAULT_SORT;
   const ascending = value.endsWith(ASCENDING_SUFFIX);
-  const key = SORT_KEYS.find((k) => k === (ascending ? value.slice(0, -ASCENDING_SUFFIX.length) : value));
+  const key = SORT_KEYS.find(
+    (k) => k === (ascending ? value.slice(0, -ASCENDING_SUFFIX.length) : value),
+  );
   return key ? { key, descending: !ascending } : DEFAULT_SORT;
 }
 

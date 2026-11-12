@@ -265,7 +265,10 @@ describe('TradeChart', () => {
       ),
     );
     renderPage(<TradeChart kind="run" id="test" pair="base/quote" trackedWallet={wallet} />);
-    expect(await screen.findByTestId('market-pin-paper-entry:ENTRY')).toHaveAttribute('data-marker-color', 'paper');
+    expect(await screen.findByTestId('market-pin-paper-entry:ENTRY')).toHaveAttribute(
+      'data-marker-color',
+      'paper',
+    );
     expect(screen.getByText(/Bot paper fill/)).toBeInTheDocument();
   });
   it('reports the latest bucket size and offers range recovery when no trades are visible', async () => {
@@ -472,7 +475,10 @@ describe('TradeChart', () => {
       ),
     );
     renderPage(<TradeChart kind="dataset" id="test" pair="base/quote" trackedWallet={wallet} />);
-    expect(await screen.findByText(/Market cap unavailable/)).toHaveAttribute('title', 'RATES_UNAVAILABLE');
+    expect(await screen.findByText(/Market cap unavailable/)).toHaveAttribute(
+      'title',
+      'RATES_UNAVAILABLE',
+    );
     expect(screen.getByRole('radio', { name: 'Price (SOL)' })).toBeChecked();
     expect(
       screen.getByText(

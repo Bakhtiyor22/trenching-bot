@@ -1,4 +1,13 @@
-import { ActionIcon, Box, Button, Group, Stack, Text, TextInput, UnstyledButton } from '@mantine/core';
+import {
+  ActionIcon,
+  Box,
+  Button,
+  Group,
+  Stack,
+  Text,
+  TextInput,
+  UnstyledButton,
+} from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
@@ -287,7 +296,13 @@ export function RunChartPage() {
           { label: `Run ${shortId(id)}`, to: paths.run(id) },
         ]}
         title={`Chart · ${tokenTitle}`}
-        status={outcome && <StatusChip tone={outcome.tone} glyph={outcome.glyph}>{outcome.label}</StatusChip>}
+        status={
+          outcome && (
+            <StatusChip tone={outcome.tone} glyph={outcome.glyph}>
+              {outcome.label}
+            </StatusChip>
+          )
+        }
         description="Market cap and trades of one token in this run, with Decu's buys and our paper fills."
         actions={
           <>
@@ -335,7 +350,11 @@ export function RunChartPage() {
         }
       />
       {run.isError && (
-        <RefreshNotice error={run.error} updatedAt={run.dataUpdatedAt} onRetry={() => void run.refetch()} />
+        <RefreshNotice
+          error={run.error}
+          updatedAt={run.dataUpdatedAt}
+          onRetry={() => void run.refetch()}
+        />
       )}
       <KpiStrip label="This token">
         <Kpi label="Token" size="sm">
@@ -392,7 +411,11 @@ export function RunChartPage() {
           <>
             <Stack gap="sm">
               {full.isError && (
-                <RefreshNotice error={full.error} updatedAt={full.dataUpdatedAt} onRetry={() => void full.refetch()} />
+                <RefreshNotice
+                  error={full.error}
+                  updatedAt={full.dataUpdatedAt}
+                  onRetry={() => void full.refetch()}
+                />
               )}
               <RangeInputs
                 key={`${range.from}/${range.to}`}

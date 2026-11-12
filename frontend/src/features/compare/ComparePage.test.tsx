@@ -19,7 +19,9 @@ describe('ComparePage', () => {
     const { user } = renderCompare(`/compare?runs=${SAMPLE_RUN_ID},${EDGE_RUN_ID}`);
     // The edge run realized zero, so A − B is the sample's own total.
     const gap = await screen.findByRole('region', { name: 'P&L difference' });
-    expect(within(gap).getByText(formatSignedDecimal(SAMPLE_TOTAL_PNL, { trim: true }))).toBeInTheDocument();
+    expect(
+      within(gap).getByText(formatSignedDecimal(SAMPLE_TOTAL_PNL, { trim: true })),
+    ).toBeInTheDocument();
     expect(within(gap).getByText('Δ P&L A − B')).toBeInTheDocument();
     expect(screen.getByText(/^Same configuration, different datasets/)).toBeInTheDocument();
 

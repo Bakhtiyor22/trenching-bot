@@ -66,17 +66,34 @@ export function Decimal({ value, ...textProps }: { value: string | null | undefi
  * Exact P&L, signed ("+" gain, "−" loss) and coloured by sign, so the direction reads without colour.
  * `trim` drops trailing zeros for a headline and keeps the stored string in a tooltip.
  */
-export function Pnl({ value, trim = false, unit, ...textProps }: { value: string; trim?: boolean; unit?: string } & TextProps) {
+export function Pnl({
+  value,
+  trim = false,
+  unit,
+  ...textProps
+}: { value: string; trim?: boolean; unit?: string } & TextProps) {
   const text = formatSignedDecimal(value, { trim });
   const shown = (
-    <Text span ff="monospace" size="sm" fw={500} c={pnlColor(value)} style={{ whiteSpace: 'nowrap' }} {...textProps}>
+    <Text
+      span
+      ff="monospace"
+      size="sm"
+      fw={500}
+      c={pnlColor(value)}
+      style={{ whiteSpace: 'nowrap' }}
+      {...textProps}
+    >
       {text}
       {unit && <span className="console-unit">{unit}</span>}
     </Text>
   );
   if (!trim || text === formatSignedDecimal(value)) return shown;
   return (
-    <Tooltip label={`${formatSignedDecimal(value)}${unit ? ` ${unit}` : ''} (exact)`} withArrow events={{ hover: true, focus: true, touch: true }}>
+    <Tooltip
+      label={`${formatSignedDecimal(value)}${unit ? ` ${unit}` : ''} (exact)`}
+      withArrow
+      events={{ hover: true, focus: true, touch: true }}
+    >
       {shown}
     </Tooltip>
   );
@@ -101,7 +118,10 @@ export function Timestamp({ iso, ...textProps }: { iso: string | null | undefine
 }
 
 /** "3 min ago", with the local time on hover; text props (size, weight) pass through. */
-export function RelativeTime({ iso, ...textProps }: { iso: string | null | undefined } & TextProps) {
+export function RelativeTime({
+  iso,
+  ...textProps
+}: { iso: string | null | undefined } & TextProps) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);

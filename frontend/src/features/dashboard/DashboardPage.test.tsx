@@ -47,7 +47,9 @@ describe('DashboardPage', () => {
     );
 
     // The headline is signed and trimmed; the exact stored string stays in the cumulative table.
-    expect(screen.getByText(formatSignedDecimal(SAMPLE_TOTAL_PNL, { trim: true }))).toBeInTheDocument();
+    expect(
+      screen.getByText(formatSignedDecimal(SAMPLE_TOTAL_PNL, { trim: true })),
+    ).toBeInTheDocument();
     expect(screen.getByText('2 in the last 24 h')).toBeInTheDocument();
   });
 
@@ -76,7 +78,9 @@ describe('DashboardPage', () => {
     let fail = false;
     server.use(
       http.get('/api/dashboard', () =>
-        fail ? new HttpResponse('Bad gateway', { status: 502 }) : HttpResponse.json(dashboardFixture()),
+        fail
+          ? new HttpResponse('Bad gateway', { status: 502 })
+          : HttpResponse.json(dashboardFixture()),
       ),
     );
     const { queryClient } = renderPage(<DashboardPage />);

@@ -207,7 +207,11 @@ export function MarketActionCard({
           </Stack>
         )}
         {note && (
-          <Text size="xs" c={paper ? 'dimmed' : color} title={paper ? (action.reason ?? undefined) : undefined}>
+          <Text
+            size="xs"
+            c={paper ? 'dimmed' : color}
+            title={paper ? (action.reason ?? undefined) : undefined}
+          >
             {note}
           </Text>
         )}

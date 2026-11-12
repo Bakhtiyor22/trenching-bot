@@ -109,7 +109,10 @@ describe('usage chart option', () => {
     });
     const series = seriesOf(buildUsageChartOption(usage, 'LAST_HOUR', terminalLight));
     expect(series.map((s) => s.name)).toEqual(['Solana RPC', 'Binance']);
-    expect(series.map((s) => s.itemStyle.color)).toEqual([terminalLight.series[0], terminalLight.series[1]]);
+    expect(series.map((s) => s.itemStyle.color)).toEqual([
+      terminalLight.series[0],
+      terminalLight.series[1],
+    ]);
     expect(providerColor('TELEGRAM', terminal)).toBe(terminal.series[2]);
   });
 });

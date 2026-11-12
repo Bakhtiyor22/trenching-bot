@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import type { RunSummary } from '../../api/types';
 import { edgeRun, sampleRun } from '../../mocks/fixtures';
-import { DEFAULT_SORT, filterRuns, parseOutcome, parseSort, serializeSort, sortRuns, toggleSort } from './runList';
+import {
+  DEFAULT_SORT,
+  filterRuns,
+  parseOutcome,
+  parseSort,
+  serializeSort,
+  sortRuns,
+  toggleSort,
+} from './runList';
 
 const run = (
   id: string,

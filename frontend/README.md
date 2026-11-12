@@ -75,6 +75,7 @@ backend target. Never print secret configuration values.
 ```powershell
 npm test
 npm run lint
+npm run format:check
 npm run build
 ```
 

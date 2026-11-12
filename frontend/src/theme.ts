@@ -177,7 +177,8 @@ export function tokensFor(scheme: 'light' | 'dark'): TerminalTokens {
   return scheme === 'light' ? terminalLight : terminal;
 }
 
-export const FONT_MONO = '"JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace';
+export const FONT_MONO =
+  '"JetBrains Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace';
 
 export const theme = createTheme({
   colors: { dark, amber, teal, red, blue, orange },
@@ -189,7 +190,12 @@ export const theme = createTheme({
   fontFamilyMonospace: FONT_MONO,
   headings: {
     fontWeight: '600',
-    sizes: { h1: { fontSize: '1.375rem' }, h2: { fontSize: '1.375rem' }, h3: { fontSize: '0.9375rem' }, h4: { fontSize: '0.875rem' } },
+    sizes: {
+      h1: { fontSize: '1.375rem' },
+      h2: { fontSize: '1.375rem' },
+      h3: { fontSize: '0.9375rem' },
+      h4: { fontSize: '0.875rem' },
+    },
   },
   components: {
     Anchor: Anchor.extend({ defaultProps: { underline: 'hover' } }),

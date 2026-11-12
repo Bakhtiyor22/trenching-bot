@@ -2,3 +2,5 @@ dist
 coverage
 node_modules
 package-lock.json
+# QA verification records (notes, screenshots) stay as written
+qa

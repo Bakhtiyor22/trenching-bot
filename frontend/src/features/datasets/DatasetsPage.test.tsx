@@ -30,13 +30,22 @@ describe('DatasetsPage', () => {
       'Replay checksum mismatch: declared 0000aaaa, computed 7da78ada00b144606af1578d5d72de54f879149f906e785833d6bab9c9e862f6';
     server.use(
       http.post('/api/datasets', () =>
-        HttpResponse.json({ code: 'DATASET_INVALID', message: serverMessage, fields: {} }, { status: 400 }),
+        HttpResponse.json(
+          { code: 'DATASET_INVALID', message: serverMessage, fields: {} },
+          { status: 400 },
+        ),
       ),
     );
-    const { user, container } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
+    const { user, container } = renderPage(<DatasetsPage />, {
+      path: '/datasets',
+      url: '/datasets',
+    });
     await screen.findByRole('link', { name: 'dip-sample-v3' });
 
-    await user.upload(fileInput(container), jsonFile({ schemaVersion: 1, checksum: '0000aaaa' }, 'tampered.json'));
+    await user.upload(
+      fileInput(container),
+      jsonFile({ schemaVersion: 1, checksum: '0000aaaa' }, 'tampered.json'),
+    );
     await user.click(await screen.findByRole('button', { name: /Upload and validate/ }));
 
     const alert = await screen.findByRole('alert');
@@ -53,14 +62,22 @@ describe('DatasetsPage', () => {
         return HttpResponse.json({ dataset: sampleDataset, created: false }, { status: 200 });
       }),
     );
-    const { user, container } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
+    const { user, container } = renderPage(<DatasetsPage />, {
+      path: '/datasets',
+      url: '/datasets',
+    });
     await screen.findByRole('link', { name: 'dip-sample-v3' });
 
-    await user.upload(fileInput(container), jsonFile({ schemaVersion: 1, checksum: SAMPLE_DATASET_ID }));
+    await user.upload(
+      fileInput(container),
+      jsonFile({ schemaVersion: 1, checksum: SAMPLE_DATASET_ID }),
+    );
     await user.type(screen.getByLabelText(/Name/), 'renamed copy');
     await user.click(screen.getByRole('button', { name: /Upload and validate/ }));
 
-    expect(await screen.findByText(/Datasets are identified by their checksum/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Datasets are identified by their checksum/),
+    ).toBeInTheDocument();
     expect(contentType).toMatch(/^multipart\/form-data/);
   });
 
@@ -72,7 +89,10 @@ describe('DatasetsPage', () => {
         return HttpResponse.json({}, { status: 500 });
       }),
     );
-    const { user, container } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
+    const { user, container } = renderPage(<DatasetsPage />, {
+      path: '/datasets',
+      url: '/datasets',
+    });
     await screen.findByRole('link', { name: 'dip-sample-v3' });
 
     const big = jsonFile('{}', 'big.json');
@@ -89,16 +109,25 @@ describe('DatasetsPage', () => {
     const { user } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
     await screen.findByRole('link', { name: 'dip-sample-v3' });
     await user.click(screen.getByRole('button', { name: 'Import sample dataset' }));
-    expect(await screen.findByText(/Datasets are identified by their checksum/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Datasets are identified by their checksum/),
+    ).toBeInTheDocument();
   });
   it('deletes a dataset only after confirmation, and cancelling sends nothing', async () => {
     const deleted: string[] = [];
-    server.use(http.delete('/api/datasets/:id', ({ params }) => { deleted.push(String(params.id)); return new HttpResponse(null, { status: 204 }); }));
+    server.use(
+      http.delete('/api/datasets/:id', ({ params }) => {
+        deleted.push(String(params.id));
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
     const { user } = renderPage(<DatasetsPage />, { path: '/datasets', url: '/datasets' });
     const row = (await screen.findByText(sampleDataset.name)).closest('tr') as HTMLElement;
 
     await user.click(within(row).getByRole('button', { name: 'Delete' }));
-    expect(await screen.findByText(/Runs that keep their own copy of it are kept/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Runs that keep their own copy of it are kept/),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(deleted).toEqual([]);
 
@@ -122,7 +151,9 @@ describe('DatasetsPage', () => {
     await user.click(within(row).getByRole('button', { name: 'Delete' }));
     const dialog = await screen.findByRole('dialog');
     await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
-    expect(await within(dialog).findByText(/Runs read this dataset from the catalog/)).toBeInTheDocument();
+    expect(
+      await within(dialog).findByText(/Runs read this dataset from the catalog/),
+    ).toBeInTheDocument();
     expect(within(dialog).getByRole('link', { name: 'See its runs' })).toHaveAttribute(
       'href',
       `/runs?datasetId=${SAMPLE_DATASET_ID}`,

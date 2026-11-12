@@ -5,7 +5,8 @@ import type { ReactNode } from 'react';
  * with a dot), attention (orange: stopped, rejected, needs a look), pending (dashed outline), neutral.
  * Amber is never a status: it is the accent.
  */
-export type StatusTone = 'success' | 'failure' | 'running' | 'attention' | 'pending' | 'neutral' | 'ready';
+export type StatusTone =
+  'success' | 'failure' | 'running' | 'attention' | 'pending' | 'neutral' | 'ready';
 
 /** A status as a glyph or dot plus a word, so it never relies on colour alone. */
 export function StatusChip({
@@ -22,7 +23,11 @@ export function StatusChip({
 }) {
   return (
     <span className="console-chip" data-tone={tone} title={title}>
-      {glyph ? <span aria-hidden>{glyph}</span> : tone === 'running' ? <span className="console-chip-dot" aria-hidden /> : null}
+      {glyph ? (
+        <span aria-hidden>{glyph}</span>
+      ) : tone === 'running' ? (
+        <span className="console-chip-dot" aria-hidden />
+      ) : null}
       {children}
     </span>
   );

@@ -1,4 +1,16 @@
-import { Alert, Anchor, Badge, Box, Button, Group, SegmentedControl, SimpleGrid, Stack, Tabs, Text } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Badge,
+  Box,
+  Button,
+  Group,
+  SegmentedControl,
+  SimpleGrid,
+  Stack,
+  Tabs,
+  Text,
+} from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router';
@@ -160,7 +172,9 @@ function RunTotals({ detail, usdt }: { detail: RunDetail; usdt: RunUsdtView | nu
           {usdt.realizedPnlUsdt == null ? (
             <Stack gap={2}>
               <Text c="dimmed" size="sm">
-                —{usdt.realizedPnlUnavailableReason && ` ${codeLabel(usdt.realizedPnlUnavailableReason)}`}
+                —
+                {usdt.realizedPnlUnavailableReason &&
+                  ` ${codeLabel(usdt.realizedPnlUnavailableReason)}`}
               </Text>
               <CodeText code={usdt.realizedPnlUnavailableReason} />
             </Stack>
@@ -169,7 +183,12 @@ function RunTotals({ detail, usdt }: { detail: RunDetail; usdt: RunUsdtView | nu
           )}
         </Kpi>
       ) : (
-        <Kpi label={`Realized P&L (${unit})`} hint="Exact sum over closed positions" size="hero" span="full">
+        <Kpi
+          label={`Realized P&L (${unit})`}
+          hint="Exact sum over closed positions"
+          size="hero"
+          span="full"
+        >
           <Pnl value={run.realizedPnl} trim unit={unit} fz="inherit" fw={500} />
         </Kpi>
       )}
@@ -330,7 +349,11 @@ function RecordTabs({
 
   return (
     <Section title="Stored records">
-      <Tabs value={tab} onChange={(value) => value && onTabChange(parseRecordTab(value))} keepMounted={false}>
+      <Tabs
+        value={tab}
+        onChange={(value) => value && onTabChange(parseRecordTab(value))}
+        keepMounted={false}
+      >
         <Tabs.List mb="md" style={{ flexWrap: 'nowrap', overflowX: 'auto' }}>
           <Tabs.Tab value="events">Events</Tabs.Tab>
           <Tabs.Tab value="observations">Observations</Tabs.Tab>
@@ -409,9 +432,15 @@ function SolPrice() {
       color="gray"
       tt="none"
       size="lg"
-      title={unavailableReason ? `Binance SOLUSDT · ${unavailableReason}` : 'Binance SOLUSDT, refreshed every 30 seconds'}
+      title={
+        unavailableReason
+          ? `Binance SOLUSDT · ${unavailableReason}`
+          : 'Binance SOLUSDT, refreshed every 30 seconds'
+      }
     >
-      {rate ? `1 SOL = ${rate} USDT` : `SOL price unavailable${unavailableReason ? `: ${codeLabel(unavailableReason)}` : ''}`}
+      {rate
+        ? `1 SOL = ${rate} USDT`
+        : `SOL price unavailable${unavailableReason ? `: ${codeLabel(unavailableReason)}` : ''}`}
     </Badge>
   );
 }
@@ -505,7 +534,11 @@ export function RunDetailPage() {
   // A failed refresh keeps the run on screen; the full error only shows when nothing was loaded.
   if (!run.data) {
     return run.isError ? (
-      <ErrorState error={run.error} title="Could not load the run" onRetry={() => void run.refetch()} />
+      <ErrorState
+        error={run.error}
+        title="Could not load the run"
+        onRetry={() => void run.refetch()}
+      />
     ) : (
       <LoadingState label="Loading run…" />
     );
@@ -559,7 +592,8 @@ export function RunDetailPage() {
         }
         meta={
           <>
-            Engine {detail.run.engineVersion} · created <Timestamp iso={detail.run.createdAt} size="xs" c="dimmed" />
+            Engine {detail.run.engineVersion} · created{' '}
+            <Timestamp iso={detail.run.createdAt} size="xs" c="dimmed" />
           </>
         }
         description="A persisted, immutable replay run. Pick a cycle to follow it on the chart; J and K step through them."
@@ -605,7 +639,11 @@ export function RunDetailPage() {
         }
       />
       {run.isError && (
-        <RefreshNotice error={run.error} updatedAt={run.dataUpdatedAt} onRetry={() => void run.refetch()} />
+        <RefreshNotice
+          error={run.error}
+          updatedAt={run.dataUpdatedAt}
+          onRetry={() => void run.refetch()}
+        />
       )}
       {navigationState?.created === false && (
         <Alert color="gray" variant="light" title="Run already existed">
@@ -645,7 +683,12 @@ export function RunDetailPage() {
             }}
           >
             <Box style={{ flex: '1 1 300px', minWidth: 0 }}>
-              <CycleList scenarios={cycles} selected={selected} onSelect={selectCycle} unit={unit} />
+              <CycleList
+                scenarios={cycles}
+                selected={selected}
+                onSelect={selectCycle}
+                unit={unit}
+              />
             </Box>
             <Stack gap="lg" style={{ flex: '3 1 560px', minWidth: 0 }}>
               <Timeline

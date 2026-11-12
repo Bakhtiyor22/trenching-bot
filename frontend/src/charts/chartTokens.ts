@@ -42,4 +42,3 @@ export function chartTheme(t: TerminalTokens) {
 export function useChartTokens(): TerminalTokens {
   return tokensFor(useComputedColorScheme('dark'));
 }
-

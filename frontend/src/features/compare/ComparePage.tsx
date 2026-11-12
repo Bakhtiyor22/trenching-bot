@@ -141,17 +141,27 @@ function RunCard({
   const color = useSlotColor()(slot);
   const failed = !detail && error != null;
   return (
-    <Card padding="md" role={failed ? 'alert' : undefined} style={{ borderTop: `3px solid ${color}` }}>
+    <Card
+      padding="md"
+      role={failed ? 'alert' : undefined}
+      style={{ borderTop: `3px solid ${color}` }}
+    >
       <CardHeader slot={slot} id={id} link={!!detail} onRemove={onRemove} />
       {detail ? (
         <>
           <Box mt="sm">
-            <Pnl value={detail.run.realizedPnl} trim unit={mintLabel(detail.run.quoteMint)} size="lg" fw={500} />
+            <Pnl
+              value={detail.run.realizedPnl}
+              trim
+              unit={mintLabel(detail.run.quoteMint)}
+              size="lg"
+              fw={500}
+            />
           </Box>
           <Text size="xs" c="dimmed" mt={4}>
             <Timestamp iso={detail.run.createdAt} size="xs" c="dimmed" /> ·{' '}
-            {formatCount(detail.run.closedCount)} closed · {formatCount(detail.run.openCount)} open ·{' '}
-            {formatCount(detail.run.rejectedCount)} no entry
+            {formatCount(detail.run.closedCount)} closed · {formatCount(detail.run.openCount)} open
+            · {formatCount(detail.run.rejectedCount)} no entry
           </Text>
         </>
       ) : failed ? (
@@ -184,7 +194,11 @@ function Verdict({ details, slots }: { details: RunDetail[]; slots: number[] }) 
         <Kpi
           key={i}
           label={`Δ P&L ${letter(slots[0]!)} − ${letter(slots[i + 1]!)}`}
-          hint={delta == null ? undefined : `Run ${letter(slots[0]!)} minus run ${letter(slots[i + 1]!)}`}
+          hint={
+            delta == null
+              ? undefined
+              : `Run ${letter(slots[0]!)} minus run ${letter(slots[i + 1]!)}`
+          }
         >
           {delta == null ? (
             <Text span size="sm" c="dimmed">
@@ -225,7 +239,12 @@ function Inputs({ details, slots }: { details: RunDetail[]; slots: number[] }) {
         </Text>
       ) : (
         <ScrollArea type="auto">
-          <Table highlightOnHover={false} verticalSpacing="xs" miw={480} aria-label="Inputs side by side">
+          <Table
+            highlightOnHover={false}
+            verticalSpacing="xs"
+            miw={480}
+            aria-label="Inputs side by side"
+          >
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Input</Table.Th>

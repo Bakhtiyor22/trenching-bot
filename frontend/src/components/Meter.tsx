@@ -47,7 +47,10 @@ export function Meter({
         {segments
           .filter((s) => s.value > 0)
           .map((s) => (
-            <span key={s.label} style={{ width: meterWidth(s.value, total), background: s.color }} />
+            <span
+              key={s.label}
+              style={{ width: meterWidth(s.value, total), background: s.color }}
+            />
           ))}
       </div>
     );
@@ -63,18 +66,27 @@ export function Meter({
       aria-valuemax={max ?? 0}
       aria-valuenow={now}
     >
-      {now > 0 && <span style={{ width: meterWidth(now, max ?? 0), background: color, borderRadius: 3 }} />}
+      {now > 0 && (
+        <span style={{ width: meterWidth(now, max ?? 0), background: color, borderRadius: 3 }} />
+      )}
     </div>
   );
 }
 
 /** A small legend for a segmented meter: a swatch and the word beside each count. */
-export function MeterLegend({ segments }: { segments: Array<MeterSegment & { text?: ReactNode }> }) {
+export function MeterLegend({
+  segments,
+}: {
+  segments: Array<MeterSegment & { text?: ReactNode }>;
+}) {
   return (
     <Group gap="md" wrap="wrap">
       {segments.map((s) => (
         <Group key={s.label} gap={6} wrap="nowrap">
-          <span aria-hidden style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flex: 'none' }} />
+          <span
+            aria-hidden
+            style={{ width: 8, height: 8, borderRadius: 2, background: s.color, flex: 'none' }}
+          />
           <Text size="xs" c="dimmed">
             {s.text ?? `${s.value} ${s.label}`}
           </Text>

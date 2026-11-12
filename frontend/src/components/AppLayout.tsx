@@ -53,7 +53,10 @@ interface NavItem {
 
 /** The sidebar, grouped by what the user is doing. Automation's views live in its page tabs. */
 const NAV_GROUPS: Array<{ label: string | null; items: NavItem[] }> = [
-  { label: null, items: [{ to: paths.dashboard, label: 'Dashboard', icon: <IconDashboard />, end: true }] },
+  {
+    label: null,
+    items: [{ to: paths.dashboard, label: 'Dashboard', icon: <IconDashboard />, end: true }],
+  },
   {
     label: 'Research',
     items: [
@@ -152,12 +155,26 @@ export function BackendHealthIndicator() {
   const dot = (
     <span
       className={up ? 'console-live-dot' : undefined}
-      style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: color }}
+      style={{
+        display: 'inline-block',
+        width: 8,
+        height: 8,
+        borderRadius: '50%',
+        background: color,
+      }}
     />
   );
   return (
     <Tooltip label={`Actuator health: ${status}`}>
-      <Group gap={8} wrap="nowrap" px="sm" h={36} aria-label={label} role="status" style={HEADER_PILL}>
+      <Group
+        gap={8}
+        wrap="nowrap"
+        px="sm"
+        h={36}
+        aria-label={label}
+        role="status"
+        style={HEADER_PILL}
+      >
         {dot}
         <Text size="sm" visibleFrom="xs">
           {label}
@@ -205,7 +222,12 @@ function PaletteButton() {
         aria-label="Open command palette"
         h={36}
         px="sm"
-        style={{ ...HEADER_PILL, background: 'var(--console-panel)', flex: '0 1 300px', minWidth: 0 }}
+        style={{
+          ...HEADER_PILL,
+          background: 'var(--console-panel)',
+          flex: '0 1 300px',
+          minWidth: 0,
+        }}
       >
         <Group gap={10} wrap="nowrap">
           <IconSearch size={15} color="var(--mantine-color-dimmed)" />
@@ -365,7 +387,13 @@ export function AppLayout() {
 
       <AppShell.Header>
         <Group h="100%" px="md" gap="sm" wrap="nowrap">
-          <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Toggle navigation" />
+          <Burger
+            opened={opened}
+            onClick={toggle}
+            hiddenFrom="sm"
+            size="sm"
+            aria-label="Toggle navigation"
+          />
           <Box hiddenFrom="sm">
             <Brand compact />
           </Box>
@@ -422,8 +450,8 @@ export function AppLayout() {
               style={{ background: 'var(--console-raised)', borderRadius: 8 }}
               aria-label="Paper trading notice"
             >
-              Every fill, position and P&amp;L here is simulated from replayed data. Nothing is traded, and Solana
-              is only ever read.
+              Every fill, position and P&amp;L here is simulated from replayed data. Nothing is
+              traded, and Solana is only ever read.
             </Text>
           )}
           <Group justify={rail ? 'center' : 'space-between'} mt="xs" gap={4}>

@@ -3,7 +3,9 @@ import type { StatusTone } from '../../components/StatusChip';
 import { humanizeCode } from '../../lib/format';
 
 /** OK success; rate limited / timeout / nothing to inspect need attention; errors fail; not configured is neutral (never red). */
-export function outcomeTone(outcome: SolanaCheckOutcome | AddressCheckOutcome | string): StatusTone {
+export function outcomeTone(
+  outcome: SolanaCheckOutcome | AddressCheckOutcome | string,
+): StatusTone {
   switch (outcome) {
     case 'OK':
     case 'CHECKED':
@@ -35,9 +37,17 @@ export function toneGlyph(tone: StatusTone): string | undefined {
 export type OutcomeColor = 'teal' | 'orange' | 'red' | 'gray';
 
 /** The Mantine colour token of an outcome (used by the dashboard health line). */
-export function outcomeColor(outcome: SolanaCheckOutcome | AddressCheckOutcome | string): OutcomeColor {
+export function outcomeColor(
+  outcome: SolanaCheckOutcome | AddressCheckOutcome | string,
+): OutcomeColor {
   const tone = outcomeTone(outcome);
-  return tone === 'success' ? 'teal' : tone === 'failure' ? 'red' : tone === 'attention' ? 'orange' : 'gray';
+  return tone === 'success'
+    ? 'teal'
+    : tone === 'failure'
+      ? 'red'
+      : tone === 'attention'
+        ? 'orange'
+        : 'gray';
 }
 
 /** The Mantine colour of a message box beside an outcome: grey unless it needs attention or failed. */
