@@ -776,6 +776,15 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.get('/api/config/defaults', async () => {
       await wait();
+      // Limits the backend has since narrowed: the form allows clocks up to 7200 s that POST /api/runs then refuses.
+      if (mockState() === 'run-limits-changed') {
+        const widened = { min: 1000, max: 7200000 };
+        const { limits } = configDefaults;
+        return HttpResponse.json({
+          ...configDefaults,
+          limits: { ...limits, dipWindowMs: widened, maxHoldMs: widened, hardExitStartMs: widened },
+        });
+      }
       return HttpResponse.json(configDefaults);
     }),
 

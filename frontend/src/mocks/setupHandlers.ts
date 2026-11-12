@@ -117,6 +117,9 @@ export function createSetupHandlers(wait: () => Promise<void>) {
           { code: 'PRESET_UNAVAILABLE', message: 'Preset unavailable', fields: {} },
           { status: 503 },
         );
+      // A preset the backend has since replaced, so POST /api/runs refuses its id as unknown.
+      if (mockState() === 'preset-retired')
+        return HttpResponse.json({ ...runPreset, id: 'decu-dip-v1-on-dip-entry-v1' });
       return HttpResponse.json(runPreset);
     }),
     http.get('/api/runs/recommendations', async () => {

@@ -38,8 +38,23 @@ function recordRunStarts(): RunStartRequest[] {
   return bodies;
 }
 
+/** Refuses every run start with a 400 that names [fields] by their API property, as `ConsoleExceptionHandler` does. */
+function refuseRunStarts(code: string, message: string, fields: Record<string, string>) {
+  server.use(
+    http.post('/api/runs', () => HttpResponse.json({ code, message, fields }, { status: 400 })),
+  );
+}
+
+/** Asserts that [input] is marked invalid and described by the message [text]. */
+function expectFieldError(input: HTMLElement, text: string) {
+  expect(input).toHaveAttribute('aria-invalid', 'true');
+  expect(errorIdsOf(input)).toContain(screen.getByText(text).id);
+}
+
 const BOTH_RULES_TITLE = "This dataset cannot show Decu's sells or size his buy";
 const SELLS_CHECKBOX = "Follow Decu's sells (no entry, and exit if holding)";
+const NOT_STARTED = 'The run was not started';
+const CONFIG_INVALID_MESSAGE = 'Simulation configuration is invalid';
 
 describe('NewRunPage', () => {
   it('formats changed agreed values and resets just one field', async () => {
@@ -200,6 +215,94 @@ describe('NewRunPage', () => {
         .getAllByRole('alert')
         .some((alert) => alert.textContent?.includes('Simulation configuration is invalid')),
     ).toBe(true);
+  });
+
+  it('puts the backend clock errors, sent in milliseconds, on the seconds inputs in seconds', async () => {
+    refuseRunStarts('CONFIG_INVALID', CONFIG_INVALID_MESSAGE, {
+      dipWindowMs: 'must be an integer between 1000 and 20000',
+      maxHoldMs: 'must be an integer between 1000 and 120000',
+    });
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Dip window/);
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+
+    const refusal = await screen.findByRole('alert', { name: NOT_STARTED });
+    expect(
+      within(refusal).getByText('Simulation configuration is invalid. See the highlighted fields.'),
+    ).toBeInTheDocument();
+    expectFieldError(screen.getByLabelText(/Dip window/), 'Must be between 1 and 20 s');
+    expectFieldError(screen.getByLabelText(/Maximum hold/), 'Must be between 1 and 120 s');
+    expect(screen.getByLabelText(/Hard exit start/)).not.toHaveAttribute('aria-invalid', 'true');
+    expect(screen.queryByText(/20000|120000/)).not.toBeInTheDocument();
+  });
+
+  it('points at the highlighted field only while it still is', async () => {
+    refuseRunStarts('CONFIG_INVALID', CONFIG_INVALID_MESSAGE, {
+      hardExitStartMs: 'must be set together with maxHoldMs',
+    });
+    const { user } = renderNewRun();
+    const hard = await screen.findByLabelText(/Hard exit start/);
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+
+    const refusal = await screen.findByRole('alert', { name: NOT_STARTED });
+    expect(
+      within(refusal).getByText('Simulation configuration is invalid. See the highlighted field.'),
+    ).toBeInTheDocument();
+    expectFieldError(hard, 'Set together with the maximum hold');
+    // Editing the field clears its highlight, so the refusal stops pointing at it.
+    await user.type(hard, '0');
+    expect(hard).not.toHaveAttribute('aria-invalid', 'true');
+    expect(within(refusal).getByText(CONFIG_INVALID_MESSAGE)).toBeInTheDocument();
+  });
+
+  it('says why an unknown preset was refused without pointing at fields, as no input shows it', async () => {
+    const message = 'Invalid request field=presetId reason=is not a known preset';
+    refuseRunStarts('INVALID_REQUEST', message, { presetId: 'is not a known preset' });
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Fill delay/);
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+
+    const refusal = await screen.findByRole('alert', { name: NOT_STARTED });
+    // The message already gives the reason, so it is said once, and nothing claims a highlight.
+    expect(within(refusal).getByText(message)).toBeInTheDocument();
+    expect(refusal).not.toHaveTextContent(/highlighted/);
+    expect(within(refusal).getByText('Technical code: INVALID_REQUEST')).toBeInTheDocument();
+    expect(document.querySelectorAll('[aria-invalid="true"]')).toHaveLength(0);
+  });
+
+  it('highlights the fields it can and says the reason of any other in the refusal', async () => {
+    refuseRunStarts('CONFIG_INVALID', CONFIG_INVALID_MESSAGE, {
+      latencySlots: 'must be an integer between 1 and 150',
+      maxHoldMs: 'must be an integer between 1000 and 120000',
+      presetId: 'is not a known preset',
+    });
+    const { user } = renderNewRun();
+    await screen.findByLabelText(/Fill delay/);
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+
+    const refusal = await screen.findByRole('alert', { name: NOT_STARTED });
+    expect(
+      within(refusal).getByText(
+        'Simulation configuration is invalid. The agreed strategy is not a known preset. See the highlighted fields.',
+      ),
+    ).toBeInTheDocument();
+    expectFieldError(screen.getByLabelText(/Fill delay/), 'must be an integer between 1 and 150');
+    expectFieldError(screen.getByLabelText(/Maximum hold/), 'Must be between 1 and 120 s');
+    expect(document.querySelectorAll('[aria-invalid="true"]')).toHaveLength(2);
+  });
+
+  it('highlights the fields a refused comparison run names, as a refused start does', async () => {
+    refuseRunStarts('CONFIG_INVALID', CONFIG_INVALID_MESSAGE, {
+      dipWindowMs: 'must be an integer between 1000 and 20000',
+    });
+    const { user } = renderNewRun();
+    await user.click(await screen.findByRole('button', { name: 'Add comparison run' }));
+
+    const refusal = await screen.findByRole('alert', { name: NOT_STARTED });
+    expect(
+      within(refusal).getByText('Simulation configuration is invalid. See the highlighted field.'),
+    ).toBeInTheDocument();
+    expectFieldError(screen.getByLabelText(/Dip window/), 'Must be between 1 and 20 s');
   });
 
   it('explains a dataset cut short by the old cutoff and offers the old defaults instead', async () => {
