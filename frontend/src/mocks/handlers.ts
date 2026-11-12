@@ -14,6 +14,8 @@ import type {
 } from '../api/types';
 import { SAMPLE_DATASET } from '../api/endpoints';
 import { isSolanaAddress } from '../lib/base58';
+import { SELL_CHECK_NEEDS_TRADES, SIGNAL_SIZE_NEEDS_TRADES } from '../lib/codes';
+import { recordsTrades, TRADES_SCHEMA_VERSION } from '../lib/datasetSchema';
 import { compareDecimals } from '../lib/decimal';
 import { createCaptureHandlers, resetCaptureMocks } from './captureHandlers';
 import { createAutomationHandlers, resetAutomationMocks } from './automationHandlers';
@@ -75,6 +77,30 @@ export function resetMockDb(): void {
 function error(status: number, code: string, message: string, fields: Record<string, string> = {}) {
   const body: ApiErrorBody = { code, message, fields };
   return HttpResponse.json(body, { status });
+}
+
+/** A catalog dataset by id, or the v4 chart fixture, which the catalog does not list but serves by id. */
+function findDataset(id: unknown): Dataset | undefined {
+  return db.datasets.find((d) => d.id === id) ?? (id === V4_DATASET_ID ? v4Dataset : undefined);
+}
+
+/**
+ * `ReplayRunner.run`'s refusals on a dataset whose observations record no trades, in its order: the wallet-sell rule
+ * first, then the minimum signal size. Each is a 409 with the backend's code and `TradesRequiredException` message.
+ */
+function tradesRefusal(schemaVersion: number, config: RunStartRequest['config']) {
+  if (recordsTrades(schemaVersion)) return null;
+  const refuse = (code: string, rule: string) =>
+    error(
+      409,
+      code,
+      `${rule} needs a dataset whose observations record trades schemaVersion=${schemaVersion} minimumSchemaVersion=${TRADES_SCHEMA_VERSION} (${code})`,
+    );
+  if (config?.followWalletSells === true)
+    return refuse(SELL_CHECK_NEEDS_TRADES, 'The wallet-sell rule');
+  if (config?.minSignalSol != null)
+    return refuse(SIGNAL_SIZE_NEEDS_TRADES, 'The minimum signal size');
+  return null;
 }
 
 function pageOf<T>(items: T[], url: URL) {
@@ -571,9 +597,7 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.get('/api/datasets/:id', async ({ params }) => {
       await wait();
-      const dataset =
-        db.datasets.find((d) => d.id === params.id) ??
-        (params.id === V4_DATASET_ID ? v4Dataset : undefined);
+      const dataset = findDataset(params.id);
       return dataset
         ? HttpResponse.json({
             ...dataset,
@@ -593,9 +617,7 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.get('/api/datasets/:id/observations', async ({ params, request }) => {
       await wait();
-      const dataset =
-        db.datasets.find((d) => d.id === params.id) ??
-        (params.id === V4_DATASET_ID ? v4Dataset : undefined);
+      const dataset = findDataset(params.id);
       if (!dataset)
         return error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
       const pair = new URL(request.url).searchParams.get('pair');
@@ -610,9 +632,7 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.get('/api/datasets/:id/chart', async ({ params, request }) => {
       await wait();
-      const dataset =
-        db.datasets.find((item) => item.id === params.id) ??
-        (params.id === V4_DATASET_ID ? v4Dataset : undefined);
+      const dataset = findDataset(params.id);
       if (!dataset)
         return error(404, 'DATASET_NOT_FOUND', `Dataset ${String(params.id)} not found`);
       const url = new URL(request.url);
@@ -625,7 +645,7 @@ export function createHandlers(options: MockOptions = {}) {
         []
       ).filter((item) => `${item.pair.base}/${item.pair.quote}` === pair);
       return chartResponse(
-        dataset.schemaVersion >= 4 ? v4Chart : legacyChart(observations),
+        recordsTrades(dataset.schemaVersion) ? v4Chart : legacyChart(observations),
         url,
         true,
       );
@@ -645,17 +665,12 @@ export function createHandlers(options: MockOptions = {}) {
       if (Object.keys(fields).length > 0) {
         return error(400, 'CONFIG_INVALID', 'Simulation configuration is invalid', fields);
       }
-      const dataset = db.datasets.find((d) => d.id === body.datasetId);
+      const dataset = findDataset(body.datasetId);
       if (!dataset) {
         return error(404, 'DATASET_NOT_FOUND', `Dataset ${body.datasetId} not found`);
       }
-      if (body.config?.followWalletSells === true && dataset.schemaVersion < 4) {
-        return error(
-          409,
-          'SELL_CHECK_NEEDS_TRADES',
-          `The wallet-sell rule needs a dataset whose observations record trades schemaVersion=${dataset.schemaVersion} minimumSchemaVersion=4 (SELL_CHECK_NEEDS_TRADES)`,
-        );
-      }
+      const refusal = tradesRefusal(dataset.schemaVersion, body.config);
+      if (refusal) return refusal;
       const runId = runForDataset[body.datasetId] ?? Object.keys(runRecords)[0]!;
       const records = runRecords[runId]!;
       const created = !db.startedRuns.has(runId);

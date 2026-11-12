@@ -26,13 +26,8 @@ import { useConfigDefaults, useDataset, useDatasets, useStartRun } from '../../a
 import type { ConfigDefaults, Dataset } from '../../api/types';
 import { setupApi, type Recommendation, type RunPreset } from '../../api/setup';
 import { Recommendations } from '../../components/Recommendations';
-import {
-  codeLabel,
-  MARKET_COVERAGE_ENDED,
-  presetStatusLabels,
-  SELL_CHECK_NEEDS_TRADES,
-  SIGNAL_SIZE_NEEDS_TRADES,
-} from '../../lib/codes';
+import { codeLabel, MARKET_COVERAGE_ENDED, presetStatusLabels } from '../../lib/codes';
+import { TRADES_SCHEMA_VERSION } from '../../lib/datasetSchema';
 import { formatDecimal, trimFractionZeros } from '../../lib/decimal';
 import { formatPercent } from '../../lib/percent';
 import { IconAlert, IconPlay } from '../../components/Icons';
@@ -58,10 +53,14 @@ import {
   PERCENT_FIELDS,
   PRICE_MEASURE_LABELS,
   rangeText,
+  refusedTradeRules,
   SECONDS_FIELDS,
   secondsText,
   type SecondsField,
   toRunStartRequest,
+  tradeRuleConflicts,
+  tradeRulesOff,
+  type TradeRule,
   validateRunForm,
   type RunFormValues,
 } from './runForm';
@@ -127,6 +126,71 @@ function percentBps(value: string) {
   return formatDecimal((BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0'))).toString());
 }
 
+/**
+ * Why a dataset that records no trades cannot run [rules], and the actions that drop them: the same words before
+ * Start run and after a refusal. [schemaVersion] is the dataset's, when known.
+ */
+function tradeRulesCopy(rules: readonly TradeRule[], schemaVersion: number | undefined) {
+  const recording =
+    schemaVersion === undefined
+      ? 'Its market recording does not record who traded'
+      : `Its market recording is schema ${schemaVersion}, which does not record who traded`;
+  const newer = `or choose a dataset of schema ${TRADES_SCHEMA_VERSION} or later`;
+  if (rules.length > 1)
+    return {
+      title: "This dataset cannot show Decu's sells or size his buy",
+      text: `${recording}, so Decu's sells cannot be followed and the size of his buy cannot be checked. Turn off "Follow Decu's sells" and clear "Minimum signal size" to run it, ${newer}.`,
+      turnOff: 'Turn off both settings',
+      runWithout: 'Run without both settings',
+    };
+  if (rules[0] === 'minSignalSol')
+    return {
+      title: "This dataset cannot size Decu's buy",
+      text: `${recording}, so the size of Decu's buy cannot be checked. Clear "Minimum signal size" to run it, ${newer}.`,
+      turnOff: 'Clear the minimum signal size',
+      runWithout: 'Run without a minimum signal size',
+    };
+  return {
+    title: "This dataset cannot show Decu's sells",
+    text: `${recording}. Turn off "Follow Decu's sells" to run it, ${newer}.`,
+    turnOff: "Turn off Follow Decu's sells",
+    runWithout: 'Run without following sells',
+  };
+}
+
+/**
+ * Before Start run: the settings the chosen dataset cannot run, because it records no trades, with one action that
+ * turns them all off in the form. The backend would refuse a start with any of them on.
+ */
+function TradeRulesNotice({
+  rules,
+  schemaVersion,
+  onTurnOff,
+}: {
+  rules: readonly TradeRule[];
+  schemaVersion: number;
+  onTurnOff: () => void;
+}) {
+  const copy = tradeRulesCopy(rules, schemaVersion);
+  return (
+    <Alert
+      color="orange"
+      variant="light"
+      icon={<IconAlert />}
+      title={copy.title}
+      role="status"
+      mt="sm"
+    >
+      <Stack gap="xs">
+        <Text size="sm">{copy.text}</Text>
+        <Button size="xs" variant="light" onClick={onTurnOff} style={{ alignSelf: 'flex-start' }}>
+          {copy.turnOff}
+        </Button>
+      </Stack>
+    </Alert>
+  );
+}
+
 function RunConfigForm({
   config,
   datasets,
@@ -159,10 +223,16 @@ function RunConfigForm({
     enabled: !!form.values.datasetId,
   });
   const undoValues = useRef<RunFormValues | null>(null);
+  /** Start run: the wide column's button or the narrow bar's; only one is rendered at a time. */
+  const startButton = useRef<HTMLButtonElement>(null);
   const agreed = formValuesFrom(defaults, form.values.datasetId);
   const changed = changedSettings(form.values, defaults);
   const missingFields = preset?.fields.filter((field) => field.status === 'MISSING') ?? [];
   const isAgreed = preset !== undefined && changed.length === 0;
+  const selectedDataset = datasets.find((d) => d.id === form.values.datasetId);
+  const schemaVersion = selectedDataset?.schemaVersion;
+  // Settings the chosen dataset cannot run, flagged before Start run because the backend refuses them.
+  const conflicts = tradeRuleConflicts(form.values, schemaVersion);
   // Below md the summary column sits far under the settings, so Start run moves to a bar pinned to the bottom.
   const narrow = useMediaQuery('(max-width: 62em)') ?? false;
   async function applyRecommendation(item: Recommendation) {
@@ -212,19 +282,25 @@ function RunConfigForm({
     );
   }
   const submit = form.onSubmit(start);
-  /** After a SIGNAL_SIZE_NEEDS_TRADES refusal: the same settings without a minimum signal size, shown in the form too. */
-  function startWithoutMinSignal() {
-    form.setFieldValue('minSignalSol', '');
-    start({ ...form.values, minSignalSol: '' });
+  /** The one action before Start run: turn off every setting the chosen dataset cannot run. */
+  function turnOffConflicts() {
+    form.setValues(tradeRulesOff(conflicts));
+    // The notice holding this action goes away with it, so focus moves on to the next step instead of the page.
+    startButton.current?.focus();
   }
-  /** After a SELL_CHECK_NEEDS_TRADES refusal: the same settings with the sell rule off, shown in the form too. */
-  function startWithoutSells() {
-    form.setFieldValue('followWalletSells', false);
-    start({ ...form.values, followWalletSells: false });
+  /** After a refusal for missing trader data: the same settings with [rules] off, shown in the form too. */
+  function startWithout(rules: readonly TradeRule[]) {
+    const off = tradeRulesOff(rules);
+    form.setValues(off);
+    start({ ...form.values, ...off });
   }
   const serverError = startRun.error;
   const fieldErrorsShown =
     serverError instanceof ApiError && Object.keys(serverError.fields).length > 0;
+  const refusalRules = refusedTradeRules(
+    form.values,
+    serverError instanceof ApiError ? serverError.code : null,
+  );
 
   function settingCard(field: SettingField) {
     const isClock = (SECONDS_FIELDS as readonly string[]).includes(field);
@@ -234,6 +310,7 @@ function RunConfigForm({
     const metadata = preset?.fields.find((item) => item.field === presetField);
     const edited = changed.includes(field);
     const missing = metadata?.status === 'MISSING';
+    const conflict = (conflicts as readonly string[]).includes(field);
     const status = !preset
       ? 'Engine default · not the agreed strategy'
       : edited
@@ -272,14 +349,17 @@ function RunConfigForm({
         withBorder
         data-edited={edited || undefined}
         data-missing={missing || undefined}
+        data-conflict={conflict || undefined}
         style={{
-          // Edited reads from the raised tone and the words; a setting without an agreed value needs attention.
+          // Edited reads from the raised tone and the words; a setting without an agreed value, or one the dataset
+          // cannot run, needs attention.
           background: edited ? 'var(--console-raised)' : undefined,
-          borderColor: missing
-            ? 'var(--console-rejected)'
-            : edited
-              ? 'var(--console-line-strong)'
-              : undefined,
+          borderColor:
+            missing || conflict
+              ? 'var(--console-rejected)'
+              : edited
+                ? 'var(--console-line-strong)'
+                : undefined,
         }}
       >
         <Stack gap="xs">
@@ -318,6 +398,12 @@ function RunConfigForm({
               spellCheck={false}
               ff={field === 'quoteMint' ? 'monospace' : undefined}
             />
+          )}
+          {conflict && (
+            <Text size="xs" fw={500} c="orange">
+              <span aria-hidden>▲ </span>
+              {`Can't run on this dataset: schema ${schemaVersion} does not record who traded.`}
+            </Text>
           )}
           <Text size="xs" c="dimmed">
             {FIELD_HINTS[field]}
@@ -449,6 +535,13 @@ function RunConfigForm({
               Slots {slotRange(sourceDataset.data)}
             </Text>
           )}
+          {conflicts.length > 0 && schemaVersion !== undefined && (
+            <TradeRulesNotice
+              rules={conflicts}
+              schemaVersion={schemaVersion}
+              onTurnOff={turnOffConflicts}
+            />
+          )}
         </Section>
         <Grid align="flex-start">
           <Grid.Col span={{ base: 12, lg: 8 }}>
@@ -517,6 +610,7 @@ function RunConfigForm({
                   </Text>
                   {!narrow && (
                     <Button
+                      ref={startButton}
                       type="submit"
                       loading={startRun.isPending || legacy.isPending}
                       leftSection={<IconPlay size={16} />}
@@ -531,8 +625,9 @@ function RunConfigForm({
                       fieldErrorsShown={fieldErrorsShown}
                       onRunLegacy={startLegacyRun}
                       legacyPending={legacy.isPending}
-                      onRunWithoutSells={startWithoutSells}
-                      onRunWithoutMinSignal={startWithoutMinSignal}
+                      tradeRules={refusalRules}
+                      schemaVersion={schemaVersion}
+                      onRunWithoutTradeRules={() => startWithout(refusalRules)}
                       pending={startRun.isPending}
                     />
                   )}
@@ -585,13 +680,19 @@ function RunConfigForm({
                   <Text size="xs" c="red">
                     Not started. The reason is under In plain words.
                   </Text>
+                ) : conflicts.length > 0 ? (
+                  <Text size="xs" c="orange">
+                    {conflicts.length === 1 ? '1 setting' : `${conflicts.length} settings`} can't
+                    run on this dataset. See Dataset.
+                  </Text>
                 ) : (
                   <Text size="xs" c="dimmed" truncate>
-                    {datasets.find((d) => d.id === form.values.datasetId)?.name || 'Choose a dataset'}
+                    {selectedDataset?.name || 'Choose a dataset'}
                   </Text>
                 )}
               </Stack>
               <Button
+                ref={startButton}
                 type="submit"
                 loading={startRun.isPending || legacy.isPending}
                 leftSection={<IconPlay size={16} />}
@@ -608,30 +709,33 @@ function RunConfigForm({
 }
 
 /**
- * Why the run was refused, beside Start run. A dataset cut short by the old cutoff, or too old to show Decu's sells, gets
- * a way forward.
+ * Why the run was refused, beside Start run. A dataset cut short by the old cutoff gets a way forward, and one that
+ * records no trades gets a single action that turns off every setting it cannot run ([tradeRules]), not just the one
+ * the refusal names, so the retry is not refused for the next one.
  */
 function RunStartError({
   error,
   fieldErrorsShown,
   onRunLegacy,
   legacyPending,
-  onRunWithoutSells,
-  onRunWithoutMinSignal,
+  tradeRules,
+  schemaVersion,
+  onRunWithoutTradeRules,
   pending,
 }: {
   error: Error;
   fieldErrorsShown: boolean;
   onRunLegacy: () => void;
   legacyPending: boolean;
-  onRunWithoutSells: () => void;
-  onRunWithoutMinSignal: () => void;
+  /** The trade rules to turn off; empty unless the refusal is for missing trader data. */
+  tradeRules: readonly TradeRule[];
+  schemaVersion: number | undefined;
+  onRunWithoutTradeRules: () => void;
   pending: boolean;
 }) {
   const code = error instanceof ApiError ? error.code : null;
   const coverageEnded = code === MARKET_COVERAGE_ENDED;
-  const sellsHidden = code === SELL_CHECK_NEEDS_TRADES;
-  const sizeHidden = code === SIGNAL_SIZE_NEEDS_TRADES;
+  const trades = tradeRules.length > 0 ? tradeRulesCopy(tradeRules, schemaVersion) : null;
   return (
     <Alert
       color="red"
@@ -640,11 +744,7 @@ function RunStartError({
       title={
         coverageEnded
           ? 'This dataset ends before these settings can finish'
-          : sellsHidden
-            ? "This dataset cannot show Decu's sells"
-            : sizeHidden
-              ? "This dataset cannot size Decu's buy"
-              : 'The run was not started'
+          : (trades?.title ?? 'The run was not started')
       }
       role="alert"
     >
@@ -652,25 +752,17 @@ function RunStartError({
         <Text size="sm">
           {coverageEnded
             ? 'Its capture stopped recording the token once the outcome under the old default rules was decided, so a run with these settings would be cut short. Run the old defaults on it, or capture the token again with the market cutoff set to the whole window.'
-            : sellsHidden
-              ? 'Its market recording is schema 3, which does not record who traded. Turn off "Follow Decu\'s sells" to run it, or re-export the capture as a newer dataset.'
-              : sizeHidden
-                ? 'Its market recording is schema 3, which does not record who traded, so the fees on Decu\'s buy cannot be counted. Clear "Minimum signal size" to run it, or re-export the capture as a newer dataset.'
-                : `${errorMessage(error)}${fieldErrorsShown ? ' See the highlighted fields.' : ''}`}
+            : (trades?.text ??
+              `${errorMessage(error)}${fieldErrorsShown ? ' See the highlighted fields.' : ''}`)}
         </Text>
         {coverageEnded && (
           <Button size="xs" variant="light" onClick={onRunLegacy} loading={legacyPending}>
             Run the old defaults instead
           </Button>
         )}
-        {sellsHidden && (
-          <Button size="xs" variant="light" onClick={onRunWithoutSells} loading={pending}>
-            Run without following sells
-          </Button>
-        )}
-        {sizeHidden && (
-          <Button size="xs" variant="light" onClick={onRunWithoutMinSignal} loading={pending}>
-            Run without a minimum signal size
+        {trades && (
+          <Button size="xs" variant="light" onClick={onRunWithoutTradeRules} loading={pending}>
+            {trades.runWithout}
           </Button>
         )}
         {error instanceof ApiError && <CodeText code={error.code} />}

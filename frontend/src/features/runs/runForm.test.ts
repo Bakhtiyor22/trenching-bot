@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { configDefaults } from '../../mocks/fixtures';
 import { runPreset } from '../../mocks/setupHandlers';
+import {
+  MARKET_COVERAGE_ENDED,
+  SELL_CHECK_NEEDS_TRADES,
+  SIGNAL_SIZE_NEEDS_TRADES,
+} from '../../lib/codes';
 import { compareDecimals } from '../../lib/decimal';
 import {
   formValuesFrom,
+  refusedTradeRules,
   secondsText,
   secondsToMs,
   toRunStartRequest,
+  tradeRuleConflicts,
+  TRADE_RULES,
+  tradeRulesOff,
   validateRunForm,
 } from './runForm';
 
@@ -100,6 +109,50 @@ describe('run form price measure and sell rule', () => {
     expect(defaults.config).toMatchObject({
       priceMeasure: 'TRADE_AVERAGE',
       followWalletSells: false,
+    });
+  });
+});
+
+describe('run form rules that need trader data', () => {
+  const agreed = formValuesFrom(runPreset.config, 'dataset');
+  const engine = formValuesFrom(configDefaults.defaults, 'dataset');
+
+  it('flags the sell rule, then the minimum signal size, only on a dataset that records no trades', () => {
+    expect(tradeRuleConflicts(agreed, 3)).toEqual(['followWalletSells', 'minSignalSol']);
+    expect([4, 5, 6].map((schema) => tradeRuleConflicts(agreed, schema))).toEqual([[], [], []]);
+    expect(tradeRuleConflicts(agreed, undefined)).toEqual([]);
+  });
+
+  it('flags only the rules that are on', () => {
+    expect(tradeRuleConflicts({ ...agreed, followWalletSells: false }, 3)).toEqual([
+      'minSignalSol',
+    ]);
+    expect(tradeRuleConflicts({ ...agreed, minSignalSol: ' ' }, 3)).toEqual(['followWalletSells']);
+    expect(tradeRuleConflicts(engine, 3)).toEqual([]);
+  });
+
+  it('turns off every rule still on after either refusal, not only the one it names', () => {
+    expect(refusedTradeRules(agreed, SELL_CHECK_NEEDS_TRADES)).toEqual([
+      'followWalletSells',
+      'minSignalSol',
+    ]);
+    expect(refusedTradeRules(agreed, SIGNAL_SIZE_NEEDS_TRADES)).toEqual([
+      'followWalletSells',
+      'minSignalSol',
+    ]);
+    // Edited off since the refusal: the named rule is still the one to turn off.
+    expect(refusedTradeRules(engine, SIGNAL_SIZE_NEEDS_TRADES)).toEqual(['minSignalSol']);
+    expect(refusedTradeRules(agreed, MARKET_COVERAGE_ENDED)).toEqual([]);
+    expect(refusedTradeRules(agreed, null)).toEqual([]);
+  });
+
+  it('turns the rules off as an unticked sell rule and a cleared minimum, sent as false and null', () => {
+    expect(tradeRulesOff(['minSignalSol'])).toEqual({ minSignalSol: '' });
+    const off = { ...agreed, ...tradeRulesOff(TRADE_RULES) };
+    expect(tradeRuleConflicts(off, 3)).toEqual([]);
+    expect(toRunStartRequest(off).config).toMatchObject({
+      followWalletSells: false,
+      minSignalSol: null,
     });
   });
 });
