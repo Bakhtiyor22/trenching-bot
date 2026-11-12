@@ -26,8 +26,7 @@ describe('DatasetsPage', () => {
   });
 
   it('shows the server validation message when an upload is rejected with 400', async () => {
-    const serverMessage =
-      'Replay checksum mismatch: declared 0000aaaa, computed 7da78ada00b144606af1578d5d72de54f879149f906e785833d6bab9c9e862f6';
+    const serverMessage = `Replay checksum mismatch computed=${SAMPLE_DATASET_ID}`;
     server.use(
       http.post('/api/datasets', () =>
         HttpResponse.json({ code: 'DATASET_INVALID', message: serverMessage, fields: {} }, { status: 400 }),

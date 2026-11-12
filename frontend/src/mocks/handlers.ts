@@ -13,8 +13,8 @@ import type {
   SolanaCheck,
   SolanaStatus,
 } from '../api/types';
-import { SAMPLE_DATASET } from '../api/endpoints';
-import { base58ByteLength, isSolanaAddress } from '../lib/base58';
+import { pairKey, SAMPLE_DATASET } from '../api/endpoints';
+import { base58ByteLength } from '../lib/base58';
 import { SELL_CHECK_NEEDS_TRADES, SIGNAL_SIZE_NEEDS_TRADES } from '../lib/codes';
 import { recordsTrades, TRADES_SCHEMA_VERSION } from '../lib/datasetSchema';
 import { compareDecimals, decimalSign } from '../lib/decimal';
@@ -45,6 +45,10 @@ import {
 } from './fixtures';
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+/** `ReplayDatasetCatalogService.MAX_NAME_LENGTH`. */
+const MAX_DATASET_NAME_LENGTH = 128;
+/** `ReplayDataset.SUPPORTED_SCHEMA_VERSIONS`. */
+const SUPPORTED_SCHEMA_VERSIONS = [3, 4, 5, 6];
 
 export interface MockOptions {
   /** Pretend `SOLANA_RPC_URL` is set (devnet). Default false, like a fresh local setup. */
@@ -93,6 +97,54 @@ function datasetNotFound(id: string) {
   return error(404, 'DATASET_NOT_FOUND', `Replay dataset not found datasetId=${id}`);
 }
 
+/** `SimulationRunNotFoundException`, which every run endpoint answers for an unknown id. */
+function runNotFound(id: string) {
+  return error(404, 'RUN_NOT_FOUND', `Simulation run not found runId=${id}`);
+}
+
+/** `DatasetInvalidException` or `EmptyDatasetUploadException`: an upload the catalog refuses, with its message. */
+function datasetInvalid(message: string) {
+  return error(400, 'DATASET_INVALID', message);
+}
+
+/** `MethodArgumentTypeMismatchException`: a query parameter Spring cannot convert to its declared type. */
+function parameterMismatch(name: string) {
+  return error(400, 'INVALID_REQUEST', 'Request parameter has an invalid value', {
+    [name]: 'has an invalid value',
+  });
+}
+
+/** `ConsolePairs.parse`'s reason for a `pair` parameter it cannot read. */
+const PAIR_FORMAT = 'must be <baseMint>/<quoteMint> with two different base58 mints';
+
+/** `ConsolePairs.parse`: two different 32-byte base58 mints, as `<baseMint>/<quoteMint>`. */
+function isPair(value: string): boolean {
+  const mints = value.split('/');
+  return (
+    mints.length === 2 &&
+    mints[0] !== mints[1] &&
+    mints.every((mint) => base58ByteLength(mint) === 32)
+  );
+}
+
+/** `Base58.requireBytes(value, 32)`'s reason for refusing [value], or null for a 32-byte base58 address. */
+function base58Refusal(value: string): string | null {
+  if (value.length < 32 || value.length > 64) return 'Invalid base58 length';
+  const bytes = base58ByteLength(value);
+  if (bytes === null) return 'Invalid base58 character';
+  return bytes === 32 ? null : 'Invalid decoded base58 length';
+}
+
+/** An upload's text, or null when `ReplayDatasetCatalogService.parse` refuses it: not UTF-8, or with a NUL. */
+function utf8Text(bytes: Uint8Array): string | null {
+  if (bytes.includes(0)) return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
 /** A catalog dataset by id, or the v4 chart fixture, which the catalog does not list but serves by id. */
 function findDataset(id: unknown): Dataset | undefined {
   return db.datasets.find((d) => d.id === id) ?? (id === V4_DATASET_ID ? v4Dataset : undefined);
@@ -130,6 +182,133 @@ function runDetailOr404(id: string) {
 
 const BUCKET_LADDER = [1, 5, 15, 30, 60, 300, 900, 3600, 14400, 86400];
 const MARKER_CURSOR_PREFIX = 'mock-chart-page:';
+// ChartLimits.
+const DEFAULT_MAX_BUCKETS = 300;
+const MAX_BUCKETS = 2000;
+const DEFAULT_MARKER_LIMIT = 500;
+const MAX_MARKER_LIMIT = 2000;
+const MAX_CHART_WALLETS = 20;
+const MAX_TICK_LIMIT = 5000;
+
+/** A chart request as `ChartParameters.of` leaves it: limits defaulted and capped, wallets distinct. */
+interface ChartQuery {
+  pair: string | null;
+  from: string | null;
+  to: string | null;
+  maxBuckets: number;
+  markerLimit: number;
+  wallets: string[];
+  /** The marker offset the cursor encodes; null on a first page. */
+  offset: number | null;
+  tickLimit: number;
+}
+
+/** The chart body the backend sends: its range may be null, which `ChartResponse` does not allow yet. */
+type BackendChartResponse = Omit<ChartResponse, 'range'> & {
+  range: { from: string | null; to: string | null };
+};
+
+/** `Instant.parse`'s ISO-8601 instant: seconds required, up to 9 fraction digits, then `Z` or an offset. */
+function isInstant(text: string): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$/.test(text) &&
+    Number.isFinite(Date.parse(text))
+  );
+}
+
+/** A decimal Java `int`, as Spring converts an `Int` parameter. */
+function isInt(text: string): boolean {
+  const value = Number(text);
+  return /^[+-]?\d+$/.test(text) && value >= -(2 ** 31) && value < 2 ** 31;
+}
+
+/** `ChartController`'s parameters that Spring converts, in declaration order; pair, wallet and cursor stay strings. */
+const CHART_TYPED_PARAMETERS: [string, (text: string) => boolean][] = [
+  ['from', isInstant],
+  ['to', isInstant],
+  ['maxBuckets', isInt],
+  ['markerLimit', isInt],
+  ['tickLimit', isInt],
+];
+
+/** The offset a mock marker cursor encodes, or null; as with `ChartPosition.decode`, any such cursor is valid. */
+function cursorOffset(cursor: string): number | null {
+  const offset = cursor.startsWith(MARKER_CURSOR_PREFIX)
+    ? cursor.slice(MARKER_CURSOR_PREFIX.length)
+    : '';
+  return /^\d+$/.test(offset) ? Number(offset) : null;
+}
+
+/** `ChartParameters.limit`'s refusal of a value below [minimum]; a value above its cap is capped, not refused. */
+function belowMinimum(field: string, value: number | null, minimum: number) {
+  return value !== null && value < minimum
+    ? invalidRequest(field, `must be at least ${minimum}`)
+    : null;
+}
+
+/**
+ * The chart request [url] makes, or the backend's refusal of it: first Spring's conversion of each typed parameter,
+ * then `ChartParameters.of`'s checks, each in its order. Spring reads an empty instant or number as absent; an empty
+ * pair, wallet or cursor is still sent.
+ */
+function chartQuery(url: URL): ChartQuery | Response {
+  const params = url.searchParams;
+  const value = (name: string) => params.get(name) || null;
+  const mismatch = CHART_TYPED_PARAMETERS.find(([name, converts]) => {
+    const text = value(name);
+    return text !== null && !converts(text);
+  });
+  if (mismatch) return parameterMismatch(mismatch[0]);
+  const integer = (name: string) => {
+    const text = value(name);
+    return text === null ? null : Number(text);
+  };
+  const from = value('from');
+  const to = value('to');
+  if (from !== null && to !== null && Date.parse(from) > Date.parse(to))
+    return invalidRequest('from', 'must not be after to');
+  const wallets = [...new Set(params.getAll('wallet'))];
+  if (wallets.length > MAX_CHART_WALLETS)
+    return invalidRequest('wallet', `accepts at most ${MAX_CHART_WALLETS} wallets`);
+  // `WalletAddress.of`, which does not trim.
+  if (wallets.some((wallet) => base58ByteLength(wallet) !== 32))
+    return invalidRequest('wallet', 'must be a base58 wallet address');
+  const pair = params.get('pair');
+  if (pair !== null && !isPair(pair)) return invalidRequest('pair', PAIR_FORMAT);
+  const maxBuckets = integer('maxBuckets');
+  const markerLimit = integer('markerLimit');
+  const cursor = params.get('cursor');
+  const offset = cursor === null ? null : cursorOffset(cursor);
+  const tickLimit = integer('tickLimit');
+  const refusal =
+    belowMinimum('maxBuckets', maxBuckets, 1) ??
+    belowMinimum('markerLimit', markerLimit, 1) ??
+    (cursor !== null && offset === null
+      ? invalidRequest('cursor', 'is not a valid cursor')
+      : null) ??
+    belowMinimum('tickLimit', tickLimit, 0);
+  if (refusal) return refusal;
+  return {
+    pair,
+    from,
+    to,
+    maxBuckets: Math.min(maxBuckets ?? DEFAULT_MAX_BUCKETS, MAX_BUCKETS),
+    markerLimit: Math.min(markerLimit ?? DEFAULT_MARKER_LIMIT, MAX_MARKER_LIMIT),
+    wallets,
+    offset,
+    tickLimit: Math.min(tickLimit ?? 0, MAX_TICK_LIMIT),
+  };
+}
+
+/** `ChartBuckets.bucketSeconds`: the finest ladder step that fits [maxBuckets]; the finest for an open range. */
+function chartBucketSeconds(from: string | null, to: string | null, maxBuckets: number): number {
+  if (from === null || to === null) return BUCKET_LADDER[0]!;
+  const span = Date.parse(to) - Date.parse(from);
+  return (
+    BUCKET_LADDER.find((seconds) => Math.floor(span / (seconds * 1000)) + 1 <= maxBuckets) ??
+    BUCKET_LADDER.at(-1)!
+  );
+}
 
 function mockMcap(price: string): string {
   const [integer = '0', fraction = ''] = price.split('.');
@@ -239,42 +418,12 @@ function legacyChart(
   };
 }
 
-function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
-  const params = url.searchParams;
-  const from = params.get('from') ?? base.range.from;
-  const to = params.get('to') ?? base.range.to;
-  const maxBuckets = Number(params.get('maxBuckets') ?? 300);
-  const markerLimit = Number(params.get('markerLimit') ?? 500);
-  const tickLimit = Number(params.get('tickLimit') ?? 0);
-  const wallets = params.getAll('wallet');
-  if (
-    !Number.isFinite(Date.parse(from)) ||
-    !Number.isFinite(Date.parse(to)) ||
-    Date.parse(from) > Date.parse(to)
-  ) {
-    return error(400, 'INVALID_REQUEST', 'Chart range must contain ordered ISO instants');
-  }
-  if (
-    !Number.isInteger(maxBuckets) ||
-    maxBuckets < 1 ||
-    !Number.isInteger(markerLimit) ||
-    markerLimit < 1 ||
-    !Number.isInteger(tickLimit) ||
-    tickLimit < 0 ||
-    tickLimit > 5000 ||
-    wallets.length > 20 ||
-    wallets.some((wallet) => !isSolanaAddress(wallet))
-  ) {
-    return error(400, 'INVALID_REQUEST', 'Invalid chart bucket, marker or wallet parameters');
-  }
+function chartResponse(base: ChartResponse, query: ChartQuery, datasetOnly = false) {
+  const from = query.from ?? base.range.from;
+  const to = query.to ?? base.range.to;
   const inRange = (time: string) =>
     Date.parse(time) >= Date.parse(from) && Date.parse(time) <= Date.parse(to);
-  const bucketSeconds =
-    BUCKET_LADDER.find(
-      (seconds) =>
-        Math.floor((Date.parse(to) - Date.parse(from)) / (seconds * 1000)) + 1 <=
-        Math.min(maxBuckets, 2000),
-    ) ?? BUCKET_LADDER.at(-1)!;
+  const bucketSeconds = chartBucketSeconds(from, to, query.maxBuckets);
   const candles = new Map<string, ChartCandle>();
   for (const candle of base.candles.filter((item) => inRange(item.bucketStart))) {
     const bucketStart = new Date(
@@ -320,28 +469,18 @@ function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
   const selected = base.markers.items.filter(
     (item) =>
       inRange(item.time) &&
-      (wallets.length === 0 || item.isTrackedWallet || wallets.includes(item.trader)),
+      (query.wallets.length === 0 || item.isTrackedWallet || query.wallets.includes(item.trader)),
   );
-  const clustered = selected.length > Math.min(markerLimit, 2000);
+  const clustered = selected.length > query.markerLimit;
   const items = clustered ? selected.filter((item) => item.isTrackedWallet) : selected;
-  const cursor = params.get('cursor');
-  const offset = cursor?.startsWith(MARKER_CURSOR_PREFIX)
-    ? Number(cursor.slice(MARKER_CURSOR_PREFIX.length))
-    : 0;
-  if (
-    cursor &&
-    (!cursor.startsWith(MARKER_CURSOR_PREFIX) ||
-      !Number.isInteger(offset) ||
-      offset < 1 ||
-      offset >= items.length)
-  ) {
-    return error(400, 'INVALID_REQUEST', 'Invalid chart marker cursor');
-  }
-  const page = items.slice(offset, offset + Math.min(markerLimit, 2000));
+  // A cursor past the last marker is a valid, empty page.
+  const offset = query.offset ?? 0;
+  const page = items.slice(offset, offset + query.markerLimit);
   const ticks = base.ticks.items.filter((item) => inRange(item.time));
-  const ticksIncluded = !cursor && tickLimit > 0 && ticks.length <= tickLimit;
+  const firstPage = query.offset === null;
+  const ticksIncluded = firstPage && query.tickLimit > 0 && ticks.length <= query.tickLimit;
   const clusterMap = new Map<string, ChartResponse['markers']['clusters'][number]>();
-  if (clustered && !cursor) {
+  if (clustered && firstPage) {
     for (const item of selected.filter((marker) => !marker.isTrackedWallet)) {
       const bucketStart = new Date(
         Math.floor(Date.parse(item.time) / (bucketSeconds * 1000)) * bucketSeconds * 1000,
@@ -386,7 +525,7 @@ function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
       total: ticks.length,
       items: ticksIncluded && mockState() !== 'chart-empty' ? ticks : [],
     },
-    candles: mockState() === 'chart-empty' && maxBuckets !== 1 ? [] : [...candles.values()],
+    candles: mockState() === 'chart-empty' && query.maxBuckets !== 1 ? [] : [...candles.values()],
     markers: {
       ...base.markers,
       mode: clustered ? 'CLUSTERED' : 'ITEMS',
@@ -400,6 +539,32 @@ function chartResponse(base: ChartResponse, url: URL, datasetOnly = false) {
     },
     paperFills: datasetOnly ? [] : base.paperFills.filter((fill) => inRange(fill.time)),
   } satisfies ChartResponse);
+}
+
+/**
+ * `ChartConsoleService.assemble` for a pair the run or dataset has no observations of: an empty chart, not an error.
+ * Its range is the requested one, null where none was asked for.
+ */
+function emptyChart(base: ChartResponse, query: ChartQuery) {
+  return HttpResponse.json({
+    ...base,
+    millisPerSlot: null,
+    coverage: [],
+    extent: null,
+    bucketSeconds: chartBucketSeconds(query.from, query.to, query.maxBuckets),
+    range: { from: query.from, to: query.to },
+    candles: [],
+    markers: {
+      ...base.markers,
+      mode: 'ITEMS',
+      total: 0,
+      items: [],
+      clusters: [],
+      nextCursor: null,
+    },
+    paperFills: [],
+    ticks: { included: query.offset === null && query.tickLimit > 0, total: 0, items: [] },
+  } satisfies BackendChartResponse);
 }
 
 // ConsoleConfigValidator, field by field: the same checks, in its order, with its messages and error codes.
@@ -660,8 +825,11 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.post('/api/datasets/samples/:sample', async ({ params }) => {
       await wait();
-      if (params.sample !== SAMPLE_DATASET) {
-        return error(404, 'SAMPLE_NOT_FOUND', `Unknown sample dataset ${String(params.sample)}`);
+      // DatasetConsoleService.importSample matches the enum name trimmed, case-insensitively, `-` standing for `_`.
+      const sample = String(params.sample);
+      const key = (name: string) => name.trim().toUpperCase().replace(/-/g, '_');
+      if (key(sample) !== key(SAMPLE_DATASET)) {
+        return error(404, 'SAMPLE_NOT_FOUND', `Unknown sample dataset sample=${sample}`);
       }
       const exists = db.datasets.some((d) => d.id === SAMPLE_DATASET_ID);
       if (!exists) db.datasets.unshift(sampleDataset);
@@ -673,48 +841,69 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.post('/api/datasets', async ({ request }) => {
       await wait();
+      // DatasetController.upload, DatasetConsoleService.upload, then ReplayDatasetCatalogService.register, in order.
       let form: FormData;
       try {
         form = await request.formData();
       } catch {
-        return error(400, 'INVALID_REQUEST', 'The upload is not a readable multipart request');
+        return error(
+          400,
+          'INVALID_REQUEST',
+          'Request must be multipart/form-data with a file part',
+        );
       }
       const file = form.get('file');
-      if (!(file instanceof File))
-        return error(400, 'INVALID_REQUEST', 'file is required', { file: 'is required' });
+      // A part without a file name is a plain form field, which Spring does not bind as the file either.
+      if (file === null || typeof file === 'string')
+        return error(400, 'INVALID_REQUEST', 'Multipart request is missing a required part', {
+          file: 'is required',
+        });
       if (file.size > MAX_UPLOAD_BYTES)
-        return error(413, 'UPLOAD_TOO_LARGE', 'The upload exceeds 100 MB');
-      const text = await file.text();
-      if (!text.trim()) return error(400, 'DATASET_INVALID', 'The uploaded dataset is empty');
-      let parsed: { checksum?: unknown; schemaVersion?: unknown };
+        return error(413, 'UPLOAD_TOO_LARGE', 'Dataset upload exceeds the maximum upload size');
+      if (file.size === 0) return datasetInvalid('Uploaded dataset file is empty');
+      const nameField = form.get('name');
+      // Without a name the file's own name labels the dataset, extension and all.
+      const name = (
+        typeof nameField === 'string' && nameField.trim() ? nameField : file.name
+      ).trim();
+      if (!name || name.length > MAX_DATASET_NAME_LENGTH)
+        return datasetInvalid(`Dataset name must be 1..${MAX_DATASET_NAME_LENGTH} characters`);
+      const text = utf8Text(new Uint8Array(await file.arrayBuffer()));
+      if (text === null) return datasetInvalid('Dataset must be UTF-8 JSON');
+      let root: unknown;
       try {
-        parsed = JSON.parse(text) as typeof parsed;
+        root = JSON.parse(text);
       } catch {
-        return error(400, 'DATASET_INVALID', 'Replay dataset is not valid JSON');
+        // The backend relays the JSON parser's own message, which names the position; the mock cannot reproduce it.
+        return datasetInvalid('Replay dataset is not valid JSON');
       }
-      if (![3, 4, 5, 6].includes(parsed.schemaVersion as number)) {
-        return error(
-          400,
-          'DATASET_INVALID',
-          `Unsupported replay schemaVersion ${String(parsed.schemaVersion)}; expected 3, 4, 5 or 6`,
+      // ReplayDatasetLoader reads a missing field, or any field of a non-object, as absent.
+      const field = (key: string): unknown =>
+        typeof root === 'object' && root !== null && !Array.isArray(root)
+          ? (root as Record<string, unknown>)[key]
+          : undefined;
+      const schemaVersion = field('schemaVersion');
+      if (typeof schemaVersion !== 'number' || !Number.isInteger(schemaVersion))
+        return datasetInvalid('Expected integer field=schemaVersion');
+      if (!SUPPORTED_SCHEMA_VERSIONS.includes(schemaVersion)) {
+        const supported = SUPPORTED_SCHEMA_VERSIONS.join(', ');
+        return datasetInvalid(
+          `Unsupported replay schemaVersion=${schemaVersion}; supported versions are [${supported}] (UNSUPPORTED_SCHEMA)`,
         );
       }
-      const checksum = String(parsed.checksum ?? '');
-      if (!/^[0-9a-f]{64}$/.test(checksum) || checksum.startsWith('0000')) {
-        return error(
-          400,
-          'DATASET_INVALID',
-          `Replay checksum mismatch: declared ${checksum || '(none)'}, computed ${SAMPLE_DATASET_ID}`,
-        );
-      }
+      // The mock reads no other field: a well-formed checksum not starting 0000 stands for a dataset that loads.
+      const checksum = field('checksum');
+      if (typeof checksum !== 'string' || !checksum.trim())
+        return datasetInvalid('Expected nonempty string field=checksum');
+      if (!/^[0-9a-f]{64}$/.test(checksum) || checksum.startsWith('0000'))
+        return datasetInvalid(`Replay checksum mismatch computed=${SAMPLE_DATASET_ID}`);
       const existing = db.datasets.find((d) => d.id === checksum);
       if (existing) return HttpResponse.json({ dataset: existing, created: false });
-      const name = String(form.get('name') ?? '') || file.name.replace(/\.json$/i, '');
       const dataset: Dataset = {
         ...sampleDataset,
         id: checksum,
         name,
-        schemaVersion: parsed.schemaVersion as number,
+        schemaVersion,
         createdAt: new Date().toISOString(),
       };
       db.datasets.unshift(dataset);
@@ -742,36 +931,36 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.get('/api/datasets/:id/observations', async ({ params, request }) => {
       await wait();
+      // DatasetConsoleService.observations reads the pair before it loads the dataset.
+      const pair = new URL(request.url).searchParams.get('pair');
+      if (pair !== null && !isPair(pair)) return invalidRequest('pair', PAIR_FORMAT);
       const dataset = findDataset(params.id);
       if (!dataset) return datasetNotFound(String(params.id));
-      const pair = new URL(request.url).searchParams.get('pair');
       const all =
         dataset.id === V4_DATASET_ID
           ? v4Observations
           : (datasetObservations[dataset.id] ?? datasetObservations[SAMPLE_DATASET_ID] ?? []);
-      return HttpResponse.json(
-        pair ? all.filter((o) => `${o.pair.base}/${o.pair.quote}` === pair) : all,
-      );
+      return HttpResponse.json(pair === null ? all : all.filter((o) => pairKey(o.pair) === pair));
     }),
 
     http.get('/api/datasets/:id/chart', async ({ params, request }) => {
       await wait();
+      // ChartConsoleService.datasetChart: the parameters, then the pair it requires, then the dataset.
+      const query = chartQuery(new URL(request.url));
+      if (query instanceof Response) return query;
+      const pair = query.pair;
+      if (pair === null) return invalidRequest('pair', 'is required');
       const dataset = findDataset(params.id);
       if (!dataset) return datasetNotFound(String(params.id));
-      const url = new URL(request.url);
-      const pair = url.searchParams.get('pair');
-      if (!pair || !dataset.pairs.some((item) => `${item.base}/${item.quote}` === pair))
-        return error(400, 'INVALID_REQUEST', 'A recorded pair is required');
       const observations = (
         datasetObservations[dataset.id] ??
         datasetObservations[SAMPLE_DATASET_ID] ??
         []
-      ).filter((item) => `${item.pair.base}/${item.pair.quote}` === pair);
-      return chartResponse(
-        recordsTrades(dataset.schemaVersion) ? v4Chart : legacyChart(observations),
-        url,
-        true,
-      );
+      ).filter((item) => pairKey(item.pair) === pair);
+      const base = recordsTrades(dataset.schemaVersion) ? v4Chart : legacyChart(observations);
+      return dataset.pairs.some((item) => pairKey(item) === pair)
+        ? chartResponse(base, query, true)
+        : emptyChart(base, query);
     }),
 
     http.get('/api/config/defaults', async () => {
@@ -819,47 +1008,45 @@ export function createHandlers(options: MockOptions = {}) {
       const records = runDetailOr404(String(params.id));
       return records
         ? HttpResponse.json(withRunSetup(records.detail))
-        : error(404, 'RUN_NOT_FOUND', `Run ${String(params.id)} not found`);
+        : runNotFound(String(params.id));
     }),
 
     http.get('/api/runs/:id/chart', async ({ params, request }) => {
       await wait();
-      const records = runDetailOr404(String(params.id));
-      if (!records) return error(404, 'RUN_NOT_FOUND', `Run ${String(params.id)} not found`);
-      const url = new URL(request.url);
-      const pairs = [
-        ...new Set(records.observations.map((item) => `${item.pair.base}/${item.pair.quote}`)),
-      ];
-      const pair = url.searchParams.get('pair');
-      if ((!pair && pairs.length > 1) || (pair && !pairs.includes(pair)))
-        return error(400, 'INVALID_REQUEST', 'A recorded pair is required');
-      const observations = records.observations.filter(
-        (item) => !pair || `${item.pair.base}/${item.pair.quote}` === pair,
-      );
-      return chartResponse(
+      // ChartConsoleService.runChart: the parameters, then the run, then its only pair when none is named.
+      const query = chartQuery(new URL(request.url));
+      if (query instanceof Response) return query;
+      const id = String(params.id);
+      const records = runDetailOr404(id);
+      if (!records) return runNotFound(id);
+      const pairs = [...new Set(records.observations.map((item) => pairKey(item.pair)))];
+      if (query.pair === null && pairs.length > 1)
+        return invalidRequest('pair', 'is required when the run has several pairs');
+      const pair = query.pair ?? pairs[0] ?? null;
+      const observations = records.observations.filter((item) => pairKey(item.pair) === pair);
+      const base =
         mockState() === 'chart-first-slot-gap'
           ? firstSlotGapChart
-          : params.id === REAL_RUN_ID
+          : id === REAL_RUN_ID
             ? expandedRunChart
-            : legacyChart(observations, records),
-        url,
-      );
+            : legacyChart(observations, records);
+      return pair !== null && pairs.includes(pair)
+        ? chartResponse(base, query)
+        : emptyChart(base, query);
     }),
 
     ...(['events', 'observations', 'orders', 'positions'] as const).map((kind) =>
       http.get(`/api/runs/:id/${kind}`, async ({ params }) => {
         await wait();
         const records = runDetailOr404(String(params.id));
-        return records
-          ? HttpResponse.json(records[kind])
-          : error(404, 'RUN_NOT_FOUND', `Run ${String(params.id)} not found`);
+        return records ? HttpResponse.json(records[kind]) : runNotFound(String(params.id));
       }),
     ),
 
     http.get('/api/runs/:id/usdt', async ({ params }) => {
       await wait();
       const id = String(params.id);
-      if (!runDetailOr404(id)) return error(404, 'RUN_NOT_FOUND', `Run ${id} not found`);
+      if (!runDetailOr404(id)) return runNotFound(id);
       if (id === realRunUsdt.runId) return HttpResponse.json(realRunUsdt);
       return HttpResponse.json({
         runId: id,
@@ -879,7 +1066,7 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.get('/api/runs/:id/report', ({ params }) => {
       const records = runDetailOr404(String(params.id));
-      if (!records) return error(404, 'RUN_NOT_FOUND', `Run ${String(params.id)} not found`);
+      if (!records) return runNotFound(String(params.id));
       return HttpResponse.json(records.detail, {
         headers: { 'Content-Disposition': `attachment; filename="run-${String(params.id)}.json"` },
       });
@@ -934,10 +1121,12 @@ export function createHandlers(options: MockOptions = {}) {
     http.post('/api/solana/address-check', async ({ request }) => {
       await wait();
       const body = (await request.json()) as { address?: string };
-      const address = String(body?.address ?? '');
-      if (!isSolanaAddress(address)) {
-        return error(400, 'INVALID_ADDRESS', 'Address is not a valid 32-byte base58 address', {
-          address: 'must be a 32-byte base58 address',
+      // SolanaProbeService.checkAddress trims the address and checks it before the configuration.
+      const address = String(body?.address ?? '').trim();
+      const reason = base58Refusal(address);
+      if (reason) {
+        return error(400, 'INVALID_ADDRESS', 'Not a valid 32-byte base58 Solana address', {
+          address: reason,
         });
       }
       if (!options.solanaConfigured) {

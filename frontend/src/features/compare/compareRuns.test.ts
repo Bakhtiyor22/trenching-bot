@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { RunDetail } from '../../api/types';
+import { bpsToPercent } from '../../lib/percent';
 import { SAMPLE_TOTAL_PNL, edgeRunDetail, sampleRunDetail } from '../../mocks/fixtures';
 import {
   alignByMint,
@@ -10,10 +11,11 @@ import {
   sharedRows,
 } from './compareRuns';
 
+// The backend sends each level with its percent twin, so both change together.
 const withConfig = (detail: RunDetail, takeProfitBps: number, hash: string): RunDetail => ({
   ...detail,
   run: { ...detail.run, configurationHash: hash },
-  config: { ...detail.config, takeProfitBps },
+  config: { ...detail.config, takeProfitBps, takeProfitPercent: bpsToPercent(takeProfitBps) },
 });
 
 describe('parseCompareIds', () => {

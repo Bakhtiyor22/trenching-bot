@@ -26,6 +26,7 @@ import type {
   SolanaStatus,
   SolUsdtPrice,
 } from '../api/types';
+import { bpsToPercent } from '../lib/percent';
 
 export const SOL_MINT = 'So11111111111111111111111111111111111111112';
 export const BASE_MINT = '11111111111111111111111111111112';
@@ -134,6 +135,12 @@ export const edgeObservations: Observation[] = [
   { ...observation(203, '0.00000000001301', 'INVALID'), priceSlot: 199, liquidityQuote: '10000' },
 ];
 
+/** `SimulationConfigBounds.LEVEL_BASIS_POINTS`, the range of the dip, take profit and stop loss levels. */
+const LEVEL_BPS = { min: 1, max: 9999 };
+/** `PercentMapper.percentRange`: a level's basis point range as exact percent strings. */
+const LEVEL_PERCENT = { min: bpsToPercent(LEVEL_BPS.min), max: bpsToPercent(LEVEL_BPS.max) };
+
+/** `GET /api/config/defaults`: `SimulationConfig.mvp()` and the current limits, each level with its percent twin. */
 export const configDefaults: ConfigDefaults = {
   defaults: {
     strategyName: 'dip-entry',
@@ -141,8 +148,11 @@ export const configDefaults: ConfigDefaults = {
     notional: '0.1',
     maxAgeSlots: 2,
     dipBps: 1500,
+    dipPercent: '15',
     takeProfitBps: 3000,
+    takeProfitPercent: '30',
     stopLossBps: 1500,
+    stopLossPercent: '15',
     minMarketCapUsd: '10000',
     horizonSlots: 4500,
     latencySlots: 1,
@@ -159,9 +169,12 @@ export const configDefaults: ConfigDefaults = {
     notionalScale: 9,
     notionalPrecision: 35,
     maxAgeSlots: { min: 0, max: 1000 },
-    dipBps: { min: 1, max: 9999 },
-    takeProfitBps: { min: 1, max: 9999 },
-    stopLossBps: { min: 1, max: 9999 },
+    dipBps: LEVEL_BPS,
+    dipPercent: LEVEL_PERCENT,
+    takeProfitBps: LEVEL_BPS,
+    takeProfitPercent: LEVEL_PERCENT,
+    stopLossBps: LEVEL_BPS,
+    stopLossPercent: LEVEL_PERCENT,
     minMarketCapUsd: { min: 0, max: 1000000000 },
     horizonSlots: { min: 1, max: 4500 },
     latencySlots: { min: 1, max: 150 },
@@ -831,8 +844,11 @@ export const walletSellRunDetail: RunDetail = {
   config: {
     ...mvpConfig,
     dipBps: 2000,
+    dipPercent: '20',
     takeProfitBps: 5500,
+    takeProfitPercent: '55',
     stopLossBps: 4000,
+    stopLossPercent: '40',
     dipWindowMs: 30000,
     maxHoldMs: 180000,
     hardExitStartMs: 240000,
