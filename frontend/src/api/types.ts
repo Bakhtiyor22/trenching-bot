@@ -166,7 +166,11 @@ export interface ChartResponse {
     lastSlot: number;
   } | null;
   bucketSeconds: number;
-  range: { from: IsoInstant; to: IsoInstant };
+  /**
+   * Each bound is the requested one, else the first or last recorded time in the chart. A bound is null when it was
+   * not requested and nothing was recorded, as for a pair the run or dataset has no observations of.
+   */
+  range: { from: IsoInstant | null; to: IsoInstant | null };
   trackedWallet: string | null;
   valuationBasis: {
     label: string;

@@ -158,7 +158,7 @@ describe('chart API', () => {
       pair: pairKey(PAIR),
       wallet: [WALLET, PAIR.base],
       markerLimit: 1,
-      from: chart.range.from,
+      from: chart.range.from!,
     });
     expect(received?.searchParams.getAll('wallet')).toEqual([WALLET, PAIR.base]);
     expect(received?.searchParams.get('pair')).toBe(pairKey(PAIR));

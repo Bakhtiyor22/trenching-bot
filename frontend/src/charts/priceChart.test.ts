@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { sampleObservations, v4Chart } from '../mocks/fixtures';
 import type { ChartResponse } from '../api/types';
 import {
+  boundTime,
   chartCandleOption,
   chartExtent,
   chartMarketPoints,
@@ -149,7 +150,7 @@ describe('time-axis candle chart', () => {
         items: [...v4Chart.ticks.items.slice(0, -1), { ...last, estimatedTime }],
       },
     };
-    const extent = chartExtent(response);
+    const extent = chartExtent(response)!;
     expect(extent.to).toBe(Date.parse(estimatedTime));
     const option = chartCandleOption(response, 'price');
     const axis = option.xAxis as { min: number; max: number };
@@ -163,13 +164,34 @@ describe('time-axis candle chart', () => {
       extent: { firstTime: time, lastTime: time, firstSlot: 1, lastSlot: 1 },
       candles: chart.candles.slice(0, 1),
     };
-    expect(chartExtent(response).to).toBe(Date.parse(time) + 60_000);
-    const single = chartExtent({ ...response, candles: [] });
+    expect(chartExtent(response)?.to).toBe(Date.parse(time) + 60_000);
+    const single = chartExtent({ ...response, candles: [] })!;
     expect(single.to - single.from).toBe(2000);
   });
 
+  it('reads a missing range bound as no time, never as 1970', () => {
+    expect(boundTime(null)).toBeNull();
+    expect(boundTime(time)).toBe(Date.parse(time));
+    // The backend's chart of a pair with no observations: no extent, no range and nothing recorded.
+    const unrecorded: ChartResponse = {
+      ...chart,
+      extent: null,
+      range: { from: null, to: null },
+      candles: [],
+      markers: { ...chart.markers, total: 0, items: [] },
+      paperFills: [],
+    };
+    expect(chartExtent(unrecorded)).toBeNull();
+    expect(chartExtent({ ...unrecorded, range: { from: time, to: null } })).toEqual({
+      from: Date.parse(time),
+      to: Date.parse(time) + 2000,
+    });
+    const axis = chartCandleOption(unrecorded, 'price').xAxis as { min: number; max: number };
+    expect([axis.min, axis.max].every(Number.isFinite)).toBe(true);
+  });
+
   it('uses subsecond labels and fits the y axis to the visible window', () => {
-    const start = Date.parse(v4Chart.range.from);
+    const start = Date.parse(v4Chart.range.from!);
     const config = {
       extent: { from: start, to: start + 62_000 },
       window: { from: start, to: start + 500 },

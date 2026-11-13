@@ -203,11 +203,6 @@ interface ChartQuery {
   tickLimit: number;
 }
 
-/** The chart body the backend sends: its range may be null, which `ChartResponse` does not allow yet. */
-type BackendChartResponse = Omit<ChartResponse, 'range'> & {
-  range: { from: string | null; to: string | null };
-};
-
 /** `Instant.parse`'s ISO-8601 instant: seconds required, up to 9 fraction digits, then `Z` or an offset. */
 function isInstant(text: string): boolean {
   return (
@@ -409,10 +404,7 @@ function legacyChart(
         tokenRaw: item.trade?.tokenRaw ?? null,
       })),
     },
-    range: {
-      from: sorted[0]?.observedTime ?? v3Chart.range.from,
-      to: sorted.at(-1)?.observedTime ?? v3Chart.range.to,
-    },
+    range: { from: sorted[0]?.observedTime ?? null, to: sorted.at(-1)?.observedTime ?? null },
     candles,
     paperFills,
   };
@@ -421,8 +413,10 @@ function legacyChart(
 function chartResponse(base: ChartResponse, query: ChartQuery, datasetOnly = false) {
   const from = query.from ?? base.range.from;
   const to = query.to ?? base.range.to;
+  // `ChartParameters.contains`: an absent bound leaves its side open.
   const inRange = (time: string) =>
-    Date.parse(time) >= Date.parse(from) && Date.parse(time) <= Date.parse(to);
+    (from === null || Date.parse(time) >= Date.parse(from)) &&
+    (to === null || Date.parse(time) <= Date.parse(to));
   const bucketSeconds = chartBucketSeconds(from, to, query.maxBuckets);
   const candles = new Map<string, ChartCandle>();
   for (const candle of base.candles.filter((item) => inRange(item.bucketStart))) {
@@ -510,14 +504,12 @@ function chartResponse(base: ChartResponse, query: ChartQuery, datasetOnly = fal
       );
     }
   }
+  const { from: firstTime, to: lastTime } = base.range;
   return HttpResponse.json({
     ...base,
-    extent: base.extent ?? {
-      firstTime: base.range.from,
-      lastTime: base.range.to,
-      firstSlot: 1000,
-      lastSlot: 5500,
-    },
+    extent:
+      base.extent ??
+      (firstTime && lastTime ? { firstTime, lastTime, firstSlot: 1000, lastSlot: 5500 } : null),
     bucketSeconds,
     range: { from, to },
     ticks: {
@@ -539,6 +531,11 @@ function chartResponse(base: ChartResponse, query: ChartQuery, datasetOnly = fal
     },
     paperFills: datasetOnly ? [] : base.paperFills.filter((fill) => inRange(fill.time)),
   } satisfies ChartResponse);
+}
+
+/** Whether [pair] is one of the recorded [pairs]; the dev-only `?mockState=chart-unrecorded-pair` says none is. */
+function recordedPair(pairs: string[], pair: string | null): boolean {
+  return pair !== null && pairs.includes(pair) && mockState() !== 'chart-unrecorded-pair';
 }
 
 /**
@@ -564,7 +561,7 @@ function emptyChart(base: ChartResponse, query: ChartQuery) {
     },
     paperFills: [],
     ticks: { included: query.offset === null && query.tickLimit > 0, total: 0, items: [] },
-  } satisfies BackendChartResponse);
+  } satisfies ChartResponse);
 }
 
 // ConsoleConfigValidator, field by field: the same checks, in its order, with its messages and error codes.
@@ -958,7 +955,7 @@ export function createHandlers(options: MockOptions = {}) {
         []
       ).filter((item) => pairKey(item.pair) === pair);
       const base = recordsTrades(dataset.schemaVersion) ? v4Chart : legacyChart(observations);
-      return dataset.pairs.some((item) => pairKey(item) === pair)
+      return recordedPair(dataset.pairs.map(pairKey), pair)
         ? chartResponse(base, query, true)
         : emptyChart(base, query);
     }),
@@ -1030,9 +1027,7 @@ export function createHandlers(options: MockOptions = {}) {
           : id === REAL_RUN_ID
             ? expandedRunChart
             : legacyChart(observations, records);
-      return pair !== null && pairs.includes(pair)
-        ? chartResponse(base, query)
-        : emptyChart(base, query);
+      return recordedPair(pairs, pair) ? chartResponse(base, query) : emptyChart(base, query);
     }),
 
     ...(['events', 'observations', 'orders', 'positions'] as const).map((kind) =>

@@ -98,3 +98,8 @@ reference capture still requires checking against a backend process serving the
 new contract. Until that process is restarted, the frontend accepts the previous
 contract, uses bucket-end candles and whole-second markers, and reports that
 positions inside a second are unknown.
+
+The dev-only `?mockState=chart-unrecorded-pair` answers every chart as the
+backend answers a pair the run or dataset has no observations of: no candles
+and a null time range. It shows the chart's empty state, which the pages
+cannot reach otherwise because they only offer recorded pairs.
