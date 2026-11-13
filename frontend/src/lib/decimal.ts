@@ -99,7 +99,8 @@ export function compactDecimal(value: string | null | undefined): string {
   if (value == null) return '—';
   const trimmed = value.trim();
   const match = /^([+-]?)0\.(0+)(\d*)$/.exec(trimmed);
-  if (!match || match[2]!.length < COMPACT_MIN_ZEROS || !/[1-9]/.test(match[3]!)) return formatDecimal(value);
+  if (!match || match[2]!.length < COMPACT_MIN_ZEROS || !/[1-9]/.test(match[3]!))
+    return formatDecimal(value);
   const [, sign, zeros, digits] = match;
   const count = String(zeros!.length).replace(/\d/g, (d) => SUBSCRIPT_DIGITS[Number(d)]!);
   return `${sign}0.0${count}${digits}`;
@@ -203,7 +204,9 @@ export function validateDecimal(input: string, rule: PlainDecimalRule): string |
   const belowMin = compareDecimals(value, rule.min) < 0;
   const aboveMax = rule.max !== undefined && compareDecimals(value, rule.max) > 0;
   if (belowMin || aboveMax) {
-    return rule.max === undefined ? `Must be at least ${rule.min}` : `Must be between ${rule.min} and ${rule.max}`;
+    return rule.max === undefined
+      ? `Must be at least ${rule.min}`
+      : `Must be between ${rule.min} and ${rule.max}`;
   }
   return null;
 }

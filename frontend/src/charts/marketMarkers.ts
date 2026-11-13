@@ -3,9 +3,20 @@ import { trimFractionZeros } from '../lib/decimal';
 import { exactUnits } from './tradeWallets';
 
 export type MarketAction = ObservedChartMarker | PaperChartFill;
-export interface MarkerAnchor { x: number; y: number }
-export interface MarkerPosition { action: MarketAction; point: MarkerAnchor; center: MarkerAnchor }
-export interface MarkerGroup { actions: MarketAction[]; point: MarkerAnchor; center: MarkerAnchor }
+export interface MarkerAnchor {
+  x: number;
+  y: number;
+}
+export interface MarkerPosition {
+  action: MarketAction;
+  point: MarkerAnchor;
+  center: MarkerAnchor;
+}
+export interface MarkerGroup {
+  actions: MarketAction[];
+  point: MarkerAnchor;
+  center: MarkerAnchor;
+}
 
 export function actionKey(action: MarketAction): string {
   return action.kind === 'OBSERVED' ? action.observationId : `${action.intentId}:${action.phase}`;
@@ -40,8 +51,15 @@ export interface CardSize {
  * on it. A card too tall for either goes beside the marker, on the side with room, so it never hides the marker it describes.
  * It never starts above the plot's top, where the page header would cover it. An unmeasured plot (height 0) puts it below.
  */
-export function actionCardPosition(anchor: MarkerAnchor, card: CardSize, plot: CardSize): MarkerAnchor {
-  const centred = Math.max(ACTION_CARD_MARGIN, Math.min(anchor.x - card.width / 2, plot.width - card.width - ACTION_CARD_MARGIN));
+export function actionCardPosition(
+  anchor: MarkerAnchor,
+  card: CardSize,
+  plot: CardSize,
+): MarkerAnchor {
+  const centred = Math.max(
+    ACTION_CARD_MARGIN,
+    Math.min(anchor.x - card.width / 2, plot.width - card.width - ACTION_CARD_MARGIN),
+  );
   const below = anchor.y + ACTION_CARD_GAP;
   if (plot.height <= 0) return { x: centred, y: below };
   const above = anchor.y - ACTION_CARD_GAP - card.height;
@@ -60,7 +78,10 @@ export function actionCardPosition(anchor: MarkerAnchor, card: CardSize, plot: C
 
 /** Connected Decu pins form one stack at the current pixel scale. Paper fills stay individual. */
 export function groupMarkerPositions(positions: MarkerPosition[]): MarkerGroup[] {
-  const remaining = [...positions].sort((a, b) => Date.parse(a.action.time) - Date.parse(b.action.time) || a.action.slot - b.action.slot);
+  const remaining = [...positions].sort(
+    (a, b) =>
+      Date.parse(a.action.time) - Date.parse(b.action.time) || a.action.slot - b.action.slot,
+  );
   const groups: MarkerGroup[] = [];
   while (remaining.length) {
     const first = remaining.shift()!;
@@ -70,15 +91,30 @@ export function groupMarkerPositions(positions: MarkerPosition[]): MarkerGroup[]
         const member = members[index]!;
         for (let candidate = remaining.length - 1; candidate >= 0; candidate--) {
           const next = remaining[candidate]!;
-          if (next.action.kind === 'OBSERVED' && next.action.isTrackedWallet && Math.hypot(member.center.x - next.center.x, member.center.y - next.center.y) < 28) {
+          if (
+            next.action.kind === 'OBSERVED' &&
+            next.action.isTrackedWallet &&
+            Math.hypot(member.center.x - next.center.x, member.center.y - next.center.y) < 28
+          ) {
             members.push(next);
             remaining.splice(candidate, 1);
           }
         }
       }
     }
-    members.sort((a, b) => Date.parse(a.action.time) - Date.parse(b.action.time) || a.action.slot - b.action.slot);
-    groups.push({ actions: members.map((member) => member.action), point: first.point, center: first.center });
+    members.sort(
+      (a, b) =>
+        Date.parse(a.action.time) - Date.parse(b.action.time) || a.action.slot - b.action.slot,
+    );
+    groups.push({
+      actions: members.map((member) => member.action),
+      point: first.point,
+      center: first.center,
+    });
   }
-  return groups.sort((a, b) => Date.parse(a.actions[0]!.time) - Date.parse(b.actions[0]!.time) || a.actions[0]!.slot - b.actions[0]!.slot);
+  return groups.sort(
+    (a, b) =>
+      Date.parse(a.actions[0]!.time) - Date.parse(b.actions[0]!.time) ||
+      a.actions[0]!.slot - b.actions[0]!.slot,
+  );
 }

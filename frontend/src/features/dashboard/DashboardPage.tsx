@@ -48,7 +48,12 @@ import {
   variationChange,
 } from '../automation/automationModel';
 import { clusterLabel, outcomeLabel, outcomeTone } from '../solana/solanaOutcome';
-import { cumulativePnlOption, cumulativePnlSteps, runIdFromClick, sparklineOption } from './dashboardCharts';
+import {
+  cumulativePnlOption,
+  cumulativePnlSteps,
+  runIdFromClick,
+  sparklineOption,
+} from './dashboardCharts';
 import { GAUGE_HISTORY_MS, gaugeHistory, useGaugeHistory, type GaugeSample } from './gaugeHistory';
 
 type HealthTone = 'ok' | 'warn' | 'bad' | 'neutral';
@@ -80,30 +85,78 @@ function healthWord(status: string | null | undefined): string {
 
 /** The Solana item is neutral, never red, when no RPC is configured. */
 function solanaHealth(status: SolanaStatus | undefined, error: boolean) {
-  if (error) return { status: 'Unknown', tone: 'warn' as HealthTone, detail: 'status endpoint failed' };
+  if (error)
+    return { status: 'Unknown', tone: 'warn' as HealthTone, detail: 'status endpoint failed' };
   if (!status) return { status: 'Checking…', tone: 'neutral' as HealthTone };
   if (!status.configured) {
-    return { status: 'Not configured', tone: 'neutral' as HealthTone, detail: 'Set SOLANA_RPC_URL to enable' };
+    return {
+      status: 'Not configured',
+      tone: 'neutral' as HealthTone,
+      detail: 'Set SOLANA_RPC_URL to enable',
+    };
   }
   const check = status.lastCheck;
-  const where = [status.cluster ? clusterLabel(status.cluster) : null, status.host].filter(Boolean).join(' · ');
-  if (!check) return { status: 'Configured', tone: 'neutral' as HealthTone, detail: `${where} — not checked yet` };
+  const where = [status.cluster ? clusterLabel(status.cluster) : null, status.host]
+    .filter(Boolean)
+    .join(' · ');
+  if (!check)
+    return {
+      status: 'Configured',
+      tone: 'neutral' as HealthTone,
+      detail: `${where} — not checked yet`,
+    };
   const tone = outcomeTone(check.outcome);
-  const health: HealthTone = tone === 'success' || tone === 'ready' ? 'ok' : tone === 'failure' ? 'bad' : tone === 'attention' ? 'warn' : 'neutral';
+  const health: HealthTone =
+    tone === 'success' || tone === 'ready'
+      ? 'ok'
+      : tone === 'failure'
+        ? 'bad'
+        : tone === 'attention'
+          ? 'warn'
+          : 'neutral';
   return { status: outcomeLabel(check.outcome), tone: health, detail: where };
 }
 
-function HealthItem({ title, status, tone, detail }: { title: string; status: string; tone: HealthTone; detail?: ReactNode }) {
+function HealthItem({
+  title,
+  status,
+  tone,
+  detail,
+}: {
+  title: string;
+  status: string;
+  tone: HealthTone;
+  detail?: ReactNode;
+}) {
   return (
     <Group gap={8} wrap="nowrap" aria-label={`${title} health: ${status}`} align="baseline">
       <span
         className={tone === 'ok' ? 'console-live-dot' : undefined}
-        style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', flex: 'none', background: TONE_COLOR[tone], alignSelf: 'center' }}
+        style={{
+          display: 'inline-block',
+          width: 7,
+          height: 7,
+          borderRadius: '50%',
+          flex: 'none',
+          background: TONE_COLOR[tone],
+          alignSelf: 'center',
+        }}
       />
       <Text size="sm">
-        {title}{' '}
-        {/* Neutral states keep the default text colour, never an error colour. */}
-        <Text span fw={500} c={tone === 'ok' ? undefined : tone === 'neutral' ? undefined : tone === 'warn' ? 'orange' : 'red'}>
+        {title} {/* Neutral states keep the default text colour, never an error colour. */}
+        <Text
+          span
+          fw={500}
+          c={
+            tone === 'ok'
+              ? undefined
+              : tone === 'neutral'
+                ? undefined
+                : tone === 'warn'
+                  ? 'orange'
+                  : 'red'
+          }
+        >
           {status}
         </Text>
         {detail && (
@@ -130,8 +183,17 @@ function HealthLine({ data }: { data: Dashboard }) {
           tone={healthTone(data.health?.status)}
           detail={gauges.uptimeMs != null ? `up ${formatDuration(gauges.uptimeMs)}` : undefined}
         />
-        <HealthItem title="Database" status={healthWord(data.health?.database)} tone={healthTone(data.health?.database)} />
-        <HealthItem title="Solana" status={solanaInfo.status} tone={solanaInfo.tone} detail={solanaInfo.detail} />
+        <HealthItem
+          title="Database"
+          status={healthWord(data.health?.database)}
+          tone={healthTone(data.health?.database)}
+        />
+        <HealthItem
+          title="Solana"
+          status={solanaInfo.status}
+          tone={solanaInfo.tone}
+          detail={solanaInfo.detail}
+        />
         <Box style={{ flex: 1 }} />
         <Anchor component={Link} to={paths.solana} size="sm">
           Check Solana
@@ -142,7 +204,12 @@ function HealthLine({ data }: { data: Dashboard }) {
 }
 
 function CountValue({ value, unit }: { value: number | undefined; unit?: string }) {
-  if (value === undefined) return <Text c="dimmed" fz="inherit" ff="inherit">—</Text>;
+  if (value === undefined)
+    return (
+      <Text c="dimmed" fz="inherit" ff="inherit">
+        —
+      </Text>
+    );
   return (
     <>
       <Flash watch={value}>{formatCount(value)}</Flash>
@@ -158,7 +225,12 @@ function KeyFigures({ data }: { data: Dashboard }) {
   const scenarios = filled !== undefined && rejected !== undefined ? filled + rejected : undefined;
   return (
     <KpiStrip label="Key figures" min={200}>
-      <Kpi label="Realized P&L" size="hero" span="full" hint="Closed positions of every run, per quote mint. Never summed across mints.">
+      <Kpi
+        label="Realized P&L"
+        size="hero"
+        span="full"
+        hint="Closed positions of every run, per quote mint. Never summed across mints."
+      >
         {pnlByMint === undefined ? (
           <Text c="dimmed" fz="inherit" ff="inherit">
             —
@@ -177,12 +249,23 @@ function KeyFigures({ data }: { data: Dashboard }) {
           </Stack>
         )}
       </Kpi>
-      <Kpi label="Runs" hint={data.runs?.last24h != null ? `${formatCount(data.runs.last24h)} in the last 24 h` : undefined}>
+      <Kpi
+        label="Runs"
+        hint={
+          data.runs?.last24h != null
+            ? `${formatCount(data.runs.last24h)} in the last 24 h`
+            : undefined
+        }
+      >
         <CountValue value={data.runs?.total} />
       </Kpi>
       <Kpi
         label="Scenarios"
-        hint={filled !== undefined && rejected !== undefined ? `${formatCount(filled)} filled · ${formatCount(rejected)} rejected` : undefined}
+        hint={
+          filled !== undefined && rejected !== undefined
+            ? `${formatCount(filled)} filled · ${formatCount(rejected)} rejected`
+            : undefined
+        }
       >
         <CountValue value={scenarios} />
         {filled !== undefined && rejected !== undefined && (
@@ -197,7 +280,10 @@ function KeyFigures({ data }: { data: Dashboard }) {
           </Box>
         )}
       </Kpi>
-      <Kpi label="Positions" hint={data.positions ? `${formatCount(data.positions.closed)} closed` : undefined}>
+      <Kpi
+        label="Positions"
+        hint={data.positions ? `${formatCount(data.positions.closed)} closed` : undefined}
+      >
         <CountValue value={data.positions?.open} unit="open" />
       </Kpi>
     </KpiStrip>
@@ -206,7 +292,9 @@ function KeyFigures({ data }: { data: Dashboard }) {
 
 /** The chart's data as a table: each run's step and the running total, newest first. */
 function CumulativeTable({ recent }: { recent: RecentRun[] }) {
-  const rows = [...cumulativePnlSteps(recent).values()].flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const rows = [...cumulativePnlSteps(recent).values()]
+    .flat()
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   return (
     <ScrollArea type="auto">
       <Table miw={560}>
@@ -267,7 +355,10 @@ function CumulativePnl({ recent }: { recent: RecentRun[] }) {
       }
     >
       {recent.length === 0 ? (
-        <EmptyState title="Nothing to chart yet" description="The running total starts with the first finished run." />
+        <EmptyState
+          title="Nothing to chart yet"
+          description="The running total starts with the first finished run."
+        />
       ) : view === 'table' ? (
         <CumulativeTable recent={recent} />
       ) : (
@@ -289,7 +380,12 @@ function CumulativePnl({ recent }: { recent: RecentRun[] }) {
 
 function RecentRunsList({ recent }: { recent: RecentRun[] }) {
   return (
-    <Card padding={0} component="section" aria-label="Recent runs" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <Card
+      padding={0}
+      component="section"
+      aria-label="Recent runs"
+      style={{ display: 'flex', flexDirection: 'column', height: '100%' }}
+    >
       <Group justify="space-between" p="lg" pb="sm">
         <Text fw={600} fz={15}>
           Recent runs
@@ -333,9 +429,26 @@ function RecentRunsList({ recent }: { recent: RecentRun[] }) {
   );
 }
 
-function OutcomeRow({ label, value, of, color }: { label: string; value: number | undefined; of: number; color: string }) {
+function OutcomeRow({
+  label,
+  value,
+  of,
+  color,
+}: {
+  label: string;
+  value: number | undefined;
+  of: number;
+  color: string;
+}) {
   return (
-    <Box style={{ display: 'grid', gridTemplateColumns: '96px minmax(0, 1fr) 48px', gap: 12, alignItems: 'center' }}>
+    <Box
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '96px minmax(0, 1fr) 48px',
+        gap: 12,
+        alignItems: 'center',
+      }}
+    >
       <Text size="sm">{label}</Text>
       <Meter label={label} value={value ?? 0} max={of} color={color} size="lg" />
       <Text size="sm" ff="monospace" ta="right">
@@ -352,13 +465,31 @@ function ScenarioOutcomes({ data }: { data: Dashboard }) {
   const rejections = data.rejectionsByReason ?? [];
   const largest = Math.max(0, ...rejections.map((r) => r.count));
   return (
-    <Section title="How scenarios ended" hint="Every cycle of the stored runs, from Decu's first buy to its exit. The bars share one scale.">
+    <Section
+      title="How scenarios ended"
+      hint="Every cycle of the stored runs, from Decu's first buy to its exit. The bars share one scale."
+    >
       <Stack gap={10}>
         <OutcomeRow label="Cycles" value={cycles} of={cycles ?? 0} color="var(--console-neutral)" />
         <OutcomeRow label="Entered" value={filled} of={cycles ?? 0} color="var(--console-info)" />
-        <OutcomeRow label="Closed" value={data.positions?.closed} of={cycles ?? 0} color="var(--console-text-2)" />
-        <OutcomeRow label="Still open" value={data.positions?.open} of={cycles ?? 0} color="var(--console-neutral)" />
-        <OutcomeRow label="Rejected" value={rejected} of={cycles ?? 0} color="var(--console-rejected)" />
+        <OutcomeRow
+          label="Closed"
+          value={data.positions?.closed}
+          of={cycles ?? 0}
+          color="var(--console-text-2)"
+        />
+        <OutcomeRow
+          label="Still open"
+          value={data.positions?.open}
+          of={cycles ?? 0}
+          color="var(--console-neutral)"
+        />
+        <OutcomeRow
+          label="Rejected"
+          value={rejected}
+          of={cycles ?? 0}
+          color="var(--console-rejected)"
+        />
       </Stack>
       <Text size="xs" c="dimmed" mt="lg" mb="xs" fw={500}>
         Why scenarios were rejected
@@ -368,11 +499,24 @@ function ScenarioOutcomes({ data }: { data: Dashboard }) {
       ) : (
         <Stack gap={6}>
           {rejections.map((r) => (
-            <Box key={r.reason} style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 120px 32px', gap: 10, alignItems: 'center' }}>
+            <Box
+              key={r.reason}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'minmax(0, 1fr) 120px 32px',
+                gap: 10,
+                alignItems: 'center',
+              }}
+            >
               <Text size="xs" c={r.count > 0 ? undefined : 'dimmed'} title={r.reason}>
                 {humanizeCode(r.reason)}
               </Text>
-              <Meter label={humanizeCode(r.reason)} value={r.count} max={largest} color="var(--console-rejected)" />
+              <Meter
+                label={humanizeCode(r.reason)}
+                value={r.count}
+                max={largest}
+                color="var(--console-rejected)"
+              />
               <Text size="xs" ff="monospace" ta="right" c={r.count > 0 ? undefined : 'dimmed'}>
                 {formatCount(r.count)}
               </Text>
@@ -390,7 +534,12 @@ const MODE_CHIP = {
   CAPTURING: { tone: 'running', text: 'Capturing' },
 } as const;
 
-const VERDICT_TONE = { SUCCESS: 'success', NO_SUCCESS: 'failure', NO_RESULT: 'neutral', PENDING: 'pending' } as const;
+const VERDICT_TONE = {
+  SUCCESS: 'success',
+  NO_SUCCESS: 'failure',
+  NO_RESULT: 'neutral',
+  PENDING: 'pending',
+} as const;
 
 /** The unattended part at a glance: mode, the newest verdict and the request cap. Read-only; it opens the Automation page. */
 function AutomationSummary() {
@@ -412,7 +561,11 @@ function AutomationSummary() {
           Automation is off on this backend. The Automation page says which settings turn it on.
         </Text>
       ) : (
-        <QueryView query={status} loadingLabel="Loading automation…" errorTitle="Automation status unavailable">
+        <QueryView
+          query={status}
+          loadingLabel="Loading automation…"
+          errorTitle="Automation status unavailable"
+        >
           {(s) => {
             const mode = MODE_CHIP[automationMode(s)];
             const scored = defaultScoredDay(days.data?.items ?? []);
@@ -423,7 +576,9 @@ function AutomationSummary() {
                   <StatusChip tone={mode.tone}>{mode.text}</StatusChip>
                   <Text size="sm" c="dimmed">
                     {s.mode === 'ALWAYS' ? 'always on' : `window ${s.pollFrom}–${s.pollTo}`}
-                    {today ? ` · today ${today.buys === 0 ? 'no buys yet' : `${formatCount(today.buys)} buys`}` : ''}
+                    {today
+                      ? ` · today ${today.buys === 0 ? 'no buys yet' : `${formatCount(today.buys)} buys`}`
+                      : ''}
                   </Text>
                 </Group>
                 <Stack gap={4}>
@@ -432,7 +587,10 @@ function AutomationSummary() {
                   </span>
                   {scored?.bestStatus ? (
                     <Group gap="xs" wrap="wrap">
-                      <StatusChip tone={VERDICT_TONE[scored.bestStatus]} glyph={statusGlyph[scored.bestStatus]}>
+                      <StatusChip
+                        tone={VERDICT_TONE[scored.bestStatus]}
+                        glyph={statusGlyph[scored.bestStatus]}
+                      >
                         {statusText[scored.bestStatus]}
                       </StatusChip>
                       {scored.bestLabel && (
@@ -459,7 +617,11 @@ function AutomationSummary() {
                       {formatCount(s.requestsLast24h)} / {formatCount(s.maxRequestsPer24h)}
                     </Text>
                   </Group>
-                  <Meter label="Requests used of the 24 hour cap" value={s.requestsLast24h} max={s.maxRequestsPer24h} />
+                  <Meter
+                    label="Requests used of the 24 hour cap"
+                    value={s.requestsLast24h}
+                    max={s.maxRequestsPer24h}
+                  />
                 </Stack>
               </Stack>
             );
@@ -480,7 +642,11 @@ interface ActivityItem {
 
 function signDot(value: string): string {
   const sign = decimalSign(value);
-  return sign < 0 ? 'var(--console-loss)' : sign > 0 ? 'var(--console-gain)' : 'var(--console-neutral)';
+  return sign < 0
+    ? 'var(--console-loss)'
+    : sign > 0
+      ? 'var(--console-gain)'
+      : 'var(--console-neutral)';
 }
 
 /** Finished runs and imported datasets, newest first. */
@@ -492,7 +658,11 @@ function activityItems(recent: RecentRun[], datasets: Dataset[]): ActivityItem[]
     to: paths.run(r.id),
     text: (
       <>
-        Run <Text span ff="monospace">{shortId(r.id)}</Text> finished ·{' '}
+        Run{' '}
+        <Text span ff="monospace">
+          {shortId(r.id)}
+        </Text>{' '}
+        finished ·{' '}
         <Text span ff="monospace" c={pnlColor(r.realizedPnl)}>
           {formatSignedDecimal(r.realizedPnl)} {mintLabel(r.quoteMint)}
         </Text>
@@ -523,9 +693,26 @@ function Activity({ recent }: { recent: RecentRun[] }) {
       ) : (
         <Stack gap={0}>
           {items.map((item) => (
-            <UnstyledButton key={item.key} component={Link} to={item.to} className="console-row-button" py={9} px={4} style={{ borderBottom: ROW_BORDER }}>
-              <Box style={{ display: 'grid', gridTemplateColumns: '10px minmax(0, 1fr) auto', gap: 12, alignItems: 'baseline' }}>
-                <span style={{ width: 8, height: 8, borderRadius: '50%', background: item.color }} />
+            <UnstyledButton
+              key={item.key}
+              component={Link}
+              to={item.to}
+              className="console-row-button"
+              py={9}
+              px={4}
+              style={{ borderBottom: ROW_BORDER }}
+            >
+              <Box
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '10px minmax(0, 1fr) auto',
+                  gap: 12,
+                  alignItems: 'baseline',
+                }}
+              >
+                <span
+                  style={{ width: 8, height: 8, borderRadius: '50%', background: item.color }}
+                />
                 <Text size="sm">{item.text}</Text>
                 <Text size="xs" c="dimmed" ff="monospace">
                   {formatLocalTime(item.at)}
@@ -566,7 +753,11 @@ function Sparkline({
       </Group>
       {hasData ? (
         <Chart
-          option={sparklineOption(samples, pick, { color: tokens.dimmed, unit, latest: tokens.accent })}
+          option={sparklineOption(samples, pick, {
+            color: tokens.dimmed,
+            unit,
+            latest: tokens.accent,
+          })}
           height={48}
           ariaLabel={`${title} over the last 30 minutes`}
         />
@@ -636,14 +827,18 @@ function Runtime({ gauges }: { gauges: Gauges }) {
           samples={samples}
           pick={(s) => s.httpMeanLatencyMs}
           unit="ms"
-          current={gauges.httpMeanLatencyMs == null ? '—' : `${gauges.httpMeanLatencyMs.toFixed(1)} ms`}
+          current={
+            gauges.httpMeanLatencyMs == null ? '—' : `${gauges.httpMeanLatencyMs.toFixed(1)} ms`
+          }
         />
         <Sparkline
           title="HTTP request rate"
           samples={samples}
           pick={(s) => s.httpRequestRate}
           unit="req/s"
-          current={gauges.httpRequestCount == null ? '—' : `${formatCount(gauges.httpRequestCount)} total`}
+          current={
+            gauges.httpRequestCount == null ? '—' : `${formatCount(gauges.httpRequestCount)} total`
+          }
         />
       </SimpleGrid>
     </Section>
@@ -657,7 +852,14 @@ function DashboardContent({ data }: { data: Dashboard }) {
       <HealthLine data={data} />
       <KeyFigures data={data} />
 
-      <Box style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--mantine-spacing-lg)', alignItems: 'stretch' }}>
+      <Box
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 'var(--mantine-spacing-lg)',
+          alignItems: 'stretch',
+        }}
+      >
         <Box style={{ flex: '2 1 560px', minWidth: 0 }}>
           <CumulativePnl recent={recent} />
         </Box>
@@ -692,7 +894,13 @@ function LiveBadge({ failed, at }: { failed: boolean; at: string }) {
       >
         <span
           className={failed ? undefined : 'console-live-dot'}
-          style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: failed ? 'var(--console-loss)' : 'var(--console-gain)' }}
+          style={{
+            display: 'inline-block',
+            width: 7,
+            height: 7,
+            borderRadius: '50%',
+            background: failed ? 'var(--console-loss)' : 'var(--console-gain)',
+          }}
         />
         <Text size="xs" c={failed ? 'red' : undefined}>
           {failed ? 'Update failed · ' : 'Live · '}
@@ -718,7 +926,11 @@ export function DashboardPage() {
         description="Did the strategy make or lose money, and is the system healthy? Refreshed every 5 seconds while this tab is visible."
         actions={data && <LiveBadge failed={dashboard.isError} at={data.generatedAt} />}
       />
-      <QueryView query={dashboard} loadingLabel="Loading dashboard…" errorTitle="Dashboard unavailable">
+      <QueryView
+        query={dashboard}
+        loadingLabel="Loading dashboard…"
+        errorTitle="Dashboard unavailable"
+      >
         {(loaded) => <DashboardContent data={loaded} />}
       </QueryView>
     </>

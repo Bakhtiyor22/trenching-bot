@@ -49,10 +49,7 @@ describe('API usage page', () => {
     expect(await screen.findByText('getTransaction')).toBeInTheDocument();
     server.use(
       http.get('/api/usage', () =>
-        HttpResponse.json(
-          { code: 'UNAVAILABLE', message: 'Backend unreachable' },
-          { status: 503 },
-        ),
+        HttpResponse.json({ code: 'UNAVAILABLE', message: 'Backend unreachable' }, { status: 503 }),
       ),
     );
     await user.click(screen.getByRole('button', { name: 'Refresh usage' }));

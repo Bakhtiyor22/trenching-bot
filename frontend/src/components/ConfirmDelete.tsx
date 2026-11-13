@@ -42,17 +42,29 @@ export function ConfirmDelete({
   };
   return (
     <>
-      <Button color="red" variant={compact ? 'subtle' : 'outline'} size={compact ? 'xs' : 'sm'} onClick={open} disabled={disabled}>
+      <Button
+        color="red"
+        variant={compact ? 'subtle' : 'outline'}
+        size={compact ? 'xs' : 'sm'}
+        onClick={open}
+        disabled={disabled}
+      >
         {label}
       </Button>
       <Modal opened={opened} onClose={close} title={title} centered>
         <Stack gap="md">
-          <Text size="sm" component="div">{children}</Text>
+          <Text size="sm" component="div">
+            {children}
+          </Text>
           {error != null && <ErrorState error={error} title="Delete failed" />}
           {error != null && explainError?.(error)}
           <Group justify="flex-end">
-            <Button variant="default" onClick={close} disabled={pending}>Cancel</Button>
-            <Button color="red" onClick={() => void confirm()} loading={pending}>Delete</Button>
+            <Button variant="default" onClick={close} disabled={pending}>
+              Cancel
+            </Button>
+            <Button color="red" onClick={() => void confirm()} loading={pending}>
+              Delete
+            </Button>
           </Group>
         </Stack>
       </Modal>

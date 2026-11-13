@@ -31,7 +31,13 @@ describe('QueryView', () => {
 
   it('keeps the data on screen when a background refresh fails, with a retry', async () => {
     const refetch = vi.fn();
-    view({ data: 3, isError: true, error: failure, dataUpdatedAt: Date.UTC(2026, 10, 3, 9, 2, 10), refetch });
+    view({
+      data: 3,
+      isError: true,
+      error: failure,
+      dataUpdatedAt: Date.UTC(2026, 10, 3, 9, 2, 10),
+      refetch,
+    });
     expect(screen.getByText('rows: 3')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent(/Couldn.t refresh/);
     screen.getByRole('button', { name: 'Retry' }).click();

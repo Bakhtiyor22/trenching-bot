@@ -176,7 +176,8 @@ and validation, also load the `dataviz` skill. Project chart conventions:
 
 1. Test first for logic (formatting, models, queries); `@testing-library` tests for pages, with
    MSW fixtures in `src/mocks/`. Add a `?mockState=` preview for states that are hard to reach.
-2. Run, from `frontend/`: `npm test`, `npm run lint`, `npm run build`.
+2. Run, from `frontend/`: `npm test`, `npm run lint`, `npm run format:check`, `npm run build`
+   (CI runs all four; `npm run format` fixes what `format:check` flags).
 3. Start the dev server with mocks (`VITE_USE_MOCKS=true`, `npm run dev`) through the preview tool,
    open the page at 1440 and 375 px, walk the states, check the console for errors and keyboard-test
    the new controls.

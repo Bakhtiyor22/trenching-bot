@@ -7,7 +7,11 @@ export function readWatchlist(): string[] {
   try {
     const stored: unknown = JSON.parse(localStorage.getItem(WATCHLIST_KEY) ?? '[]');
     return Array.isArray(stored)
-      ? [...new Set(stored.filter((v): v is string => typeof v === 'string' && isSolanaAddress(v)))].slice(0, WATCHLIST_LIMIT)
+      ? [
+          ...new Set(
+            stored.filter((v): v is string => typeof v === 'string' && isSolanaAddress(v)),
+          ),
+        ].slice(0, WATCHLIST_LIMIT)
       : [];
   } catch {
     // Corrupt or unavailable browser storage must not prevent chart access.

@@ -66,5 +66,5 @@ parameter change and the watched work finishing.
 
 - [ ] Tests cover new formatting/model logic and page behaviour (MSW fixtures, `?mockState=` for
       hard-to-reach states).
-- [ ] `npm test`, `npm run lint`, `npm run build` pass in `frontend/`.
+- [ ] `npm test`, `npm run lint`, `npm run format:check`, `npm run build` pass in `frontend/`.
 - [ ] Checked in the browser at both widths; screenshots in `frontend/qa/<yyyyMMdd>-<topic>/`.

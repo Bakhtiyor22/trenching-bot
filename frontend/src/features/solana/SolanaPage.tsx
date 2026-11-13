@@ -72,7 +72,15 @@ function Cluster({ cluster }: { cluster: string | null | undefined }) {
   );
 }
 
-function ResultHeader({ outcome, cached, checkedAt }: { outcome: string; cached: boolean; checkedAt: string }) {
+function ResultHeader({
+  outcome,
+  cached,
+  checkedAt,
+}: {
+  outcome: string;
+  cached: boolean;
+  checkedAt: string;
+}) {
   return (
     <Group gap="sm" align="flex-start">
       <OutcomeChip outcome={outcome} />
@@ -163,7 +171,8 @@ function AddressResult({ result }: { result: AddressCheck }) {
       <OutcomeMessage outcome={result.outcome} message={result.message} />
       {result.outcome === 'NO_SUCCESSFUL_TRANSACTION' && (
         <Text size="sm" c="dimmed">
-          None of the newest signatures was a successful transaction, so no fields could be inspected.
+          None of the newest signatures was a successful transaction, so no fields could be
+          inspected.
         </Text>
       )}
       <FieldChecklist result={result} />
@@ -214,7 +223,13 @@ function AddressCheckForm({ configured }: { configured: boolean }) {
             spellCheck={false}
             style={{ flex: '1 1 240px', minWidth: 0 }}
           />
-          <Button type="submit" variant="default" mt={25} loading={check.isPending} disabled={!configured}>
+          <Button
+            type="submit"
+            variant="default"
+            mt={25}
+            loading={check.isPending}
+            disabled={!configured}
+          >
             Check address
           </Button>
         </Group>
@@ -248,7 +263,11 @@ export function SolanaPage() {
         title="Solana"
         description="Read-only connectivity checks. Nothing here signs or sends a transaction; checks run only when you click."
       />
-      <QueryView query={status} loadingLabel="Loading Solana status…" errorTitle="Could not load the Solana status">
+      <QueryView
+        query={status}
+        loadingLabel="Loading Solana status…"
+        errorTitle="Could not load the Solana status"
+      >
         {(data) => {
           const latest = check.data ?? data.lastCheck ?? null;
           return (
@@ -284,16 +303,22 @@ export function SolanaPage() {
                       ['Cluster', <Cluster key="cl" cluster={data.cluster} />],
                       [
                         'Last check',
-                        data.lastCheck ? <Timestamp key="lc" iso={data.lastCheck.checkedAt} /> : 'Never',
+                        data.lastCheck ? (
+                          <Timestamp key="lc" iso={data.lastCheck.checkedAt} />
+                        ) : (
+                          'Never'
+                        ),
                       ],
                     ]}
                   />
                   {!data.configured && <NotConfiguredHelp />}
-                  {check.isError && <ProviderErrorState error={check.error} onRetry={() => check.mutate()} />}
+                  {check.isError && (
+                    <ProviderErrorState error={check.error} onRetry={() => check.mutate()} />
+                  )}
                   {latest && <CheckResult check={latest} />}
                   <Text size="xs" c="dimmed">
-                    Calls getHealth, getVersion, getSlot and getGenesisHash. Results are cached for 30 s
-                    and concurrent clicks share one request.
+                    Calls getHealth, getVersion, getSlot and getGenesisHash. Results are cached for
+                    30 s and concurrent clicks share one request.
                   </Text>
                 </Stack>
               </Section>

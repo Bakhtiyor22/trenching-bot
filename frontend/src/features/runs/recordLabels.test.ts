@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { commitmentLabel, intervalLabel, rateSourceLabel, sideLabel, sourceLabel } from './recordLabels';
+import {
+  commitmentLabel,
+  intervalLabel,
+  rateSourceLabel,
+  sideLabel,
+  sourceLabel,
+} from './recordLabels';
 
 describe('record labels', () => {
   it('puts recording sources, commitments and sides in words', () => {

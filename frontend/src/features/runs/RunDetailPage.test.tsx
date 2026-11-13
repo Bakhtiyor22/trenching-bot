@@ -66,7 +66,8 @@ const grouped = (value: string) => formatDecimal(value);
 const signed = (value: string) => formatSignedDecimal(value);
 /** The headline P&L: signed, trailing zeros trimmed, the unit right after it. */
 const heroPnl = (value: string, unit: string) => (_: string, element: Element | null) =>
-  element?.tagName === 'SPAN' && element.textContent === `${formatSignedDecimal(value, { trim: true })}${unit}`;
+  element?.tagName === 'SPAN' &&
+  element.textContent === `${formatSignedDecimal(value, { trim: true })}${unit}`;
 
 function hrefs(name: string): string[] {
   return screen.queryAllByRole('link', { name }).map((link) => link.getAttribute('href') ?? '');
@@ -108,7 +109,10 @@ describe('RunDetailPage', () => {
     const { user } = renderRun(REAL_RUN_ID);
     await user.click(await screen.findByRole('button', { name: 'Valuation information' }));
     expect(await screen.findByText(v4Chart.valuationBasis.label)).toBeInTheDocument();
-    expect(screen.getByText(/Pump.fun standard supply/)).toHaveAttribute('title', 'pumpfun-standard-supply');
+    expect(screen.getByText(/Pump.fun standard supply/)).toHaveAttribute(
+      'title',
+      'pumpfun-standard-supply',
+    );
     expect(screen.getByText(/Recorded SOLUSDT 1-minute open · 1-minute/)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Valuation information' }));
     await user.click(screen.getByRole('button', { name: 'Layers' }));
@@ -234,8 +238,12 @@ describe('RunDetailPage', () => {
     expect(
       within(lowCap!).getByText(/The dip happened below the minimum market cap/),
     ).toBeInTheDocument();
-    expect(within(lowCap!).getByText('Technical code: DIP_BELOW_MIN_MARKET_CAP')).toBeInTheDocument();
-    expect(within(migrated!).getByText('Technical code: MIGRATED_BEFORE_ENTRY')).toBeInTheDocument();
+    expect(
+      within(lowCap!).getByText('Technical code: DIP_BELOW_MIN_MARKET_CAP'),
+    ).toBeInTheDocument();
+    expect(
+      within(migrated!).getByText('Technical code: MIGRATED_BEFORE_ENTRY'),
+    ).toBeInTheDocument();
 
     expect(within(open!).getByText('Open')).toBeInTheDocument();
     expect(within(open!).getByText('Still open')).toBeInTheDocument();
@@ -397,9 +405,14 @@ describe('RunDetailPage', () => {
     await screen.findAllByRole('article');
     expect(screen.getByRole('article', { current: true })).toHaveAccessibleName(/Cycle/);
     expect(
-      within(screen.getByRole('navigation', { name: 'Cycles' })).getByRole('button', { name: /Stop loss/ }),
+      within(screen.getByRole('navigation', { name: 'Cycles' })).getByRole('button', {
+        name: /Stop loss/,
+      }),
     ).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getByRole('tab', { name: 'Orders & fills' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Orders & fills' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
   });
 
   it('keeps the run on screen when a refresh fails', async () => {
@@ -407,7 +420,10 @@ describe('RunDetailPage', () => {
     await screen.findAllByRole('article');
     server.use(
       http.get('/api/runs/:id', () =>
-        HttpResponse.json({ code: 'FAILED', message: 'Run unavailable', fields: {} }, { status: 500 }),
+        HttpResponse.json(
+          { code: 'FAILED', message: 'Run unavailable', fields: {} },
+          { status: 500 },
+        ),
       ),
     );
     await queryClient.refetchQueries({ queryKey: ['run', SAMPLE_RUN_ID], exact: true });

@@ -86,7 +86,10 @@ describe('NewRunPage', () => {
     await user.type(stop, '41');
     server.use(
       http.get('/api/datasets', () =>
-        HttpResponse.json({ code: 'FAILED', message: 'Datasets unavailable', fields: {} }, { status: 500 }),
+        HttpResponse.json(
+          { code: 'FAILED', message: 'Datasets unavailable', fields: {} },
+          { status: 500 },
+        ),
       ),
     );
     await queryClient.refetchQueries({ queryKey: ['datasets'] });
@@ -557,7 +560,9 @@ describe('NewRunPage', () => {
     await user.type(minimum, '1.0000000001');
     await user.tab();
     expect(await screen.findByText('At most 9 decimals')).toBeInTheDocument();
-    expect(screen.getByText('Changed by you · agreed More than 1.9 SOL, fees included')).toBeInTheDocument();
+    expect(
+      screen.getByText('Changed by you · agreed More than 1.9 SOL, fees included'),
+    ).toBeInTheDocument();
   });
 
   // The schema 3 sample with the agreed strategy: both its sell rule and its minimum signal size need trader data the

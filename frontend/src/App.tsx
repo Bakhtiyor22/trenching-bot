@@ -19,7 +19,11 @@ const router = createBrowserRouter(routes, { basename: ROUTER_BASENAME });
 export function App() {
   const [queryClient] = useState(createQueryClient);
   return (
-    <MantineProvider theme={theme} defaultColorScheme="dark" cssVariablesResolver={cssVariablesResolver}>
+    <MantineProvider
+      theme={theme}
+      defaultColorScheme="dark"
+      cssVariablesResolver={cssVariablesResolver}
+    >
       <Notifications position="bottom-right" />
       <QueryClientProvider client={queryClient}>
         <RouterProvider router={router} />

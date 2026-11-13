@@ -814,10 +814,18 @@ export function NewRunPage() {
       />
       {/* Errors only replace the form when the data never loaded: a failed refresh keeps the user's edits. */}
       {defaults.data && defaults.isError && (
-        <RefreshNotice error={defaults.error} updatedAt={defaults.dataUpdatedAt} onRetry={() => void defaults.refetch()} />
+        <RefreshNotice
+          error={defaults.error}
+          updatedAt={defaults.dataUpdatedAt}
+          onRetry={() => void defaults.refetch()}
+        />
       )}
       {datasets.data && datasets.isError && (
-        <RefreshNotice error={datasets.error} updatedAt={datasets.dataUpdatedAt} onRetry={() => void datasets.refetch()} />
+        <RefreshNotice
+          error={datasets.error}
+          updatedAt={datasets.dataUpdatedAt}
+          onRetry={() => void datasets.refetch()}
+        />
       )}
       {defaults.data === undefined && defaults.isError ? (
         <ErrorState

@@ -64,7 +64,11 @@ export function usageBuckets(report: UsageReport, period: UsagePeriod, seconds: 
   return buckets;
 }
 
-const clock = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false });
+const clock = new Intl.DateTimeFormat('en-GB', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
 const dayMonth = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
 
 /** Axis label of a bucket in local time: the clock within a day, the date beside it over longer periods. */
@@ -93,8 +97,12 @@ export function buildUsageChartOption(
   const seconds = usageBucketSeconds(report, period);
   const buckets = usageBuckets(report, period, seconds);
   const points = aggregateUsage(report.series, seconds);
-  const counts = new Map(points.map((point) => [`${point.bucketStart}/${point.provider}`, point.requests]));
-  const providers = PROVIDER_ORDER.filter((provider) => points.some((point) => point.provider === provider));
+  const counts = new Map(
+    points.map((point) => [`${point.bucketStart}/${point.provider}`, point.requests]),
+  );
+  const providers = PROVIDER_ORDER.filter((provider) =>
+    points.some((point) => point.provider === provider),
+  );
   const recordingStart = report.recordingStartedAt ? Date.parse(report.recordingStartedAt) : null;
   const beforeRecording = (bucket: string) =>
     recordingStart != null && Date.parse(bucket) + seconds * 1000 <= recordingStart;

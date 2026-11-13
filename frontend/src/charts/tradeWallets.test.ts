@@ -8,7 +8,10 @@ describe('wallet chart helpers', () => {
     expect(exactUnits('1000000000', 9)).toBe('1.000000000');
   });
   it('loads only valid unique addresses and bounds the watchlist', () => {
-    localStorage.setItem('trenching.chart.watchlist', JSON.stringify(['bad', '1'.repeat(32), '1'.repeat(32)]));
+    localStorage.setItem(
+      'trenching.chart.watchlist',
+      JSON.stringify(['bad', '1'.repeat(32), '1'.repeat(32)]),
+    );
     expect(readWatchlist()).toEqual(['1'.repeat(32)]);
     localStorage.setItem('trenching.chart.watchlist', '{');
     expect(readWatchlist()).toEqual([]);

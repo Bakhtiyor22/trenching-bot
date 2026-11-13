@@ -285,7 +285,11 @@ export function ScenarioCard({
                   Exit
                   {position && (
                     <StatusChip tone="neutral" glyph={position.state === 'OPEN' ? '◷' : undefined}>
-                      {position.state === 'OPEN' ? 'Position open' : position.state === 'CLOSED' ? 'Position closed' : humanizeCode(position.state)}
+                      {position.state === 'OPEN'
+                        ? 'Position open'
+                        : position.state === 'CLOSED'
+                          ? 'Position closed'
+                          : humanizeCode(position.state)}
                     </StatusChip>
                   )}
                 </Group>

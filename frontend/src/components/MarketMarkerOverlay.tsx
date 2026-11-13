@@ -159,7 +159,9 @@ export function MarketMarkerOverlay({
         const sell = action.side === 'SELL';
         const selected = group.actions.some((item) => actionKey(item) === selectedKey);
         // Decu's B/S pins are amber; our paper fills are blue diamonds.
-        const color = group.actions.every((item) => item.kind === 'PAPER') ? PAPER_COLOR : DECU_COLOR;
+        const color = group.actions.every((item) => item.kind === 'PAPER')
+          ? PAPER_COLOR
+          : DECU_COLOR;
         return (
           <button
             key={key}
@@ -218,7 +220,9 @@ export function MarketMarkerOverlay({
                     width: 7,
                     height: 7,
                     boxSizing: 'border-box',
-                    borderWidth: 2, borderStyle: 'solid', borderColor: color,
+                    borderWidth: 2,
+                    borderStyle: 'solid',
+                    borderColor: color,
                     borderRadius: '50%',
                     background: SURFACE,
                   }}
@@ -234,7 +238,9 @@ export function MarketMarkerOverlay({
                   top: 6,
                   width: 26,
                   height: 26,
-                  borderWidth: 2, borderStyle: 'solid', borderColor: color,
+                  borderWidth: 2,
+                  borderStyle: 'solid',
+                  borderColor: color,
                   boxSizing: 'border-box',
                   borderRadius: '50%',
                   background: SURFACE,
@@ -253,7 +259,9 @@ export function MarketMarkerOverlay({
                 height: paper ? 11 : 26,
                 boxSizing: 'border-box',
                 borderRadius: paper ? 0 : '50%',
-                borderWidth: 2, borderStyle: 'solid', borderColor: color,
+                borderWidth: 2,
+                borderStyle: 'solid',
+                borderColor: color,
                 background: paper ? color : sell && !stacked ? SURFACE : color,
                 color: sell && !stacked ? color : 'var(--console-accent-ink)',
                 transform: paper ? 'rotate(45deg)' : undefined,

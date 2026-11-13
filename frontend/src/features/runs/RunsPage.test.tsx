@@ -133,7 +133,10 @@ describe('RunsPage', () => {
     const table = await screen.findByRole('table');
     server.use(
       http.get('/api/runs', () =>
-        HttpResponse.json({ code: 'FAILED', message: 'Runs unavailable', fields: {} }, { status: 500 }),
+        HttpResponse.json(
+          { code: 'FAILED', message: 'Runs unavailable', fields: {} },
+          { status: 500 },
+        ),
       ),
     );
     await queryClient.refetchQueries();

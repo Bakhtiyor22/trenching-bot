@@ -7,7 +7,13 @@ export function MarketLinks({ links }: { links: MarketLink[] }) {
   return (
     <Group gap={8} component="span" style={{ display: 'inline-flex' }}>
       {links.map((link) => (
-        <Anchor key={link.href} href={link.href} target="_blank" rel="noopener noreferrer" size="xs">
+        <Anchor
+          key={link.href}
+          href={link.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          size="xs"
+        >
           {link.label}
         </Anchor>
       ))}

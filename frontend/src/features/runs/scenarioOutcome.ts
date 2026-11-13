@@ -31,12 +31,47 @@ export function scenarioOutcome(scenario: Scenario): ScenarioOutcome {
     if (close.reason === 'STOP_LOSS')
       return { ...closed, tag: 'SL', label: 'Stop loss', tone: 'failure', glyph: '✕', hex: LOSS };
     if (close.reason === 'TIME_EXIT')
-      return { ...closed, tag: 'TIME', label: 'Time exit', tone: 'attention', glyph: '▲', hex: ATTENTION };
+      return {
+        ...closed,
+        tag: 'TIME',
+        label: 'Time exit',
+        tone: 'attention',
+        glyph: '▲',
+        hex: ATTENTION,
+      };
     if (close.reason === 'WALLET_SOLD')
-      return { ...closed, tag: 'SOLD', label: 'Sold because Decu sold', tone: 'attention', glyph: '▲', hex: ATTENTION };
-    return { ...closed, tag: 'EXIT', label: humanizeCode(close.reason), tone: 'attention', glyph: '▲', hex: ATTENTION };
+      return {
+        ...closed,
+        tag: 'SOLD',
+        label: 'Sold because Decu sold',
+        tone: 'attention',
+        glyph: '▲',
+        hex: ATTENTION,
+      };
+    return {
+      ...closed,
+      tag: 'EXIT',
+      label: humanizeCode(close.reason),
+      tone: 'attention',
+      glyph: '▲',
+      hex: ATTENTION,
+    };
   }
   if (scenario.position)
-    return { tag: 'OPEN', label: 'Open', tone: 'neutral', glyph: '◷', hex: 'var(--console-neutral)', pnl: null };
-  return { tag: '—', label: 'No entry', tone: 'neutral', glyph: '–', hex: 'var(--console-dimmed)', pnl: null };
+    return {
+      tag: 'OPEN',
+      label: 'Open',
+      tone: 'neutral',
+      glyph: '◷',
+      hex: 'var(--console-neutral)',
+      pnl: null,
+    };
+  return {
+    tag: '—',
+    label: 'No entry',
+    tone: 'neutral',
+    glyph: '–',
+    hex: 'var(--console-dimmed)',
+    pnl: null,
+  };
 }

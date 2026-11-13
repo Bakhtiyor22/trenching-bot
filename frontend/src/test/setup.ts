@@ -22,7 +22,10 @@ function serializeOption(option: unknown): string {
 function fakeChartInstance(dom: HTMLElement) {
   const noop = () => {};
   return {
-    convertToPixel: (_finder: unknown, values: number[]) => [((values[0]! / 1000) % 60) * 40 + 40, 200],
+    convertToPixel: (_finder: unknown, values: number[]) => [
+      ((values[0]! / 1000) % 60) * 40 + 40,
+      200,
+    ],
     containPixel: () => true,
     on: noop,
     off: noop,
@@ -36,14 +39,24 @@ function fakeChartInstance(dom: HTMLElement) {
 // can still assert what would be plotted, and hand callers a fake instance once mounted.
 vi.mock('echarts-for-react/esm/core', async () => {
   const { createElement, useEffect, useRef } = await import('react');
-  function EChartsStub({ option, onChartReady }: { option: unknown; onChartReady?: (instance: unknown) => void }) {
+  function EChartsStub({
+    option,
+    onChartReady,
+  }: {
+    option: unknown;
+    onChartReady?: (instance: unknown) => void;
+  }) {
     const dom = useRef<HTMLDivElement>(null);
     const ready = useRef(onChartReady);
     // Ready fires once per mount, as in echarts-for-react.
     useEffect(() => {
       if (dom.current) ready.current?.(fakeChartInstance(dom.current));
     }, []);
-    return createElement('div', { ref: dom, 'data-testid': 'echarts', 'data-option': serializeOption(option) });
+    return createElement('div', {
+      ref: dom,
+      'data-testid': 'echarts',
+      'data-option': serializeOption(option),
+    });
   }
   return { default: EChartsStub };
 });

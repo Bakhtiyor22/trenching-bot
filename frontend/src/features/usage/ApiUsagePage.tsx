@@ -177,7 +177,10 @@ function UsageContent({
 }) {
   const tokens = useChartTokens();
   // Built once per report: a new option object on every render would make the chart redraw.
-  const chartOption = useMemo(() => buildUsageChartOption(report, period, tokens), [report, period, tokens]);
+  const chartOption = useMemo(
+    () => buildUsageChartOption(report, period, tokens),
+    [report, period, tokens],
+  );
   const seconds = usageBucketSeconds(report, period);
   const unit = bucketWord(seconds);
   const periodText = PERIOD_LABELS[period].toLowerCase();
@@ -224,11 +227,7 @@ function UsageContent({
           title={`Requests sent per ${unit}`}
           hint={`Every ${unit} of the period is on the axis, so a gap means no requests were sent then. Before recording started a bucket is "not recorded".`}
         >
-          <Chart
-            ariaLabel="Provider requests over time"
-            height={300}
-            option={chartOption}
-          />
+          <Chart ariaLabel="Provider requests over time" height={300} option={chartOption} />
         </Section>
       )}
       <CallsTable report={report} />
@@ -350,7 +349,11 @@ export function ApiUsagePage() {
             Capture choices could not be loaded. Usage is still available.
           </Alert>
         )}
-        <QueryView query={usage} loadingLabel="Loading API usage…" errorTitle="Could not load API usage">
+        <QueryView
+          query={usage}
+          loadingLabel="Loading API usage…"
+          errorTitle="Could not load API usage"
+        >
           {(report) => (
             <UsageContent
               report={report}

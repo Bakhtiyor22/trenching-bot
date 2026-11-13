@@ -404,8 +404,7 @@ export function chartCandleOption(
     (point): point is MarketPoint & { value: number } => point.value != null,
   );
   const sparse = !response.ticks?.included && valid.length < 3;
-  const color =
-    (valid.at(-1)?.value ?? 0) >= (valid[0]?.value ?? 0) ? t.gain : t.loss;
+  const color = (valid.at(-1)?.value ?? 0) >= (valid[0]?.value ?? 0) ? t.gain : t.loss;
   const rail = response.markers.clusters.length > 0;
   const extent = config.extent ?? chartExtent(response) ?? NO_TIME_EXTENT;
   const extentMin = extent.from;

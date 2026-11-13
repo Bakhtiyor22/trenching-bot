@@ -58,13 +58,19 @@ interface AnchorDatum {
 /** How far before the first run the zero anchor sits, as a share of the plotted time span. */
 const ORIGIN_LEAD = 0.04;
 
-function anchored(steps: CumulativeDatum[], start: number, now: number): Array<CumulativeDatum | AnchorDatum> {
+function anchored(
+  steps: CumulativeDatum[],
+  start: number,
+  now: number,
+): Array<CumulativeDatum | AnchorDatum> {
   const last = steps.at(-1);
   if (!last) return steps;
   return [
     { value: [start, 0], symbol: 'none' },
     ...steps,
-    ...(now > last.value[0] ? [{ value: [now, last.value[1]] as [number, number | null], symbol: 'none' as const }] : []),
+    ...(now > last.value[0]
+      ? [{ value: [now, last.value[1]] as [number, number | null], symbol: 'none' as const }]
+      : []),
   ];
 }
 
@@ -86,7 +92,13 @@ export function cumulativePnlOption(
   const mints = [...byMint.keys()];
   const points = recent.length;
   return {
-    grid: { left: 8, right: 120, top: mints.length > 1 ? 36 : 16, bottom: points >= SLIDER_MIN_POINTS ? 44 : 8, containLabel: true },
+    grid: {
+      left: 8,
+      right: 120,
+      top: mints.length > 1 ? 36 : 16,
+      bottom: points >= SLIDER_MIN_POINTS ? 44 : 8,
+      containLabel: true,
+    },
     legend: mints.length > 1 ? { top: 0, data: mints.map(mintLabel) } : undefined,
     tooltip: {
       trigger: 'item',
@@ -104,10 +116,16 @@ export function cumulativePnlOption(
       },
     },
     xAxis: { type: 'time', splitLine: { show: false } },
-    yAxis: { type: 'value', scale: false, name: mints.length === 1 ? mintLabel(mints[0]!) : undefined },
+    yAxis: {
+      type: 'value',
+      scale: false,
+      name: mints.length === 1 ? mintLabel(mints[0]!) : undefined,
+    },
     dataZoom: [
       INSIDE_ZOOM,
-      ...(points >= SLIDER_MIN_POINTS ? [{ type: 'slider' as const, filterMode: 'none' as const, height: 18, bottom: 8 }] : []),
+      ...(points >= SLIDER_MIN_POINTS
+        ? [{ type: 'slider' as const, filterMode: 'none' as const, height: 18, bottom: 8 }]
+        : []),
     ],
     series: mints.map((mint, index) => {
       const steps = byMint.get(mint) ?? [];
@@ -155,7 +173,12 @@ export function runIdFromClick(params: unknown): string | null {
 export function sparklineOption(
   samples: GaugeSample[],
   pick: (s: GaugeSample) => number | null,
-  { color, unit, digits = 1, latest }: { color: string; unit: string; digits?: number; latest?: string },
+  {
+    color,
+    unit,
+    digits = 1,
+    latest,
+  }: { color: string; unit: string; digits?: number; latest?: string },
 ): EChartsOption {
   const points = samples.map((s) => [s.t, pick(s)] as [number, number | null]);
   const last = [...points].reverse().find((p) => p[1] != null);
@@ -163,7 +186,8 @@ export function sparklineOption(
     grid: { left: 4, right: 6, top: 6, bottom: 4, containLabel: false },
     tooltip: {
       trigger: 'axis',
-      valueFormatter: (value) => (typeof value === 'number' ? `${value.toFixed(digits)} ${unit}` : '—'),
+      valueFormatter: (value) =>
+        typeof value === 'number' ? `${value.toFixed(digits)} ${unit}` : '—',
     },
     xAxis: { type: 'time', show: false },
     yAxis: { type: 'value', show: false, scale: true },

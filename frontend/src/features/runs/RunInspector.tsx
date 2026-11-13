@@ -79,8 +79,17 @@ export function CycleList({
         </Text>
       }
     >
-      <Box component="nav" aria-label="Cycles" mx="calc(var(--mantine-spacing-md) * -1)" mb="calc(var(--mantine-spacing-md) * -1)">
-        <ScrollArea.Autosize mah={560} type="auto" style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
+      <Box
+        component="nav"
+        aria-label="Cycles"
+        mx="calc(var(--mantine-spacing-md) * -1)"
+        mb="calc(var(--mantine-spacing-md) * -1)"
+      >
+        <ScrollArea.Autosize
+          mah={560}
+          type="auto"
+          style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}
+        >
           {scenarios.map((s, index) => {
             const outcome = scenarioOutcome(s);
             const active = index === selected;
@@ -103,7 +112,13 @@ export function CycleList({
                     {shortId(s.pair.base)}
                   </Text>
                   {outcome.pnl && (
-                    <Text ff="monospace" size="sm" fw={600} c={pnlColor(outcome.pnl)} style={{ whiteSpace: 'nowrap' }}>
+                    <Text
+                      ff="monospace"
+                      size="sm"
+                      fw={600}
+                      c={pnlColor(outcome.pnl)}
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
                       {pnlText(outcome.pnl, unit)}
                     </Text>
                   )}

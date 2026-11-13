@@ -10,7 +10,15 @@ import type {
   Verdict,
   VerificationBound,
 } from '../api/captures';
-import { BASE_MINT, ENGINE_VERSION, SAMPLE_DATASET_ID, SAMPLE_PNL, SIGNATURE, TAKE_PROFIT_ENTRY_PRICE, WALLET } from './fixtures';
+import {
+  BASE_MINT,
+  ENGINE_VERSION,
+  SAMPLE_DATASET_ID,
+  SAMPLE_PNL,
+  SIGNATURE,
+  TAKE_PROFIT_ENTRY_PRICE,
+  WALLET,
+} from './fixtures';
 
 export const CAPTURE_ID = 'capture-demo';
 const CREATED_AT = '2026-10-10T09:00:00Z';
@@ -21,7 +29,11 @@ export const captureConfig: CaptureConfig = {
   ratesConfigured: true,
   walletDefaults: { wallet: '', scope: 'pumpfun-user-buys', limit: 1, scanPages: 20 },
   walletTokenDefaults: { wallet: '', scope: 'wallet-token', limit: 1000, scanPages: 20, mint: '' },
-  walletTokenBudgetDefaults: { requestBudget: 1000, byteBudget: 104857600, operationTimeoutMinutes: 10 },
+  walletTokenBudgetDefaults: {
+    requestBudget: 1000,
+    byteBudget: 104857600,
+    operationTimeoutMinutes: 10,
+  },
   marketDefaults: { scanPages: 50, maxTransactions: 50000 },
   budgetDefaults: { requestBudget: 400, byteBudget: 104857600, operationTimeoutMinutes: 10 },
   bounds: {
@@ -41,7 +53,13 @@ export const captureConfig: CaptureConfig = {
   windowSlots: 4500,
 };
 
-const ready: CaptureStage = { state: 'READY', reason: null, canStart: false, canResume: false, requiresNewAttempt: false };
+const ready: CaptureStage = {
+  state: 'READY',
+  reason: null,
+  canStart: false,
+  canResume: false,
+  requiresNewAttempt: false,
+};
 
 export const readyInspection: CaptureInspection = {
   wallet: ready,
@@ -49,11 +67,33 @@ export const readyInspection: CaptureInspection = {
   rates: ready,
   canCalibrate: true,
   canExport: true,
-  walletSummary: { selected: '1', buys: '1', requestsUsed: '7', bytesUsed: '48211', decoder: 'PUMPFUN_BONDING_CURVE_BUY' },
-  marketSummary: { windows: '1', observations: '42', requestsUsed: '61', bytesUsed: '903114', scanPages: '50', maxTransactions: '50000' },
+  walletSummary: {
+    selected: '1',
+    buys: '1',
+    requestsUsed: '7',
+    bytesUsed: '48211',
+    decoder: 'PUMPFUN_BONDING_CURVE_BUY',
+  },
+  marketSummary: {
+    windows: '1',
+    observations: '42',
+    requestsUsed: '61',
+    bytesUsed: '903114',
+    scanPages: '50',
+    maxTransactions: '50000',
+  },
   ratesSummary: { minutes: '9', recorded: '9' },
   marketWindows: [
-    { mint: BASE_MINT, fromSlot: 1000, toSlot: 5500, coverage: 'COMPLETE', scanned: 120, selected: 42, detailGaps: 0, observations: 42 },
+    {
+      mint: BASE_MINT,
+      fromSlot: 1000,
+      toSlot: 5500,
+      coverage: 'COMPLETE',
+      scanned: 120,
+      selected: 42,
+      detailGaps: 0,
+      observations: 42,
+    },
   ],
 };
 
@@ -91,7 +131,12 @@ export const calibrationReport: CalibrationReport = {
         creatorFeeLamports: '50000',
         computedCreatorFeeLamports: '50000',
       },
-      latency: { status: 'CHECKED', observationSlot: 999, predictedTokenAmount: '3555700000000', errorBps: '-1234.5' },
+      latency: {
+        status: 'CHECKED',
+        observationSlot: 999,
+        predictedTokenAmount: '3555700000000',
+        errorBps: '-1234.5',
+      },
       costs: { transactionFeeLamports: '5000', otherLamports: '5000.5' },
     },
   ],
@@ -186,7 +231,13 @@ export const provenTarget: TargetToken = {
   tokenAccount: TOKEN_ACCOUNT,
   pumpAccumulator: '11111111111111111111111111111116',
   pumpSwapAccumulator: '11111111111111111111111111111117',
-  tokenAccountFirstBuy: { state: 'FOUND', signature: FIRST_BUY_SIGNATURE, slot: FIRST_BUY_SLOT, reason: null, blocking: [] },
+  tokenAccountFirstBuy: {
+    state: 'FOUND',
+    signature: FIRST_BUY_SIGNATURE,
+    slot: FIRST_BUY_SLOT,
+    reason: null,
+    blocking: [],
+  },
   actualFirstBuy: provenFirstBuy,
 };
 
@@ -211,13 +262,30 @@ const ranProvenance: Verdict['provenance'] = {
 const complete: Verdict['capture'] = { state: 'COMPLETE', stage: null, reason: null };
 const ran: Verdict['replay'] = { state: 'RAN', category: null };
 const notRun: Verdict['replay'] = { state: 'NOT_RUN', category: null };
-const notEvaluated = (reason: string | null): Verdict['dip'] => ({ state: 'NOT_EVALUATED', reason });
+const notEvaluated = (reason: string | null): Verdict['dip'] => ({
+  state: 'NOT_EVALUATED',
+  reason,
+});
 
 export const qualifyingVerdict: Verdict = {
   classification: 'QUALIFYING_DIP',
   capture: complete,
-  dip: { state: 'QUALIFIED', reason: null, triggerSlot: 1002, triggerPrice: TRIGGER_PRICE, marketCapUsd: TRIGGER_MARKET_CAP_USD, rate: '152.31', observationId: 'observation-1002' },
-  entry: { state: 'FILLED', reason: null, slot: 1003, executionPrice: TAKE_PROFIT_ENTRY_PRICE, observationId: 'observation-1003' },
+  dip: {
+    state: 'QUALIFIED',
+    reason: null,
+    triggerSlot: 1002,
+    triggerPrice: TRIGGER_PRICE,
+    marketCapUsd: TRIGGER_MARKET_CAP_USD,
+    rate: '152.31',
+    observationId: 'observation-1002',
+  },
+  entry: {
+    state: 'FILLED',
+    reason: null,
+    slot: 1003,
+    executionPrice: TAKE_PROFIT_ENTRY_PRICE,
+    observationId: 'observation-1003',
+  },
   exit: { state: 'CLOSED', reason: 'TAKE_PROFIT', slot: 1006, realizedPnl: SAMPLE_PNL },
   replay: ran,
   provenance: ranProvenance,
@@ -232,7 +300,10 @@ const noDipVerdict: Verdict = {
   provenance: ranProvenance,
 };
 /** Before export the verdict comes from inspection alone: replay NOT_RUN and no strategy outcome. */
-const inspectionOnly = (classification: Verdict['classification'], capture: Verdict['capture']): Verdict => ({
+const inspectionOnly = (
+  classification: Verdict['classification'],
+  capture: Verdict['capture'],
+): Verdict => ({
   classification,
   capture,
   dip: notEvaluated(capture.reason ?? null),
@@ -251,12 +322,24 @@ const replayFailedVerdict: Verdict = {
   provenance: { ...ranProvenance, runId: null, configurationHash: null },
 };
 
-const notStarted = (reason: string): CaptureStage => ({ state: 'NOT_STARTED', reason, canStart: false, canResume: false, requiresNewAttempt: false });
+const notStarted = (reason: string): CaptureStage => ({
+  state: 'NOT_STARTED',
+  reason,
+  canStart: false,
+  canResume: false,
+  requiresNewAttempt: false,
+});
 /** The wallet stage is unusable with the verdict's reason; nothing later can start. */
 const blockedInspection = (reason: string, actualFirstBuy: ActualFirstBuy): CaptureInspection => ({
   ...readyInspection,
   targetToken: { ...provenTarget, actualFirstBuy },
-  wallet: { state: 'UNUSABLE', reason, canStart: false, canResume: false, requiresNewAttempt: false },
+  wallet: {
+    state: 'UNUSABLE',
+    reason,
+    canStart: false,
+    canResume: false,
+    requiresNewAttempt: false,
+  },
   market: notStarted('WALLET_CAPTURE_NOT_READY'),
   rates: notStarted('MARKET_CAPTURE_NOT_READY'),
   canExport: false,
@@ -270,7 +353,11 @@ const SAME_SLOT_BUY_REASON = 'SAME_SLOT_BUY';
 const FIRST_BUY_NOT_LISTED_REASON = 'FIRST_BUY_NOT_LISTED';
 const sameSlotBuyTarget: TargetToken = {
   ...provenTarget,
-  tokenAccountFirstBuy: { state: 'NOT_ESTABLISHED', reason: SAME_SLOT_BUY_REASON, blocking: [SAME_SLOT_BUY_SIGNATURE] },
+  tokenAccountFirstBuy: {
+    state: 'NOT_ESTABLISHED',
+    reason: SAME_SLOT_BUY_REASON,
+    blocking: [SAME_SLOT_BUY_SIGNATURE],
+  },
   actualFirstBuy: { state: 'NOT_VERIFIED', blocking: [] },
 };
 const sameSlotBuyInspection: CaptureInspection = {
@@ -278,7 +365,13 @@ const sameSlotBuyInspection: CaptureInspection = {
   targetToken: sameSlotBuyTarget,
 };
 
-function tokenSession(id: string, name: string, inspection: CaptureInspection, qualification: Verdict, datasetReady: boolean): CaptureSession {
+function tokenSession(
+  id: string,
+  name: string,
+  inspection: CaptureInspection,
+  qualification: Verdict,
+  datasetReady: boolean,
+): CaptureSession {
   return {
     ...captureSession,
     id,
@@ -293,54 +386,116 @@ function tokenSession(id: string, name: string, inspection: CaptureInspection, q
 }
 
 export const walletTokenSessions = {
-  qualifying: tokenSession('capture-token-qualifying', 'Wallet + token: take profit', verifiedInspection, qualifyingVerdict, true),
-  noDip: tokenSession('capture-token-no-dip', 'Wallet + token: no dip', verifiedInspection, noDipVerdict, true),
+  qualifying: tokenSession(
+    'capture-token-qualifying',
+    'Wallet + token: take profit',
+    verifiedInspection,
+    qualifyingVerdict,
+    true,
+  ),
+  noDip: tokenSession(
+    'capture-token-no-dip',
+    'Wallet + token: no dip',
+    verifiedInspection,
+    noDipVerdict,
+    true,
+  ),
   unproven: tokenSession(
     'capture-token-unproven',
     'Wallet + token: verification capped',
-    blockedInspection('VERIFICATION_BOUND', { state: 'UNPROVEN', reason: 'VERIFICATION_BOUND', blocking: [], bound: verificationBound }),
-    inspectionOnly('FIRST_BUY_UNPROVEN', { state: 'UNUSABLE', stage: 'WALLET', reason: 'VERIFICATION_BOUND' }),
+    blockedInspection('VERIFICATION_BOUND', {
+      state: 'UNPROVEN',
+      reason: 'VERIFICATION_BOUND',
+      blocking: [],
+      bound: verificationBound,
+    }),
+    inspectionOnly('FIRST_BUY_UNPROVEN', {
+      state: 'UNUSABLE',
+      stage: 'WALLET',
+      reason: 'VERIFICATION_BOUND',
+    }),
     false,
   ),
   outside: tokenSession(
     'capture-token-outside',
     'Wallet + token: first buy elsewhere',
-    blockedInspection('FIRST_BUY_OUTSIDE_TOKEN_ACCOUNT', { state: 'OUTSIDE_TOKEN_ACCOUNT', signature: OUTSIDE_SIGNATURE, slot: 978, blocking: [] }),
-    inspectionOnly('FIRST_BUY_OUTSIDE_TOKEN_ACCOUNT', { state: 'UNUSABLE', stage: 'WALLET', reason: 'FIRST_BUY_OUTSIDE_TOKEN_ACCOUNT' }),
+    blockedInspection('FIRST_BUY_OUTSIDE_TOKEN_ACCOUNT', {
+      state: 'OUTSIDE_TOKEN_ACCOUNT',
+      signature: OUTSIDE_SIGNATURE,
+      slot: 978,
+      blocking: [],
+    }),
+    inspectionOnly('FIRST_BUY_OUTSIDE_TOKEN_ACCOUNT', {
+      state: 'UNUSABLE',
+      stage: 'WALLET',
+      reason: 'FIRST_BUY_OUTSIDE_TOKEN_ACCOUNT',
+    }),
     false,
   ),
-  replayFailed: tokenSession('capture-token-replay-failed', 'Wallet + token: replay failed', verifiedInspection, replayFailedVerdict, true),
+  replayFailed: tokenSession(
+    'capture-token-replay-failed',
+    'Wallet + token: replay failed',
+    verifiedInspection,
+    replayFailedVerdict,
+    true,
+  ),
   incomplete: tokenSession(
     'capture-token-incomplete',
     'Wallet + token: market incomplete',
     {
       ...verifiedInspection,
-      market: { state: 'INCOMPLETE', reason: 'MARKET_CAPTURE_INCOMPLETE', canStart: false, canResume: true, requiresNewAttempt: false },
+      market: {
+        state: 'INCOMPLETE',
+        reason: 'MARKET_CAPTURE_INCOMPLETE',
+        canStart: false,
+        canResume: true,
+        requiresNewAttempt: false,
+      },
       rates: notStarted('MARKET_CAPTURE_NOT_READY'),
       canExport: false,
     },
-    inspectionOnly('INCOMPLETE_CAPTURE', { state: 'INCOMPLETE', stage: 'MARKET', reason: 'MARKET_CAPTURE_INCOMPLETE' }),
+    inspectionOnly('INCOMPLETE_CAPTURE', {
+      state: 'INCOMPLETE',
+      stage: 'MARKET',
+      reason: 'MARKET_CAPTURE_INCOMPLETE',
+    }),
     false,
   ),
   pendingQualification: tokenSession(
     'capture-token-pending-qualification',
     'Wallet + token: qualification pending',
     verifiedInspection,
-    inspectionOnly('INCOMPLETE_CAPTURE', { state: 'COMPLETE', stage: 'EXPORT', reason: 'QUALIFICATION_PENDING' }),
+    inspectionOnly('INCOMPLETE_CAPTURE', {
+      state: 'COMPLETE',
+      stage: 'EXPORT',
+      reason: 'QUALIFICATION_PENDING',
+    }),
     true,
   ),
   sameSlotBuy: tokenSession(
     'capture-token-same-slot-buy',
     'Wallet + token: same-slot buys',
     sameSlotBuyInspection,
-    inspectionOnly('FIRST_BUY_UNPROVEN', { state: 'UNUSABLE', stage: 'WALLET', reason: SAME_SLOT_BUY_REASON }),
+    inspectionOnly('FIRST_BUY_UNPROVEN', {
+      state: 'UNUSABLE',
+      stage: 'WALLET',
+      reason: SAME_SLOT_BUY_REASON,
+    }),
     false,
   ),
   firstBuyNotListed: tokenSession(
     'capture-token-first-buy-not-listed',
     'Wallet + token: known buy missing from listing',
-    blockedInspection(FIRST_BUY_NOT_LISTED_REASON, { state: 'UNPROVEN', reason: FIRST_BUY_NOT_LISTED_REASON, blocking: [FIRST_BUY_SIGNATURE] }),
-    inspectionOnly('FIRST_BUY_UNPROVEN', { state: 'UNUSABLE', stage: 'WALLET', reason: FIRST_BUY_NOT_LISTED_REASON }),
+    blockedInspection(FIRST_BUY_NOT_LISTED_REASON, {
+      state: 'UNPROVEN',
+      reason: FIRST_BUY_NOT_LISTED_REASON,
+      blocking: [FIRST_BUY_SIGNATURE],
+    }),
+    inspectionOnly('FIRST_BUY_UNPROVEN', {
+      state: 'UNUSABLE',
+      stage: 'WALLET',
+      reason: FIRST_BUY_NOT_LISTED_REASON,
+    }),
     false,
   ),
 } satisfies Record<string, CaptureSession>;
