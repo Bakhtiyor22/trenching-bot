@@ -25,6 +25,9 @@ Thumbs.db
 # Local environment
 .env
 
+# Local profile log file and its rolled archives (application-local.yml)
+/logs/
+
 # Claude Code (per-developer settings and agent worktrees)
 .claude/settings.local.json
 .claude/worktrees/

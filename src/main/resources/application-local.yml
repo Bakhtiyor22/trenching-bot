@@ -49,6 +49,15 @@ management:
     health:
       show-details: always
 
+# Also written to a rolling file: show-sql prints to stdout only, not through the logger, so the file stays free of SQL
+# and an INTERNAL_ERROR reply's errorId can still be found after the console has scrolled past it.
 logging:
+  file:
+    name: logs/trenching-bot.log
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7
+      total-size-cap: 500MB
   level:
     com.trenching.bot: DEBUG

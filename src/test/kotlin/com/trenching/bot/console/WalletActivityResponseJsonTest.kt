@@ -40,14 +40,16 @@ class WalletActivityResponseJsonTest {
     }
 
     @Test
-    fun `retryAfterSeconds is a top-level number only when present`() {
+    fun `retryAfterSeconds and errorId are top-level fields only when present`() {
         runner.run { context ->
             val json = context.getBean(JsonMapper::class.java)
 
             assertEquals("""{"code":"PROVIDER_RATE_LIMITED","message":"m","fields":{},"retryAfterSeconds":12}""",
-                json.writeValueAsString(ConsoleErrorResponse("PROVIDER_RATE_LIMITED", "m", emptyMap(), 12)))
+                json.writeValueAsString(ConsoleErrorResponse("PROVIDER_RATE_LIMITED", "m", emptyMap(), 12, null)))
             assertEquals("""{"code":"PROVIDER_UNAVAILABLE","message":"m","fields":{}}""",
-                json.writeValueAsString(ConsoleErrorResponse("PROVIDER_UNAVAILABLE", "m", emptyMap(), null)))
+                json.writeValueAsString(ConsoleErrorResponse("PROVIDER_UNAVAILABLE", "m", emptyMap(), null, null)))
+            assertEquals("""{"code":"INTERNAL_ERROR","message":"m","fields":{},"errorId":"e-1"}""",
+                json.writeValueAsString(ConsoleErrorResponse("INTERNAL_ERROR", "m", emptyMap(), null, "e-1")))
         }
     }
 }
