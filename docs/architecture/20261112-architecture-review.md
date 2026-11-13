@@ -10,6 +10,18 @@ reproduced on a copy of the real local database. Where this document says **veri
 on the real data, or read end to end in the code. **Likely** means one link was inferred. **Assumption** marks anything not
 checked. Raw area reports (about 600 KB) stay outside the repository.
 
+**Update 2026-11-13.** Since this review, `develop` has gained:
+- the fix from section 3;
+- roadmap item 6: the backend suite passes on Windows, 2,079 tests with none failing;
+- roadmap item 7: the first run on the bundled sample works;
+- the backend half of item 3: unexpected failures answer `INTERNAL_ERROR` with an `errorId`, and the local profile writes a
+  rolling log file;
+- a mock backend that answers errors the way the backend does;
+- LF line endings pinned in `.gitattributes`;
+- a Prettier check in CI.
+
+The console does not show the `errorId` yet. Everything else below is as found on 2026-11-12.
+
 **The short version.**
 
 1. The failing runs are fixed (section 3). The cause was not in the run code. The long-lived local database still enforced
