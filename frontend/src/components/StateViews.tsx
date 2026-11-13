@@ -29,7 +29,10 @@ export function ErrorState({
   return (
     <Alert color="red" variant="light" title={title} icon={<IconAlert />} role="alert">
       <Stack gap="xs" align="flex-start">
-        <Text size="sm">{errorMessage(error)}</Text>
+        {/* Backend messages carry ids such as a 64-character dataset checksum: let them wrap on a phone. */}
+        <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
+          {errorMessage(error)}
+        </Text>
         {onRetry && (
           <Button size="xs" variant="default" onClick={onRetry}>
             Try again

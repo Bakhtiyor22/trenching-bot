@@ -2,7 +2,13 @@ import { act, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { ApiError } from '../api/client';
 import { renderPage } from '../test/render';
-import { ProviderErrorState } from './StateViews';
+import { ErrorState, ProviderErrorState } from './StateViews';
+
+it('wraps a long backend message, such as a 64-character dataset id, inside the error card', () => {
+  const message = `Replay dataset not found datasetId=${'9e3b5d7f'.repeat(8)}`;
+  renderPage(<ErrorState error={new ApiError(404, 'DATASET_NOT_FOUND', message)} />);
+  expect(screen.getByText(message)).toHaveStyle({ overflowWrap: 'anywhere' });
+});
 
 it('holds rate-limit retry until the countdown expires', async () => {
   vi.useFakeTimers();
