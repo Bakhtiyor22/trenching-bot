@@ -696,7 +696,7 @@ class CaptureOperationServiceTest {
     }
 
     @Test
-    fun `a FULL market operation extends a decided capture that is otherwise complete, and only such a capture`() {
+    fun `a FULL market operation extends a decided capture that is otherwise complete, and any other complete capture has nothing to fetch`() {
         val fixture = CaptureConsoleFixture(root).apply { createToken() }
 
         fixture.workflow.inspection = completeMarket(cutoff = false)
@@ -708,9 +708,57 @@ class CaptureOperationServiceTest {
         fixture.market("extend", cutoffMode = "FULL")
         fixture.executor.runAll()
 
-        assertEquals("PREREQUISITE", fixture.operations.find("session-1", "full-complete").code)
-        assertEquals("PREREQUISITE", fixture.operations.find("session-1", "decided-again").code)
+        assertNothingFetched(fixture.operations.find("session-1", "full-complete"))
+        assertNothingFetched(fixture.operations.find("session-1", "decided-again"))
         assertEquals(listOf(MarketCutoffMode.FULL), fixture.marketModes())
         assertEquals("FULL", fixture.operations.find("session-1", "extend").cutoffMode)
+    }
+
+    @Test
+    fun `an acquisition whose stage is already complete succeeds without running its step`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = completeMarket(cutoff = false)
+        fixture.sessions.newAttempt("session-1", CaptureAttemptRequest("rates-1", CaptureNames.RATES))
+        fixture.settle()
+        val session = fixture.store.session("session-1")
+
+        fixture.operations.start("session-1", CaptureOperationRequest("wallet-again", CaptureNames.WALLET, session.walletAttemptId))
+        fixture.executor.runAll()
+        fixture.market("market-again")
+        fixture.executor.runAll()
+        fixture.operations.start("session-1", CaptureOperationRequest("rates-again", CaptureNames.RATES, session.ratesAttemptId))
+        fixture.executor.runAll()
+
+        listOf("wallet-again", "market-again", "rates-again").forEach { assertNothingFetched(fixture.operations.find("session-1", it)) }
+        assertTrue(fixture.workflow.executed.isEmpty())
+    }
+
+    @Test
+    fun `a market capture resumed after a restart that came after its last request succeeds without fetching again`() {
+        val scheduler = ManualCaptureRetryScheduler()
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = marketStartable
+        val accepted = fixture.operations.start("session-1", CaptureOperationRequest(
+            "market-restarted", CaptureNames.MARKET, fixture.store.session("session-1").marketAttemptId,
+            CaptureBudget(requestBudget = 2, byteBudget = 100),
+            recovery = CaptureRecoveryConfig(totalRequestBudget = 6, totalByteBudget = 300, maxAttempts = 3),
+        ))
+        // The process stopped after the capture had written every window but before the operation recorded its success.
+        fixture.workflow.inspection = completeMarket(cutoff = false)
+        val restartedExecutor = ManualExecutor()
+        val restarted = CaptureOperationService(fixture.store, fixture.workflow, CaptureResponseMapperImpl(), fixture.json,
+            fixture.clock, restartedExecutor, true, true, scheduler)
+        restarted.recover()
+
+        scheduler.runNext()
+        restartedExecutor.runAll()
+
+        assertNothingFetched(restarted.find("session-1", accepted.id))
+        assertTrue(fixture.marketModes().isEmpty())
+    }
+
+    private fun assertNothingFetched(operation: CaptureOperationRecord) {
+        assertEquals(CaptureNames.SUCCEEDED, operation.state)
+        assertNull(operation.code)
     }
 }

@@ -278,27 +278,29 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             val session = synchronized(store) { store.session(id) }
             val paths = paths(session)
             val verified = workflow.inspect(paths)
-            requirePrerequisite(initial,verified)
-            val command = command(session,initial,paths)
-            val result = workflow.execute(command, stoppable(id, initial.id, CaptureCheckpointObserver { checkpoint -> synchronized(store) {
-                val progress = mapper.progress(checkpoint)
-                operation = accountCheckpoint(operation, progress).copy(updatedAt=checkpoint.at, progress=progress)
-                val saved = store.operation(id, operation.id)
-                operation = operation.copy(control = saved.control, controlRequestIds = saved.controlRequestIds)
-                when (saved.control) {
-                    CaptureNames.PAUSE_REQUESTED -> {
-                        operation = operation.copy(state = CaptureNames.PAUSED, control = null, endedAt = checkpoint.at, recovery = releaseReservation(operation.recovery))
-                        store.save(id, operation)
-                        throw CaptureOperationStop()
+            val result = if (stageComplete(initial, verified)) CaptureStepResult.Inspected(verified) else {
+                requirePrerequisite(initial,verified)
+                val command = command(session,initial,paths)
+                workflow.execute(command, stoppable(id, initial.id, CaptureCheckpointObserver { checkpoint -> synchronized(store) {
+                    val progress = mapper.progress(checkpoint)
+                    operation = accountCheckpoint(operation, progress).copy(updatedAt=checkpoint.at, progress=progress)
+                    val saved = store.operation(id, operation.id)
+                    operation = operation.copy(control = saved.control, controlRequestIds = saved.controlRequestIds)
+                    when (saved.control) {
+                        CaptureNames.PAUSE_REQUESTED -> {
+                            operation = operation.copy(state = CaptureNames.PAUSED, control = null, endedAt = checkpoint.at, recovery = releaseReservation(operation.recovery))
+                            store.save(id, operation)
+                            throw CaptureOperationStop()
+                        }
+                        CaptureNames.CANCEL_REQUESTED -> {
+                            operation = operation.copy(state = CaptureNames.CANCELLED, control = null, code = "CANCELLED_BY_USER", message = "Remaining capture work was cancelled", endedAt = checkpoint.at, recovery = releaseReservation(operation.recovery))
+                            store.save(id, operation)
+                            throw CaptureOperationStop()
+                        }
+                        else -> store.save(id,operation)
                     }
-                    CaptureNames.CANCEL_REQUESTED -> {
-                        operation = operation.copy(state = CaptureNames.CANCELLED, control = null, code = "CANCELLED_BY_USER", message = "Remaining capture work was cancelled", endedAt = checkpoint.at, recovery = releaseReservation(operation.recovery))
-                        store.save(id, operation)
-                        throw CaptureOperationStop()
-                    }
-                    else -> store.save(id,operation)
-                }
-            } }))
+                } }))
+            }
             retryAfter = when (result) {
                 is CaptureStepResult.Wallet -> result.capture.stopRetryAfter
                 is CaptureStepResult.Markets -> result.capture.stopRetryAfter
@@ -409,6 +411,17 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
             else -> true
         }
         if(!eligible) CaptureValidation.conflict("PREREQUISITE","Selected capture does not meet the operation prerequisites")
+    }
+    /**
+     * An acquisition whose stage is already ready has nothing left to fetch, so it succeeds without running its step: for
+     * example one resumed after a restart that came after its last request but before it recorded its success. A FULL market
+     * operation that extends a decided window still runs.
+     */
+    private fun stageComplete(operation: CaptureOperationRecord, value: CaptureInspection): Boolean = when (operation.step) {
+        CaptureNames.WALLET -> value.wallet.state == CaptureStageState.READY
+        CaptureNames.MARKET -> value.market.state == CaptureStageState.READY && !extendsDecidedWindow(operation, value)
+        CaptureNames.RATES -> value.rates.state == CaptureStageState.READY
+        else -> false
     }
     /** A complete market stage restarts only to capture the rest of a decided window, which a FULL operation does. */
     private fun extendsDecidedWindow(operation: CaptureOperationRecord, value: CaptureInspection): Boolean =
