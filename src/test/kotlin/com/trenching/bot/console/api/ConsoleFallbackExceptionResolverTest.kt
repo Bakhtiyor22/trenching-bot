@@ -114,7 +114,7 @@ class ConsoleFallbackExceptionResolverTest {
                 listOf(
                     runSetupController,
                     CaptureController(captureSessions, captureSetup, mock(), mock(), mock(), mock(), mock(), mock()),
-                    AutomationController(automationQuery, mock(), mock(), mock(), mock(), mock(), mock(), mock()),
+                    AutomationController(automationQuery, mock(), mock(), mock(), mock(), mock(), mock(), mock(), mock()),
                     ConsoleExceptionHandler(errors),
                     CaptureExceptionHandler(errors, mock()),
                     AutomationExceptionHandler(errors),
