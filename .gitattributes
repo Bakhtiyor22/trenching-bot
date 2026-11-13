@@ -1,0 +1,25 @@
+# Pin line endings for every checkout, whatever core.autocrlf is set to.
+# Text files are stored and checked out with LF, so a Windows checkout has the
+# same bytes as Linux CI: Prettier expects LF, and some tests match LF in
+# fixture files.
+* text=auto eol=lf
+
+# cmd.exe runs batch files reliably only with CRLF (gradlew.bat).
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary: never convert line endings, diff or merge as text.
+*.jar   binary
+*.jpg   binary
+*.jpeg  binary
+*.png   binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.otf   binary
+*.pdf   binary
+*.zip   binary
+*.gz    binary

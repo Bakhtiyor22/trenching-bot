@@ -268,6 +268,8 @@ Decoding beyond the single evidenced Pump.fun bonding-curve buy route, market ob
 
 See [CLAUDE.md](CLAUDE.md) and [developer tooling](docs/CLAUDE_CODE_GUIDE.md). The original roadmap is preserved for traceability; accepted changes and actual test evidence are in the ADR and implementation status, rather than marking unfinished acceptance criteria complete.
 
+Line endings are pinned by [.gitattributes](.gitattributes): every checkout gets LF text files whatever `core.autocrlf` is, except `*.bat` and `*.cmd`, which get CRLF.
+
 
 ## Postman API checks
 
