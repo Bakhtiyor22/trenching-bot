@@ -51,10 +51,13 @@ import {
   INTEGER_FIELDS,
   MILLIS_FIELD,
   PERCENT_FIELDS,
+  placeFieldErrors,
   PRICE_MEASURE_LABELS,
   rangeText,
+  refusalText,
   refusedTradeRules,
   SECONDS_FIELDS,
+  secondsFieldOf,
   secondsText,
   type SecondsField,
   toRunStartRequest,
@@ -90,6 +93,8 @@ const SETTING_FIELDS: SettingField[] = [
   'maxAgeSlots',
   'quoteMint',
 ];
+/** The fields the form has an input for; a refusal's reason for any other field is said in the refusal itself. */
+const INPUT_FIELDS: readonly (keyof RunFormValues)[] = ['datasetId', ...SETTING_FIELDS];
 const UNITS: Partial<Record<SettingField, string>> = {
   dipPercent: '%',
   takeProfitPercent: '%',
@@ -107,10 +112,7 @@ const UNITS: Partial<Record<SettingField, string>> = {
 };
 /** The form label of a preset field, which the preset names by its config field (dipBps, dipWindowMs, …). */
 function fieldLabel(field: string): string {
-  const seconds = (Object.keys(MILLIS_FIELD) as SecondsField[]).find(
-    (key) => MILLIS_FIELD[key] === field,
-  );
-  const formField = seconds ?? field.replace('Bps', 'Percent');
+  const formField = secondsFieldOf(field) ?? field.replace('Bps', 'Percent');
   return SETTING_LABELS[formField as SettingField] ?? formField;
 }
 function specDate(value: string) {
@@ -235,6 +237,12 @@ function RunConfigForm({
   const conflicts = tradeRuleConflicts(form.values, schemaVersion);
   // Below md the summary column sits far under the settings, so Start run moves to a bar pinned to the bottom.
   const narrow = useMediaQuery('(max-width: 62em)') ?? false;
+  /** Marks the inputs a refused start names; the reasons no input shows are said in the refusal beside Start run. */
+  function showFieldErrors(error: Error) {
+    if (!(error instanceof ApiError)) return;
+    const { inputs } = placeFieldErrors(error.fields, INPUT_FIELDS);
+    if (Object.keys(inputs).length > 0) form.setErrors(inputs);
+  }
   async function applyRecommendation(item: Recommendation) {
     if (item.id === 'USE_AGREED_STRATEGY' && preset) {
       undoValues.current = { ...form.values };
@@ -243,10 +251,10 @@ function RunConfigForm({
     if (item.id === 'ADD_LEGACY_COMPARISON') {
       // A refusal stays in startRun/legacy error state and is shown beside Start run.
       const current = await startRun
-        .mutateAsync({
-          ...toRunStartRequest(form.values),
-          ...(preset ? { presetId: preset.id } : {}),
-        })
+        .mutateAsync(
+          { ...toRunStartRequest(form.values), ...(preset ? { presetId: preset.id } : {}) },
+          { onError: showFieldErrors },
+        )
         .catch(() => null);
       if (!current) return;
       const comparison = await legacy
@@ -274,10 +282,7 @@ function RunConfigForm({
           const state: RunStartNavigationState = { created };
           void navigate(paths.run(run.id), { state });
         },
-        onError: (error) => {
-          if (error instanceof ApiError && Object.keys(error.fields).length > 0)
-            form.setErrors(error.fields);
-        },
+        onError: showFieldErrors,
       },
     );
   }
@@ -295,8 +300,12 @@ function RunConfigForm({
     start({ ...form.values, ...off });
   }
   const serverError = startRun.error;
-  const fieldErrorsShown =
-    serverError instanceof ApiError && Object.keys(serverError.fields).length > 0;
+  const serverFields =
+    serverError instanceof ApiError ? placeFieldErrors(serverError.fields, INPUT_FIELDS) : null;
+  // Counted from the form, not the refusal: editing a field, or leaving it valid, clears its highlight.
+  const highlighted = Object.keys(serverFields?.inputs ?? {}).filter(
+    (field) => form.errors[field] != null,
+  ).length;
   const refusalRules = refusedTradeRules(
     form.values,
     serverError instanceof ApiError ? serverError.code : null,
@@ -622,7 +631,11 @@ function RunConfigForm({
                   {serverError && (
                     <RunStartError
                       error={serverError}
-                      fieldErrorsShown={fieldErrorsShown}
+                      message={refusalText(
+                        errorMessage(serverError),
+                        serverFields?.unplaced ?? [],
+                        highlighted,
+                      )}
                       onRunLegacy={startLegacyRun}
                       legacyPending={legacy.isPending}
                       tradeRules={refusalRules}
@@ -715,7 +728,7 @@ function RunConfigForm({
  */
 function RunStartError({
   error,
-  fieldErrorsShown,
+  message,
   onRunLegacy,
   legacyPending,
   tradeRules,
@@ -724,7 +737,8 @@ function RunStartError({
   pending,
 }: {
   error: Error;
-  fieldErrorsShown: boolean;
+  /** The refusal in words, with any field reasons no input shows; said unless a refusal has its own explanation. */
+  message: string;
   onRunLegacy: () => void;
   legacyPending: boolean;
   /** The trade rules to turn off; empty unless the refusal is for missing trader data. */
@@ -749,11 +763,11 @@ function RunStartError({
       role="alert"
     >
       <Stack gap="xs">
-        <Text size="sm">
+        {/* Backend messages carry ids (a 64-character dataset id) that must wrap at 375 px, not be clipped. */}
+        <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
           {coverageEnded
             ? 'Its capture stopped recording the token once the outcome under the old default rules was decided, so a run with these settings would be cut short. Run the old defaults on it, or capture the token again with the market cutoff set to the whole window.'
-            : (trades?.text ??
-              `${errorMessage(error)}${fieldErrorsShown ? ' See the highlighted fields.' : ''}`)}
+            : (trades?.text ?? message)}
         </Text>
         {coverageEnded && (
           <Button size="xs" variant="light" onClick={onRunLegacy} loading={legacyPending}>

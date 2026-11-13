@@ -20,12 +20,18 @@ export const SECONDS_FIELDS = [
   'hardExitStartSeconds',
 ] as const;
 export type SecondsField = (typeof SECONDS_FIELDS)[number];
+/** The config fields, and API properties, that carry the clocks in milliseconds. */
+export type MillisField = 'dipWindowMs' | 'maxHoldMs' | 'hardExitStartMs';
 /** The config field in milliseconds behind each seconds field. */
-export const MILLIS_FIELD: Record<SecondsField, 'dipWindowMs' | 'maxHoldMs' | 'hardExitStartMs'> = {
+export const MILLIS_FIELD: Record<SecondsField, MillisField> = {
   dipWindowSeconds: 'dipWindowMs',
   maxHoldSeconds: 'maxHoldMs',
   hardExitStartSeconds: 'hardExitStartMs',
 };
+/** The seconds field a config field in milliseconds is typed in (the inverse of `MILLIS_FIELD`); undefined for any other. */
+export function secondsFieldOf(field: string): SecondsField | undefined {
+  return SECONDS_FIELDS.find((seconds) => MILLIS_FIELD[seconds] === field);
+}
 /** The two entry and exit rules that are a choice, not a number. */
 export type RuleField = 'priceMeasure' | 'followWalletSells';
 
@@ -215,13 +221,21 @@ function secondsError(input: string, range: Range): string | null {
   const ms = secondsToMs(input);
   if (ms === null) return null;
   if (ms === undefined) return 'Use whole seconds or up to 3 decimals';
-  if (ms < range.min || (range.max !== null && ms > range.max)) {
-    const min = secondsText(range.min);
-    return range.max === null
-      ? `Must be at least ${min} s`
-      : `Must be between ${min} and ${secondsText(range.max)} s`;
-  }
+  if (ms < range.min || (range.max !== null && ms > range.max)) return secondsRangeError(range);
   return null;
+}
+
+/** A clock outside [range], which is in milliseconds, said in the seconds its input takes. */
+function secondsRangeError(range: Range): string {
+  const min = secondsText(range.min);
+  return range.max === null
+    ? `Must be at least ${min} s`
+    : `Must be between ${min} and ${secondsText(range.max)} s`;
+}
+
+/** A clock set without [other], the clock it needs: "Set together with the maximum hold". */
+function pairError(other: SecondsField): string {
+  return `Set together with the ${FIELD_LABELS[other].toLowerCase()}`;
 }
 
 export function rangeText(range: Range): string {
@@ -319,9 +333,9 @@ export function validateRunForm(
   const holdSet = values.maxHoldSeconds.trim() !== '';
   const hardSet = values.hardExitStartSeconds.trim() !== '';
   if (holdSet && !hardSet && !errors.maxHoldSeconds)
-    errors.hardExitStartSeconds = 'Set together with the maximum hold';
+    errors.hardExitStartSeconds = pairError('maxHoldSeconds');
   if (hardSet && !holdSet && !errors.hardExitStartSeconds)
-    errors.maxHoldSeconds = 'Set together with the hard exit start';
+    errors.maxHoldSeconds = pairError('hardExitStartSeconds');
   if (!isSolanaAddress(values.quoteMint)) errors.quoteMint = 'Must be a 32-byte base58 address';
   const minSignal = minSignalError(values.minSignalSol, limits);
   if (minSignal) errors.minSignalSol = minSignal;
@@ -354,4 +368,80 @@ export function toRunStartRequest(values: RunFormValues): RunStartRequest {
       minSignalSol: values.minSignalSol.trim() === '' ? null : values.minSignalSol.trim(),
     },
   };
+}
+
+/** A refused run start's reason for one field, named by its API property (`presetId`, `dipWindowMs`, …). */
+export interface FieldReason {
+  field: string;
+  reason: string;
+}
+
+/** A refused run start's field reasons, split into the ones the form's inputs show and the rest. */
+export interface PlacedFieldErrors {
+  /** For `form.setErrors`: each reason under the form field whose input shows it. */
+  inputs: Partial<Record<keyof RunFormValues, string>>;
+  /** The reasons no input shows, in the backend's order. */
+  unplaced: FieldReason[];
+}
+
+/** `ConsoleConfigValidator`'s reasons for a clock, which it counts in milliseconds. */
+const MILLIS_RANGE_REASON = /^must be an integer between (\d+) and (\d+)$/;
+const MILLIS_MINIMUM_REASON = /^must be an integer of at least (\d+)$/;
+const PAIR_REASON = /^must be set together with (\w+)$/;
+
+/**
+ * A backend [reason] for a clock, said in the seconds its input takes and in the form's own words. A reason of any
+ * other shape keeps its words, and says its numbers are milliseconds when it has any.
+ */
+function clockReason(reason: string): string {
+  const range = MILLIS_RANGE_REASON.exec(reason);
+  if (range) return secondsRangeError({ min: Number(range[1]), max: Number(range[2]) });
+  const minimum = MILLIS_MINIMUM_REASON.exec(reason);
+  if (minimum) return secondsRangeError({ min: Number(minimum[1]), max: null });
+  const other = secondsFieldOf(PAIR_REASON.exec(reason)?.[1] ?? '');
+  if (other) return pairError(other);
+  return /\d/.test(reason) ? `${reason} (in milliseconds)` : reason;
+}
+
+/**
+ * Puts a refused run start's [fields], keyed by API property, on the [inputFields] the page shows: a clock in
+ * milliseconds on its seconds input, any other field on the input of the same name. The rest, such as `presetId`,
+ * which no input shows, are set aside for the refusal text.
+ */
+export function placeFieldErrors(
+  fields: Record<string, string>,
+  inputFields: readonly (keyof RunFormValues)[],
+): PlacedFieldErrors {
+  const placed: PlacedFieldErrors = { inputs: {}, unplaced: [] };
+  for (const [field, reason] of Object.entries(fields)) {
+    const seconds = secondsFieldOf(field);
+    const input = inputFields.find((name) => name === (seconds ?? field));
+    if (input) placed.inputs[input] = seconds ? clockReason(reason) : reason;
+    else placed.unplaced.push({ field, reason });
+  }
+  return placed;
+}
+
+/** How a sentence about a field no input shows names it; any other field keeps its API name. */
+const UNPLACED_SUBJECTS: Record<string, string> = { presetId: 'The agreed strategy' };
+
+/** [text] ending as a sentence; backend messages have no closing period. */
+function sentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
+/**
+ * A refused run start in words: the backend's [message], then the reason of each field no input shows, unless the
+ * message already names that field and reason, then a pointer to the inputs when [highlighted] of them still show one.
+ */
+export function refusalText(
+  message: string,
+  unplaced: readonly FieldReason[],
+  highlighted: number,
+): string {
+  const more = unplaced
+    .filter(({ field, reason }) => !(message.includes(field) && message.includes(reason)))
+    .map(({ field, reason }) => `${UNPLACED_SUBJECTS[field] ?? field} ${reason}`);
+  if (highlighted > 0) more.push(`See the highlighted ${highlighted === 1 ? 'field' : 'fields'}`);
+  return more.length === 0 ? message : [message, ...more].map(sentence).join(' ');
 }

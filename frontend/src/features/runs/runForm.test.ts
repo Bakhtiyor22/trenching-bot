@@ -9,7 +9,10 @@ import {
 import { compareDecimals } from '../../lib/decimal';
 import {
   formValuesFrom,
+  placeFieldErrors,
+  refusalText,
   refusedTradeRules,
+  type RunFormValues,
   secondsText,
   secondsToMs,
   toRunStartRequest,
@@ -88,6 +91,106 @@ describe('run form clocks', () => {
     expect(holdOnly.maxHoldSeconds).toBeUndefined();
     const hardOnly = validateRunForm({ ...values, hardExitStartSeconds: '240' }, limits);
     expect(hardOnly.maxHoldSeconds).toBe('Set together with the hard exit start');
+  });
+});
+
+describe('run form server field errors', () => {
+  const allInputs = Object.keys(
+    formValuesFrom(configDefaults.defaults, 'dataset'),
+  ) as (keyof RunFormValues)[];
+  const invalid = 'Simulation configuration is invalid';
+
+  it('puts each clock reason on its seconds input, in seconds and in the form’s own words', () => {
+    expect(
+      placeFieldErrors(
+        {
+          dipWindowMs: 'must be an integer between 1000 and 20000',
+          maxHoldMs: 'must be an integer of at least 1500',
+          hardExitStartMs: 'must be set together with maxHoldMs',
+        },
+        allInputs,
+      ),
+    ).toEqual({
+      inputs: {
+        dipWindowSeconds: 'Must be between 1 and 20 s',
+        maxHoldSeconds: 'Must be at least 1.5 s',
+        hardExitStartSeconds: 'Set together with the maximum hold',
+      },
+      unplaced: [],
+    });
+    const holdAlone = { maxHoldMs: 'must be set together with hardExitStartMs' };
+    expect(placeFieldErrors(holdAlone, allInputs).inputs).toEqual({
+      maxHoldSeconds: 'Set together with the hard exit start',
+    });
+  });
+
+  it('keeps a clock reason of another shape, saying its numbers are milliseconds', () => {
+    expect(
+      placeFieldErrors(
+        { dipWindowMs: 'must be a multiple of 1000', maxHoldMs: 'is required' },
+        allInputs,
+      ).inputs,
+    ).toEqual({
+      dipWindowSeconds: 'must be a multiple of 1000 (in milliseconds)',
+      maxHoldSeconds: 'is required',
+    });
+  });
+
+  it('keeps the reason of any other input and sets aside, in order, the fields no input shows', () => {
+    expect(
+      placeFieldErrors(
+        {
+          feeBps: 'is not a configuration field',
+          latencySlots: 'must be an integer between 1 and 150',
+          presetId: 'is not a known preset',
+        },
+        allInputs,
+      ),
+    ).toEqual({
+      inputs: { latencySlots: 'must be an integer between 1 and 150' },
+      unplaced: [
+        { field: 'feeBps', reason: 'is not a configuration field' },
+        { field: 'presetId', reason: 'is not a known preset' },
+      ],
+    });
+    expect(
+      placeFieldErrors({ dipWindowMs: 'must be an integer between 1000 and 20000' }, ['datasetId']),
+    ).toEqual({
+      inputs: {},
+      unplaced: [{ field: 'dipWindowMs', reason: 'must be an integer between 1000 and 20000' }],
+    });
+  });
+
+  it('closes the backend message, which has no period, before each sentence it adds', () => {
+    expect(refusalText(invalid, [], 0)).toBe(invalid);
+    expect(refusalText(invalid, [], 1)).toBe(
+      'Simulation configuration is invalid. See the highlighted field.',
+    );
+    expect(refusalText(invalid, [], 2)).toBe(
+      'Simulation configuration is invalid. See the highlighted fields.',
+    );
+    expect(refusalText('Cannot reach the backend. Is it running?', [], 1)).toBe(
+      'Cannot reach the backend. Is it running? See the highlighted field.',
+    );
+  });
+
+  it('states the reason of each field no input shows, unless the message already names it', () => {
+    expect(
+      refusalText(
+        invalid,
+        [
+          { field: 'presetId', reason: 'is not a known preset' },
+          { field: 'feeBps', reason: 'is not a configuration field' },
+        ],
+        1,
+      ),
+    ).toBe(
+      'Simulation configuration is invalid. The agreed strategy is not a known preset. feeBps is not a configuration field. See the highlighted field.',
+    );
+    const unknownPreset = 'Invalid request field=presetId reason=is not a known preset';
+    expect(
+      refusalText(unknownPreset, [{ field: 'presetId', reason: 'is not a known preset' }], 0),
+    ).toBe(unknownPreset);
   });
 });
 
