@@ -1,9 +1,12 @@
 import { http, HttpResponse } from 'msw';
 import type {
   AutomationBackfill,
+  AutomationDayRetryResult,
+  AutomationItem,
   AutomationSessionDetail,
   BackfillCreateRequest,
   EvaluationStatus,
+  RetryRefusal,
 } from '../api/automation';
 import { isSolanaAddress } from '../lib/base58';
 import {
@@ -36,10 +39,86 @@ const SCAN_MS = 4_000;
 const MAX_DAYS_PER_LIST = 62;
 const DEFAULT_DAYS = 14;
 
+/** The request id of each item's last retry, as the backend keeps it in `retry_request_id`. */
+const retryRequestIds = new Map<string, string>();
+const REQUEST_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
+
 export function resetAutomationMocks(next: AutomationDb = createAutomationDb()): void {
   db = next;
   runQueuedAt = null;
   startedAt.clear();
+  retryRequestIds.clear();
+}
+
+/** The backend's retry rule, in its order: not failed, a failure no retry can fix, a backfill still scanning, capture off. */
+function retryRefusal(item: AutomationItem): RetryRefusal | null {
+  if (item.state !== 'FAILED') return 'ITEM_NOT_FAILED';
+  if (item.failureCode === 'BACKFILL_BUDGET' || item.failureCode === 'MISSING_BLOCK_TIME')
+    return 'RETRY_NOT_ALLOWED';
+  const backfill = db.backfills.find((b) => b.id === item.backfillId);
+  if (backfill && (backfill.state === 'QUEUED' || backfill.state === 'SCANNING'))
+    return 'BACKFILL_NOT_CAPTURING';
+  if (!db.status.captureEnabled) return 'CAPTURE_DISABLED';
+  return null;
+}
+
+const REFUSAL_MESSAGES: Record<RetryRefusal, string> = {
+  ITEM_NOT_FAILED: 'Only a failed automation item can be retried',
+  RETRY_NOT_ALLOWED: 'This failure cannot be retried',
+  BACKFILL_NOT_CAPTURING: 'The backfill of this item has not started capturing',
+  CAPTURE_DISABLED: 'Automation capture is disabled',
+};
+
+function refusalResponse(item: AutomationItem, code: RetryRefusal) {
+  return error(
+    409,
+    code,
+    REFUSAL_MESSAGES[code],
+    code === 'RETRY_NOT_ALLOWED' ? { failureCode: item.failureCode ?? '' } : {},
+  );
+}
+
+/** Puts a failed item back where it failed (plan 20261107, rules 2–4) and stores the request id. */
+function applyRetry(item: AutomationItem, requestId: string): void {
+  const session = db.sessions.find((s) => s.id === item.sessionId);
+  const sweep = item.failureCode === 'SWEEP_FAILED';
+  const next: AutomationItem['state'] = sweep ? 'CAPTURED' : 'CAPTURING';
+  if (session) {
+    session.itemCounts[item.state] = (session.itemCounts[item.state] ?? 0) - 1;
+    session.itemCounts[next] = (session.itemCounts[next] ?? 0) + 1;
+  }
+  if (item.failureCode === 'CAPTURE_NOT_FOUND') {
+    item.step = 'CREATE_SESSION';
+    item.captureSessionId = null;
+  } else if (sweep) item.step = 'SWEEP';
+  item.state = next;
+  item.stepAttempt = 1;
+  item.operationId = null;
+  item.nextActionAt = new Date().toISOString();
+  item.failureCode = null;
+  item.failureMessage = null;
+  item.retries += 1;
+  item.retryRefusal = 'ITEM_NOT_FAILED';
+  item.updatedAt = new Date().toISOString();
+  retryRequestIds.set(item.id, requestId);
+}
+
+async function retryRequestId(request: Request): Promise<string | Response> {
+  const body = (await request.json().catch(() => ({}))) as { requestId?: unknown };
+  const id = body.requestId;
+  if (typeof id !== 'string' || !REQUEST_ID.test(id))
+    return error(400, 'INVALID_REQUEST', 'requestId is missing or malformed', {
+      requestId: 'must match [a-zA-Z0-9][a-zA-Z0-9_-]{0,79}',
+    });
+  return id;
+}
+
+/**
+ * The per-item id of a day retry. The backend hashes a request id too long to carry the suffix; the console's ids
+ * (at most 45 characters) never are, so the mock leaves that out.
+ */
+function dayItemRequestId(requestId: string, itemId: string): string {
+  return `${requestId}-${itemId.slice(0, 24)}`;
 }
 
 function current(): AutomationDb {
@@ -440,6 +519,62 @@ export function createAutomationHandlers(wait: () => Promise<void>) {
       db.status = { ...db.status, activeBackfillId: id };
       startedAt.set(id, Date.now());
       return HttpResponse.json(withProgress(created), { status: 201 });
+    }),
+    http.post('/api/automation/items/:id/retry', async ({ params, request }) => {
+      await wait();
+      const blocked = off();
+      if (blocked) return blocked;
+      const requestId = await retryRequestId(request);
+      if (requestId instanceof Response) return requestId;
+      const item = db.items.find((i) => i.id === params.id);
+      if (!item)
+        return error(404, 'AUTOMATION_ITEM_NOT_FOUND', `No automation item ${String(params.id)}`);
+      if (retryRequestIds.get(item.id) !== requestId) {
+        const refusal = retryRefusal(item);
+        if (refusal) return refusalResponse(item, refusal);
+        applyRetry(item, requestId);
+      }
+      return HttpResponse.json({
+        item,
+        sweepRuns: db.sweepRuns.filter((r) => r.itemId === item.id),
+      });
+    }),
+    http.post('/api/automation/days/:date/retry', async ({ params, request }) => {
+      await wait();
+      const blocked = off();
+      if (blocked) return blocked;
+      const date = String(params.date);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+        return error(400, 'INVALID_REQUEST', 'Request parameter has an invalid value', {
+          date: 'has an invalid value',
+        });
+      const requestId = await retryRequestId(request);
+      if (requestId instanceof Response) return requestId;
+      const sessionIds = new Set(db.sessions.filter((s) => s.tradingDay === date).map((s) => s.id));
+      const result: AutomationDayRetryResult = {
+        day: date,
+        retried: [],
+        unchanged: [],
+        refused: {},
+      };
+      const items = db.items
+        .filter((i) => sessionIds.has(i.sessionId))
+        .sort((a, b) => (a.blockTime ?? '').localeCompare(b.blockTime ?? ''));
+      for (const item of items) {
+        const itemRequestId = dayItemRequestId(requestId, item.id);
+        if (retryRequestIds.get(item.id) === itemRequestId) {
+          result.unchanged.push(item.id);
+          continue;
+        }
+        if (item.state !== 'FAILED') continue;
+        const refusal = retryRefusal(item);
+        if (refusal) result.refused[item.id] = refusal;
+        else {
+          applyRetry(item, itemRequestId);
+          result.retried.push(item.id);
+        }
+      }
+      return HttpResponse.json(result);
     }),
     http.post('/api/automation/backfills/:id/cancel', async ({ params }) => {
       await wait();

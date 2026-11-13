@@ -5,7 +5,10 @@ import com.trenching.bot.console.automation.application.AutomationDiscoveryServi
 import com.trenching.bot.console.automation.application.AutomationDiscoveryTransaction
 import com.trenching.bot.console.automation.application.AutomationCoverage
 import com.trenching.bot.console.automation.application.AutomationDayService
+import com.trenching.bot.console.automation.application.AutomationItemViews
 import com.trenching.bot.console.automation.application.AutomationPipelineTransaction
+import com.trenching.bot.console.automation.application.AutomationRetryService
+import com.trenching.bot.console.automation.application.AutomationRetryTransaction
 import com.trenching.bot.console.automation.application.AutomationQueryService
 import com.trenching.bot.console.automation.application.AutomationRuntime
 import com.trenching.bot.console.automation.application.AutomationSessionRows
@@ -67,6 +70,7 @@ abstract class AutomationDatabaseTest {
     @Autowired protected lateinit var sessionTransaction: AutomationSessionTransaction
     @Autowired protected lateinit var pipelineTransaction: AutomationPipelineTransaction
     @Autowired protected lateinit var sweepTransaction: AutomationSweepTransaction
+    @Autowired protected lateinit var retryTransaction: AutomationRetryTransaction
     @Autowired protected lateinit var runCycles: AutomationRunCycles
     @Autowired protected lateinit var backfillTransaction: AutomationBackfillTransaction
     @Autowired protected lateinit var backfillRecorder: AutomationBackfillRecorder
@@ -93,12 +97,17 @@ abstract class AutomationDatabaseTest {
         AutomationDiscoveryService(lookup, discoveryTransaction, properties, runtime, clock)
 
     protected fun query(properties: AutomationProperties, clock: Clock, usage: ApiUsageReports = ApiUsageReports { _, _ -> error("unused") }): AutomationQueryService =
-        AutomationQueryService(sessions, items, sweepRuns, watermarks, backfills, records, sessionRows(properties), properties, runtime, usage, SolanaRpcProperties(), clock)
+        AutomationQueryService(sessions, items, sweepRuns, watermarks, backfills, records, sessionRows(properties), itemViews(properties), properties, runtime, usage, SolanaRpcProperties(), clock)
+
+    protected fun itemViews(properties: AutomationProperties): AutomationItemViews = AutomationItemViews(backfills, records, properties)
+
+    protected fun retryService(properties: AutomationProperties, clock: Clock): AutomationRetryService =
+        AutomationRetryService(retryTransaction, sessions, items, query(properties, clock), properties, clock)
 
     protected fun sessionRows(properties: AutomationProperties): AutomationSessionRows = AutomationSessionRows(items, records, properties)
 
     protected fun dayService(properties: AutomationProperties, clock: Clock): AutomationDayService =
-        AutomationDayService(sessions, items, sweepRuns, coverage, sessionRows(properties), records, properties, clock)
+        AutomationDayService(sessions, items, sweepRuns, coverage, sessionRows(properties), itemViews(properties), records, properties, clock)
 
     protected fun sessionService(properties: AutomationProperties, clock: Clock, operations: CaptureOperationService = idleOperations(clock)): AutomationSessionService =
         AutomationSessionService(sessionTransaction, discoveryTransaction, sessions, AutomationCaptureCancellation(operations), query(properties, clock),
@@ -172,6 +181,10 @@ abstract class AutomationDatabaseTest {
         @Bean
         fun automationSweepTransaction(items: AutomationItemRepository, sweepRuns: AutomationSweepRunRepository, mapper: AutomationRecordMapper) =
             AutomationSweepTransaction(items, sweepRuns, mapper)
+
+        @Bean
+        fun automationRetryTransaction(items: AutomationItemRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper) =
+            AutomationRetryTransaction(items, backfills, mapper)
 
         @Bean
         fun automationRunCycles(intents: TradeIntentStore, orders: PaperOrderStore, positions: PositionStore, events: WalletEventStore) =

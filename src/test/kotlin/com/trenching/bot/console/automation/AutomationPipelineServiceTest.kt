@@ -87,6 +87,21 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `a clock finer than the database's microseconds does not make an item cancel the step it starts after another ends`() {
+        clock.now = EVENING.plusNanos(SUB_MICROSECOND_NANOS)
+        discover(buy(1, 100, EVENING))
+
+        ticks(5)
+        clock.now = EVENING.plus(MARKET_DELAY).plusNanos(SUB_MICROSECOND_NANOS)
+        ticks(10)
+
+        val item = item(1)
+        assertEquals(AutomationItemState.CAPTURED, item.state)
+        assertNull(item.failureCode)
+        assertTrue(operations(item).all { it.controlRequestIds.isEmpty() }, "no operation the pipeline started was cancelled by it")
+    }
+
+    @Test
     fun `an item waits to create its capture session while its wallet's discovery catch-up is in progress`() {
         discover(buy(1, 100, EVENING))
         lookup.otherTransactions += (200..224).map { signature(it) to 1000L + it }
@@ -588,5 +603,8 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
 
     private companion object {
         val MARKET_DELAY: Duration = Duration.ofMinutes(35)
+
+        /** A system clock's 100 ns resolution on Windows: finer than the microseconds PostgreSQL keeps. */
+        const val SUB_MICROSECOND_NANOS = 123_456_789L
     }
 }

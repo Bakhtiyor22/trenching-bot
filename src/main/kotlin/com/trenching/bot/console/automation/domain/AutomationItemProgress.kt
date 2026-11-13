@@ -6,7 +6,8 @@ import java.time.Instant
  * Where one item stands in its capture (plan Rules 13–18): its [state], the [step] it is on and that step's [stepAttempt], its
  * capture session, the current step's operation once started, and what the capture produced. A discovered item has no step
  * yet; it starts with [AutomationStep.CREATE_SESSION], attempt 1. Each function returns the progress after one event; the
- * pipeline stores it only when [AutomationItemTransitions] allows the state change.
+ * pipeline stores it only when [AutomationItemTransitions] allows the state change. [retries] counts the times a person sent the
+ * failed item back through capture or the sweep ([retried]).
  */
 data class AutomationItemProgress(
     val state: AutomationItemState,
@@ -19,6 +20,7 @@ data class AutomationItemProgress(
     val failureCode: String?,
     val failureMessage: String?,
     val nextActionAt: Instant?,
+    val retries: Int = 0,
 ) {
     val currentStep: AutomationStep get() = step ?: AutomationStep.CREATE_SESSION
 
@@ -95,6 +97,22 @@ data class AutomationItemProgress(
 /** The current step's capture call was made; its operation is followed on every tick until it ends. */
 fun AutomationItemProgress.started(operationId: String): AutomationItemProgress =
     onCurrentStep(AutomationItemState.CAPTURING).copy(operationId = operationId, nextActionAt = null)
+
+/**
+ * A person retried this `FAILED` item: it goes on where it failed, with a fresh round of attempts and its evidence kept. A failed
+ * sweep is swept again; a capture deleted from the console starts over from the session creation, since nothing is left to
+ * resume; any other failed capture step runs again on its capture session. The item is due at once.
+ */
+fun AutomationItemProgress.retried(now: Instant): AutomationItemProgress {
+    check(state == AutomationItemState.FAILED) { "Only a failed item can be retried state=$state" }
+    val restarted = copy(stepAttempt = 1, operationId = null, failureCode = null, failureMessage = null, nextActionAt = now, retries = retries + 1)
+    return when (failureCode) {
+        AutomationFailures.SWEEP_FAILED -> restarted.copy(state = AutomationItemState.CAPTURED, step = AutomationStep.SWEEP)
+        AutomationFailures.CAPTURE_NOT_FOUND ->
+            restarted.copy(state = AutomationItemState.CAPTURING, step = AutomationStep.CREATE_SESSION, captureSessionId = null)
+        else -> restarted.copy(state = AutomationItemState.CAPTURING, step = currentStep)
+    }
+}
 
 /** The item's backfill has no budget left for the current step's operation (plan Rule 39): the item fails at once, unscored. */
 fun AutomationItemProgress.outOfBudget(message: String?): AutomationItemProgress = lost(AutomationFailures.BACKFILL_BUDGET, message)

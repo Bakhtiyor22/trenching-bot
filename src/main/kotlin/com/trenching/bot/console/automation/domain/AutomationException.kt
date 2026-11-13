@@ -30,3 +30,10 @@ class BackfillOverlapsCoverageException(val from: Instant, val to: Instant, val 
     AutomationException("A capturing backfill must end at or before live coverage and overlap no other one from=$from to=$to coveredFrom=$coveredFrom overlappingBackfillId=$overlappingId")
 
 class CaptureDisabledException : AutomationException("A capturing backfill needs capture trenching.automation.capture-enabled=true")
+
+/** [failureCode] is the item's failure; [fields] names it in the error body only when it is what makes the retry not allowed. */
+class AutomationRetryRefusedException(itemId: String, val refusal: AutomationRetryRefusal, val failureCode: String?) :
+    AutomationException("Automation item cannot be retried itemId=$itemId refusal=${refusal.code} failureCode=$failureCode") {
+    val fields: Map<String, String> =
+        failureCode?.takeIf { refusal == AutomationRetryRefusal.RETRY_NOT_ALLOWED }?.let { mapOf("failureCode" to it) }.orEmpty()
+}

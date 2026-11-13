@@ -1,3 +1,4 @@
+import { ApiError } from '../../api/client';
 import { STEPS } from '../../api/automation';
 import type {
   AutomationBackfill,
@@ -10,6 +11,7 @@ import type {
   EvaluationStatus,
 } from '../../api/automation';
 import { compareDecimals, decimalSign, isDecimalString, toChartNumber } from '../../lib/decimal';
+import { humanizeCode } from '../../lib/format';
 import { reasonText } from '../captures/captureReasons';
 
 /**
@@ -613,6 +615,75 @@ export const REFUSAL_TEXT: Record<string, string> = {
 export function isBackfillRefusal(error: unknown): boolean {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === 'string' && (code === 'BACKFILL_ACTIVE' || code in REFUSAL_TEXT);
+}
+
+/** Why a failed buy that failed with `failureCode` cannot be retried, in plain words. */
+const RETRY_NOT_ALLOWED_TEXT: Record<string, string> = {
+  BACKFILL_BUDGET:
+    'It stopped because its backfill ran out of request budget, so a retry cannot pick it up. Start a new backfill over this day to capture it.',
+  MISSING_BLOCK_TIME:
+    'Its transaction has no block time, so its market window cannot be placed. A retry would fail the same way.',
+};
+
+/**
+ * A plain explanation of a retry refusal code: from an item's `retryRefusal` or a 409 answer. `failureCode` is the
+ * buy's failure (or the answer's `fields.failureCode`), which says why `RETRY_NOT_ALLOWED` applies.
+ */
+export function retryRefusalText(code: string, failureCode?: string | null): string {
+  switch (code) {
+    case 'ITEM_NOT_FAILED':
+      return 'Only a failed buy can be retried, and this one is not failed (any more).';
+    case 'RETRY_NOT_ALLOWED':
+      return (
+        (failureCode ? RETRY_NOT_ALLOWED_TEXT[failureCode] : undefined) ??
+        'This kind of failure cannot be retried.'
+      );
+    case 'BACKFILL_NOT_CAPTURING':
+      return 'Its backfill is still scanning for buys. Retry it once the scan has finished.';
+    case 'CAPTURE_DISABLED':
+      return 'Capture is off on the backend (trenching.automation.capture-enabled=false). Turn it on to retry.';
+    default:
+      return `Not retried: ${humanizeCode(code)}.`;
+  }
+}
+
+/** Why a retry request failed, in plain words: a refusal, an unknown buy, a bad request, or the backend's message. */
+export function retryErrorText(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 409) {
+      if (error.code === 'ITEM_NOT_FAILED')
+        return 'This buy is no longer failed, so it was not retried. It may already be retrying; the page now shows its current state.';
+      return retryRefusalText(error.code, error.fields.failureCode);
+    }
+    if (error.status === 404 && error.code === 'AUTOMATION_ITEM_NOT_FOUND')
+      return 'This buy no longer exists on the backend.';
+    if (error.status === 400) return `The backend refused the retry request: ${error.message}`;
+    return error.message;
+  }
+  return error instanceof Error ? error.message : 'Unexpected error.';
+}
+
+/** Why `item` cannot be retried now, in plain words, or null when it can. */
+export function itemRefusalText(
+  item: Pick<AutomationItem, 'retryRefusal' | 'failureCode'>,
+): string | null {
+  return item.retryRefusal ? retryRefusalText(item.retryRefusal, item.failureCode) : null;
+}
+
+/** The step a retry sends `item` back to: a capture deleted from the console starts over, a failed sweep is swept again. */
+export function retryStepOf(
+  item: Pick<AutomationItem, 'step' | 'failureCode'>,
+): AutomationItem['step'] {
+  if (item.failureCode === 'CAPTURE_NOT_FOUND') return 'CREATE_SESSION';
+  if (item.failureCode === 'SWEEP_FAILED') return 'SWEEP';
+  return item.step;
+}
+
+export const RETRY_SPEND_NOTE = 'It spends provider requests under the 24 h cap like any capture.';
+
+/** "retried 2×", or null for a buy never retried. */
+export function retriesText(retries: number): string | null {
+  return retries > 0 ? `retried ${retries}×` : null;
 }
 
 const DATE_KEY = /^(\d{4})-(\d{2})-(\d{2})$/;

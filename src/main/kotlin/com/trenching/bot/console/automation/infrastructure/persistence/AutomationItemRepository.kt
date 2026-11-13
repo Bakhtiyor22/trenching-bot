@@ -60,6 +60,10 @@ interface AutomationItemRepository : JpaRepository<AutomationItemEntity, String>
     @Query("select i from AutomationItemEntity i where i.sessionId in :sessionIds order by i.blockTime asc nulls last, i.id")
     fun findAllBySessionIdIn(@Param("sessionIds") sessionIds: Collection<String>, pageable: Pageable): List<AutomationItemEntity>
 
+    /** The ids of the items of [sessionIds] in [state], oldest buy first; bounded by the sessions' items, which a trading day's sessions bound. */
+    @Query("select i.id from AutomationItemEntity i where i.sessionId in :sessionIds and i.state = :state order by i.blockTime asc nulls last, i.id")
+    fun findIdsBySessionIdInAndState(@Param("sessionIds") sessionIds: Collection<String>, @Param("state") state: AutomationItemState): List<String>
+
     @Query("""
         select i.sessionId as sessionId, i.state as state, count(i) as items from AutomationItemEntity i
         where i.sessionId in :sessionIds group by i.sessionId, i.state
@@ -81,13 +85,15 @@ interface AutomationItemRepository : JpaRepository<AutomationItemEntity, String>
      * 1. the phase 0 backlog: live items of a `CLOSED` session. With capture on a session cannot close while one of its items is
      *    non-terminal, so these are exactly the items discovered while capture was off, from the moment capture is switched on
      *    until each one is terminal; they never delay a buy of a session that still takes or awaits buys;
-     * 2. items of a backfill in [backfillStates], whatever their session's state.
+     * 2. items of a backfill in [backfillStates], whatever their session's state, and the retried items (`retries` > 0) of a backfill
+     *    in [retriedBackfillStates], the ended ones, which a person sent back through capture (plan 20261107, Rule 16).
      */
     @Query("""
         select i from AutomationItemEntity i join AutomationSessionEntity s on s.id = i.sessionId
         where i.state in :states and (i.nextActionAt is null or i.nextActionAt <= :now)
           and (i.backfillId is null
-            or exists (select 1 from AutomationBackfillEntity b where b.id = i.backfillId and b.state in :backfillStates))
+            or exists (select 1 from AutomationBackfillEntity b where b.id = i.backfillId
+              and (b.state in :backfillStates or (i.retries > 0 and b.state in :retriedBackfillStates))))
         order by case
             when i.backfillId is not null then 2
             when s.state = com.trenching.bot.console.automation.domain.AutomationSessionState.CLOSED then 1
@@ -97,6 +103,7 @@ interface AutomationItemRepository : JpaRepository<AutomationItemEntity, String>
     fun findDue(
         @Param("states") states: Collection<AutomationItemState>,
         @Param("backfillStates") backfillStates: Collection<BackfillState>,
+        @Param("retriedBackfillStates") retriedBackfillStates: Collection<BackfillState>,
         @Param("now") now: Instant,
         pageable: Pageable,
     ): List<AutomationItemEntity>

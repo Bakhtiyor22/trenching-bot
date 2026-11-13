@@ -365,6 +365,191 @@ describe('AutomationDayPage', () => {
   });
 });
 
+describe('AutomationDayPage retry', () => {
+  const DAY = '2026-10-31';
+  const daySessions = new Set(db.sessions.filter((s) => s.tradingDay === DAY).map((s) => s.id));
+  const failed = db.items.filter((i) => daySessions.has(i.sessionId) && i.state === 'FAILED');
+  const retryable = failed.find((i) => i.retryRefusal == null)!;
+  const refused = failed.find((i) => i.retryRefusal != null)!;
+
+  function renderDay(date = DAY, query = '') {
+    return renderPage(<AutomationDayPage />, {
+      path: '/automation/days/:date',
+      url: `/automation/days/${date}${query}`,
+    });
+  }
+
+  function rowOf(item: { mint: string }) {
+    const table = screen.getByRole('table', { name: 'Buys this day' });
+    return within(table)
+      .getAllByRole('row')
+      .find((row) => row.textContent?.includes(item.mint.slice(0, 4)))!;
+  }
+
+  function refusalOnce(status: number, code: string, message: string, fields = {}) {
+    server.use(
+      http.post('/api/automation/items/:id/retry', () =>
+        HttpResponse.json({ code, message, fields }, { status }),
+      ),
+    );
+  }
+
+  it('has a retryable and a refused failed buy in the fixtures', () => {
+    expect(retryable).toBeDefined();
+    expect(refused.retryRefusal).toBe('RETRY_NOT_ALLOWED');
+  });
+
+  it('retries a failed buy with a fresh request id and shows its new state without a refresh', async () => {
+    const bodies = postBodies<{ requestId: string }>('/retry');
+    const { user } = renderDay(DAY, `?item=${retryable.id}`);
+    expect(await screen.findByText(/Sends it back to the market step/)).toBeInTheDocument();
+    const table = screen.getByRole('table', { name: 'Buys this day' });
+    expect(within(table).getAllByRole('button', { name: /^Retry buy at/ })).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull());
+    expect(within(rowOf(retryable)).getByText('Capturing')).toBeInTheDocument();
+    expect(within(rowOf(retryable)).getByText(/· retried 1×/)).toBeInTheDocument();
+    expect(within(table).getAllByRole('button', { name: /^Retry buy at/ })).toHaveLength(1);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.requestId).toMatch(/^ui-retry-[0-9a-f]{32}$/);
+  });
+
+  it('shows a refused buy as disabled with its reason in plain words', async () => {
+    renderDay(DAY, `?item=${refused.id}`);
+    expect(
+      await screen.findByText(/Cannot be retried: Its transaction has no block time/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeDisabled();
+    const rowButton = within(rowOf(refused)).getByRole('button', { name: /^Retry buy at/ });
+    expect(rowButton).toHaveAttribute('aria-disabled', 'true');
+    expect(rowButton).toHaveAccessibleDescription(/no block time/);
+  });
+
+  it('disables the button while the request is in flight and sends a new id on every click', async () => {
+    const bodies = postBodies<{ requestId: string }>('/retry');
+    let release: () => void = () => {};
+    server.use(
+      http.post('/api/automation/items/:id/retry', async () => {
+        await new Promise<void>((resolve) => (release = resolve));
+        return unavailable();
+      }),
+    );
+    const { user } = renderDay(DAY, `?item=${retryable.id}`);
+    const button = await screen.findByRole('button', { name: 'Retry' });
+    await user.click(button);
+    await waitFor(() => expect(button).toBeDisabled());
+    release();
+    expect(await screen.findByRole('alert')).toHaveTextContent('Backend unreachable');
+    await waitFor(() => expect(button).not.toBeDisabled());
+    await user.click(button);
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    release();
+    expect(bodies[0]!.requestId).not.toBe(bodies[1]!.requestId);
+  });
+
+  it.each([
+    ['ITEM_NOT_FAILED', {}, /no longer failed/],
+    ['RETRY_NOT_ALLOWED', { failureCode: 'BACKFILL_BUDGET' }, /ran out of request budget/],
+    ['RETRY_NOT_ALLOWED', { failureCode: 'MISSING_BLOCK_TIME' }, /no block time/],
+    ['BACKFILL_NOT_CAPTURING', {}, /still scanning/],
+    ['CAPTURE_DISABLED', {}, /Capture is off on the backend/],
+  ])('explains a %s refusal %j', async (code, fields, text) => {
+    refusalOnce(409, code, 'refused', fields);
+    const { user } = renderDay(DAY, `?item=${retryable.id}`);
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(text);
+  });
+
+  it('explains an unknown buy and a malformed request', async () => {
+    refusalOnce(404, 'AUTOMATION_ITEM_NOT_FOUND', 'No automation item');
+    const { user } = renderDay(DAY, `?item=${retryable.id}`);
+    await user.click(await screen.findByRole('button', { name: 'Retry' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('This buy no longer exists');
+    refusalOnce(400, 'INVALID_REQUEST', 'requestId must not be blank');
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(
+      await screen.findByText('The backend refused the retry request: requestId must not be blank'),
+    ).toBeInTheDocument();
+  });
+
+  it("retries a day's failed buys after confirmation and lists the refused ones", async () => {
+    const bodies = postBodies<{ requestId: string }>('/days/');
+    const { user } = renderDay();
+    await user.click(await screen.findByRole('button', { name: 'Retry failed buys' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Retry 1 failed buy?' });
+    expect(within(dialog).getByText(/1 other failed buy cannot be retried/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(bodies).toEqual([]);
+    await user.click(screen.getByRole('button', { name: 'Retry failed buys' }));
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Retry 1 buy' }),
+    );
+    const result = await screen.findByRole('dialog', { name: 'Retry sent' });
+    expect(
+      within(result).getByText(/1 buy sent back to the step where it failed/),
+    ).toBeInTheDocument();
+    expect(within(result).getByText('1 buy was not retried:')).toBeInTheDocument();
+    expect(within(result).getByText(/no block time/)).toBeInTheDocument();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.requestId).toMatch(/^ui-retry-day-[0-9a-f]{32}$/);
+    expect(bodies[0]!.requestId.length).toBeLessThanOrEqual(55);
+    await waitFor(() =>
+      expect(within(rowOf(retryable)).getByText('Capturing')).toBeInTheDocument(),
+    );
+    await user.click(within(result).getByRole('button', { name: 'Done' }));
+    // Only the refused buy is left failed, so the day action now explains instead of sending.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Retry failed buys' })).toHaveAttribute(
+        'aria-disabled',
+        'true',
+      ),
+    );
+  });
+
+  it("reports a repeated day retry's buys as unchanged", async () => {
+    server.use(
+      http.post('/api/automation/days/:date/retry', () =>
+        HttpResponse.json({ day: DAY, retried: [], unchanged: [retryable.id], refused: {} }),
+      ),
+    );
+    const { user } = renderDay();
+    await user.click(await screen.findByRole('button', { name: 'Retry failed buys' }));
+    await user.click(
+      within(await screen.findByRole('dialog')).getByRole('button', { name: 'Retry 1 buy' }),
+    );
+    const result = await screen.findByRole('dialog', { name: 'Retry sent' });
+    expect(within(result).getByText(/No buy was sent back/)).toBeInTheDocument();
+    expect(
+      within(result).getByText(/1 buy was already retried by this request and left as it is/),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps the day dialog open with the reason when the day retry is refused', async () => {
+    server.use(
+      http.post('/api/automation/days/:date/retry', () =>
+        HttpResponse.json(
+          { code: 'INVALID_REQUEST', message: 'date has an invalid value', fields: {} },
+          { status: 400 },
+        ),
+      ),
+    );
+    const { user } = renderDay();
+    await user.click(await screen.findByRole('button', { name: 'Retry failed buys' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Retry 1 buy' }));
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent(
+      'The backend refused the retry request: date has an invalid value',
+    );
+  });
+
+  it('shows no retry controls on a day without failed buys', async () => {
+    renderDay('2026-11-02');
+    await screen.findByRole('table', { name: 'Buys this day' });
+    expect(screen.queryByRole('button', { name: 'Retry failed buys' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Retry buy at/ })).toBeNull();
+  });
+});
+
 describe('BackfillsPage', () => {
   function renderBackfills(url = '/automation/backfills') {
     return renderPage(<BackfillsPage />, {

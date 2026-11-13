@@ -37,7 +37,8 @@ data class AutomationSessionRow(
 
 /**
  * [requestsUsed] is the provider requests of the item's capture session so far, refreshed whenever a capture step ends;
- * [backfillId] is the backfill that found the buy, null for a live one.
+ * [backfillId] is the backfill that found the buy, null for a live one. [retries] is how often a person retried the item;
+ * [retryRefusal] is null when it can be retried now, else the [AutomationRetryRefusal] code.
  */
 data class AutomationItemView(
     val id: String,
@@ -64,7 +65,15 @@ data class AutomationItemView(
     val createdAt: Instant,
     val updatedAt: Instant,
     val backfillId: String?,
+    val retries: Int,
+    val retryRefusal: String?,
 )
+
+/**
+ * The outcome of retrying a trading day's failed items: the ids [retried], those [unchanged] because the request had already retried
+ * them, and the code each [refused] one was refused with.
+ */
+data class DayRetryResult(val day: LocalDate, val retried: List<String>, val unchanged: List<String>, val refused: Map<String, String>)
 
 /** One sweep entry replayed on an item: its run, or in [outcome] the refusal code of an entry that got none. P&L is SOL at scale 12. */
 data class AutomationSweepRunView(

@@ -22,5 +22,8 @@ enum class BackfillState(val active: Boolean) {
 
         /** The states whose items the pipeline captures: the scan is over, so no earlier buy of a mint can still replace an item. */
         val CAPTURING_STATES: Set<BackfillState> = setOf(CAPTURING, STOPPED_BUDGET)
+
+        /** The states of a backfill that is over for good; its retried items are still captured (plan 20261107, Rule 16). */
+        val ENDED_STATES: Set<BackfillState> = setOf(DONE, CANCELLED)
     }
 }

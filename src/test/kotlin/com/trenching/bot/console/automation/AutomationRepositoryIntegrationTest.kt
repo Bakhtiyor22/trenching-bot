@@ -24,11 +24,13 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.data.domain.PageRequest
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
 
 class AutomationRepositoryIntegrationTest : AutomationDatabaseTest() {
     @Autowired private lateinit var transactionManager: PlatformTransactionManager
+    @Autowired private lateinit var jdbc: JdbcTemplate
 
     @Test
     fun `a second session starting with the same item is refused`() {
@@ -51,6 +53,25 @@ class AutomationRepositoryIntegrationTest : AutomationDatabaseTest() {
         items.saveAndFlush(item(1, "s1", mint = 1, signature = 1))
 
         assertFailsWith<DataIntegrityViolationException> { items.saveAndFlush(item(2, "s1", mint = 1, signature = 2)) }
+    }
+
+    @Test
+    fun `the retry columns default to no retries, so a row written without them reads zero retries and no request id`() {
+        val columns = jdbc.queryForList(
+            "select column_name, is_nullable, column_default from information_schema.columns where table_name = 'automation_items' and column_name in ('retries', 'retry_request_id')",
+        ).associateBy { it["column_name"] }
+        jdbc.update(
+            "insert into automation_items (id, session_id, wallet, mint, signature, instruction_index, inner_index, slot, curve_payment_lamports, state, step_attempt, created_at, updated_at, version) " +
+                "values ('existing', 's1', 'w', 'm', 'sig', 2, -1, 1, 1, 'FAILED', 0, now(), now(), 0)",
+        )
+
+        val row = items.findOneById("existing")
+
+        assertEquals("NO", columns.getValue("retries")["is_nullable"])
+        assertEquals("0", columns.getValue("retries")["column_default"])
+        assertEquals("YES", columns.getValue("retry_request_id")["is_nullable"])
+        assertEquals(0, row?.retries)
+        assertNull(row?.retryRequestId)
     }
 
     @Test
@@ -86,10 +107,10 @@ class AutomationRepositoryIntegrationTest : AutomationDatabaseTest() {
         ))
         val pending = AutomationItemState.entries.filterNot { it.terminal }
 
-        val first = items.findDue(pending, BackfillState.CAPTURING_STATES, EVENING, PageRequest.of(0, 2)).map { it.id }
-        val second = items.findDue(pending, BackfillState.CAPTURING_STATES, EVENING, PageRequest.of(1, 2)).map { it.id }
+        val first = items.findDue(pending, BackfillState.CAPTURING_STATES, BackfillState.ENDED_STATES, EVENING, PageRequest.of(0, 2)).map { it.id }
+        val second = items.findDue(pending, BackfillState.CAPTURING_STATES, BackfillState.ENDED_STATES, EVENING, PageRequest.of(1, 2)).map { it.id }
 
-        val third = items.findDue(pending, BackfillState.CAPTURING_STATES, EVENING, PageRequest.of(2, 2)).map { it.id }
+        val third = items.findDue(pending, BackfillState.CAPTURING_STATES, BackfillState.ENDED_STATES, EVENING, PageRequest.of(2, 2)).map { it.id }
 
         assertEquals(listOf("item-2", "item-1"), first)
         assertEquals(listOf("item-5", "item-6"), second)
@@ -306,7 +327,7 @@ class AutomationRepositoryIntegrationTest : AutomationDatabaseTest() {
         ))
         val pending = AutomationItemState.entries.filterNot { it.terminal }
 
-        val due = items.findDue(pending, BackfillState.CAPTURING_STATES, EVENING, PageRequest.of(0, 10)).map { it.id }
+        val due = items.findDue(pending, BackfillState.CAPTURING_STATES, BackfillState.ENDED_STATES, EVENING, PageRequest.of(0, 10)).map { it.id }
 
         assertEquals(listOf("item-6", "item-1", "item-3", "item-2"), due, "an item of a scanning or cancelled backfill is not due")
     }

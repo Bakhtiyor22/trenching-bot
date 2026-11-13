@@ -7,9 +7,11 @@ import com.trenching.bot.console.automation.api.dto.AutomationBackfillResponse
 import com.trenching.bot.console.automation.api.dto.AutomationCloseRequest
 import com.trenching.bot.console.automation.api.dto.AutomationDayDetailResponse
 import com.trenching.bot.console.automation.api.dto.AutomationDayListResponse
+import com.trenching.bot.console.automation.api.dto.AutomationDayRetryResponse
 import com.trenching.bot.console.automation.api.dto.AutomationEvaluationPageResponse
 import com.trenching.bot.console.automation.api.dto.AutomationItemDetailResponse
 import com.trenching.bot.console.automation.api.dto.AutomationManualRunResponse
+import com.trenching.bot.console.automation.api.dto.AutomationRetryRequest
 import com.trenching.bot.console.automation.api.dto.AutomationSessionDetailResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSessionPageResponse
 import com.trenching.bot.console.automation.api.dto.AutomationStatusResponse
@@ -19,6 +21,7 @@ import com.trenching.bot.console.automation.application.AutomationBackfillServic
 import com.trenching.bot.console.automation.application.AutomationDayService
 import com.trenching.bot.console.automation.application.AutomationManualRun
 import com.trenching.bot.console.automation.application.AutomationQueryService
+import com.trenching.bot.console.automation.application.AutomationRetryService
 import com.trenching.bot.console.automation.application.AutomationSessionService
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationSessionSort
@@ -48,6 +51,7 @@ class AutomationController(
     private val manualRun: AutomationManualRun,
     private val backfills: AutomationBackfillService,
     private val backfillQuery: AutomationBackfillQueryService,
+    private val retries: AutomationRetryService,
     private val mapper: AutomationResponseMapper,
     private val backfillRequests: AutomationBackfillRequestMapper,
 ) {
@@ -122,6 +126,16 @@ class AutomationController(
     @PostMapping("/backfills/{id}/cancel")
     fun cancelBackfill(@PathVariable id: String, @RequestBody request: AutomationCloseRequest): AutomationBackfillResponse =
         mapper.toBackfill(backfills.cancel(id, request.requestId))
+
+    @PostMapping("/items/{id}/retry")
+    fun retryItem(@PathVariable id: String, @RequestBody request: AutomationRetryRequest): AutomationItemDetailResponse =
+        mapper.toItemDetail(retries.retry(id, request.requestId))
+
+    @PostMapping("/days/{date}/retry")
+    fun retryDay(
+        @PathVariable @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) date: LocalDate,
+        @RequestBody request: AutomationRetryRequest,
+    ): AutomationDayRetryResponse = mapper.toDayRetry(retries.retryDay(date, request.requestId))
 
     @PostMapping("/sessions/{id}/close")
     fun close(@PathVariable id: String, @RequestBody request: AutomationCloseRequest): AutomationSessionDetailResponse =

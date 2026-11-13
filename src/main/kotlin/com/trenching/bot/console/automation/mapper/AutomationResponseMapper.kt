@@ -5,6 +5,7 @@ import com.trenching.bot.console.automation.api.dto.AutomationBackfillPageRespon
 import com.trenching.bot.console.automation.api.dto.AutomationBackfillResponse
 import com.trenching.bot.console.automation.api.dto.AutomationDayDetailResponse
 import com.trenching.bot.console.automation.api.dto.AutomationDayListResponse
+import com.trenching.bot.console.automation.api.dto.AutomationDayRetryResponse
 import com.trenching.bot.console.automation.api.dto.AutomationEvaluationPageResponse
 import com.trenching.bot.console.automation.api.dto.AutomationEvaluationResponse
 import com.trenching.bot.console.automation.api.dto.AutomationItemDetailResponse
@@ -19,6 +20,7 @@ import com.trenching.bot.console.automation.domain.AutomationBackfillRow
 import com.trenching.bot.console.automation.domain.AutomationItemDetail
 import com.trenching.bot.console.automation.domain.DayDetail
 import com.trenching.bot.console.automation.domain.DayList
+import com.trenching.bot.console.automation.domain.DayRetryResult
 import com.trenching.bot.console.automation.domain.DayVerdict
 import com.trenching.bot.console.automation.domain.ManualRunResult
 import com.trenching.bot.console.automation.domain.AutomationItemState
@@ -61,6 +63,8 @@ interface AutomationResponseMapper {
     fun toDayList(list: DayList): AutomationDayListResponse
 
     fun toDayDetail(detail: DayDetail): AutomationDayDetailResponse
+
+    fun toDayRetry(result: DayRetryResult): AutomationDayRetryResponse
 
     fun toManualRun(result: ManualRunResult): AutomationManualRunResponse
 

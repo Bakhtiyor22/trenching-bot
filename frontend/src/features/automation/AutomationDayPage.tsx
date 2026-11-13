@@ -9,6 +9,7 @@ import {
   Table,
   Text,
   Tooltip,
+  VisuallyHidden,
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
@@ -43,6 +44,9 @@ import {
   dayInfo,
   itemStateLabels,
   lamportsToSol,
+  RETRY_SPEND_NOTE,
+  retriesText,
+  retryStepOf,
   stepMarks,
   tradingDayOf,
   variationChange,
@@ -62,6 +66,7 @@ import {
   StatusAlerts,
   ZoneTime,
 } from './AutomationShared';
+import { RetryBuy, RetryFailedBuys } from './RetryControls';
 import { Scoreboard } from './Scoreboard';
 
 const STEP_NAMES: Record<AutomationStep, string> = {
@@ -136,6 +141,16 @@ function ItemStateChip({ item }: { item: AutomationItem }) {
 }
 
 function ItemNote({ item, zone }: { item: AutomationItem; zone: string }) {
+  const retried = retriesText(item.retries);
+  return (
+    <>
+      <ItemNoteText item={item} zone={zone} />
+      {retried && ` · ${retried}`}
+    </>
+  );
+}
+
+function ItemNoteText({ item, zone }: { item: AutomationItem; zone: string }) {
   if (item.state === 'SIMULATED') return <>Every variation replayed</>;
   if (item.state === 'SKIPPED_NOT_FIRST_BUY') return <>Decu held this token before; never scored</>;
   if (item.state === 'BLOCKED_BUDGET') return <>Waiting for the 24 h request cap to free up</>;
@@ -281,6 +296,11 @@ function Sessions({ detail, status }: { detail: AutomationDayDetail; status: Aut
   );
 }
 
+function retryHint(item: AutomationItem): string {
+  const step = retryStepOf(item);
+  return `Sends it back to the ${step ? `${STEP_NAMES[step]} step` : 'pipeline'} with the evidence already saved and a fresh round of attempts. ${RETRY_SPEND_NOTE}`;
+}
+
 function SelectedBuy({
   itemId,
   status,
@@ -317,6 +337,7 @@ function SelectedBuy({
                 ? `verdict ${codeLabel(item.classification).toLowerCase()}`
                 : null,
               item.requestsUsed != null ? `${formatCount(item.requestsUsed)} requests` : null,
+              retriesText(item.retries),
               `slot ${formatSlot(item.slot)}`,
             ]
               .filter(Boolean)
@@ -369,6 +390,7 @@ function SelectedBuy({
                   Paid to the curve, fees excluded
                 </Text>
               </Group>
+              <RetryBuy item={item} hint={retryHint(item)} />
               {(item.classification || item.failureCode) && (
                 <Group gap="lg" wrap="wrap">
                   <CodeText code={item.classification} />
@@ -548,6 +570,7 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
         <Section
           title="Buys this day · oldest first"
           hint="Steps: session · wallet · market · rates · export · qualify · register · sweep. Choose a buy to see its 10 sweep runs."
+          actions={<RetryFailedBuys date={summary.day} items={items} zone={status.zone} />}
         >
           <ScrollArea type="auto">
             <Table miw={900} verticalSpacing="xs" aria-label="Buys this day">
@@ -559,6 +582,9 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
                   <Table.Th>Progress</Table.Th>
                   <Table.Th>State</Table.Th>
                   <Table.Th>Note</Table.Th>
+                  <Table.Th>
+                    <VisuallyHidden>Retry</VisuallyHidden>
+                  </Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -603,6 +629,12 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
                         <Text size="sm" c="dimmed">
                           <ItemNote item={item} zone={status.zone} />
                         </Text>
+                      </Table.Td>
+                      <Table.Td ta="right">
+                        <RetryBuy
+                          item={item}
+                          label={`Retry buy at ${zoneTime(item.blockTime, status.zone, true)}`}
+                        />
                       </Table.Td>
                     </Table.Tr>
                   );

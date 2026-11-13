@@ -30,6 +30,8 @@ interface AutomationRecordMapper {
 
     fun toSession(entity: AutomationSessionEntity): AutomationSessionView
 
+    /** The retry refusal needs the item's backfill, so [com.trenching.bot.console.automation.application.AutomationItemViews] sets it. */
+    @Mapping(target = "retryRefusal", ignore = true)
     fun toItem(entity: AutomationItemEntity): AutomationItemView
 
     fun toProgress(entity: AutomationItemEntity): AutomationItemProgress

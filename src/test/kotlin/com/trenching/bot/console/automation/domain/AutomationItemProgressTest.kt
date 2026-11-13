@@ -141,4 +141,89 @@ class AutomationItemProgressTest {
         assertNull(simulated.failureCode)
         assertNull(simulated.failureMessage)
     }
+    private val failedAtRates = AutomationItemProgress(AutomationItemState.FAILED, AutomationStep.RATES, 2, "capture", "auto-rates-a-2", null,
+        "INCOMPLETE_CAPTURE", "INCOMPLETE", "rates incomplete", null)
+
+    @Test
+    fun `retrying a failed capture step runs that step again from its first attempt on the same capture session`() {
+        val retried = failedAtRates.retried(now)
+
+        assertEquals(AutomationItemState.CAPTURING, retried.state)
+        assertEquals(AutomationStep.RATES, retried.step)
+        assertEquals(1, retried.stepAttempt)
+        assertEquals("capture", retried.captureSessionId)
+        assertNull(retried.operationId)
+        assertNull(retried.failureCode)
+        assertNull(retried.failureMessage)
+        assertEquals(now, retried.nextActionAt)
+        assertEquals(1, retried.retries)
+        assertEquals("INCOMPLETE_CAPTURE", retried.classification)
+        assertTrue(retried.dueAt(now))
+        AutomationItemTransitions.require("item-1", failedAtRates.state, retried.state, retry = true)
+    }
+
+    @Test
+    fun `a capture deleted from the console is retried from the session creation with its capture session cleared`() {
+        val lost = wallet.lost(AutomationFailures.CAPTURE_NOT_FOUND, "gone")
+
+        val retried = lost.retried(now)
+
+        assertEquals(AutomationItemState.CAPTURING, retried.state)
+        assertEquals(AutomationStep.CREATE_SESSION, retried.step)
+        assertEquals(1, retried.stepAttempt)
+        assertNull(retried.captureSessionId)
+        assertNull(retried.operationId)
+        assertNull(retried.failureCode)
+        assertEquals(1, retried.retries)
+    }
+
+    @Test
+    fun `a failed sweep is retried as a captured item on the sweep's first attempt, due now`() {
+        val failedSweep = AutomationItemProgress(AutomationItemState.CAPTURED, AutomationStep.SWEEP, 2, "capture", null, "dataset",
+            "QUALIFYING_DIP", null, null, null).sweepFailed(AutomationFailures.SWEEP_FAILED, "replay broke", maxAttempts = 2, now = now)
+
+        val retried = failedSweep.retried(now)
+
+        assertEquals(AutomationItemState.FAILED, failedSweep.state)
+        assertEquals(AutomationItemState.CAPTURED, retried.state)
+        assertEquals(AutomationStep.SWEEP, retried.step)
+        assertEquals(1, retried.stepAttempt)
+        assertEquals(1, retried.sweepAttempt)
+        assertEquals("dataset", retried.datasetId)
+        assertNull(retried.failureCode)
+        assertEquals(now, retried.nextActionAt)
+        assertEquals(1, retried.retries)
+        AutomationItemTransitions.require("item-1", failedSweep.state, retried.state, retry = true)
+    }
+
+    @Test
+    fun `the attempts of a retried step run again and the item can fail and be retried again`() {
+        val retried = failedAtRates.retried(now)
+
+        val again = retried.failed("INCOMPLETE", null, maxAttempts = 2, now = now)
+        val failedAgain = again.failed("INCOMPLETE", null, maxAttempts = 2, now = now)
+
+        assertEquals(2, again.stepAttempt)
+        assertEquals(AutomationItemState.FAILED, failedAgain.state)
+        assertEquals(1, failedAgain.retries)
+        assertEquals(2, failedAgain.retried(now).retries)
+    }
+
+    @Test
+    fun `only a failed item can be retried`() {
+        assertFailsWith<IllegalStateException> { wallet.retried(now) }
+    }
+
+    @Test
+    fun `the pipeline's own transitions still refuse to leave failed`() {
+        assertFailsWith<IllegalItemTransitionException> {
+            AutomationItemTransitions.require("item-1", AutomationItemState.FAILED, AutomationItemState.CAPTURING)
+        }
+        assertFailsWith<IllegalItemTransitionException> {
+            AutomationItemTransitions.require("item-1", AutomationItemState.FAILED, AutomationItemState.SIMULATED, retry = true)
+        }
+        assertFailsWith<IllegalItemTransitionException> {
+            AutomationItemTransitions.require("item-1", AutomationItemState.ABANDONED, AutomationItemState.CAPTURING, retry = true)
+        }
+    }
 }

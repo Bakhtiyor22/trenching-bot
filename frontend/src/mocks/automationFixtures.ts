@@ -81,7 +81,14 @@ export function mockAddDays(day: string, n: number): string {
   return mockDayOf(mockDayStart(day) + n * DAY_MS);
 }
 
-type BuyPlan = Array<[minuteOffset: number, state: AutomationItemState]>;
+/** A buy's minute offset, its state and, for a failed buy, its failure code (TIMEOUT by default). */
+type BuyPlan = Array<[minuteOffset: number, state: AutomationItemState, failureCode?: MockFailure]>;
+type MockFailure = 'TIMEOUT' | 'MISSING_BLOCK_TIME';
+
+const FAILURE_MESSAGES: Record<MockFailure, string> = {
+  TIMEOUT: 'The provider did not answer in time on both attempts of the market step.',
+  MISSING_BLOCK_TIME: 'The buy has no block time, so its market window cannot be placed.',
+};
 
 /** Live nights: the buys' minute offsets after the first buy and how each ended. */
 const LIVE_PLANS: BuyPlan[] = Array.from({ length: LIVE_NIGHTS }, (_, n) => {
@@ -95,7 +102,9 @@ const LIVE_PLANS: BuyPlan[] = Array.from({ length: LIVE_NIGHTS }, (_, n) => {
       [139, 'WAITING'],
     ];
   const count = 2 + (n % 3);
-  return Array.from({ length: count }, (_, i): [number, AutomationItemState] => {
+  return Array.from({ length: count }, (_, i): BuyPlan[number] => {
+    // Night 14 has one failed buy that can be retried and one that cannot.
+    if (n === 14 && i === 3) return [i * (50 + (n % 4) * 17), 'FAILED', 'MISSING_BLOCK_TIME'];
     const state: AutomationItemState =
       n === 14 && i === 2
         ? 'FAILED'
@@ -246,7 +255,7 @@ function buildSession(
   db: Pick<AutomationDb, 'sessions' | 'items' | 'sweepRuns'>,
 ): void {
   const sessionId = hex(1000 + seed);
-  const sessionItems = plan.map(([offset, state]): AutomationItem => {
+  const sessionItems = plan.map(([offset, state, failure = 'TIMEOUT']): AutomationItem => {
     itemSeed += 1;
     const blockTime = start + offset * MINUTE_MS;
     const failed = state === 'FAILED';
@@ -287,9 +296,9 @@ function buildSession(
           : state === 'SIMULATED'
             ? 'QUALIFIED'
             : null,
-      failureCode: failed ? 'TIMEOUT' : state === 'ABANDONED' ? 'SESSION_CLOSED' : null,
+      failureCode: failed ? failure : state === 'ABANDONED' ? 'SESSION_CLOSED' : null,
       failureMessage: failed
-        ? 'The provider did not answer in time on both attempts of the market step.'
+        ? FAILURE_MESSAGES[failure]
         : state === 'ABANDONED'
           ? 'The session was closed by hand before this buy finished.'
           : null,
@@ -299,6 +308,12 @@ function buildSession(
       createdAt: iso(blockTime + 2 * MINUTE_MS),
       updatedAt: iso(blockTime + 40 * MINUTE_MS),
       backfillId,
+      retries: 0,
+      retryRefusal: !failed
+        ? 'ITEM_NOT_FAILED'
+        : failure === 'MISSING_BLOCK_TIME'
+          ? 'RETRY_NOT_ALLOWED'
+          : null,
     };
   });
   db.items.push(...sessionItems);
@@ -533,6 +548,7 @@ export function discoveryOnly(db: AutomationDb): AutomationDb {
     failureCode: null,
     failureMessage: null,
     requestsUsed: null,
+    retryRefusal: 'ITEM_NOT_FAILED' as const,
   }));
   const sessions = db.sessions.map((session) => {
     const counts = emptyCounts();

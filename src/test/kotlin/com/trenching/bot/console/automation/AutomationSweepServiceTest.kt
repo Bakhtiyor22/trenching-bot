@@ -5,6 +5,9 @@ import com.trenching.bot.console.automation.AutomationFixtures.properties
 import com.trenching.bot.console.automation.application.AutomationSweepService
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.domain.AutomationFailures
+import com.trenching.bot.console.automation.domain.BackfillState
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillEntity
+import java.time.LocalDate
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationLimits
 import com.trenching.bot.console.automation.domain.AutomationSessionState
@@ -217,6 +220,57 @@ class AutomationSweepServiceTest : AutomationDatabaseTest() {
         assertEquals(2, failed?.stepAttempt)
         assertEquals("replay broke", failed?.failureMessage)
         assertNull(failed?.nextActionAt)
+    }
+
+    @Test
+    fun `a retried failed sweep runs only the entries without a row and the item becomes simulated`() {
+        captured(1, register("take-profit", takeProfit()))
+        service().sweep()
+        val stored = rows(1).associate { it.label to it.runId }
+        sweepRuns.deleteAll(rows(1).filter { it.label in setOf("V03", "V04") })
+        items.findOneById("item-1")?.let {
+            it.state = AutomationItemState.FAILED
+            it.step = AutomationStep.SWEEP
+            it.stepAttempt = 2
+            it.failureCode = AutomationFailures.SWEEP_FAILED
+            it.nextActionAt = null
+            items.save(it)
+        }
+        retryService(properties(captureEnabled = true), clock).retry("item-1", "retry-1")
+        val runs = RecordingRuns(simulationRuns)
+
+        service(runs).sweep()
+
+        val item = items.findOneById("item-1")
+        assertEquals(listOf(plan.entries[3].config, plan.entries[4].config), runs.started.map { it.first })
+        assertEquals(AutomationItemState.SIMULATED, item?.state)
+        assertEquals(1, item?.stepAttempt, "the retried sweep ran on its first attempt")
+        assertEquals(1, item?.retries)
+        assertNull(item?.failureCode)
+        assertEquals(10, sweepRuns.count())
+        assertEquals(stored.filterKeys { it !in setOf("V03", "V04") }, rows(1).associate { it.label to it.runId }.filterKeys { it !in setOf("V03", "V04") })
+    }
+
+    @Test
+    fun `a retried failed sweep of an item of a done backfill is swept too, and the backfill stays done`() {
+        captured(1, register("take-profit", takeProfit()))
+        backfills.save(AutomationBackfillEntity("bf-1", "req-1", AutomationFixtures.WALLET, null, LocalDate.parse("2026-10-29"), LocalDate.parse("2026-10-30"),
+            EVENING, EVENING.plusSeconds(60), false, null, null, 20_000, BackfillState.DONE, EVENING, EVENING))
+        items.findOneById("item-1")?.let {
+            it.backfillId = "bf-1"
+            it.state = AutomationItemState.FAILED
+            it.step = AutomationStep.SWEEP
+            it.stepAttempt = 2
+            it.failureCode = AutomationFailures.SWEEP_FAILED
+            items.save(it)
+        }
+        retryService(properties(captureEnabled = true), clock).retry("item-1", "retry-1")
+
+        service().sweep()
+
+        assertEquals(AutomationItemState.SIMULATED, items.findOneById("item-1")?.state)
+        assertEquals(10, sweepRuns.count())
+        assertEquals(BackfillState.DONE, backfills.findOneById("bf-1")?.state)
     }
 
     @Test

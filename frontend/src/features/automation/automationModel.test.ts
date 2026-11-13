@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { AutomationDaySummary, AutomationEvaluation } from '../../api/automation';
+import {
+  newRetryRequestId,
+  RETRY_DAY_PREFIX,
+  RETRY_ITEM_PREFIX,
+  type AutomationDaySummary,
+  type AutomationEvaluation,
+} from '../../api/automation';
+import { ApiError } from '../../api/client';
 import { isSolanaAddress } from '../../lib/base58';
 import {
   addDays,
@@ -26,6 +33,10 @@ import {
   planLabels,
   pnlBar,
   pnlScale,
+  retriesText,
+  retryErrorText,
+  retryRefusalText,
+  retryStepOf,
   scanFraction,
   shortSol,
   statusGrid,
@@ -360,5 +371,70 @@ describe('URL input', () => {
     expect(parseBackfillPrefill(new URLSearchParams('dryRun=false&budget=500')).ignored).toEqual([
       'budget',
     ]);
+  });
+});
+
+describe('retry', () => {
+  const REQUEST_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
+
+  it('makes a new request id per call that the backend accepts, with room for the per-buy suffix', () => {
+    const a = newRetryRequestId(RETRY_ITEM_PREFIX);
+    const b = newRetryRequestId(RETRY_ITEM_PREFIX);
+    const day = newRetryRequestId(RETRY_DAY_PREFIX);
+    expect(a).not.toBe(b);
+    for (const id of [a, b, day]) {
+      expect(id).toMatch(REQUEST_ID);
+      expect(id.length).toBeLessThanOrEqual(55);
+    }
+    expect(a).toMatch(/^ui-retry-[0-9a-f]{32}$/);
+    expect(day).toMatch(/^ui-retry-day-[0-9a-f]{32}$/);
+  });
+
+  it('explains every refusal code in plain words', () => {
+    expect(retryRefusalText('ITEM_NOT_FAILED')).toMatch(/Only a failed buy/);
+    expect(retryRefusalText('RETRY_NOT_ALLOWED', 'BACKFILL_BUDGET')).toMatch(
+      /backfill ran out of request budget/,
+    );
+    expect(retryRefusalText('RETRY_NOT_ALLOWED', 'MISSING_BLOCK_TIME')).toMatch(/no block time/);
+    expect(retryRefusalText('RETRY_NOT_ALLOWED', null)).toBe(
+      'This kind of failure cannot be retried.',
+    );
+    expect(retryRefusalText('BACKFILL_NOT_CAPTURING')).toMatch(/still scanning/);
+    expect(retryRefusalText('CAPTURE_DISABLED')).toMatch(/Capture is off/);
+    expect(retryRefusalText('SOMETHING_NEW')).toBe('Not retried: Something new.');
+  });
+
+  it('turns a failed retry request into a readable message', () => {
+    expect(
+      retryErrorText(
+        new ApiError(409, 'RETRY_NOT_ALLOWED', 'not allowed', {
+          failureCode: 'MISSING_BLOCK_TIME',
+        }),
+      ),
+    ).toMatch(/no block time/);
+    expect(retryErrorText(new ApiError(409, 'ITEM_NOT_FAILED', 'x'))).toMatch(/no longer failed/);
+    expect(retryErrorText(new ApiError(409, 'CAPTURE_DISABLED', 'x'))).toMatch(/Capture is off/);
+    expect(retryErrorText(new ApiError(404, 'AUTOMATION_ITEM_NOT_FOUND', 'x'))).toBe(
+      'This buy no longer exists on the backend.',
+    );
+    expect(
+      retryErrorText(new ApiError(400, 'INVALID_REQUEST', 'requestId must not be blank')),
+    ).toBe('The backend refused the retry request: requestId must not be blank');
+    expect(retryErrorText(new ApiError(503, 'UNAVAILABLE', 'Backend unreachable'))).toBe(
+      'Backend unreachable',
+    );
+  });
+
+  it('sends a buy back to the step where it failed, from the start when its capture was deleted', () => {
+    expect(retryStepOf({ step: 'RATES', failureCode: 'INCOMPLETE' })).toBe('RATES');
+    expect(retryStepOf({ step: 'MARKET', failureCode: 'CAPTURE_NOT_FOUND' })).toBe(
+      'CREATE_SESSION',
+    );
+    expect(retryStepOf({ step: 'SWEEP', failureCode: 'SWEEP_FAILED' })).toBe('SWEEP');
+  });
+
+  it('counts retries only once there is one', () => {
+    expect(retriesText(0)).toBeNull();
+    expect(retriesText(1)).toBe('retried 1×');
   });
 });

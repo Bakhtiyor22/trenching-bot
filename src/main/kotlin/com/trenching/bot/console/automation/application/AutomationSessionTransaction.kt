@@ -68,7 +68,7 @@ class AutomationSessionTransaction(
         val captureSessionId = item.captureSessionId ?: return null
         val operationId = item.operationId ?: return null
         val step = item.step ?: return null
-        return AutomationOperationRef(item.id, captureSessionId, operationId, step, item.stepAttempt)
+        return AutomationOperationRef(item.id, captureSessionId, operationId, step, item.stepAttempt, item.retries)
     }
 
     private fun close(session: AutomationSessionEntity, reason: SessionCloseReason, now: Instant) {

@@ -53,6 +53,7 @@ class AutomationDayService(
     private val sweepRuns: AutomationSweepRunRepository,
     private val coverage: AutomationCoverage,
     private val sessionRows: AutomationSessionRows,
+    private val itemViews: AutomationItemViews,
     private val mapper: AutomationRecordMapper,
     private val properties: AutomationProperties,
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
@@ -73,7 +74,7 @@ class AutomationDayService(
         val entities = data.sessionsByDay[day].orEmpty()
         val ids = entities.map { it.id }
         val dayItems = if (ids.isEmpty()) emptyList() else {
-            items.findAllBySessionIdIn(ids, PageRequest.of(0, ids.size * AutomationLimits.MAX_ITEMS_PER_SESSION)).map(mapper::toItem)
+            items.findAllBySessionIdIn(ids, PageRequest.of(0, ids.size * AutomationLimits.MAX_ITEMS_PER_SESSION)).let(itemViews::of)
         }
         return DayDetail(summary(day, data), DayCoverage(data.facts.getValue(day).covered, data.coverage.ranges), sessionRows.of(entities), dayItems,
             scoring.verdicts(day, data.facts))

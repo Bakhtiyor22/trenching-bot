@@ -34,11 +34,11 @@ class AutomationPipelineTransaction(
     /**
      * Items in capture whose next action has come, in any session, in priority order (plan Rule 40, amended 2026-11-03): live items of sessions
      * still open or closing, then the live phase 0 backlog of closed sessions (items discovered while capture was off), then those
-     * of a backfill whose scan is over, each oldest buy first.
+     * of a backfill whose scan is over (and a person's retried items of an ended one), each oldest buy first.
      */
     @Transactional(readOnly = true)
     fun due(now: Instant): List<AutomationDueItem> =
-        items.findDue(AutomationItemState.IN_CAPTURE, BackfillState.CAPTURING_STATES, now, BATCH).map(mapper::toDueItem)
+        items.findDue(AutomationItemState.IN_CAPTURE, BackfillState.CAPTURING_STATES, BackfillState.ENDED_STATES, now, BATCH).map(mapper::toDueItem)
 
     /** The spend of [backfillId] against its request budget (plan Rule 39): its discovery requests plus its items' captures so far. */
     @Transactional(readOnly = true)

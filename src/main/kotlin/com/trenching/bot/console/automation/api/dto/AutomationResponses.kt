@@ -70,7 +70,9 @@ data class AutomationSessionPageResponse(val items: List<AutomationSessionRespon
 
 /**
  * [curvePaymentLamports] is an exact integer string, fees excluded. [requestsUsed] is the provider requests of the item's capture
- * session, refreshed whenever a capture step ends; null before any.
+ * session, refreshed whenever a capture step ends; null before any. [retries] is how often a person retried the item;
+ * [retryRefusal] is null when it can be retried now, else `ITEM_NOT_FAILED`, `RETRY_NOT_ALLOWED`, `BACKFILL_NOT_CAPTURING` or
+ * `CAPTURE_DISABLED`.
  */
 data class AutomationItemResponse(
     val id: String,
@@ -97,7 +99,15 @@ data class AutomationItemResponse(
     val createdAt: Instant,
     val updatedAt: Instant,
     val backfillId: String?,
+    val retries: Int,
+    val retryRefusal: String?,
 )
+
+/**
+ * The failed buys of trading day [day] a retry request put back into capture ([retried], item ids), those it had already retried under
+ * the same request id ([unchanged]), and the refusal code of each one it did not retry ([refused]).
+ */
+data class AutomationDayRetryResponse(val day: LocalDate, val retried: List<String>, val unchanged: List<String>, val refused: Map<String, String>)
 
 /** One sweep entry replayed on an item. [runId] opens at `/api/runs/{id}`; without one, [outcome] is the entry's refusal code. */
 data class AutomationSweepRunResponse(

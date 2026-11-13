@@ -32,6 +32,9 @@ export type EvaluationSort = 'status' | 'day,desc';
 export type DiscoveryMode = 'ALWAYS' | 'WINDOW';
 export type BackfillState =
   'QUEUED' | 'SCANNING' | 'CAPTURING' | 'DONE' | 'STOPPED_BUDGET' | 'CANCELLED';
+/** Why a buy cannot be retried now; the same codes answer a refused retry with 409. */
+export type RetryRefusal =
+  'ITEM_NOT_FAILED' | 'RETRY_NOT_ALLOWED' | 'BACKFILL_NOT_CAPTURING' | 'CAPTURE_DISABLED';
 
 export const ITEM_STATES: AutomationItemState[] = [
   'DISCOVERED',
@@ -153,6 +156,10 @@ export interface AutomationItem {
   createdAt: IsoInstant;
   updatedAt: IsoInstant;
   backfillId?: string | null;
+  /** Times a person retried this buy. */
+  retries: number;
+  /** Null when the buy can be retried now; otherwise why not. */
+  retryRefusal: RetryRefusal | null;
 }
 
 /** One sweep entry replayed on a buy. Without a `runId`, `outcome` is the entry's refusal code. */
@@ -251,6 +258,17 @@ export interface AutomationSessionDetail {
 export interface AutomationItemDetail {
   item: AutomationItem;
   sweepRuns: AutomationSweepRun[];
+}
+
+/**
+ * What a day's retry did, by item id: put back into capture (`retried`), already retried by this same request
+ * (`unchanged`), or refused with a {@link RetryRefusal} code (`refused`).
+ */
+export interface AutomationDayRetryResult {
+  day: IsoDate;
+  retried: string[];
+  unchanged: string[];
+  refused: Record<string, RetryRefusal>;
 }
 
 /** What "run now" did: queued a pass, or found one already queued and added nothing. */
@@ -379,6 +397,10 @@ export const automationApi = {
     postJson<AutomationBackfill>(`${BASE}/backfills`, body),
   cancelBackfill: (id: string, requestId: string) =>
     postJson<AutomationBackfill>(`${BASE}/backfills/${enc(id)}/cancel`, { requestId }),
+  retryItem: (id: string, requestId: string) =>
+    postJson<AutomationItemDetail>(`${BASE}/items/${enc(id)}/retry`, { requestId }),
+  retryDay: (date: IsoDate, requestId: string) =>
+    postJson<AutomationDayRetryResult>(`${BASE}/days/${enc(date)}/retry`, { requestId }),
 };
 
 /** True when the automation endpoints are absent: automation or the console is switched off on the backend. */
@@ -632,5 +654,39 @@ export function useCancelBackfill(id: string) {
       client.setQueryData(automationKeys.backfill(id), backfill);
       void client.invalidateQueries({ queryKey: automationKeys.all });
     },
+  });
+}
+
+/** Prefixes of retry request ids; the backend derives `<id>-<item>` per buy of a day retry, within its 80 characters. */
+export const RETRY_ITEM_PREFIX = 'ui-retry';
+export const RETRY_DAY_PREFIX = 'ui-retry-day';
+
+/**
+ * A new request id for one retry click: the prefix and a UUID without dashes, at most 45 characters, matching the
+ * backend's `[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}`. Each click is a new decision, so it never reuses an earlier id.
+ */
+export function newRetryRequestId(prefix: string): string {
+  return `${prefix}-${crypto.randomUUID().replace(/-/g, '')}`;
+}
+
+/**
+ * Sends a failed buy back to the step where it failed. Afterwards (also after a refusal, which means the shown state
+ * was out of date) every automation view is read again, so the day, its session, the buy and the status agree.
+ */
+export function useRetryItem(id: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => automationApi.retryItem(id, newRetryRequestId(RETRY_ITEM_PREFIX)),
+    onSuccess: (detail) => client.setQueryData(automationKeys.item(id), detail),
+    onSettled: () => client.invalidateQueries({ queryKey: automationKeys.all }),
+  });
+}
+
+/** Retries every retryable failed buy of trading day `date`; refreshes like {@link useRetryItem}. */
+export function useRetryDay(date: IsoDate) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => automationApi.retryDay(date, newRetryRequestId(RETRY_DAY_PREFIX)),
+    onSettled: () => client.invalidateQueries({ queryKey: automationKeys.all }),
   });
 }

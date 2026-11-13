@@ -51,6 +51,7 @@ class AutomationQueryService(
     private val backfills: AutomationBackfillRepository,
     private val mapper: AutomationRecordMapper,
     private val sessionRows: AutomationSessionRows,
+    private val itemViews: AutomationItemViews,
     private val properties: AutomationProperties,
     private val runtime: AutomationRuntime,
     private val usage: ApiUsageReports,
@@ -99,7 +100,7 @@ class AutomationQueryService(
 
     fun session(id: String): AutomationSessionDetail {
         val session = sessions.findOneById(id) ?: throw AutomationSessionNotFoundException(id)
-        val sessionItems = items.findAllBySessionIdOrderByBlockTimeAscIdAsc(id, PageRequest.of(0, AutomationLimits.MAX_ITEMS_PER_SESSION)).map(mapper::toItem)
+        val sessionItems = items.findAllBySessionIdOrderByBlockTimeAscIdAsc(id, PageRequest.of(0, AutomationLimits.MAX_ITEMS_PER_SESSION)).let(itemViews::of)
         return AutomationSessionDetail(sessionRows.of(listOf(session)).single(), sessionItems)
     }
 
@@ -107,7 +108,7 @@ class AutomationQueryService(
     fun item(id: String): AutomationItemDetail {
         val item = items.findOneById(id) ?: throw AutomationItemNotFoundException(id)
         val runs = sweepRuns.findAllByItemIdOrderByPlanIdAscLabelAsc(id, PageRequest.of(0, MAX_SWEEP_RUNS)).map(mapper::toSweepRun)
-        return AutomationItemDetail(mapper.toItem(item), runs)
+        return AutomationItemDetail(itemViews.of(item), runs)
     }
 
     /** The sweep runs of every plan, newest buy first, filtered by [sessionId], the buy's [mint], [label] and [outcome]. */

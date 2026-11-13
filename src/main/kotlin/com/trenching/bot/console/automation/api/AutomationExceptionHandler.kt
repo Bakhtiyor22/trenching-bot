@@ -4,6 +4,7 @@ import com.trenching.bot.console.api.dto.ConsoleErrorResponse
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationDisabledException
 import com.trenching.bot.console.automation.domain.AutomationItemNotFoundException
+import com.trenching.bot.console.automation.domain.AutomationRetryRefusedException
 import com.trenching.bot.console.automation.domain.AutomationSessionNotFoundException
 import com.trenching.bot.console.automation.domain.BackfillActiveException
 import com.trenching.bot.console.automation.domain.BackfillNotFoundException
@@ -65,6 +66,10 @@ class AutomationExceptionHandler(private val mapper: ConsoleErrorMapper) {
     @ExceptionHandler
     @ResponseStatus(HttpStatus.CONFLICT)
     fun captureDisabled(e: CaptureDisabledException): ConsoleErrorResponse = mapper.toResponse(CAPTURE_DISABLED, e.message.orEmpty(), emptyMap())
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun retryRefused(e: AutomationRetryRefusedException): ConsoleErrorResponse = mapper.toResponse(e.refusal.code, e.message.orEmpty(), e.fields)
 
     @ExceptionHandler
     @ResponseStatus(HttpStatus.CONFLICT)

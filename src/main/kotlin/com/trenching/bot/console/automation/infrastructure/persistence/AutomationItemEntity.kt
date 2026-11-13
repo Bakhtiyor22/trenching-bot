@@ -63,6 +63,14 @@ class AutomationItemEntity(
     @Column(name = "backfill_id", nullable = true, length = 64)
     var backfillId: String? = null
 
+    /** How many times a person retried the item after it failed; the default lets `ddl-auto: update` add the column to existing rows. */
+    @Column(name = "retries", nullable = false, columnDefinition = "integer not null default 0")
+    var retries: Int = 0
+
+    /** The request id of the item's last retry, which makes a repeat of that request a no-op. */
+    @Column(name = "retry_request_id", length = 80)
+    var retryRequestId: String? = null
+
     @Version @Column(name = "version", nullable = false)
     var version: Long? = null
 }

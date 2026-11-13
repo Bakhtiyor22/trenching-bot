@@ -1,15 +1,25 @@
 package com.trenching.bot.console.automation.infrastructure.persistence
 
 import com.trenching.bot.console.automation.domain.BackfillState
+import jakarta.persistence.LockModeType
 import java.time.Instant
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 
 interface AutomationBackfillRepository : JpaRepository<AutomationBackfillEntity, String> {
     fun findOneById(id: String): AutomationBackfillEntity?
+
+    /**
+     * The backfill of an item being retried, its version raised when the transaction commits: a backfill that was ended meanwhile
+     * (see `AutomationBackfillTransaction.settle`) fails that commit, and one that ends later fails its own.
+     */
+    @Lock(LockModeType.OPTIMISTIC_FORCE_INCREMENT)
+    @Query("select b from AutomationBackfillEntity b where b.id = :id")
+    fun findForRetryById(@Param("id") id: String): AutomationBackfillEntity?
 
     /** The wallet's backfill that holds its active slot, if any: a wallet has at most one. */
     fun findOneByActiveWallet(activeWallet: String): AutomationBackfillEntity?

@@ -22,6 +22,8 @@ import com.trenching.bot.console.automation.domain.AutomationIds
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.AutomationStep
+import com.trenching.bot.console.automation.domain.BackfillState
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkEntity
 import com.trenching.bot.console.automation.mapper.AutomationBackfillRequestMapperImpl
 import com.trenching.bot.console.automation.mapper.AutomationResponseMapperImpl
@@ -29,6 +31,7 @@ import com.trenching.bot.console.capture.MutableClock
 import com.trenching.bot.console.mapper.ConsoleErrorMapperImpl
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.test.assertEquals
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
@@ -56,7 +59,7 @@ class AutomationControllerTest : AutomationDatabaseTest() {
 
     private fun mvc(properties: AutomationProperties, manualRun: AutomationManualRun): MockMvc =
         MockMvcBuilders.standaloneSetup(AutomationController(query(properties, clock, usage), dayService(properties, clock), sessionService(properties, clock),
-            manualRun, backfillService(properties, clock), backfillQuery(properties), AutomationResponseMapperImpl(), AutomationBackfillRequestMapperImpl()))
+            manualRun, backfillService(properties, clock), backfillQuery(properties), retryService(properties, clock), AutomationResponseMapperImpl(), AutomationBackfillRequestMapperImpl()))
             .setControllerAdvice(AutomationExceptionHandler(ConsoleErrorMapperImpl()))
             .build()
 
@@ -352,6 +355,79 @@ class AutomationControllerTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `retrying a failed item answers 200 with the item back in capture and its retry count, and the item read says whether it can be retried`() {
+        seedThreeNights()
+        items.saveAll(listOf(failedItem(1, "tonight", "RATES_INCOMPLETE"), failedItem(2, "tonight", "BACKFILL_BUDGET")))
+
+        val before = ok(get("/api/automation/items/item-1"), capturing)["item"]
+        val blocked = ok(get("/api/automation/items/item-2"), capturing)["item"]
+        val retried = ok(retryRequest("/api/automation/items/item-1/retry", "retry-1"), capturing)["item"]
+
+        assertEquals(true, before["retryRefusal"].isNull)
+        assertEquals(0, before["retries"].asInt())
+        assertEquals("RETRY_NOT_ALLOWED", blocked["retryRefusal"].asString())
+        assertEquals(listOf("CAPTURING", "RATES", 1, 1), listOf(retried["state"].asString(), retried["step"].asString(), retried["stepAttempt"].asInt(), retried["retries"].asInt()))
+        assertEquals(true, retried["failureCode"].isNull)
+        assertEquals("ITEM_NOT_FAILED", retried["retryRefusal"].asString())
+    }
+
+    @Test
+    fun `a retry that is refused answers 409 with the refusal code, and the failure code for an item that cannot be retried`() {
+        seedThreeNights()
+        items.saveAll(listOf(failedItem(1, "tonight", "BACKFILL_BUDGET"), item(2, "tonight", AutomationItemState.ABANDONED), failedItem(3, "tonight", "X")))
+
+        val notAllowed = conflict(retryRequest("/api/automation/items/item-1/retry", "retry-1"), capturing)
+        val notFailed = conflict(retryRequest("/api/automation/items/item-2/retry", "retry-2"), capturing)
+        val disabled = conflict(retryRequest("/api/automation/items/item-3/retry", "retry-3"), mvc)
+
+        assertEquals("RETRY_NOT_ALLOWED", notAllowed["code"].asString())
+        assertEquals("BACKFILL_BUDGET", notAllowed["fields"]["failureCode"].asString())
+        assertEquals("ITEM_NOT_FAILED", notFailed["code"].asString())
+        assertEquals("CAPTURE_DISABLED", disabled["code"].asString())
+    }
+
+    @Test
+    fun `a retry of an item whose backfill is still scanning answers 409 BACKFILL_NOT_CAPTURING`() {
+        seedThreeNights()
+        backfills.save(AutomationBackfillEntity("bf-1", "req-1", WALLET, null, LocalDate.parse("2026-10-29"), LocalDate.parse("2026-10-30"), EVENING,
+            EVENING.plusSeconds(60), false, null, null, 20_000, BackfillState.SCANNING, EVENING, EVENING))
+        items.save(failedItem(1, "tonight", "X").apply { backfillId = "bf-1" })
+
+        val refused = conflict(retryRequest("/api/automation/items/item-1/retry", "retry-1"), capturing)
+
+        assertEquals("BACKFILL_NOT_CAPTURING", refused["code"].asString())
+    }
+
+    @Test
+    fun `a retry without a valid request id or with a malformed date is a 400, and an unknown item is a 404`() {
+        seedThreeNights()
+        items.save(failedItem(1, "tonight", "X"))
+
+        val missing = capturing.perform(post("/api/automation/items/item-1/retry").contentType(MediaType.APPLICATION_JSON).content("{}")).andReturn().response
+        val malformed = capturing.perform(post("/api/automation/items/item-1/retry").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"no good"}""")).andReturn().response
+        val badDate = capturing.perform(post("/api/automation/days/yesterday/retry").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"day-1"}""")).andReturn().response
+        val unknown = capturing.perform(post("/api/automation/items/nope/retry").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"retry-1"}""")).andReturn().response
+
+        assertEquals(listOf(400, 400, 400, 404), listOf(missing.status, malformed.status, badDate.status, unknown.status))
+        assertEquals("INVALID_REQUEST", body(missing)["code"].asString())
+        assertEquals("AUTOMATION_ITEM_NOT_FOUND", body(unknown)["code"].asString())
+    }
+
+    @Test
+    fun `retrying a day answers 200 with the retried item ids and the refusal code of each other failed item`() {
+        seedThreeNights()
+        items.saveAll(listOf(failedItem(1, "tonight", "RATES_INCOMPLETE"), failedItem(2, "tonight", "BACKFILL_BUDGET"), item(3, "tonight", AutomationItemState.SIMULATED)))
+
+        val result = ok(retryRequest("/api/automation/days/2026-11-02/retry", "day-1"), capturing)
+
+        assertEquals("2026-11-02", result["day"].asString())
+        assertEquals(listOf("item-1"), List(result["retried"].size()) { result["retried"][it].asString() })
+        assertEquals("RETRY_NOT_ALLOWED", result["refused"]["item-2"].asString())
+        assertEquals(1, result["refused"].size())
+        assertEquals(0, result["unchanged"].size())
+    }
+
+    @Test
     fun `run now answers 202 and queues one pass, a second request answers 202 and queues nothing more`() {
         lookup.actions += buy(1, 100, EVENING.minusSeconds(60))
 
@@ -604,12 +680,30 @@ class AutomationControllerTest : AutomationDatabaseTest() {
     private fun closeRequest(id: String, requestId: String) =
         post("/api/automation/sessions/$id/close").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"$requestId"}""")
 
-    private fun ok(request: RequestBuilder): JsonNode = respond(request, 200)
+    private val capturing: MockMvc by lazy {
+        val captureProperties = properties(captureEnabled = true)
+        mvc(captureProperties, AutomationManualRun(captureProperties, runtime, discovery(lookup, captureProperties, clock), scheduler, clock))
+    }
+
+    private fun failedItem(n: Int, sessionId: String, code: String) =
+        item(n, sessionId, AutomationItemState.FAILED).apply {
+            failureCode = code
+            step = AutomationStep.RATES
+            stepAttempt = 2
+            captureSessionId = "capture-$n"
+        }
+
+    private fun retryRequest(path: String, requestId: String) =
+        post(path).contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"$requestId"}""")
+
+    private fun conflict(request: RequestBuilder, on: MockMvc = mvc): JsonNode = respond(request, 409, on)
+
+    private fun ok(request: RequestBuilder, on: MockMvc = mvc): JsonNode = respond(request, 200, on)
 
     private fun accepted(request: RequestBuilder): JsonNode = respond(request, 202)
 
-    private fun respond(request: RequestBuilder, status: Int): JsonNode {
-        val response = mvc.perform(request).andReturn().response
+    private fun respond(request: RequestBuilder, status: Int, on: MockMvc = mvc): JsonNode {
+        val response = on.perform(request).andReturn().response
         assertEquals(status, response.status, response.contentAsString)
         return body(response)
     }
