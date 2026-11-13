@@ -9,12 +9,13 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption.ATOMIC_MOVE
 import java.nio.file.StandardCopyOption.REPLACE_EXISTING
 import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
 import tools.jackson.core.JacksonException
 import tools.jackson.databind.DeserializationFeature
 import tools.jackson.databind.JsonNode
 import tools.jackson.databind.ObjectMapper
 
-/** Capture directory primitives: symlink-safe paths, atomic writes, bounded hashed reads and a hash-enveloped manifest. */
+/** Capture directory primitives: link-safe paths, atomic writes, bounded hashed reads and a hash-enveloped manifest. */
 class CaptureArtifactStore(private val mapper: ObjectMapper) {
     fun root(directory: Path, create: Boolean): Path {
         val root = directory.toAbsolutePath().normalize()
@@ -22,7 +23,7 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
         for (component in root) {
             current = current.resolve(component)
             if (Files.exists(current, NOFOLLOW_LINKS)) {
-                if (Files.isSymbolicLink(current) || !Files.isDirectory(current, NOFOLLOW_LINKS)) fail("UNSAFE_DIRECTORY")
+                if (isLink(current) || !Files.isDirectory(current, NOFOLLOW_LINKS)) fail("UNSAFE_DIRECTORY")
             } else if (create) Files.createDirectory(current)
         }
         return root
@@ -47,7 +48,7 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
 
     fun lock(directory: Path): AutoCloseable {
         val file = root(directory, create = true).resolve(ChainCaptureFormat.CAPTURE_LOCK)
-        if (Files.isSymbolicLink(file)) fail("UNSAFE_PATH")
+        if (isLink(file)) fail("UNSAFE_PATH")
         val channel = FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.WRITE, NOFOLLOW_LINKS)
         val acquired = try { channel.tryLock() } catch (_: OverlappingFileLockException) { null } catch (exception: IOException) {
             channel.close()
@@ -74,7 +75,7 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
         val root = root(directory, create = true)
         val transactions = root.resolve(subdirectory)
         if (Files.exists(transactions, NOFOLLOW_LINKS)) {
-            if (Files.isSymbolicLink(transactions) || !Files.isDirectory(transactions, NOFOLLOW_LINKS)) fail("UNSAFE_PATH")
+            if (isLink(transactions) || !Files.isDirectory(transactions, NOFOLLOW_LINKS)) fail("UNSAFE_PATH")
         } else Files.createDirectory(transactions)
         val bytes = mapper.writeValueAsBytes(raw)
         if (bytes.size.toLong() > ChainCaptureFormat.MAX_RESPONSE_BYTES) fail("ARTIFACT_SIZE")
@@ -92,7 +93,7 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
         var current = root
         for (component in root.relativize(path)) {
             current = current.resolve(component)
-            if (Files.isSymbolicLink(current)) fail("SYMLINK")
+            if (isLink(current)) fail("SYMLINK")
         }
         if (!Files.isRegularFile(path, NOFOLLOW_LINKS)) fail("ARTIFACT_MISSING")
         return path
@@ -114,13 +115,20 @@ class CaptureArtifactStore(private val mapper: ObjectMapper) {
 
     internal fun atomicWrite(root: Path, relative: String, bytes: ByteArray) {
         val target = root.resolve(relative).normalize()
-        if (!target.startsWith(root) || Files.isSymbolicLink(target)) fail("UNSAFE_PATH")
+        if (!target.startsWith(root) || isLink(target)) fail("UNSAFE_PATH")
         val pending = Files.createTempFile(target.parent, ".capture-", ".pending")
         try {
             Files.write(pending, bytes)
             Files.move(pending, target, ATOMIC_MOVE, REPLACE_EXISTING)
         } finally { Files.deleteIfExists(pending) }
     }
+
+    /**
+     * A symbolic link or another reparse point, such as the directory junction any Windows account can create without the
+     * symbolic link privilege. Java reads a junction as a directory that is also "other", never as a symbolic link.
+     */
+    private fun isLink(path: Path): Boolean = Files.exists(path, NOFOLLOW_LINKS) &&
+        Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS).let { it.isSymbolicLink || it.isOther }
 
     private fun hash(bytes: ByteArray): String = Sha256.hex(bytes)
 

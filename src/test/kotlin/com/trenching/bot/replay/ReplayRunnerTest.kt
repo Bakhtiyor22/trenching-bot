@@ -465,9 +465,10 @@ class ReplayRunnerTest {
     @Test
     fun `datasets persistence would reject fail at load time`() {
         val json = DipSample.json()
-        // Each failure must come from the specific check, not from the checksum mismatch the edit also causes.
+        // Each failure must come from the specific check, not from the checksum mismatch the edit also causes. The block time edit
+        // matches any line break, since a Windows checkout with core.autocrlf has CRLF in the sample.
         listOf(
-            json.replace("2026-10-01T00:00:00Z\",\n      \"baseMint", "2026-10-01T00:00:00.000000001Z\",\n      \"baseMint") to "microsecond",
+            json.replace(Regex("2026-10-01T00:00:00Z(\",\\s+\"baseMint)"), "2026-10-01T00:00:00.000000001Z\$1") to "microsecond",
             json.replace("\"pumpfun-bonding-curve-trade/v1\"", "\"" + "s".repeat(129) + "\"") to "maxLength=128",
         ).forEach { (tampered, reason) ->
             val error = assertFailsWith<IllegalArgumentException> { loader.load(tampered.byteInputStream()) }
