@@ -1,5 +1,7 @@
 import type { Config, ConfigLimits, PriceMeasure, Range, RunStartRequest } from '../../api/types';
 import { isSolanaAddress } from '../../lib/base58';
+import { SELL_CHECK_NEEDS_TRADES, SIGNAL_SIZE_NEEDS_TRADES } from '../../lib/codes';
+import { recordsTrades, TRADES_SCHEMA_VERSION } from '../../lib/datasetSchema';
 import { trimFractionZeros, validateDecimal } from '../../lib/decimal';
 import { bpsToPercent } from '../../lib/percent';
 
@@ -103,13 +105,66 @@ export const FIELD_HINTS: Record<
   latencySlots: 'Slots between a trigger and the trade that fills it (1 = next slot).',
   maxAgeSlots: 'How old (by price slot) an observation may be when used.',
   quoteMint: 'Only swaps against this mint create signals. Wrapped SOL by default.',
-  minSignalSol:
-    "Decu's buy is a signal only when it pays more than this, curve payment plus protocol and creator fees; empty for no minimum. Needs a dataset of schema 4 or later.",
+  minSignalSol: `Decu's buy is a signal only when it pays more than this, curve payment plus protocol and creator fees; empty for no minimum. Needs a dataset of schema ${TRADES_SCHEMA_VERSION} or later.`,
   priceMeasure:
     'Which price the reference, the dip and take profit / stop loss compare. The exit levels still come from our own fill.',
-  followWalletSells:
-    "No entry once Decu sells the token before the dip, including a sell in the dip's own slot; sell everything if he sells while we hold. Needs a dataset of schema 4 or later.",
+  followWalletSells: `No entry once Decu sells the token before the dip, including a sell in the dip's own slot; sell everything if he sells while we hold. Needs a dataset of schema ${TRADES_SCHEMA_VERSION} or later.`,
 };
+
+/**
+ * The rules that read the tracked wallet's trades from the market data, in the order the backend checks them
+ * (`ReplayRunner.run`): the sell rule, then the minimum signal size. A dataset that records no trades refuses either.
+ */
+export const TRADE_RULES = ['followWalletSells', 'minSignalSol'] as const;
+export type TradeRule = (typeof TRADE_RULES)[number];
+
+/** The run-start refusal code of each trade rule on a dataset that records no trades. */
+const TRADE_RULE_CODES: Record<TradeRule, string> = {
+  followWalletSells: SELL_CHECK_NEEDS_TRADES,
+  minSignalSol: SIGNAL_SIZE_NEEDS_TRADES,
+};
+
+/** The trade rules switched on in [values]: the sell rule ticked, a minimum signal size typed. */
+export function activeTradeRules(values: RunFormValues): TradeRule[] {
+  return TRADE_RULES.filter((rule) =>
+    rule === 'followWalletSells' ? values.followWalletSells : values.minSignalSol.trim() !== '',
+  );
+}
+
+/**
+ * The trade rules on in [values] that a dataset of [schemaVersion] cannot run, so a start would be refused; none when
+ * the dataset records trades or its schema is not known.
+ */
+export function tradeRuleConflicts(
+  values: RunFormValues,
+  schemaVersion: number | undefined,
+): TradeRule[] {
+  return schemaVersion === undefined || recordsTrades(schemaVersion)
+    ? []
+    : activeTradeRules(values);
+}
+
+/**
+ * The trade rules to turn off after a refusal [code]. The backend names only the first rule it checks, but the
+ * refusal proves the dataset records no trades, so every trade rule still on goes, or the named one when none is.
+ * None for any other refusal.
+ */
+export function refusedTradeRules(values: RunFormValues, code: string | null): TradeRule[] {
+  const named = TRADE_RULES.find((rule) => TRADE_RULE_CODES[rule] === code);
+  if (!named) return [];
+  const active = activeTradeRules(values);
+  return active.length > 0 ? active : [named];
+}
+
+/** The form values that turn [rules] off: the sell rule unticked, the minimum signal size cleared. */
+export function tradeRulesOff(
+  rules: readonly TradeRule[],
+): Partial<Pick<RunFormValues, TradeRule>> {
+  return {
+    ...(rules.includes('followWalletSells') ? { followWalletSells: false } : {}),
+    ...(rules.includes('minSignalSol') ? { minSignalSol: '' } : {}),
+  };
+}
 
 export function formValuesFrom(config: Config, datasetId: string | null): RunFormValues {
   return {

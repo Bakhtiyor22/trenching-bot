@@ -7,6 +7,7 @@ import type { Scenario } from '../../api/types';
 import {
   HOLDING_SELL_TIME,
   NO_DIP_MINT,
+  REAL_MINT,
   SAMPLE_RUN_ID,
   sampleRunDetail,
   SOL_MINT,
@@ -59,7 +60,7 @@ describe('results chart page', () => {
 
   it('applies From seconds on Enter and retains chart state in the Back link', async () => {
     const requests: URL[] = [];
-    const start = Date.parse(v4Chart.range.from);
+    const start = Date.parse(v4Chart.range.from!);
     server.use(
       http.get('/api/runs/:id/chart', ({ request }) => {
         requests.push(new URL(request.url));
@@ -160,5 +161,29 @@ describe('results chart page', () => {
       url: `/runs/${WALLET_SELL_RUN_ID}/chart?pair=${NO_DIP_MINT}/${SOL_MINT}`,
     });
     expect(await screen.findByText('Decu sold before the dip')).toBeInTheDocument();
+  });
+
+  it('explains a token with no recorded trades instead of a blank chart', async () => {
+    const detail = withRunSetup(sampleRunDetail);
+    const [first, ...rest] = detail.scenarios as [Scenario, ...Scenario[]];
+    // The run holds no observations of this pair, so the mock answers its chart as the backend does: range null.
+    server.use(
+      http.get('/api/runs/:id', () =>
+        HttpResponse.json({
+          ...detail,
+          scenarios: [{ ...first, pair: { base: REAL_MINT, quote: SOL_MINT } }, ...rest],
+        }),
+      ),
+    );
+    renderPage(<RunChartPage />, { path: '/runs/:id/chart', url: `/runs/${SAMPLE_RUN_ID}/chart` });
+    expect(await screen.findByText('No trades recorded for this pair')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'This run has no market observations of 5bYU…kbDs / SOL, so there is nothing to chart.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole('link', { name: 'Back to run' })).toHaveLength(2);
+    expect(screen.queryByLabelText('From (local time)')).not.toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/Invalid Date|1970/);
   });
 });

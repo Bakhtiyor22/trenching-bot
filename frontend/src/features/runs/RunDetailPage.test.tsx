@@ -417,7 +417,9 @@ describe('RunDetailPage', () => {
 
   it('shows an error for an unknown run', async () => {
     renderRun('does-not-exist');
-    expect(await screen.findByText('Run does-not-exist not found')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Simulation run not found runId=does-not-exist'),
+    ).toBeInTheDocument();
   });
 
   describe('in USDT and with market links', () => {

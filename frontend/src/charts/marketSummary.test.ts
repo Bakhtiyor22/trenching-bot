@@ -62,6 +62,20 @@ describe('market summary', () => {
     expect(cycleStart(data)).toBe(Date.parse('2026-10-15T15:23:00Z'));
     expect(cycleStart({ ...data, markers: { ...data.markers, items: [] } })).toBeNull();
   });
+  it('shows all of a chart without a first buy or a recorded time, and starts at a lone known bound', () => {
+    // The backend's chart of a pair with no observations: no Decu action and no range.
+    const unrecorded = {
+      range: { from: null, to: null },
+      markers: { items: [] },
+    } as unknown as ChartResponse;
+    for (const preset of ['cycle', '5m', '15m', '1h', 'all'] as const)
+      expect(marketRange(unrecorded, preset)).toBeNull();
+    const openEnded = { ...unrecorded, range: { from: '2026-10-15T15:20:00Z', to: null } };
+    expect(marketRange(openEnded, 'cycle')).toEqual({
+      from: '2026-10-15T15:17:00.000Z',
+      to: '2026-10-15T15:23:00.000Z',
+    });
+  });
   it('writes offsets from the cycle start in whole signed seconds', () => {
     const origin = Date.parse('2026-10-15T15:23:00Z');
     expect(secondsFrom(origin, origin)).toBe('0s');

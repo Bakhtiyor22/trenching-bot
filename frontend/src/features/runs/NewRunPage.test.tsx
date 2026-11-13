@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import type { RunStartRequest } from '../../api/types';
@@ -8,6 +8,7 @@ import {
   SAMPLE_RUN_ID,
   sampleDataset,
   sampleRun,
+  v4Dataset,
 } from '../../mocks/fixtures';
 import { server } from '../../mocks/server';
 import { renderPage } from '../../test/render';
@@ -25,6 +26,20 @@ function renderNewRun(url = `/runs/new?datasetId=${SAMPLE_DATASET_ID}`) {
 function errorIdsOf(input: HTMLElement): string[] {
   return (input.getAttribute('aria-describedby') ?? '').split(/\s+/).filter(Boolean);
 }
+
+/** Records each run start body, then lets the default mock answer it the way the backend would. */
+function recordRunStarts(): RunStartRequest[] {
+  const bodies: RunStartRequest[] = [];
+  server.use(
+    http.post('/api/runs', async ({ request }) => {
+      bodies.push((await request.clone().json()) as RunStartRequest);
+    }),
+  );
+  return bodies;
+}
+
+const BOTH_RULES_TITLE = "This dataset cannot show Decu's sells or size his buy";
+const SELLS_CHECKBOX = "Follow Decu's sells (no entry, and exit if holding)";
 
 describe('NewRunPage', () => {
   it('formats changed agreed values and resets just one field', async () => {
@@ -132,7 +147,9 @@ describe('NewRunPage', () => {
 
   it('shows an unknown linked dataset instead of choosing a different one', async () => {
     renderNewRun('/runs/new?datasetId=missing');
-    expect(await screen.findByText('Dataset missing not found')).toBeInTheDocument();
+    expect(
+      await screen.findByText('Replay dataset not found datasetId=missing'),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Start run/ })).not.toBeInTheDocument();
   });
 
@@ -425,76 +442,143 @@ describe('NewRunPage', () => {
     expect(screen.getByText('Changed by you · agreed More than 1.9 SOL, fees included')).toBeInTheDocument();
   });
 
-  it("explains a dataset that cannot size Decu's buy and reruns it without a minimum", async () => {
-    const bodies: RunStartRequest[] = [];
-    server.use(
-      http.post('/api/runs', async ({ request }) => {
-        const body = (await request.json()) as RunStartRequest;
-        bodies.push(body);
-        if (body.config?.minSignalSol)
-          return HttpResponse.json(
-            { code: 'SIGNAL_SIZE_NEEDS_TRADES', message: 'needs trades', fields: {} },
-            { status: 409 },
-          );
-        return HttpResponse.json({ run: sampleRun, created: true });
-      }),
-    );
+  // The schema 3 sample with the agreed strategy: both its sell rule and its minimum signal size need trader data the
+  // sample does not record. These tests use the default mock, which refuses them as the backend does.
+  it('flags both rules the schema 3 sample cannot run and starts it after one action that turns them off', async () => {
+    const bodies = recordRunStarts();
     const { user } = renderNewRun();
-    await screen.findByLabelText(/Minimum signal size/);
-    await user.click(screen.getByRole('button', { name: 'Start run' }));
-    expect(await screen.findByText("This dataset cannot size Decu's buy")).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Run without a minimum signal size' }));
-    await screen.findByText('Run detail page');
-    expect(bodies.map((b) => b.config?.minSignalSol ?? null)).toEqual(['1.9', null]);
-    expect(screen.queryByLabelText(/Minimum signal size/)).toBeNull();
+    const notice = await screen.findByRole('status', { name: BOTH_RULES_TITLE });
+    expect(notice).toHaveTextContent(
+      'Its market recording is schema 3, which does not record who traded, so Decu\'s sells cannot be followed and the size of his buy cannot be checked. Turn off "Follow Decu\'s sells" and clear "Minimum signal size" to run it, or choose a dataset of schema 4 or later.',
+    );
+    expect(
+      screen.getAllByText("Can't run on this dataset: schema 3 does not record who traded."),
+    ).toHaveLength(2);
+
+    await user.click(within(notice).getByRole('button', { name: 'Turn off both settings' }));
+    expect(screen.getByRole('checkbox', { name: SELLS_CHECKBOX })).not.toBeChecked();
+    expect(screen.getByLabelText(/Minimum signal size/)).toHaveValue('');
+    expect(screen.getByText('Changed by you · agreed On')).toBeInTheDocument();
+    expect(
+      screen.getByText('Changed by you · agreed More than 1.9 SOL, fees included'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Changed · 2 settings')).toBeInTheDocument();
+    expect(screen.queryByRole('status', { name: BOTH_RULES_TITLE })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Can't run on this dataset/)).not.toBeInTheDocument();
+    // The action's notice is gone, so focus waits on the next step.
+    expect(screen.getByRole('button', { name: 'Start run' })).toHaveFocus();
+
+    await user.keyboard('{Enter}');
+    expect(await screen.findByText('Run detail page')).toBeInTheDocument();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({
+      presetId: runPreset.id,
+      config: { followWalletSells: false, minSignalSol: null, priceMeasure: 'POST_TRADE' },
+    });
   });
 
-  it("explains a dataset that cannot show Decu's sells and reruns it with the sell rule off", async () => {
-    const bodies: RunStartRequest[] = [];
-    server.use(
-      http.post('/api/runs', async ({ request }) => {
-        const body = (await request.json()) as RunStartRequest;
-        bodies.push(body);
-        return body.config?.followWalletSells
-          ? HttpResponse.json(
-              {
-                code: 'SELL_CHECK_NEEDS_TRADES',
-                message:
-                  'The wallet-sell rule needs a dataset whose observations record trades schemaVersion=3 minimumSchemaVersion=4 (SELL_CHECK_NEEDS_TRADES)',
-                fields: {},
-              },
-              { status: 409 },
-            )
-          : HttpResponse.json({ run: sampleRun, created: true }, { status: 201 });
-      }),
-    );
+  it('starts the schema 3 sample after one action when the agreed rules are refused, never refusing twice', async () => {
+    const bodies = recordRunStarts();
     const { user } = renderNewRun();
     await screen.findByLabelText(/Fill delay/);
-    await user.click(screen.getByRole('button', { name: /Start run/ }));
-    expect(await screen.findByText("This dataset cannot show Decu's sells")).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+
+    // The backend names only the sell rule, but the one action turns off both.
+    const refusal = await screen.findByRole('alert', { name: BOTH_RULES_TITLE });
     expect(
-      screen.getByText(
-        'Its market recording is schema 3, which does not record who traded. Turn off "Follow Decu\'s sells" to run it, or re-export the capture as a newer dataset.',
-      ),
+      within(refusal).getByText('Technical code: SELL_CHECK_NEEDS_TRADES'),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/minimumSchemaVersion/)).not.toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Run without following sells' }));
+    expect(refusal).not.toHaveTextContent(/minimumSchemaVersion/);
+    await user.click(within(refusal).getByRole('button', { name: 'Run without both settings' }));
+
     expect(await screen.findByText('Run detail page')).toBeInTheDocument();
     expect(bodies).toHaveLength(2);
     const [refused, rerun] = bodies;
+    expect(refused?.config).toMatchObject({ followWalletSells: true, minSignalSol: '1.9' });
     expect(rerun).toEqual({
       ...refused,
-      config: { ...refused?.config, followWalletSells: false },
+      config: { ...refused?.config, followWalletSells: false, minSignalSol: null },
     });
-    expect(refused?.config?.priceMeasure).toBe('POST_TRADE');
   });
 
-  it('refuses the bundled schema-3 sample with the sell rule on, as the backend does', async () => {
+  it('refuses the minimum signal size on its own once the sell rule is off, and reruns without it', async () => {
+    const bodies = recordRunStarts();
     const { user } = renderNewRun();
-    await screen.findByLabelText(/Fill delay/);
-    await user.click(screen.getByRole('button', { name: /Start run/ }));
-    expect(await screen.findByText("This dataset cannot show Decu's sells")).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Run without following sells' }));
+    await user.click(await screen.findByRole('checkbox', { name: SELLS_CHECKBOX }));
+    const notice = screen.getByRole('status', { name: "This dataset cannot size Decu's buy" });
+    expect(
+      within(notice).getByRole('button', { name: 'Clear the minimum signal size' }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+    const refusal = await screen.findByRole('alert', {
+      name: "This dataset cannot size Decu's buy",
+    });
+    expect(
+      within(refusal).getByText('Technical code: SIGNAL_SIZE_NEEDS_TRADES'),
+    ).toBeInTheDocument();
+    await user.click(
+      within(refusal).getByRole('button', { name: 'Run without a minimum signal size' }),
+    );
+
     expect(await screen.findByText('Run detail page')).toBeInTheDocument();
+    expect(
+      bodies.map((body) => [body.config?.followWalletSells, body.config?.minSignalSol]),
+    ).toEqual([
+      [false, '1.9'],
+      [false, null],
+    ]);
+  });
+
+  it('refuses the sell rule on its own once the minimum is cleared, and reruns without it', async () => {
+    const bodies = recordRunStarts();
+    const { user } = renderNewRun();
+    await user.clear(await screen.findByLabelText(/Minimum signal size/));
+    const notice = screen.getByRole('status', { name: "This dataset cannot show Decu's sells" });
+    expect(
+      within(notice).getByRole('button', { name: "Turn off Follow Decu's sells" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+    const refusal = await screen.findByRole('alert', {
+      name: "This dataset cannot show Decu's sells",
+    });
+    await user.click(within(refusal).getByRole('button', { name: 'Run without following sells' }));
+
+    expect(await screen.findByText('Run detail page')).toBeInTheDocument();
+    expect(
+      bodies.map((body) => [body.config?.followWalletSells, body.config?.minSignalSol]),
+    ).toEqual([
+      [true, null],
+      [false, null],
+    ]);
+  });
+
+  it('flags the rules only while the chosen dataset cannot run them, and never changes them itself', async () => {
+    server.use(
+      http.get('/api/datasets', () =>
+        HttpResponse.json({ items: [sampleDataset, v4Dataset], page: 0, size: 100, total: 2 }),
+      ),
+    );
+    const bodies = recordRunStarts();
+    const { user } = renderNewRun();
+    expect(await screen.findByRole('status', { name: BOTH_RULES_TITLE })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox', { name: /Dataset/ }));
+    await user.click(await screen.findByRole('option', { name: /chart-capture-v4/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole('status', { name: BOTH_RULES_TITLE })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByText(/Can't run on this dataset/)).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: SELLS_CHECKBOX })).toBeChecked();
+    expect(screen.getByLabelText(/Minimum signal size/)).toHaveValue('1.9');
+    expect(screen.getByText('Applied')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Start run' }));
+    expect(await screen.findByText('Run detail page')).toBeInTheDocument();
+    expect(bodies[0]).toMatchObject({
+      datasetId: v4Dataset.id,
+      config: { followWalletSells: true, minSignalSol: '1.9' },
+    });
   });
 });

@@ -1,5 +1,5 @@
 import type { ChartResponse } from '../api/types';
-import { plotTime } from './priceChart';
+import { boundTime, plotTime } from './priceChart';
 import {
   addDecimals,
   compactDecimal,
@@ -86,6 +86,7 @@ export function cycleStart(data: ChartResponse, sourceSlot?: number): number | n
   return first ? plotTime(first) : null;
 }
 
+/** The window a preset shows; null for All, and when the chart has no first buy or recorded time to start one at. */
 export function marketRange(
   data: ChartResponse,
   preset: MarketRangePreset,
@@ -93,10 +94,11 @@ export function marketRange(
 ): MarketTimeRange | null {
   if (preset === 'all') return null;
   const actions = trackedActions(data);
-  const start = cycleStart(data, sourceSlot) ?? Date.parse(data.range.from);
+  const start = cycleStart(data, sourceSlot) ?? boundTime(data.range.from);
+  if (start === null) return null;
   if (preset === 'cycle') {
     const last = actions.at(-1);
-    const end = Math.max(start, last ? plotTime(last) : Date.parse(data.range.to));
+    const end = Math.max(start, last ? plotTime(last) : (boundTime(data.range.to) ?? start));
     return {
       from: new Date(start - 3 * MINUTE).toISOString(),
       to: new Date(end + 3 * MINUTE).toISOString(),

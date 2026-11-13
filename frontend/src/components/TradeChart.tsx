@@ -45,6 +45,7 @@ import {
   type MarketTimeRange,
 } from '../charts/marketSummary';
 import {
+  boundTime,
   chartCandleOption,
   chartExtent,
   chartMarketPoints,
@@ -113,6 +114,26 @@ function ChartState({ children }: { children: React.ReactNode }) {
     <Card component="section" padding="lg" style={{ minHeight: 600 }}>
       {children}
     </Card>
+  );
+}
+
+/** In place of the chart for a pair the run or dataset has no market observations of. */
+export function UnrecordedPairState({
+  kind,
+  pair,
+  action,
+}: {
+  kind: TradeChartProps['kind'];
+  pair: string;
+  action?: ReactNode;
+}) {
+  const [base = '', quote = ''] = pair.split('/');
+  return (
+    <EmptyState
+      title="No trades recorded for this pair"
+      description={`This ${kind} has no market observations of ${mintLabel(base)} / ${mintLabel(quote)}, so there is nothing to chart.`}
+      action={action}
+    />
   );
 }
 
@@ -325,7 +346,7 @@ function TradeChartView({
   const held = hoverTime === null ? null : marketPointAt(points, hoverTime);
   const hovered = held;
   const origin = fullData ? cycleStart(fullData, cycle?.sourceSlot) : null;
-  const zero = origin ?? (data?.range.from ? Date.parse(data.range.from) : null);
+  const zero = origin ?? boundTime(data?.range.from ?? null);
   const span = window ? window.to - window.from : Infinity;
   const hoverLabel = (time: number) => {
     const precise = span < 120_000;
@@ -364,30 +385,31 @@ function TradeChartView({
         (a, b) => plotTime(a) - plotTime(b) || a.slot - b.slot,
       )
     : [];
-  const option = visible
-    ? kind === 'run'
-      ? chartTimelineOption(
-          visible,
-          view,
-          levelsLayer ? scenarios.filter((s) => `${s.pair.base}/${s.pair.quote}` === pair) : [],
-          style,
-          origin,
-          {
+  const option =
+    visible && extent
+      ? kind === 'run'
+        ? chartTimelineOption(
+            visible,
+            view,
+            levelsLayer ? scenarios.filter((s) => `${s.pair.base}/${s.pair.quote}` === pair) : [],
+            style,
+            origin,
+            {
+              window: window ?? undefined,
+              extent,
+              fullPage: expanded || fullscreen,
+              drawing: tool !== 'pointer',
+              tokens,
+            },
+          )
+        : chartCandleOption(visible, view, style, origin, {
             window: window ?? undefined,
-            extent: extent ?? undefined,
+            extent,
             fullPage: expanded || fullscreen,
             drawing: tool !== 'pointer',
             tokens,
-          },
-        )
-      : chartCandleOption(visible, view, style, origin, {
-          window: window ?? undefined,
-          extent: extent ?? undefined,
-          fullPage: expanded || fullscreen,
-          drawing: tool !== 'pointer',
-          tokens,
-        })
-    : {};
+          })
+      : {};
 
   const writeSelection = useCallback(
     (action: MarketAction | null) => {
@@ -603,6 +625,13 @@ function TradeChartView({
       </ChartState>
     );
   if (!data || !visible) return null;
+  // The backend answers a pair the run or dataset has no observations of with an empty chart and no time range.
+  if (!extent)
+    return (
+      <ChartState>
+        <UnrecordedPairState kind={kind} pair={pair} />
+      </ChartState>
+    );
   const basis = data.valuationBasis;
   const missing = data.candles.reduce((sum, candle) => sum + candle.mcapMissingPoints, 0);
   const unsupported = data.candles.reduce((sum, candle) => sum + candle.mcapUnsupportedPoints, 0);
@@ -1098,6 +1127,7 @@ function TradeChartView({
           points={points}
         />
         {emptyActions &&
+          range &&
           inWindow?.candles.length === 0 &&
           inWindow.ticks.items.length === 0 &&
           !ranged.isFetching && (
@@ -1112,7 +1142,7 @@ function TradeChartView({
               }}
             >
               <EmptyState
-                title={`No trades between ${formatLocalTime(range?.from ?? data.range.from)} and ${formatLocalTime(range?.to ?? data.range.to)}`}
+                title={`No trades between ${formatLocalTime(range.from)} and ${formatLocalTime(range.to)}`}
                 description="Nobody traded this token in the selected range."
                 action={emptyActions}
               />

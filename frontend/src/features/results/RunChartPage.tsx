@@ -17,7 +17,7 @@ import { RefreshNotice } from '../../components/QueryView';
 import { sourceCrumbs } from '../runs/sourceCrumbs';
 import { StatusChip } from '../../components/StatusChip';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
-import { TradeChart } from '../../components/TradeChart';
+import { TradeChart, UnrecordedPairState } from '../../components/TradeChart';
 import { formatDecimal, formatSignedDecimal, trimFractionZeros } from '../../lib/decimal';
 import { mintLabel, shortId } from '../../lib/format';
 import { formatPercent, levelPercent } from '../../lib/percent';
@@ -385,9 +385,20 @@ export function RunChartPage() {
         ) : (
           <LoadingState label="Loading recorded window…" />
         )
+      ) : !extent ? (
+        <Section title="Chart">
+          <UnrecordedPairState
+            kind="run"
+            pair={key}
+            action={
+              <Button component={Link} to={paths.run(id)} variant="default">
+                Back to run
+              </Button>
+            }
+          />
+        </Section>
       ) : (
         range &&
-        extent &&
         initialRange && (
           <>
             <Stack gap="sm">

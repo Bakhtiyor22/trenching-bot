@@ -2,6 +2,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChartResponse } from '../api/types';
+import { REAL_MINT, SAMPLE_DATASET_ID, SAMPLE_RUN_ID, SOL_MINT } from '../mocks/fixtures';
 import { server } from '../mocks/server';
 import { renderPage } from '../test/render';
 import { TradeChart } from './TradeChart';
@@ -482,4 +483,23 @@ describe('TradeChart', () => {
     expect(screen.getByText('— / —')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Next Decu action' })).toBeDisabled();
   });
+
+  // The default mock answers a pair it holds no observations of as the backend does: an empty chart, range null.
+  it.each([
+    ['dataset', SAMPLE_DATASET_ID],
+    ['run', SAMPLE_RUN_ID],
+  ] as const)(
+    'explains a %s pair with no recorded trades instead of plotting it',
+    async (kind, id) => {
+      renderPage(<TradeChart kind={kind} id={id} pair={`${REAL_MINT}/${SOL_MINT}`} />);
+      expect(await screen.findByText('No trades recorded for this pair')).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          `This ${kind} has no market observations of 5bYU…kbDs / SOL, so there is nothing to chart.`,
+        ),
+      ).toBeInTheDocument();
+      expect(document.body).not.toHaveTextContent(/Invalid Date|1970/);
+      expect(renderedChart.current).toBeNull();
+    },
+  );
 });

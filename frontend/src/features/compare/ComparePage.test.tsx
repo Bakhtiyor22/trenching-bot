@@ -45,7 +45,7 @@ describe('ComparePage', () => {
   it('shows an unknown run as an error on its own card and keeps the others', async () => {
     renderCompare(`/compare?runs=${SAMPLE_RUN_ID},nope,${EDGE_RUN_ID}`);
     const failed = await screen.findByRole('alert');
-    expect(within(failed).getByText('Run nope not found')).toBeInTheDocument();
+    expect(within(failed).getByText('Simulation run not found runId=nope')).toBeInTheDocument();
     expect(within(failed).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     // The two loaded runs still compare, keeping their letters A and C.
     const gap = await screen.findByRole('region', { name: 'P&L difference' });

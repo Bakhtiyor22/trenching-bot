@@ -188,13 +188,21 @@ export function plotTime(item: { time: string; estimatedTime?: string }): number
   return Date.parse(item.estimatedTime ?? item.time);
 }
 
-/** Block-time bounds also contain the later estimated instants and bucket closes we plot. */
-export function chartExtent(response: ChartResponse): { from: number; to: number } {
-  const bounds = response.extent
+/** A bound of the chart's range in epoch milliseconds; null where the chart has none. */
+export function boundTime(bound: string | null): number | null {
+  return bound === null ? null : Date.parse(bound);
+}
+
+/**
+ * Block-time bounds also contain the later estimated instants and bucket closes we plot. Null when the chart holds no
+ * time at all, as for a pair the run or dataset has no observations of.
+ */
+export function chartExtent(response: ChartResponse): { from: number; to: number } | null {
+  const bounds: (number | null)[] = response.extent
     ? [Date.parse(response.extent.firstTime), Date.parse(response.extent.lastTime)]
-    : [Date.parse(response.range.from), Date.parse(response.range.to)];
+    : [boundTime(response.range.from), boundTime(response.range.to)];
   const coordinates = [
-    ...bounds,
+    ...bounds.filter((time) => time !== null),
     ...response.markers.items.map(plotTime),
     ...response.paperFills.map(plotTime),
     ...(response.ticks?.included
@@ -204,8 +212,9 @@ export function chartExtent(response: ChartResponse): { from: number; to: number
           Date.parse(candle.bucketStart) + response.bucketSeconds * 1000,
         ])),
   ].filter(Number.isFinite);
-  const from = coordinates.length ? Math.min(...coordinates) : 0;
-  const to = coordinates.length ? Math.max(...coordinates) : from;
+  if (!coordinates.length) return null;
+  const from = Math.min(...coordinates);
+  const to = Math.max(...coordinates);
   return { from, to: Math.max(to, from + 2000) };
 }
 
@@ -376,6 +385,9 @@ export function marketAxisDomain(values: number[]): { min: number; max: number }
   return { min: min - padding, max: max + padding };
 }
 
+/** The time axis of a chart that holds no time. Pages show an empty state instead; this only keeps the option valid. */
+const NO_TIME_EXTENT = { from: 0, to: 0 };
+
 /** [origin] is the time the axis counts seconds from, the cycle's first buy; the range start when omitted. */
 export function chartCandleOption(
   response: ChartResponse,
@@ -395,7 +407,7 @@ export function chartCandleOption(
   const color =
     (valid.at(-1)?.value ?? 0) >= (valid[0]?.value ?? 0) ? t.gain : t.loss;
   const rail = response.markers.clusters.length > 0;
-  const extent = config.extent ?? chartExtent(response);
+  const extent = config.extent ?? chartExtent(response) ?? NO_TIME_EXTENT;
   const extentMin = extent.from;
   const extentMax = extent.to;
   const padding = Math.max(1, (extentMax - extentMin) * 0.02);
