@@ -1,7 +1,7 @@
 # Persistence Patterns
 
 PostgreSQL 17, Spring Data JPA. **There is no Flyway for now; the entities are the schema.**
-Hibernate runs `ddl-auto: update` in `local` and `test` and `validate` in `prod`.
+Hibernate runs `ddl-auto: update` in `local`, `test` and `prod` (the Oracle server).
 
 ## Schema
 
@@ -18,8 +18,8 @@ Hibernate runs `ddl-auto: update` in `local` and `test` and `validate` in `prod`
 - `update` only **adds**: tables, columns, declared unique keys and indexes. It never drops,
   renames, narrows or retypes, and it never creates CHECK constraints from annotations alone or
   partial indexes. After such a change, reset the local database (`docker compose down -v`).
-- `prod` only validates, so a schema change needs SQL applied to production by hand before
-  deploying. State that SQL in the plan or PR.
+- `update` only adds, also on the server (`prod`), so a destructive change needs SQL applied to the server database by
+  hand before deploying. Never reset the server database. State that SQL in the plan or PR.
 - `docs/schema/` holds the last Flyway SQL for reference, including the CHECK constraints,
   composite foreign keys and the partial unique index `uq_positions_open_scenario`, which
   Hibernate does not create.
@@ -73,7 +73,7 @@ Rules (from `CLAUDE.md`, expanded):
 - `var` for what changes, `val` for what never does after insert.
 - **No business logic** — no validation methods, no service calls, no mapping functions.
 - `@Table(name = ...)` and `@Column(name = ...)` explicit; `nullable`, `length`, `precision`,
-  `scale` explicit — they define the column, and `prod` validates against them.
+  `scale` explicit — they define the column Hibernate creates.
 - `@Enumerated(EnumType.STRING)` always, with a `length` that fits the longest constant.
 - Money/price columns: `@Column(precision = ..., scale = ...)` with the domain's `numeric` scale.
 - Entities are internal to their module and live in its `model/` (or `infrastructure/persistence/`)

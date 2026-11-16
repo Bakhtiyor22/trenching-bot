@@ -25,7 +25,7 @@ trenching:
       - label: Decu
         address: 4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9
   # Automated discovery, capture and sweep of one wallet's buys (README, Console → Automation). Off unless enabled, and only
-  # under the local profile with the console enabled; capture-enabled false is phase 0, discovery only.
+  # under the local or prod profile with the console enabled; capture-enabled false is phase 0, discovery only.
   automation:
     enabled: false
     capture-enabled: false
@@ -60,17 +60,22 @@ trenching:
     backfill-max-requests: 20000
     backfill-reserve-requests: 1400
 
-# Provider pacing is shared by every capture against the same RPC endpoint in this process. 4 requests in flight with
-# a start every 125 ms (8 per second) stays below the 10 requests per second free tier; 1 and 500ms reproduce the old pacing.
+# Provider pacing is shared by every capture and discovery against the same RPC endpoint in this process. The Helius free tier
+# refused requests at 4 in flight and 8 starts a second (hundreds of 429s a day); 2 in flight and a start every 250 ms
+# (4 a second) stays under it. 1 and 500ms reproduce the old fixed pacing.
 marketdata:
   capture:
-    max-concurrent-requests: 4
-    min-request-interval: 125ms
+    max-concurrent-requests: 2
+    min-request-interval: 250ms
+  reference-rates:
+    # api.binance.com is unreachable from this network since 2026-11-04; Binance's public market-data mirror serves the same klines and ticker.
+    # Inert until marketdata.reference-rates.enabled is true, which only the local and prod profiles set.
+    base-url: https://data-api.binance.vision
 
 walletactivity:
   capture:
-    max-concurrent-requests: 4
-    min-request-interval: 125ms
+    max-concurrent-requests: 2
+    min-request-interval: 250ms
 
 server:
   port: ${SERVER_PORT:8081}
@@ -84,3 +89,11 @@ management:
     health:
       probes:
         enabled: true
+
+# Written only where a profile sets logging.file.name; harmless otherwise.
+logging:
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7
+      total-size-cap: 500MB

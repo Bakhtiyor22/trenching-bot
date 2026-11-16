@@ -8,8 +8,8 @@ import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 
 /**
- * Active wherever Hibernate maintains the schema itself (`ddl-auto: update`, the `local` and `test` profiles). Production only
- * validates and its schema is changed by hand, so nothing is repaired there.
+ * Active wherever Hibernate maintains the schema itself (`ddl-auto: update`: the `local`, `test` and `prod` profiles). Where a deployment sets `validate`,
+ * its schema is changed by hand, so nothing is repaired there.
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = ["spring.jpa.hibernate.ddl-auto"], havingValue = "update")

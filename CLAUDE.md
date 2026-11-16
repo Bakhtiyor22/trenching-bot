@@ -53,8 +53,8 @@ implementation, test first.
 ## Database schema
 
 - There is no Flyway for now (removed 2026-10-02). The JPA entities are the
-  schema: Hibernate runs `ddl-auto: update` in the `local` and `test` profiles
-  and `validate` in `prod`.
+  schema: Hibernate runs `ddl-auto: update` in the `local`, `test` and `prod`
+  profiles (`prod` is the Oracle server).
 - Declare every business unique key and lookup index on the entity, via
   `@Table(uniqueConstraints = [...], indexes = [...])`. Code that relies on a
   duplicate insert failing (e.g. `SimulationRunLedger`) only works if the
@@ -62,8 +62,9 @@ implementation, test first.
 - `update` only adds tables and columns, plus the unique keys and indexes
   declared on entities. It never drops, renames, narrows or retypes anything.
   After such a change, reset the local database with `docker compose down -v`.
-- `prod` only validates, so any schema change must be applied to the
-  production database by hand before deploying.
+  On the server, apply a destructive change (drop, rename, narrow, retype) to
+  the database by hand before deploying; never run `docker compose down -v`
+  there.
 - [docs/schema/](docs/schema/) keeps the last Flyway SQL for reference. It also
   holds the CHECK constraints, composite foreign keys and the partial unique
   index `uq_positions_open_scenario`, which Hibernate does not create.

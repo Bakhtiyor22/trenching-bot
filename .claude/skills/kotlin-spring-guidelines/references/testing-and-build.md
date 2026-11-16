@@ -98,9 +98,9 @@ does not need a test first — say why you skipped it.
   running. That is an environment failure: report it with the output, say which tests could not run,
   and do not claim a green build.
 - `JAVA_HOME is not set` / `no Java executable` → the JDK is not configured for this shell.
-- `Schema-validation: missing table/column` at context start → only `prod` validates; the production
-  database is missing a change made to an entity. Never "fix" it by switching `prod` away from
-  `validate`.
+- A server start failing on a column type or constraint mismatch → `update` (also in `prod`) only adds, so a
+  destructive entity change reached the server without its hand-applied SQL. Apply the SQL; never reset the server
+  database.
 - A unique key or index missing locally → it is not declared in the entity's `@Table`, or the local
   database predates a rename/retype that `update` cannot apply (`docker compose down -v`).
 - **Never delete, `@Disabled`, or weaken a failing test to get green.**

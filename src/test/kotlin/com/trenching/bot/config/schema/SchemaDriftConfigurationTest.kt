@@ -27,10 +27,10 @@ class SchemaDriftConfigurationTest {
     }
 
     @Test
-    fun `the production profile validates, so nothing is repaired there`() {
+    fun `the production profile updates the schema like local, so the repair is registered`() {
         runner.withInitializer(ConfigDataApplicationContextInitializer()).withPropertyValues("spring.profiles.active=prod").run { context ->
-            assertThat(context.environment.getProperty(DDL_AUTO)).isEqualTo("validate")
-            assertThat(context).doesNotHaveBean(HibernatePropertiesCustomizer::class.java)
+            assertThat(context.environment.getProperty(DDL_AUTO)).isEqualTo("update")
+            assertThat(context).hasSingleBean(HibernatePropertiesCustomizer::class.java)
         }
     }
 

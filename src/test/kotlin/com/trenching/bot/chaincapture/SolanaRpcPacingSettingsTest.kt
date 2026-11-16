@@ -44,11 +44,11 @@ class SolanaRpcPacingSettingsTest {
     }
 
     @Test
-    fun `application yml documents the defaults under both capture prefixes`() {
+    fun `application yml sets the shared Helius pace under both capture prefixes`() {
         val yaml = YamlPropertiesFactoryBean().apply { setResources(ClassPathResource("application.yml")) }.`object`!!
         listOf("marketdata.capture", "walletactivity.capture").forEach { prefix ->
-            assertEquals("4", yaml.getProperty("$prefix.max-concurrent-requests"))
-            assertEquals("125ms", yaml.getProperty("$prefix.min-request-interval"))
+            assertEquals("2", yaml.getProperty("$prefix.max-concurrent-requests"))
+            assertEquals("250ms", yaml.getProperty("$prefix.min-request-interval"))
         }
     }
 

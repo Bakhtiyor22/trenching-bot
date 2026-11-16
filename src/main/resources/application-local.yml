@@ -17,32 +17,14 @@ spring:
 trenching:
   console:
     enabled: true
-  # Watch Decu around the clock: discovery, capture and the sweep (README, Console -> Automation).
-  automation:
-    enabled: true
-    capture-enabled: true
-    poll-always: true
-    wallet: 4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9
-    # Helius free tier: 1M credits a month, about 33,000 a day; 20,000 leaves room for manual captures within the month.
-    max-requests-per-24h: 20000
+  # Automation is off here. Live automation settings live in the untracked config/application-local.yml; run at most one
+  # automation instance across the PC and the server.
 
 # SOL/USDT rates from Binance's public API (no key): the console's USDT view, and the captures' rates step that the
-# strategy's USD market-cap check replays from.
+# strategy's USD market-cap check replays from. The mirror base-url and the Helius pacing are in application.yml.
 marketdata:
   reference-rates:
     enabled: true
-    # api.binance.com is unreachable from this network since 2026-11-04; Binance's public market-data mirror serves the same klines and ticker.
-    base-url: https://data-api.binance.vision
-  # The Helius free tier refused requests at 4 in flight and 8 starts a second (hundreds of 429s a day); 2 in flight and a
-  # start every 250 ms (4 a second) is the shared pace of every capture and discovery on the endpoint.
-  capture:
-    max-concurrent-requests: 2
-    min-request-interval: 250ms
-
-walletactivity:
-  capture:
-    max-concurrent-requests: 2
-    min-request-interval: 250ms
 
 management:
   endpoint:
@@ -54,10 +36,5 @@ management:
 logging:
   file:
     name: logs/trenching-bot.log
-  logback:
-    rollingpolicy:
-      max-file-size: 10MB
-      max-history: 7
-      total-size-cap: 500MB
   level:
     com.trenching.bot: DEBUG

@@ -1,4 +1,5 @@
-# Production settings.
+# The Oracle server profile (SPRING_PROFILES_ACTIVE=prod): the capture console, automation and the reference rates run here,
+# reached only through an SSH tunnel to the loopback address. The PC runs the local profile instead.
 #
 # The datasource is supplied entirely by the environment - there are no
 # fallbacks, so the application fails fast on a missing or misconfigured value
@@ -14,18 +15,48 @@ spring:
     open-in-view: false
     show-sql: false
     hibernate:
-      ddl-auto: validate
+      # Like local: additive changes only. Drops, renames and type changes are applied by hand before deploying.
+      ddl-auto: update
     properties:
       hibernate:
         jdbc:
           time_zone: UTC
 
+server:
+  # Loopback only: the console is reached through an SSH tunnel; the port stays 8081 from application.yml.
+  address: 127.0.0.1
+
+trenching:
+  console:
+    enabled: true
+    capture:
+      root-directory: /data/captures
+  automation:
+    # The single on-switch: set TRENCHING_AUTOMATION_ENABLED=true in the server's environment file at cut-over, so that
+    # running at most one automation instance stays an explicit act.
+    enabled: false
+    capture-enabled: true
+    poll-always: true
+    wallet: 4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9
+    # Runaway guard, not a budget: the Helius free tier is about 1M credits a month, roughly 33,000 a day.
+    max-requests-per-24h: 100000
+
+marketdata:
+  reference-rates:
+    enabled: true
+
 management:
   endpoint:
     health:
       show-details: never
+  health:
+    diskspace:
+      # The default checks the application's working directory; the data that fills up lives on the /data volume.
+      path: /data
 
 logging:
+  file:
+    name: /data/logs/trenching-bot.log
   level:
     root: INFO
     com.trenching.bot: INFO

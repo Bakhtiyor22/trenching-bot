@@ -45,8 +45,8 @@ Full detail: `references/strict-rules.md` Sections A–D, read as step 1 below.
 - **Local infrastructure only, with approval** — `docker compose`, `bootRun`, `psql` go through the
   console. `./gradlew test` (Testcontainers) is fine.
 - **The entities are the schema (no Flyway for now).** Never add migration files. Declare unique keys
-  and indexes in `@Table`; `local`/`test` run `ddl-auto: update`, `prod` runs `validate`, so state
-  the SQL production needs for any schema change.
+  and indexes in `@Table`; `local`, `test` and `prod` (the Oracle server) run `ddl-auto: update`,
+  which only adds, so state the SQL the server needs for any destructive schema change.
 - **No git state changes** unless the user asks. Read-only `git status/diff/log` is fine.
 - **No new or bumped dependency** without the user's approval.
 

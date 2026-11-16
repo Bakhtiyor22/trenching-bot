@@ -1,0 +1,11 @@
+[Unit]
+Description=trenching-bot nightly PostgreSQL dump
+Requires=docker.service
+After=docker.service
+RequiresMountsFor=/data
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/trenching-bot/trenching-bot.env
+ExecStart=/opt/trenching-bot/backup.sh
+TimeoutStartSec=2h

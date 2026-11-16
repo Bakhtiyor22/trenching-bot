@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.*
 
 @RestController
 @RequestMapping("/api/captures")
-@Profile("local & !prod")
+@Profile("local | prod")
 @ConditionalOnConsoleEnabled
 class CaptureController(private val sessions: CaptureSessionService, private val setup: CaptureSetupService, private val operations: CaptureOperationService, private val cases: CaptureCaseService, private val catalog: CaptureCatalogService, private val mapper: CaptureResponseMapper, private val datasets: DatasetResponseMapper, private val recommendations: RecommendationResponseMapper) {
     @GetMapping("/config") fun config(): CaptureConfigResponse = mapper.config(setup.config())

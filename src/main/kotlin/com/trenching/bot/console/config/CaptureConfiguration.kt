@@ -28,7 +28,7 @@ class CaptureProperties(val rootDirectory: String = "build/captures") {
 }
 
 @Configuration(proxyBeanMethods=false)
-@Profile("local & !prod")
+@Profile("local | prod")
 @ConditionalOnConsoleEnabled
 @EnableConfigurationProperties(CaptureProperties::class)
 class CaptureConfiguration {

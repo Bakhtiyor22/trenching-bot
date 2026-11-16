@@ -9,8 +9,8 @@ import org.springframework.web.filter.OncePerRequestFilter
 import java.net.URI
 
 /**
- * Restricts destructive, evidence-touching or paid console routes to a local browser: every capture route (they only exist in
- * the local profile), wallet activity (it spends provider requests and names captures) and dataset deletion in any profile,
+ * Restricts destructive, evidence-touching or paid console routes to a local browser: every capture route (they only exist in the local and prod
+ * profiles), wallet activity (it spends provider requests and names captures) and dataset deletion in any profile,
  * so none of them works through the public preview tunnel.
  */
 @Component

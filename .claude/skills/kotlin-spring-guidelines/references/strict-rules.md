@@ -58,13 +58,13 @@ explicitly approved it. `CLAUDE.md` is the base rule set; these rules add to it.
 ## D. Schema — the entities are the authority (no Flyway for now)
 
 14. **Every schema change is an entity change.** Do not add Flyway or `.sql` migration files.
-    Hibernate runs `ddl-auto: update` in `local`/`test` and `validate` in `prod`.
+    Hibernate runs `ddl-auto: update` in `local`, `test` and `prod` (the Oracle server).
 15. **Unique keys and indexes are declared on the entity** with
     `@Table(uniqueConstraints = [...], indexes = [...])` — `update` creates nothing else.
 16. **`update` only adds.** A drop, rename, narrowing or type change is not applied to an existing
     database; say so and tell the user to reset the local database (`docker compose down -v`).
-    Production validates, so any schema change needs SQL applied there by hand — state it in the
-    plan or PR.
+    The server (`prod`) behaves the same and is never reset, so a destructive change needs SQL applied there by
+    hand before deploying — state it in the plan or PR.
 17. **A destructive schema change** — drop, rename, narrowing, type change, a `NOT NULL` column on
     a populated table without a default, a backfill — needs the user's approval first and a
     rollback/data note in the plan or PR.

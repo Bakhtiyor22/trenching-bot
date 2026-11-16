@@ -20,7 +20,7 @@ import tools.jackson.databind.ObjectMapper
 
 /**
  * Wallet activity reads `SOLANA_RPC_URL` with the wallet capture's pacing and timeouts. The transaction cache and the
- * capture annotations are the capture console's ([CaptureConfiguration], `local & !prod`); elsewhere the lookup reads
+ * capture annotations are the capture console's ([CaptureConfiguration], `local | prod`); elsewhere the lookup reads
  * uncached and no action is marked captured.
  */
 @Configuration(proxyBeanMethods = false)

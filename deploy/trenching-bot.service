@@ -1,0 +1,28 @@
+[Unit]
+Description=trenching-bot (paper-trading research instance)
+Wants=docker.service network-online.target
+After=docker.service network-online.target
+RequiresMountsFor=/data
+
+[Service]
+User=trenching
+Group=trenching
+WorkingDirectory=/opt/trenching-bot
+EnvironmentFile=/etc/trenching-bot/trenching-bot.env
+Environment=SPRING_PROFILES_ACTIVE=prod
+Environment=DATABASE_URL=jdbc:postgresql://127.0.0.1:5432/trenching_bot
+ExecStart=/usr/bin/java @/opt/trenching-bot/jvm.options -jar /opt/trenching-bot/current.jar
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=60
+# The JVM exits with 143 on SIGTERM, which is a clean stop.
+SuccessExitStatus=143
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/data
+
+[Install]
+WantedBy=multi-user.target

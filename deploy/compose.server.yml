@@ -1,0 +1,45 @@
+# PostgreSQL for the Oracle Cloud server. Only the database runs in Docker; the
+# application is a systemd service (trenching-bot.service).
+#
+# The credentials come from the root-owned environment file, which Compose reads
+# only to fill in the variables below. Run it from the directory that holds
+# deploy/, with sudo because the file is mode 0600:
+#
+#   sudo docker compose --env-file /etc/trenching-bot/trenching-bot.env \
+#     -f deploy/compose.server.yml up -d
+#
+# DATABASE_PASSWORD must be the base64 output of `openssl rand -base64 32` and nothing else: Compose interpolates `$` in
+# --env-file values while systemd's EnvironmentFile does not, so a `$` would give the database and the app different
+# passwords.
+#
+# Use the same --env-file and -f arguments for ps, logs, stop and config.
+# Never run `down -v` or delete /data/postgres on the server.
+name: trenching-bot
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: trenching-bot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: trenching_bot
+      POSTGRES_USER: ${DATABASE_USERNAME:?DATABASE_USERNAME is not set}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?DATABASE_PASSWORD is not set}
+    # Docker's default /dev/shm is 64 MB, too small for shared_buffers=1GB with parallel queries.
+    shm_size: 1gb
+    command: ["postgres", "-c", "shared_buffers=1GB"]
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # create_host_path is off so that a missing /data mount stops the container
+      # instead of silently starting an empty database on the boot volume.
+      - type: bind
+        source: /data/postgres
+        target: /var/lib/postgresql/data
+        bind:
+          create_host_path: false
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10

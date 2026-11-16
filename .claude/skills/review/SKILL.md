@@ -73,8 +73,8 @@ Work these in order. Section 1 is the one reviews most often skip, and the one t
 - **Nullability.** Every `!!` is a finding. A platform type from JDBC/Jackson/Java into a non-null
   Kotlin type is a latent NPE.
 - **Schema.** A new Flyway/`.sql` migration file (there is no Flyway for now) — BLOCKER. A unique
-  key the code relies on that is not declared in the entity's `@Table` — BLOCKER. A schema change
-  with no SQL stated for production (`prod` validates). A destructive change
+  key the code relies on that is not declared in the entity's `@Table` — BLOCKER. A destructive schema
+  change with no SQL stated for the server (`prod` runs `update`, which only adds). A destructive change
   without approval. Missing unique constraint on external identity. Missing index for a new query
   on a growing table.
 - **Transactions.** Multi-write path without `@Transactional`; `@Transactional` on a `private` or

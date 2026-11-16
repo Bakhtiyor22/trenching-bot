@@ -31,7 +31,7 @@ import org.springframework.util.unit.DataSize
 
 /**
  * Automated discovery, capture and sweep of one wallet's buys (`docs/plans/archive/20261102-decu-capture-sweep-automation.md`).
- * Nothing runs unless [enabled] and the console is enabled under the local profile; [captureEnabled] false is phase 0,
+ * Nothing runs unless [enabled] and the console is enabled under the local or prod profile; [captureEnabled] false is phase 0,
  * discovery only. [operationBudget] and [recovery] are sent with each wallet and market operation automation starts and must
  * pass the capture console's own bounds for both. Startup fails on any value out of bounds, naming the property.
  *

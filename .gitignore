@@ -31,3 +31,6 @@ Thumbs.db
 # Claude Code (per-developer settings and agent worktrees)
 .claude/settings.local.json
 .claude/worktrees/
+
+# Per-machine Spring Boot config override (config/application-local.yml: this PC's live automation settings)
+/config/

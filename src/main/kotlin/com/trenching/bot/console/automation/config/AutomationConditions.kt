@@ -5,12 +5,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.context.annotation.Profile
 
 /**
- * Registers the annotated bean where the capture console exists: the local profile with the console enabled, as
+ * Registers the annotated bean where the capture console exists: the local or prod profile with the console enabled, as
  * `CaptureConfiguration` requires. The automation read API and its state live here, enabled or not.
  */
 @Target(AnnotationTarget.CLASS)
 @Retention(AnnotationRetention.RUNTIME)
-@Profile("local & !prod")
+@Profile("local | prod")
 @ConditionalOnConsoleEnabled
 annotation class ConditionalOnAutomationConsole
 

@@ -53,7 +53,7 @@ transaction.
 | Piece | What it is |
 |---|---|
 | Backend | One Spring Boot 4.1 process (Kotlin 2.3, Java 21) on port 8081, profile `local` by default |
-| Database | PostgreSQL 17 in Docker Compose on 5433; Hibernate `ddl-auto: update` in `local`/`test`, `validate` in `prod`; no migrations |
+| Database | PostgreSQL 17 in Docker Compose on 5433; Hibernate `ddl-auto: update` in `local`/`test`, `validate` in `prod` (since amended 2026-11-16: prod runs `update`, see CLAUDE.md); no migrations |
 | Capture store | JSON files under `build/captures` (sessions, operations, manifests, exported datasets, a shared transaction cache — 1.8 GB today) |
 | Providers | Solana JSON-RPC (read-only, 8 allowed methods, 4 in flight, one start every 125 ms, rolling 24 h cap of 20,000 requests locally); Binance SOL/USDT |
 | Console | React 19 + Vite + Mantine + ECharts + TanStack Query under `frontend/`; Vite dev server on 5173 proxies `/api`; a production build can be bundled into the backend under `/console`; `serve:public` exposes a preview through a jprq/ngrok tunnel |
@@ -197,6 +197,9 @@ probe test); critical while the public tunnel runs.*
 - PostgreSQL is listening on `0.0.0.0:5433` and `[::]:5433` right now (netstat). The compose file was changed to 127.0.0.1 on
   2026-11-03, but the container was never recreated. The password is a literal committed in the repository. Whether the
   Windows firewall blocks inbound 5433 was not checked.
+- *Note 2026-11-16:* the Oracle Cloud server ([plan](../plans/20261115-oracle-cloud-deployment.md),
+  [runbook](../../deploy/README.md)) runs the `prod` profile with 8081 and 5432 on loopback behind SSH, and opens only port 22. F5 therefore stays open
+  for the PC and for any future non-tunnel access (Tailscale, LAN, public). It must be fixed before either.
 
 **F6. Any start with default settings becomes a second live automation instance on the real database** — *verified, including by an
 incident during this review (section 3).*

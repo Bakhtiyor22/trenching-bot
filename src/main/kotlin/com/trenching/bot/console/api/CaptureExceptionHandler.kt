@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 
 @RestControllerAdvice(assignableTypes=[CaptureController::class])
-@Profile("local & !prod")
+@Profile("local | prod")
 @ConditionalOnConsoleEnabled
 class CaptureExceptionHandler(private val mapper: ConsoleErrorMapper, private val captures: CaptureResponseMapper) {
     @ExceptionHandler fun capture(exception: CaptureRequestException): ResponseEntity<CaptureErrorResponse> = ResponseEntity.status(exception.status).body(captures.error(exception.code,exception.message,exception.fields,exception.suggestion))

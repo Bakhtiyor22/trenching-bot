@@ -30,6 +30,13 @@ class AutomationConfigurationTest {
     }
 
     @Test
+    fun `the automation gate opens under the prod profile with the console and automation enabled`() {
+        runner.withPropertyValues(PROD, CONSOLE, "trenching.automation.enabled=true", "trenching.automation.wallet=$WALLET").run { context ->
+            assertThat(context).hasSingleBean(AutomationProperties::class.java).hasSingleBean(AutomationConfiguration::class.java)
+        }
+    }
+
+    @Test
     fun `with automation disabled the properties still load for the read API, but no scheduler`() {
         runner.withPropertyValues(LOCAL, CONSOLE).run { context ->
             assertThat(context).hasSingleBean(AutomationProperties::class.java).doesNotHaveBean(AutomationConfiguration::class.java)
@@ -37,8 +44,8 @@ class AutomationConfigurationTest {
     }
 
     @Test
-    fun `outside the local profile or without the console nothing loads, even when enabled`() {
-        listOf(arrayOf(CONSOLE, "spring.profiles.active=prod"), arrayOf(LOCAL)).forEach { values ->
+    fun `outside the local and prod profiles or without the console nothing loads, even when enabled`() {
+        listOf(arrayOf(CONSOLE, "spring.profiles.active=test"), arrayOf(LOCAL), arrayOf(PROD)).forEach { values ->
             runner.withPropertyValues(*values, "trenching.automation.enabled=true", "trenching.automation.wallet=$WALLET").run { context ->
                 assertThat(context).doesNotHaveBean(AutomationProperties::class.java).doesNotHaveBean(AutomationConfiguration::class.java)
             }
@@ -80,6 +87,7 @@ class AutomationConfigurationTest {
 
     private companion object {
         const val LOCAL = "spring.profiles.active=local"
+        const val PROD = "spring.profiles.active=prod"
         const val CONSOLE = "trenching.console.enabled=true"
         const val WALLET = "4vw54BmAogeRV3vPKWyFet5yf8DTLcREzdSzx4rw9Ud9"
     }

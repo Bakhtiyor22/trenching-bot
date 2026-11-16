@@ -56,7 +56,7 @@ class UsageApiIntegrationTest {
         assertEquals("READ_TRANSACTION", calls.getValue("getTransaction")["purpose"].asString())
         assertEquals("""[{"task":"WALLET_ACTIVITY","totals":{"requests":3,"failedRequests":0,"rateLimitedResponses":0,"responseBytes":8900,"cacheHits":1}}]""",
             body["byTask"].toString())
-        assertEquals("""[{"provider":"SOLANA_RPC","minRequestIntervalMillis":125,"maxConcurrentRequests":4}]""", body["pacing"].toString())
+        assertEquals("""[{"provider":"SOLANA_RPC","minRequestIntervalMillis":250,"maxConcurrentRequests":2}]""", body["pacing"].toString())
     }
 
     @Test

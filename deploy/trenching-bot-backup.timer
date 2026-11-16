@@ -1,0 +1,9 @@
+[Unit]
+Description=Run the trenching-bot PostgreSQL dump daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

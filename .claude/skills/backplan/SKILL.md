@@ -74,7 +74,7 @@ Every plan answers these. Skip one only by saying why it does not apply.
 
 **Persistence**
 - New tables/columns with types and constraints, as entity changes (`@Column`, and
-  `@Table(uniqueConstraints, indexes)`), plus the SQL production needs since `prod` only validates
+  `@Table(uniqueConstraints, indexes)`), plus the SQL the server needs for any destructive change, since `update` (also in `prod`) only adds
 - Unique constraints for external identity and idempotency; indexes for the query patterns
 - Whether anything is destructive (drop/rename/narrow/backfill) — needs approval and a rollback note
 - Entities and repositories per module; associations by id across modules
@@ -194,7 +194,7 @@ Before presenting, verify:
 - You read the current code and entities, not just the docs
 - The owning module is named, and cross-module access goes only through public contracts
 - The plan matches the real stack (Kotlin 2.3, Boot 4.1, Jackson 3, entity-driven schema with `update` locally and
-  `validate` in prod, JUnit 5 +
+  in prod, JUnit 5 +
   Testcontainers)
 - Every simulation-semantics dependency cites a decision or is an Open Question
 - No `Double`; every calculated number has a scale and rounding mode

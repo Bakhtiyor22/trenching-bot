@@ -1,0 +1,10 @@
+# JVM arguments for trenching-bot.service (java @/opt/trenching-bot/jvm.options).
+#
+# Oracle can reclaim an idle Always Free instance when CPU, network and memory
+# all stay under 20 % for 7 days. Starting at 3 GB and pre-touching the heap keeps
+# resident memory above 20 % of this 12 GB VM, whatever the load.
+-Xms3g
+-Xmx4g
+-XX:+AlwaysPreTouch
+-XX:+ExitOnOutOfMemoryError
+-Duser.timezone=UTC

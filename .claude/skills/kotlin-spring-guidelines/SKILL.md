@@ -24,7 +24,7 @@ paper-trading system. If the two ever disagree, follow `CLAUDE.md` and say so in
 - Spring Boot **4.1.1** — Spring MVC, Actuator, Spring Data JPA
 - **Jackson 3** (`tools.jackson.*` packages, `jackson-module-kotlin`), not `com.fasterxml.jackson`
 - **PostgreSQL 17**, no Flyway for now: the entities are the schema (`ddl-auto: update` in
-  `local`/`test`, `validate` in `prod`)
+  `local`, `test` and `prod`, the Oracle server)
 - Kotlin compiler plugins: `plugin.spring` (opens Spring stereotypes), `plugin.jpa` (no-arg
   constructors for entities); `-Xjsr305=strict`
 - Tests: JUnit 5, `kotlin-test`, `spring-boot-starter-test` (AssertJ, Mockito), Testcontainers
@@ -132,7 +132,7 @@ never on its internals, JPA entities or vendor DTOs. Within a module:
 - Slots are `Long` and are the ordering authority in a simulation; timestamps are `Instant` in UTC.
 - Anything time- or id-dependent in the domain takes an injected `Clock` / id generator.
 - Schema changes are entity changes (no migration files); unique keys and indexes are declared in
-  `@Table`. Production only validates, so its SQL is applied by hand.
+  `@Table`. `update` only adds, so a destructive change's SQL is applied to the server by hand before deploying.
 - Literals used more than twice go into a constants `object`.
 - **Prefer self-documenting code to comments.** A comment earns its place only for a *why* the code
   cannot express.
