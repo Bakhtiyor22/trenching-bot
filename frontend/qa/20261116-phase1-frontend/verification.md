@@ -56,3 +56,15 @@ Unknown event kinds and the empty/404 states are covered by `TraceTimeline.test.
   Vite's proxy and got connection-refused, so no request reached a real backend. Reloading the page restored the mocks.
   This came from the environment, not the app.
 - Command gate: `npm run lint`, `npm test`, `npm run build`, `npm run format:check`; results are in the session report.
+
+## Old backend compatibility (2026-11-16, later)
+
+Checked read-only against the user's running backend (still the pre-Phase-1 API) through the dev server on :5173: pages
+were opened and read, nothing that changes data was clicked. No screenshots were saved, because they would show real data.
+
+| Page | Result |
+|---|---|
+| Dashboard (palette mounted in the layout) | Loads, no console errors; the earlier `run.mints is not iterable` crash is gone |
+| Runs | All 740 runs listed; "This backend does not support server-side filters yet; filters apply after it is updated" shown; status counts hidden, not zero |
+| Automation day 2026-11-15 | Loads; the selected buy's History says "Step history is not available from this backend yet." (events endpoint answers 404) |
+| Command palette | Opens and lists pages and runs |

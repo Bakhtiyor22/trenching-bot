@@ -371,11 +371,12 @@ export const RUN_STATUSES: readonly RunStatus[] = ['PROFIT', 'LOSS', 'FLAT', 'NO
 
 /**
  * `GET /api/runs`: one page cut from the snapshot `asOf` (runs created at or before it), so later pages never shift
- * while new runs arrive. `statusCounts` has every status, counted with every filter except `status`.
+ * while new runs arrive. `statusCounts` has every status, counted with every filter except `status`; it is null from a
+ * backend that predates server-side run search, which also ignores every filter but `datasetId`.
  */
 export interface RunPage extends Page<RunSummary> {
   asOf: IsoInstant;
-  statusCounts: Record<RunStatus, number>;
+  statusCounts: Record<RunStatus, number> | null;
 }
 
 /** Query of `GET /api/runs`. Every filter is optional and they combine with AND; ranges are half-open `[from, to)`. */

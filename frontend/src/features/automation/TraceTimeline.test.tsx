@@ -134,21 +134,50 @@ describe('TraceTimeline', () => {
     );
   });
 
-  it('says when nothing is recorded yet and explains an unknown buy', async () => {
+  it('says when nothing is recorded yet', async () => {
     server.use(
-      http.get('/api/automation/items/:id/events', ({ params }) =>
-        params.id === 'empty'
-          ? HttpResponse.json({ itemId: 'empty', events: [] })
-          : HttpResponse.json(
-              { code: 'AUTOMATION_ITEM_NOT_FOUND', message: 'No automation item gone', fields: {} },
-              { status: 404 },
-            ),
+      http.get('/api/automation/items/:id/events', () =>
+        HttpResponse.json({ itemId: 'empty', events: [] }),
       ),
     );
-    const { unmount } = renderTrace('empty');
+    renderTrace('empty');
     expect(await screen.findByText('No steps recorded yet.')).toBeInTheDocument();
-    unmount();
-    renderTrace('gone');
-    expect(await screen.findByText('No automation item gone')).toBeInTheDocument();
+  });
+
+  it('says the history is not available when the backend has no events endpoint (404)', async () => {
+    server.use(
+      http.get('/api/automation/items/:id/events', () => new HttpResponse(null, { status: 404 })),
+    );
+    renderTrace('item-1');
+    expect(
+      await screen.findByText('Step history is not available from this backend yet.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('says the same when the backend cannot be reached', async () => {
+    server.use(http.get('/api/automation/items/:id/events', () => HttpResponse.error()));
+    renderTrace('item-1');
+    expect(
+      await screen.findByText('Step history is not available from this backend yet.', undefined, {
+        timeout: 10_000,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  it('still reports a server failure as an error', async () => {
+    server.use(
+      http.get('/api/automation/items/:id/events', () =>
+        HttpResponse.json(
+          { code: 'FAILED', message: 'Events table locked', fields: {} },
+          { status: 500 },
+        ),
+      ),
+    );
+    renderTrace('item-1');
+    expect(
+      await screen.findByText('Events table locked', undefined, { timeout: 10_000 }),
+    ).toBeInTheDocument();
   });
 });

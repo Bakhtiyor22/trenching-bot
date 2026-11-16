@@ -1,8 +1,11 @@
 import { spotlight } from '@mantine/spotlight';
 import { act, screen } from '@testing-library/react';
+import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 import { createAutomationDb, mockDayOf } from '../mocks/automationFixtures';
+import { oldShapeRun, sampleRun } from '../mocks/fixtures';
 import { listedRuns } from '../mocks/runListFixtures';
+import { server } from '../mocks/server';
 import { renderPage } from '../test/render';
 import { shortId } from '../lib/format';
 import { CommandPalette } from './CommandPalette';
@@ -46,5 +49,17 @@ describe('CommandPalette', () => {
     expect(
       await screen.findByText('No run and no automation buy holds this token.'),
     ).toBeInTheDocument();
+  });
+
+  it('lists runs from a backend that sends no mints, status or dataset name', async () => {
+    const oldShape = oldShapeRun(sampleRun);
+    server.use(
+      http.get('/api/runs', () =>
+        HttpResponse.json({ items: [oldShape], page: 0, size: 50, total: 1 }),
+      ),
+    );
+    renderPage(<CommandPalette />, { path: '*', url: '/' });
+    act(() => spotlight.open());
+    expect(await screen.findByText(`Run ${sampleRun.id.slice(0, 8)}`)).toBeInTheDocument();
   });
 });

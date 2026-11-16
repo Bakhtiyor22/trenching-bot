@@ -517,6 +517,25 @@ function StatusFilterControl({
   );
 }
 
+/** The backend answered without `statusCounts`: it predates server-side run search and ignored the new filters. */
+function FiltersUnsupportedNotice({ byDataset }: { byDataset: boolean }) {
+  return (
+    <Group
+      gap="sm"
+      mb="sm"
+      px="sm"
+      py={6}
+      role="status"
+      style={{ border: '1px solid var(--console-line-strong)', borderRadius: 6 }}
+    >
+      <Text size="sm">
+        This backend does not support server-side filters yet; filters apply after it is updated.
+        The list below is every run{byDataset ? ' of the chosen dataset' : ''}, newest first.
+      </Text>
+    </Group>
+  );
+}
+
 /** Shown when runs were created after the page's snapshot; "Show" moves the snapshot to now. */
 function NewRunsNotice({ count, onShow }: { count: number; onShow: () => void }) {
   return (
@@ -669,7 +688,9 @@ export function RunsPage() {
     ['c', () => selected.length >= 2 && void navigate(paths.compareRuns(selected))],
   ]);
 
-  const filtered = hasFilters(filters);
+  // A backend from before server-side run search answers without statusCounts and applies only the dataset filter.
+  const serverFilters = !data || data.statusCounts !== null;
+  const filtered = serverFilters ? hasFilters(filters) : filters.datasetId !== null;
   const shown = data ? sortRuns(data.items, sort) : [];
   const newRunPath = filters.datasetId ? paths.newRunFor(filters.datasetId) : paths.newRun;
   const created = createdRangeProblem(filters.createdFrom, filters.createdTo);
@@ -772,7 +793,7 @@ export function RunsPage() {
           />
           <StatusFilterControl
             value={filters.status}
-            counts={data?.statusCounts}
+            counts={data?.statusCounts ?? undefined}
             onChange={(next) => update({ set: { status: next === 'all' ? null : next } })}
           />
         </Group>
@@ -846,6 +867,7 @@ export function RunsPage() {
         hint={countHint}
         padding="md"
       >
+        {!serverFilters && <FiltersUnsupportedNotice byDataset={filters.datasetId !== null} />}
         {newRuns > 0 && <NewRunsNotice count={newRuns} onShow={showNewRuns} />}
         {data && runs.isError && (
           <RefreshNotice

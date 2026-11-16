@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { API_BASE, ApiError, getJson, postJson, withQuery } from './client';
+import { API_BASE, ApiError, getJson, NETWORK_ERROR, postJson, withQuery } from './client';
 import type { DecimalString, IsoInstant } from './types';
 
 /**
@@ -530,12 +530,24 @@ export function useAutomationItem(id: string | null, { poll = false }: { poll?: 
   });
 }
 
+/**
+ * True when the history endpoint is missing or unreachable: a backend from before token flow history answers 404, and
+ * the history is then simply not available, not a failure of the page.
+ */
+export function isItemHistoryUnavailable(error: unknown): boolean {
+  return error instanceof ApiError && (error.status === 404 || error.code === NETWORK_ERROR);
+}
+
 /** A buy's history, polled with the buy itself so the timeline and the buy's state never disagree. */
 export function useAutomationItemEvents(id: string, { poll = false }: { poll?: boolean } = {}) {
   return useQuery({
     queryKey: automationKeys.itemEvents(id),
     queryFn: ({ signal }) => automationApi.itemEvents(id, signal),
-    refetchInterval: poll ? visiblePoll(AUTOMATION_LIST_POLL_MS) : false,
+    // Asking a backend without the endpoint again every minute cannot change its answer.
+    refetchInterval: (query) =>
+      poll && !isItemHistoryUnavailable(query.state.error) && !hidden()
+        ? AUTOMATION_LIST_POLL_MS
+        : false,
   });
 }
 

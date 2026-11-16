@@ -415,6 +415,16 @@ export const sampleRun: RunSummary = {
   anchorBlockTime: null,
 };
 
+/** Fields a backend from before server-side run search leaves out of a run summary. */
+const PHASE1_RUN_FIELDS = ['status', 'datasetName', 'mints', 'anchorBlockTime'] as const;
+
+/** A run as an old backend sends it, without the Phase 1 fields: for tests of the console against it. */
+export function oldShapeRun(run: RunSummary): Omit<RunSummary, (typeof PHASE1_RUN_FIELDS)[number]> {
+  const old: Partial<RunSummary> = { ...run };
+  for (const key of PHASE1_RUN_FIELDS) delete old[key];
+  return old as Omit<RunSummary, (typeof PHASE1_RUN_FIELDS)[number]>;
+}
+
 export const sampleRunDetail: RunDetail = {
   run: sampleRun,
   config: mvpConfig,

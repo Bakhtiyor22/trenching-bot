@@ -10,6 +10,7 @@ import {
   REAL_MINT,
   SAMPLE_DATASET_ID,
   SAMPLE_RUN_ID,
+  oldShapeRun,
   SAMPLE_TOTAL_PNL,
   sampleRun,
 } from '../../mocks/fixtures';
@@ -292,6 +293,31 @@ describe('RunsPage', () => {
     await queryClient.refetchQueries({ queryKey: ['runs'] });
     expect(await screen.findByText(/Couldn.t refresh/)).toBeInTheDocument();
     expect(within(table).getByText(SIGNED_TOTAL_PNL)).toBeInTheDocument();
+  });
+
+  it('works against a backend from before server-side search, and says its filters are not applied', async () => {
+    const requests: URL[] = [];
+    const oldShape = oldShapeRun(sampleRun);
+    server.use(
+      http.get('/api/runs', ({ request }) => {
+        requests.push(new URL(request.url));
+        // The old RunPageResponse: no asOf, no statusCounts, and every filter but datasetId ignored.
+        return HttpResponse.json({ items: [oldShape], page: 0, size: 20, total: 1 });
+      }),
+    );
+    renderRuns('/runs?status=PROFIT');
+    const table = await screen.findByRole('table');
+    expect(within(table).getByRole('link', { name: SAMPLE_LINK })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /This backend does not support server-side filters yet; filters apply after it is updated/,
+      ),
+    ).toBeInTheDocument();
+    // The unfiltered list is not presented as a filtered one, and no count is made up.
+    expect(screen.getByRole('heading', { name: 'All runs' })).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Loss' })).toBeInTheDocument();
+    expect(screen.queryByRole('radio', { name: /^Loss \d/ })).toBeNull();
+    expect(requests[0]?.searchParams.get('status')).toBe('PROFIT');
   });
 
   it('shows a failed list request with the backend message', async () => {

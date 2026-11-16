@@ -1,4 +1,5 @@
 import { API_BASE, deleteRequest, getJson, postForm, postJson, withQuery } from './client';
+import { normalizeRunPage, normalizeRunSummary, type RawRunPage } from './runSummary';
 import type {
   ActuatorHealth,
   AddressCheck,
@@ -14,7 +15,6 @@ import type {
   RunDetail,
   RunEvent,
   RunOrder,
-  RunPage,
   RunPosition,
   RunQuery,
   RunStart,
@@ -94,11 +94,22 @@ export const api = {
   configDefaults: (signal?: AbortSignal) =>
     getJson<ConfigDefaults>(`${API_BASE}/config/defaults`, signal),
 
-  startRun: (body: RunStartRequest) => postJson<RunStart>(`${API_BASE}/runs`, body),
-  runs: (query: RunQuery, signal?: AbortSignal) =>
-    getJson<RunPage>(withQuery(`${API_BASE}/runs`, { ...query }), signal),
+  startRun: (body: RunStartRequest) =>
+    postJson<RunStart>(`${API_BASE}/runs`, body).then((start) => ({
+      ...start,
+      run: normalizeRunSummary(start.run),
+    })),
+  runs: (query: RunQuery, signal?: AbortSignal) => {
+    const requestedAsOf = query.asOf ?? new Date().toISOString();
+    return getJson<RawRunPage>(withQuery(`${API_BASE}/runs`, { ...query }), signal).then((page) =>
+      normalizeRunPage(page, requestedAsOf),
+    );
+  },
   run: (id: string, signal?: AbortSignal) =>
-    getJson<RunDetail>(`${API_BASE}/runs/${enc(id)}`, signal),
+    getJson<RunDetail>(`${API_BASE}/runs/${enc(id)}`, signal).then((detail) => ({
+      ...detail,
+      run: normalizeRunSummary(detail.run),
+    })),
   runChart: (id: string, request: ChartRequest, signal?: AbortSignal) =>
     getJson<ChartResponse>(chartUrl(`${API_BASE}/runs/${enc(id)}/chart`, request), signal).then(
       chartResponse,

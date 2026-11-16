@@ -5,6 +5,7 @@ import { Link } from 'react-router';
 import {
   ITEM_STATES,
   STEPS,
+  isItemHistoryUnavailable,
   useAutomationItemEvents,
   type AutomationItemEvent,
   type AutomationItemState,
@@ -307,6 +308,18 @@ export function TraceTimeline({
   live: boolean;
 }) {
   const events = useAutomationItemEvents(itemId, { poll: live });
+  const unavailable = events.data === undefined && isItemHistoryUnavailable(events.error);
+  if (unavailable)
+    return (
+      <Stack gap="xs" component="section" aria-label="History of this buy">
+        <Title order={4} fz={13}>
+          History
+        </Title>
+        <Text size="sm" c="dimmed">
+          Step history is not available from this backend yet.
+        </Text>
+      </Stack>
+    );
   return (
     <Stack gap="xs" component="section" aria-label="History of this buy">
       <Group gap="sm" justify="space-between">
