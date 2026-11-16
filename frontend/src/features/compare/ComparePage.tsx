@@ -476,7 +476,7 @@ function ScenarioAlignment({ details, slots }: { details: RunDetail[]; slots: nu
 }
 
 function RunPicker({ ids, onChange }: { ids: string[]; onChange: (ids: string[]) => void }) {
-  const runs = useRuns(0, PICKER_RUNS, null);
+  const runs = useRuns({ page: 0, size: PICKER_RUNS });
   const options = (runs.data?.items ?? []).map((r) => ({
     value: r.id,
     label: `${shortId(r.id)} · ${formatSignedDecimal(r.realizedPnl)} ${mintLabel(r.quoteMint)} · ${formatLocalTime(r.createdAt)}`,

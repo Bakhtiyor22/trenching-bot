@@ -44,6 +44,7 @@ import {
   dayInfo,
   itemStateLabels,
   lamportsToSol,
+  nextTryText,
   RETRY_SPEND_NOTE,
   retriesText,
   retryStepOf,
@@ -68,6 +69,7 @@ import {
 } from './AutomationShared';
 import { RetryBuy, RetryFailedBuys } from './RetryControls';
 import { Scoreboard } from './Scoreboard';
+import { TraceTimeline } from './TraceTimeline';
 
 const STEP_NAMES: Record<AutomationStep, string> = {
   CREATE_SESSION: 'session',
@@ -170,7 +172,7 @@ function ItemNoteText({ item, zone }: { item: AutomationItem; zone: string }) {
   return (
     <>
       {item.step ? `At the ${STEP_NAMES[item.step]} step` : 'Waiting'}
-      {item.nextActionAt ? `, next try ${zoneTime(item.nextActionAt, zone)}` : ''}
+      {item.nextActionAt ? `, ${nextTryText(item.nextActionAt, zone)}` : ''}
     </>
   );
 }
@@ -186,6 +188,13 @@ function CloseSession({ session, items }: { session: AutomationSession; items: A
     (i) => i.sessionId === session.id && !TERMINAL.includes(i.state),
   ).length;
   if (session.state === 'CLOSED') return null;
+  // A closing session already stopped taking buys; it ends by itself once its buys finish.
+  if (session.state === 'CLOSING')
+    return (
+      <Text size="sm" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+        Closing: waits for {formatCount(unfinished)} {unfinished === 1 ? 'buy' : 'buys'}
+      </Text>
+    );
   const dismiss = () => {
     if (!sending) close();
   };
@@ -397,6 +406,7 @@ function SelectedBuy({
                   <CodeText code={item.failureCode} />
                 </Group>
               )}
+              <TraceTimeline itemId={item.id} zone={status.zone} live={live} />
               {runs.length === 0 ? (
                 <Text size="sm" c="dimmed">
                   Not replayed yet

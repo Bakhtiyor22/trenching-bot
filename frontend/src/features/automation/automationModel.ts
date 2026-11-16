@@ -109,11 +109,28 @@ export function zoneTime(iso: string | null | undefined, zone: string, seconds =
   return `${pad(p.hour)}:${pad(p.minute)}${seconds ? `:${pad(p.second)}` : ''}`;
 }
 
+/** "2 Nov" in the zone. */
+export function zoneDate(iso: string | null | undefined, zone: string): string {
+  if (!iso) return '—';
+  const p = zoneParts(iso, zone);
+  return `${p.day} ${MONTHS[p.month]}`;
+}
+
 /** "2 Nov, 21:31" in the zone. */
 export function zoneDateTime(iso: string | null | undefined, zone: string): string {
   if (!iso) return '—';
   const p = zoneParts(iso, zone);
   return `${p.day} ${MONTHS[p.month]}, ${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+/**
+ * When a waiting buy tries again, on the automation clock: "next try 10:27" today, "next try 3 Nov, 10:27" on another
+ * date, and "next try overdue since 1 Nov, 10:27" once the time has passed (the date only when it is not today).
+ */
+export function nextTryText(iso: string, zone: string, now: number = Date.now()): string {
+  const today = zoneDate(new Date(now).toISOString(), zone);
+  const when = zoneDate(iso, zone) === today ? zoneTime(iso, zone) : zoneDateTime(iso, zone);
+  return Date.parse(iso) < now ? `next try overdue since ${when}` : `next try ${when}`;
 }
 
 export interface TradingDayInfo {
@@ -280,6 +297,46 @@ export function pendingText(pendingDay: string | null | undefined): string {
   return pendingDay
     ? `waiting for ${dayInfo(pendingDay).label} to complete`
     : 'waiting for its days to complete';
+}
+
+/** Why a pending day has no verdict yet, checked in this order. */
+type PendingReason = 'today' | 'uncovered' | 'capturing' | 'window';
+const PENDING_REASON_TEXT: Record<PendingReason, string> = {
+  today: 'today is still running',
+  uncovered: 'not covered by discovery',
+  capturing: 'buys still capturing',
+  window: 'waiting for earlier days of their 7-day window',
+};
+
+function pendingReason(day: AutomationDaySummary, today: string): PendingReason {
+  if (day.day >= today) return 'today';
+  if (!day.covered) return 'uncovered';
+  if (!day.complete) return 'capturing';
+  return 'window';
+}
+
+/**
+ * When every day listed is pending, how many and why ("12 days pending: buys still capturing"), so a verdict filter that
+ * matches nothing says what it waits for instead of a bare "no days match". Null while any day has a verdict.
+ */
+export function allPendingText(
+  days: AutomationDaySummary[],
+  today: string,
+  captureEnabled: boolean,
+): string | null {
+  if (days.length === 0 || !days.every((d) => d.bestStatus === 'PENDING')) return null;
+  const head = `${days.length} ${days.length === 1 ? 'day' : 'days'} pending`;
+  if (!captureEnabled) return `${head}: discovery only, so no buy is captured or replayed`;
+  const counts = new Map<PendingReason, number>();
+  for (const day of days) {
+    const reason = pendingReason(day, today);
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  const reasons = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  if (reasons.length === 1) return `${head}: ${PENDING_REASON_TEXT[reasons[0]![0]]}`;
+  return `${head}: ${reasons
+    .map(([reason, count]) => `${PENDING_REASON_TEXT[reason]} (${count})`)
+    .join(', ')}`;
 }
 
 export type AutomationMode = 'OFF' | 'DISCOVERY_ONLY' | 'CAPTURING';

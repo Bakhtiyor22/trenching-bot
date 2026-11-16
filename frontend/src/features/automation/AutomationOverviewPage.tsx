@@ -26,6 +26,7 @@ import { EmptyState } from '../../components/StateViews';
 import { formatCount, formatRelative } from '../../lib/format';
 import { paths } from '../../paths';
 import {
+  allPendingText,
   addDays,
   backfillDays,
   BASELINE_LABEL,
@@ -291,6 +292,10 @@ function Overview({ status }: { status: AutomationStatus }) {
           const dayRows = scored ? all.filter((e) => e.day === scored.day) : [];
           const board = dayRows.filter((e) => !statusFilter || e.status === statusFilter);
           const allPending = items.length > 0 && items.every((d) => d.bestStatus === 'PENDING');
+          const pendingNote =
+            statusFilter && statusFilter !== 'PENDING'
+              ? allPendingText(items, today, status.captureEnabled)
+              : null;
           const anyBuys = items.some((d) => d.buys > 0);
           const daysShown = items.map((d) => d.day);
           return (
@@ -349,9 +354,11 @@ function Overview({ status }: { status: AutomationStatus }) {
                       </Group>
                       {board.length === 0 ? (
                         <Text size="sm" c="dimmed">
-                          {statusFilter
-                            ? `No variation is ${statusText[statusFilter].toLowerCase()} for this day. `
-                            : 'No rows for this day. '}
+                          {statusFilter && pendingNote
+                            ? `${pendingNote}, so no variation is ${statusText[statusFilter].toLowerCase()} yet. `
+                            : statusFilter
+                              ? `No variation is ${statusText[statusFilter].toLowerCase()} for this day. `
+                              : 'No rows for this day. '}
                           {statusFilter && (
                             <Anchor
                               component="button"

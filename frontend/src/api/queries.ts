@@ -8,7 +8,7 @@ import {
 } from '@tanstack/react-query';
 import { ApiError } from './client';
 import { api } from './endpoints';
-import type { ChartRequest, ChartResponse, RunStartRequest } from './types';
+import type { ChartRequest, ChartResponse, RunQuery, RunStartRequest } from './types';
 
 /** Runs started from this tab; the new-run watcher skips them, since starting one already notifies. */
 export const locallyStartedRuns = new Set<string>();
@@ -19,6 +19,12 @@ const HEALTH_POLL_MS = 15_000;
 /** How often the shell looks for runs started elsewhere (another tab, or someone on a shared link). */
 export const LATEST_RUNS_POLL_MS = 10_000;
 const LATEST_RUNS_SIZE = 5;
+/** How often the Runs page checks for runs newer than its snapshot. */
+const LIVE_RUN_TOTAL_POLL_MS = 30_000;
+/** The server's minimum for a free-text `q` (runs and datasets). */
+export const MIN_SEARCH_CHARS = 2;
+/** The server's maximum for a free-text `q`. */
+export const MAX_SEARCH_CHARS = 100;
 const SOLANA_STATUS_POLL_MS = 15_000;
 /** Matches the backend's 30-second ticker cache. */
 const SOL_PRICE_POLL_MS = 30_000;
@@ -27,6 +33,7 @@ const USDT_VIEW_STALE_MS = 60_000;
 
 export const queryKeys = {
   datasets: (page: number, size: number) => ['datasets', page, size] as const,
+  datasetSearch: (q: string, size: number) => ['datasets', 'search', q, size] as const,
   datasetsAll: ['datasets'] as const,
   dataset: (id: string) => ['dataset', id] as const,
   datasetObservations: (id: string, pair: string | null) =>
@@ -34,8 +41,7 @@ export const queryKeys = {
   datasetChart: (id: string, request: ChartRequest) => ['dataset', id, 'chart', request] as const,
   configDefaults: ['config', 'defaults'] as const,
   runsAll: ['runs'] as const,
-  runs: (page: number, size: number, datasetId: string | null) =>
-    ['runs', page, size, datasetId] as const,
+  runs: (query: RunQuery) => ['runs', query] as const,
   run: (id: string) => ['run', id] as const,
   runRecords: (id: string, kind: 'events' | 'observations' | 'orders' | 'positions') =>
     ['run', id, kind] as const,
@@ -66,6 +72,18 @@ export function useDatasets(page: number, size: number) {
   return useQuery({
     queryKey: queryKeys.datasets(page, size),
     queryFn: ({ signal }) => api.datasets(page, size, signal),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Datasets matching `q` on the server; without a usable `q` (under 2 characters) the newest ones. */
+export function useDatasetSearch(q: string, size: number) {
+  const needle = q.trim();
+  const searched = needle.length >= MIN_SEARCH_CHARS;
+  return useQuery({
+    queryKey: searched ? queryKeys.datasetSearch(needle, size) : queryKeys.datasets(0, size),
+    queryFn: ({ signal }) =>
+      searched ? api.searchDatasets(needle, size, signal) : api.datasets(0, size, signal),
     placeholderData: keepPreviousData,
   });
 }
@@ -183,19 +201,38 @@ export function useStartRun() {
   });
 }
 
-export function useRuns(page: number, size: number, datasetId: string | null) {
+export function useRuns(query: RunQuery, { enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
-    queryKey: queryKeys.runs(page, size, datasetId),
-    queryFn: ({ signal }) => api.runs(page, size, datasetId, signal),
+    queryKey: queryKeys.runs(query),
+    queryFn: ({ signal }) => api.runs(query, signal),
     placeholderData: keepPreviousData,
+    enabled,
+  });
+}
+
+/**
+ * How many runs match `query` now, without a snapshot: the Runs page compares it with its snapshot's total to offer the
+ * runs created since. Polled only while the tab is visible.
+ */
+export function useLiveRunTotal(query: RunQuery, enabled: boolean) {
+  const live: RunQuery = { ...query, page: 0, size: 1, asOf: null };
+  return useQuery({
+    queryKey: queryKeys.runs(live),
+    queryFn: ({ signal }) => api.runs(live, signal),
+    select: (page) => page.total,
+    refetchInterval: LIVE_RUN_TOTAL_POLL_MS,
+    refetchIntervalInBackground: false,
+    staleTime: 0,
+    enabled,
   });
 }
 
 /** The newest runs, polled so the shell can announce runs started elsewhere. */
 export function useLatestRuns() {
+  const query: RunQuery = { page: 0, size: LATEST_RUNS_SIZE };
   return useQuery({
-    queryKey: queryKeys.runs(0, LATEST_RUNS_SIZE, null),
-    queryFn: ({ signal }) => api.runs(0, LATEST_RUNS_SIZE, null, signal),
+    queryKey: queryKeys.runs(query),
+    queryFn: ({ signal }) => api.runs(query, signal),
     refetchInterval: LATEST_RUNS_POLL_MS,
     refetchIntervalInBackground: false,
     staleTime: 0,

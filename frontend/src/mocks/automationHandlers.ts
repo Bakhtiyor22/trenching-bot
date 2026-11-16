@@ -21,6 +21,7 @@ import {
   mockDayStart,
   type AutomationDb,
 } from './automationFixtures';
+import { mockCaptureOperation, mockItemEvents } from './automationEventFixtures';
 import { mockState } from './previewState';
 
 /**
@@ -351,6 +352,27 @@ export function createAutomationHandlers(wait: () => Promise<void>) {
         item,
         sweepRuns: data.sweepRuns.filter((r) => r.itemId === item.id),
       });
+    }),
+    http.get('/api/automation/items/:id/events', async ({ params }) => {
+      await wait();
+      const blocked = off();
+      if (blocked) return blocked;
+      const data = current();
+      const item = data.items.find((i) => i.id === params.id);
+      if (!item)
+        return error(404, 'AUTOMATION_ITEM_NOT_FOUND', `No automation item ${String(params.id)}`);
+      return HttpResponse.json({ itemId: item.id, events: mockItemEvents(data, item) });
+    }),
+    // The capture operations automation buys ran; any other capture falls through to the capture mocks.
+    http.get('/api/captures/:id/operations/:operationId', async ({ params }) => {
+      const operation = mockCaptureOperation(
+        current(),
+        String(params.id),
+        String(params.operationId),
+      );
+      if (!operation) return undefined;
+      await wait();
+      return HttpResponse.json(operation);
     }),
     http.get('/api/automation/days', async ({ request }) => {
       await wait();

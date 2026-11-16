@@ -9,6 +9,9 @@ import {
 import { ApiError } from '../../api/client';
 import { isSolanaAddress } from '../../lib/base58';
 import {
+  nextTryText,
+  allPendingText,
+  zoneDate,
   addDays,
   buyBuckets,
   capPercent,
@@ -436,5 +439,76 @@ describe('retry', () => {
   it('counts retries only once there is one', () => {
     expect(retriesText(0)).toBeNull();
     expect(retriesText(1)).toBe('retried 1×');
+  });
+});
+
+describe('all-pending days', () => {
+  const day = (key: string, over: Partial<AutomationDaySummary> = {}): AutomationDaySummary => ({
+    day: key,
+    from: `${key}T07:00:00Z`,
+    to: `${key}T07:00:00Z`,
+    covered: true,
+    complete: false,
+    sessions: 1,
+    buys: 3,
+    belowFilter: 0,
+    captured: 1,
+    simulated: 1,
+    failed: 0,
+    abandoned: 0,
+    requestsUsed: 100,
+    bestStatus: 'PENDING',
+    bestLabel: null,
+    pendingDay: key,
+    ...over,
+  });
+
+  it('says how many days are pending and why, most common reason first', () => {
+    const days = [
+      day('2026-11-02'),
+      day('2026-11-01'),
+      day('2026-10-31'),
+      day('2026-10-30', { complete: true }),
+      day('2026-10-29', { covered: false }),
+    ];
+    expect(allPendingText(days.slice(1, 3), '2026-11-02', true)).toBe(
+      '2 days pending: buys still capturing',
+    );
+    expect(allPendingText(days, '2026-11-02', true)).toBe(
+      '5 days pending: buys still capturing (2), today is still running (1), waiting for earlier days of their 7-day window (1), not covered by discovery (1)',
+    );
+    expect(allPendingText(days, '2026-11-02', false)).toBe(
+      '5 days pending: discovery only, so no buy is captured or replayed',
+    );
+  });
+
+  it('says nothing once any day has a verdict', () => {
+    expect(
+      allPendingText(
+        [day('2026-11-01'), day('2026-10-31', { bestStatus: 'SUCCESS' })],
+        '2026-11-02',
+        true,
+      ),
+    ).toBeNull();
+    expect(allPendingText([], '2026-11-02', true)).toBeNull();
+  });
+
+  it('reads a date on the automation clock', () => {
+    expect(zoneDate('2026-11-02T20:00:00Z', '+05:00')).toBe('3 Nov');
+    expect(zoneDate(null, '+05:00')).toBe('—');
+  });
+});
+
+describe('next try', () => {
+  // 2 Nov 2026, 22:00 UTC+5.
+  const now = Date.parse('2026-11-02T17:00:00Z');
+
+  it('shows the time today, a date on another day, and overdue once past', () => {
+    expect(nextTryText('2026-11-02T18:27:00Z', '+05:00', now)).toBe('next try 23:27');
+    expect(nextTryText('2026-11-03T05:27:00Z', '+05:00', now)).toBe('next try 3 Nov, 10:27');
+    expect(nextTryText('2026-11-02T16:00:00Z', '+05:00', now)).toBe('next try overdue since 21:00');
+    expect(nextTryText('2026-10-31T05:27:00Z', '+05:00', now)).toBe(
+      'next try overdue since 31 Oct, 10:27',
+    );
   });
 });

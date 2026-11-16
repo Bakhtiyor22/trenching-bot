@@ -1,7 +1,12 @@
-import type { RunSummary } from '../../api/types';
-import { compareDecimals, decimalSign } from '../../lib/decimal';
+import type { RunQuery, RunStatus, RunSummary } from '../../api/types';
+import { RUN_STATUSES } from '../../api/types';
+import { MAX_SEARCH_CHARS, MIN_SEARCH_CHARS } from '../../api/queries';
+import { isSolanaAddress } from '../../lib/base58';
+import { compareDecimals } from '../../lib/decimal';
+import { mintLabel, shortId } from '../../lib/format';
+import { addDays, dayInfo, dayStartInstant, isRealDate } from '../automation/automationModel';
 
-export type Outcome = 'all' | 'profit' | 'loss' | 'flat';
+export type StatusFilter = RunStatus | 'all';
 export type SortKey = 'created' | 'pnl' | 'scenarios';
 export interface Sort {
   key: SortKey;
@@ -11,30 +16,174 @@ export interface Sort {
 
 export const DEFAULT_SORT: Sort = { key: 'created', descending: true };
 
-const OUTCOME_SIGN: Record<Exclude<Outcome, 'all'>, -1 | 0 | 1> = { profit: 1, loss: -1, flat: 0 };
+/** URL parameters of the Runs page. Every filter lives in the URL so a shared link shows the same list. */
+export const RUN_PARAMS = {
+  status: 'status',
+  mint: 'mint',
+  day: 'day',
+  createdFrom: 'from',
+  createdTo: 'to',
+  datasetId: 'datasetId',
+  q: 'q',
+  asOf: 'asOf',
+  page: 'page',
+  sort: 'sort',
+} as const;
+/** The filters "Clear filters" removes. */
+export const FILTER_PARAMS = [
+  RUN_PARAMS.status,
+  RUN_PARAMS.mint,
+  RUN_PARAMS.day,
+  RUN_PARAMS.createdFrom,
+  RUN_PARAMS.createdTo,
+  RUN_PARAMS.datasetId,
+  RUN_PARAMS.q,
+] as const;
+/** The old `?outcome=loss` links still open the matching status. */
+export const LEGACY_OUTCOME_PARAM = 'outcome';
+
+export const STATUS_LABELS: Record<RunStatus, string> = {
+  PROFIT: 'Profit',
+  LOSS: 'Loss',
+  FLAT: 'Flat',
+  NO_ENTRY: 'No entry',
+  OPEN: 'Open',
+};
+
+/** The filters as read from the URL, raw: a value that is not usable yet is kept so its field can say why. */
+export interface RunFilters {
+  status: StatusFilter;
+  mint: string;
+  /** A trading day, `YYYY-MM-DD`. */
+  day: string;
+  /** Created range in the viewer's local dates, both included. */
+  createdFrom: string;
+  createdTo: string;
+  datasetId: string | null;
+  q: string;
+}
+
+/** The status in `?status` (or a legacy `?outcome`), case-insensitive; anything unknown is "all". */
+export function parseStatus(value: string | null): StatusFilter {
+  const upper = value?.trim().toUpperCase().replace(/-/g, '_');
+  return RUN_STATUSES.find((status) => status === upper) ?? 'all';
+}
+
+export function readFilters(params: URLSearchParams): RunFilters {
+  return {
+    status: parseStatus(params.get(RUN_PARAMS.status) ?? params.get(LEGACY_OUTCOME_PARAM)),
+    mint: params.get(RUN_PARAMS.mint)?.trim() ?? '',
+    day: params.get(RUN_PARAMS.day) ?? '',
+    createdFrom: params.get(RUN_PARAMS.createdFrom) ?? '',
+    createdTo: params.get(RUN_PARAMS.createdTo) ?? '',
+    datasetId: params.get(RUN_PARAMS.datasetId) || null,
+    q: params.get(RUN_PARAMS.q) ?? '',
+  };
+}
+
+/** Why a typed text search is not sent, or null when it is usable (or empty). */
+export function queryProblem(q: string): string | null {
+  const length = q.trim().length;
+  if (length === 0) return null;
+  if (length < MIN_SEARCH_CHARS) return `Type at least ${MIN_SEARCH_CHARS} characters.`;
+  if (length > MAX_SEARCH_CHARS) return `At most ${MAX_SEARCH_CHARS} characters.`;
+  return null;
+}
+
+/** Why a typed token is not a filter, or null when it is a Solana address (or empty). */
+export function mintProblem(mint: string): string | null {
+  return mint && !isSolanaAddress(mint) ? 'Not a Solana token address.' : null;
+}
+
+/** Why a trading day is not a filter, or null when it is a real date (or empty). */
+export function dayProblem(day: string): string | null {
+  return day && !isRealDate(day) ? 'Not a real date.' : null;
+}
+
+/** What is wrong with the created range, by end. Each end is optional; both are local dates, both included. */
+export function createdRangeProblem(from: string, to: string): { from?: string; to?: string } {
+  const problems: { from?: string; to?: string } = {};
+  if (from && !isRealDate(from)) problems.from = 'Not a real date.';
+  if (to && !isRealDate(to)) problems.to = 'Not a real date.';
+  if (!problems.from && !problems.to && from && to && from > to)
+    problems.to = 'Must be on or after the start date.';
+  return problems;
+}
+
+/** Local midnight of a `YYYY-MM-DD` date, as an instant. */
+export function localMidnight(date: string): string {
+  const [year, month, day] = date.split('-').map(Number) as [number, number, number];
+  return new Date(year, month - 1, day).toISOString();
+}
+
+/** The automation clock trading days are cut on; `/api/automation/status` gives it. */
+export interface DayClock {
+  zone: string;
+  dayStart: string;
+}
 
 /**
- * Narrows the loaded page of runs by a free-text query and an outcome. The query matches any part of
- * the run id, dataset id, configuration hash or dataset name, case-insensitively.
+ * `GET /api/runs` for the filters, sending only usable values: an invalid token or date, or a too-short text, is left
+ * out (its field says why). A trading day needs the automation clock; without one it is left out too.
  */
-export function filterRuns(
-  runs: RunSummary[],
-  query: string,
-  outcome: Outcome,
-  datasetNames: Map<string, string>,
-): RunSummary[] {
-  const needle = query.trim().toLowerCase();
-  return runs.filter((run) => {
-    if (outcome !== 'all' && decimalSign(run.realizedPnl) !== OUTCOME_SIGN[outcome]) return false;
-    if (!needle) return true;
-    const haystack = [
-      run.id,
-      run.datasetId,
-      run.configurationHash,
-      datasetNames.get(run.datasetId) ?? '',
-    ];
-    return haystack.some((value) => value.toLowerCase().includes(needle));
-  });
+export function toRunQuery(
+  filters: RunFilters,
+  clock: DayClock | null,
+  page: number,
+  size: number,
+  asOf: string | null,
+): RunQuery {
+  const day = !dayProblem(filters.day) && filters.day && clock ? filters.day : null;
+  const created = createdRangeProblem(filters.createdFrom, filters.createdTo);
+  const rangeOk = !created.from && !created.to;
+  const q = filters.q.trim();
+  return {
+    page,
+    size,
+    datasetId: filters.datasetId,
+    status: filters.status === 'all' ? null : filters.status,
+    mint: filters.mint && !mintProblem(filters.mint) ? filters.mint : null,
+    anchorFrom: day && clock ? dayStartInstant(day, clock.zone, clock.dayStart) : null,
+    anchorTo: day && clock ? dayStartInstant(addDays(day, 1), clock.zone, clock.dayStart) : null,
+    createdFrom: rangeOk && filters.createdFrom ? localMidnight(filters.createdFrom) : null,
+    createdTo: rangeOk && filters.createdTo ? localMidnight(addDays(filters.createdTo, 1)) : null,
+    q: q && !queryProblem(q) ? q : null,
+    asOf,
+  };
+}
+
+/** Plain words for each filter in effect, for the empty state ("Loss", "token 5bYU…okbDs", ...). */
+export function activeFilterLabels(
+  filters: RunFilters,
+  datasetName: string | null | undefined,
+): string[] {
+  const labels: string[] = [];
+  if (filters.status !== 'all') labels.push(STATUS_LABELS[filters.status]);
+  if (filters.mint && !mintProblem(filters.mint)) labels.push(`token ${mintLabel(filters.mint)}`);
+  if (filters.day && !dayProblem(filters.day))
+    labels.push(`trading day ${dayInfo(filters.day).label}`);
+  const created = createdRangeProblem(filters.createdFrom, filters.createdTo);
+  if ((filters.createdFrom || filters.createdTo) && !created.from && !created.to)
+    labels.push(
+      `created ${filters.createdFrom ? dayInfo(filters.createdFrom).short : 'any time'} to ${
+        filters.createdTo ? dayInfo(filters.createdTo).short : 'now'
+      }`,
+    );
+  if (filters.datasetId) labels.push(`dataset ${datasetName || shortId(filters.datasetId)}`);
+  if (filters.q.trim() && !queryProblem(filters.q)) labels.push(`text “${filters.q.trim()}”`);
+  return labels;
+}
+
+export function hasFilters(filters: RunFilters): boolean {
+  return (
+    filters.status !== 'all' ||
+    filters.mint !== '' ||
+    filters.day !== '' ||
+    filters.createdFrom !== '' ||
+    filters.createdTo !== '' ||
+    filters.datasetId !== null ||
+    filters.q.trim() !== ''
+  );
 }
 
 /** Sorts a copy; P&L is compared exactly as decimal strings. Ties keep the newest first. */
@@ -54,14 +203,8 @@ export function toggleSort(current: Sort, key: SortKey): Sort {
   return current.key === key ? { key, descending: !current.descending } : { key, descending: true };
 }
 
-const OUTCOMES: readonly Outcome[] = ['all', 'profit', 'loss', 'flat'];
 const SORT_KEYS: readonly SortKey[] = ['created', 'pnl', 'scenarios'];
 const ASCENDING_SUFFIX = '-asc';
-
-/** The outcome in `?outcome`; anything unknown is "all". */
-export function parseOutcome(value: string | null): Outcome {
-  return OUTCOMES.find((outcome) => outcome === value) ?? 'all';
-}
 
 /** The sort in `?sort` ("pnl", "pnl-asc", ...); anything unknown is the default. */
 export function parseSort(value: string | null): Sort {

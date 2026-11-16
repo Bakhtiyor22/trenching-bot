@@ -261,6 +261,48 @@ export interface AutomationItemDetail {
 }
 
 /**
+ * Kinds of a token flow's history event. Phase 2 adds `STOP_REQUESTED`, `STOPPED` and `RESTARTED`, so a client renders
+ * any other kind generically.
+ */
+export type AutomationItemEventKind =
+  | 'HISTORY_STARTED'
+  | 'STATE_CHANGED'
+  | 'OPERATION_STARTED'
+  | 'OPERATION_ENDED'
+  | 'ATTEMPT_FAILED'
+  | 'RETRY_REQUESTED'
+  | 'SWEEP_ENTRY_RECORDED';
+
+/**
+ * One append-only history event of a buy, written with the change it records. `seq` orders an item's events (gapless,
+ * from 1). `detail` is kind-specific: `SWEEP_ENTRY_RECORDED` carries `{ planId, label, runId, outcome }` and
+ * `OPERATION_ENDED` carries `{ operationState }`.
+ */
+export interface AutomationItemEvent {
+  seq: number;
+  at: IsoInstant;
+  kind: AutomationItemEventKind | (string & {});
+  fromState: string | null;
+  toState: string | null;
+  step: string | null;
+  attempt: number | null;
+  captureSessionId: string | null;
+  operationId: string | null;
+  requestsUsed: number | null;
+  failureCode: string | null;
+  failureMessage: string | null;
+  actor: string | null;
+  requestId: string | null;
+  note: string | null;
+  detail: Record<string, unknown> | null;
+}
+
+export interface AutomationItemEvents {
+  itemId: string;
+  events: AutomationItemEvent[];
+}
+
+/**
  * What a day's retry did, by item id: put back into capture (`retried`), already retried by this same request
  * (`unchanged`), or refused with a {@link RetryRefusal} code (`refused`).
  */
@@ -372,6 +414,8 @@ export const automationApi = {
     postJson<AutomationSessionDetail>(`${BASE}/sessions/${enc(id)}/close`, { requestId }),
   item: (id: string, signal?: AbortSignal) =>
     getJson<AutomationItemDetail>(`${BASE}/items/${enc(id)}`, signal),
+  itemEvents: (id: string, signal?: AbortSignal) =>
+    getJson<AutomationItemEvents>(`${BASE}/items/${enc(id)}/events`, signal),
   days: (query: DayQuery, signal?: AbortSignal) =>
     getJson<AutomationDayList>(withQuery(`${BASE}/days`, { ...query }), signal),
   day: (date: IsoDate, signal?: AbortSignal) =>
@@ -423,6 +467,8 @@ export const automationKeys = {
   sessions: (query: SessionQuery) => ['automation', 'sessions', query] as const,
   session: (id: string) => ['automation', 'session', id] as const,
   item: (id: string) => ['automation', 'item', id] as const,
+  /** Under the item's key, so refreshing a buy (after a retry, say) refreshes its history too. */
+  itemEvents: (id: string) => ['automation', 'item', id, 'events'] as const,
   days: (query: DayQuery) => ['automation', 'days', query] as const,
   day: (date: string) => ['automation', 'day', date] as const,
   sweepRuns: (query: SweepRunQuery) => ['automation', 'sweep-runs', query] as const,
@@ -438,10 +484,12 @@ function visiblePoll(ms: number) {
   return () => (hidden() ? false : ms);
 }
 
-export function useAutomationStatus() {
+/** `enabled: false` reads only what another view already loaded (the palette needs the clock only for a mint). */
+export function useAutomationStatus({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: automationKeys.status,
     queryFn: ({ signal }) => automationApi.status(signal),
+    enabled,
     refetchInterval: (query) =>
       hidden()
         ? false
@@ -478,6 +526,15 @@ export function useAutomationItem(id: string | null, { poll = false }: { poll?: 
     queryKey: automationKeys.item(id ?? ''),
     queryFn: ({ signal }) => automationApi.item(id!, signal),
     enabled: id != null,
+    refetchInterval: poll ? visiblePoll(AUTOMATION_LIST_POLL_MS) : false,
+  });
+}
+
+/** A buy's history, polled with the buy itself so the timeline and the buy's state never disagree. */
+export function useAutomationItemEvents(id: string, { poll = false }: { poll?: boolean } = {}) {
+  return useQuery({
+    queryKey: automationKeys.itemEvents(id),
+    queryFn: ({ signal }) => automationApi.itemEvents(id, signal),
     refetchInterval: poll ? visiblePoll(AUTOMATION_LIST_POLL_MS) : false,
   });
 }

@@ -353,9 +353,46 @@ export interface RunSummary {
    * runs), which therefore cannot be deleted. Absent from an older backend, which only copies.
    */
   storage?: RunStorage;
+  /** Derived on the server from the counts: no fill, then any open position, then the sign of `realizedPnl`. */
+  status: RunStatus;
+  /** The dataset's name; null when it has none or was deleted. */
+  datasetName: string | null;
+  /** The tokens the run's dataset holds, sorted; empty when unknown. */
+  mints: string[];
+  /** Block time of the buy the dataset was captured around; null for a dataset without one. */
+  anchorBlockTime: IsoInstant | null;
 }
 
 export type RunStorage = 'COPY' | 'DATASET_REFERENCE';
+
+/** `RunStatus` in `GET /api/runs`: exactly one per run. */
+export type RunStatus = 'PROFIT' | 'LOSS' | 'FLAT' | 'NO_ENTRY' | 'OPEN';
+export const RUN_STATUSES: readonly RunStatus[] = ['PROFIT', 'LOSS', 'FLAT', 'NO_ENTRY', 'OPEN'];
+
+/**
+ * `GET /api/runs`: one page cut from the snapshot `asOf` (runs created at or before it), so later pages never shift
+ * while new runs arrive. `statusCounts` has every status, counted with every filter except `status`.
+ */
+export interface RunPage extends Page<RunSummary> {
+  asOf: IsoInstant;
+  statusCounts: Record<RunStatus, number>;
+}
+
+/** Query of `GET /api/runs`. Every filter is optional and they combine with AND; ranges are half-open `[from, to)`. */
+export interface RunQuery {
+  page: number;
+  size: number;
+  datasetId?: string | null;
+  status?: RunStatus | null;
+  mint?: string | null;
+  anchorFrom?: IsoInstant | null;
+  anchorTo?: IsoInstant | null;
+  createdFrom?: IsoInstant | null;
+  createdTo?: IsoInstant | null;
+  /** 2–100 characters after trim. */
+  q?: string | null;
+  asOf?: IsoInstant | null;
+}
 
 export interface RunStart {
   run: RunSummary;

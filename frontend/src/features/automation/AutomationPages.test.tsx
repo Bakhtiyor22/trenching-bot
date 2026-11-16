@@ -179,6 +179,16 @@ describe('AutomationOverviewPage', () => {
     expect(screen.getByText('trenching.automation.enabled=true')).toBeInTheDocument();
   });
 
+  it('says how many days are pending when the scoreboard status filter matches none', async () => {
+    resetAutomationMocks(discoveryOnly(createAutomationDb()));
+    renderOverview('/automation?status=SUCCESS');
+    expect(
+      await screen.findByText(
+        /^14 days pending: discovery only, so no buy is captured or replayed, so no variation is success yet\./,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('says why every day is pending in phase 0', async () => {
     resetAutomationMocks(discoveryOnly(createAutomationDb()));
     renderOverview();
@@ -209,6 +219,21 @@ describe('AutomationDaysPage', () => {
       'Wed 21 Oct',
       'Tue 20 Oct',
     ]);
+  });
+
+  it('says how many days are pending and why when a verdict filter matches none', async () => {
+    resetAutomationMocks(discoveryOnly(createAutomationDb()));
+    const { user, router } = renderPage(<AutomationDaysPage />, {
+      path: '/automation/days',
+      url: '/automation/days?status=SUCCESS',
+    });
+    expect(
+      await screen.findByText('14 days pending: discovery only, so no buy is captured or replayed'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('No days match')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Show pending days' }));
+    expect(router.state.location.search).toContain('status=PENDING');
+    expect(await screen.findByRole('table', { name: 'Trading days' })).toBeInTheDocument();
   });
 
   it('sends a custom date range and refuses one longer than 62 days', async () => {
@@ -283,6 +308,27 @@ describe('AutomationDayPage', () => {
     ).toHaveLength(10);
     // The default buy is pinned in the URL, so a refresh cannot move the selection.
     await waitFor(() => expect(router.state.location.search).toMatch(/^\?item=/));
+  });
+
+  it('shows a closing session as waiting for its buys instead of offering to close it', async () => {
+    const closing = db.sessions.find((s) => s.state === 'CLOSING')!;
+    const unfinished = db.items.filter(
+      (i) =>
+        i.sessionId === closing.id &&
+        !['SIMULATED', 'FAILED', 'ABANDONED', 'SKIPPED_NOT_FIRST_BUY'].includes(i.state),
+    ).length;
+    renderDay(closing.tradingDay);
+    const sessions = await screen.findByRole('table', { name: 'Sessions this day' });
+    expect(
+      within(sessions).getByText(
+        `Closing: waits for ${unfinished} ${unfinished === 1 ? 'buy' : 'buys'}`,
+      ),
+    ).toBeInTheDocument();
+    expect(within(sessions).queryByRole('button', { name: 'Close session now' })).toBeNull();
+    // Its waiting buy tried last in October: overdue, with the date.
+    expect(screen.getAllByText(/next try overdue since \d+ Oct, \d\d:\d\d/).length).toBeGreaterThan(
+      0,
+    );
   });
 
   it('rejects a date that does not exist', async () => {

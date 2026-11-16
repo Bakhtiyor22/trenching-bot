@@ -1,4 +1,14 @@
-import { Alert, Group, ScrollArea, Select, Stack, Table, Text, TextInput } from '@mantine/core';
+import {
+  Alert,
+  Button,
+  Group,
+  ScrollArea,
+  Select,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+} from '@mantine/core';
 import { useSearchParams } from 'react-router';
 import {
   MAX_DAYS_PER_LIST,
@@ -14,6 +24,7 @@ import { StatusChip } from '../../components/StatusChip';
 import { formatCount } from '../../lib/format';
 import {
   addDays,
+  allPendingText,
   dateProblem,
   dayInfo,
   dayItemCounts,
@@ -220,12 +231,28 @@ function Days({ status }: { status: AutomationStatus }) {
           <QueryView query={days} loadingLabel="Loading days…" errorTitle="Days unavailable">
             {(data) => {
               const rows = data.items.filter((d) => keep(d, best, health));
+              // A verdict filter over days that are all pending: say how many wait, and on what.
+              const pending =
+                best && best !== 'PENDING'
+                  ? allPendingText(data.items, today, status.captureEnabled)
+                  : null;
               if (rows.length === 0)
                 return (
                   <EmptyState
-                    title="No days match"
+                    title={pending ?? 'No days match'}
                     description={
-                      best || health ? 'Clear a filter, or widen the range.' : 'Widen the range.'
+                      pending
+                        ? `No day has a verdict yet, so none is ${statusText[best!].toLowerCase()}. A day gets one once it and the 6 days before it are complete.`
+                        : best || health
+                          ? 'Clear a filter, or widen the range.'
+                          : 'Widen the range.'
+                    }
+                    action={
+                      pending ? (
+                        <Button variant="default" onClick={() => set('status', 'PENDING')}>
+                          Show pending days
+                        </Button>
+                      ) : undefined
                     }
                   />
                 );

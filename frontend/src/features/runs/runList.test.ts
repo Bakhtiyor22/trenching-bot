@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { RunSummary } from '../../api/types';
-import { edgeRun, sampleRun } from '../../mocks/fixtures';
+import { REAL_MINT, sampleRun } from '../../mocks/fixtures';
 import {
+  activeFilterLabels,
   DEFAULT_SORT,
-  filterRuns,
-  parseOutcome,
   parseSort,
+  parseStatus,
+  readFilters,
   serializeSort,
   sortRuns,
   toggleSort,
+  toRunQuery,
 } from './runList';
 
 const run = (
@@ -27,24 +29,83 @@ const run = (
 const winner = run('aaaa1111', '26.089701492540', '2026-10-02T21:42:32Z', 3);
 const loser = run('bbbb2222', '-3.580241077133', '2026-10-05T11:48:49Z', 2);
 const flat = run('cccc3333', '0.000000000000', '2026-10-04T00:00:00Z', 5);
-const names = new Map([[sampleRun.datasetId, 'dip-sample-v3']]);
+const CLOCK = { zone: '+05:00', dayStart: '12:00' };
 
-describe('filterRuns', () => {
-  it('keeps runs by the sign of their P&L', () => {
-    const runs = [winner, loser, flat];
-    expect(filterRuns(runs, '', 'profit', names)).toEqual([winner]);
-    expect(filterRuns(runs, '', 'loss', names)).toEqual([loser]);
-    expect(filterRuns(runs, '', 'flat', names)).toEqual([flat]);
-    expect(filterRuns(runs, '', 'all', names)).toHaveLength(3);
+describe('toRunQuery', () => {
+  it('sends every usable filter and cuts a trading day on the automation clock', () => {
+    const filters = readFilters(
+      new URLSearchParams({
+        status: 'LOSS',
+        mint: REAL_MINT,
+        day: '2026-11-10',
+        datasetId: 'ds-1',
+        q: '  decu ',
+      }),
+    );
+    expect(toRunQuery(filters, CLOCK, 2, 20, '2026-11-16T10:00:00Z')).toEqual({
+      page: 2,
+      size: 20,
+      datasetId: 'ds-1',
+      status: 'LOSS',
+      mint: REAL_MINT,
+      // 12:00 UTC+5 is 07:00 UTC; the range is half-open, ending where the next trading day starts.
+      anchorFrom: '2026-11-10T07:00:00.000Z',
+      anchorTo: '2026-11-11T07:00:00.000Z',
+      createdFrom: null,
+      createdTo: null,
+      q: 'decu',
+      asOf: '2026-11-16T10:00:00Z',
+    });
   });
 
-  it('matches any part of the run id, dataset id, config hash or dataset name', () => {
-    expect(filterRuns([winner, loser], 'BBBB', 'all', names)).toEqual([loser]);
-    expect(filterRuns([winner, edgeRun], 'dip-sample', 'all', names)).toEqual([winner]);
-    expect(filterRuns([winner], sampleRun.configurationHash.slice(10, 20), 'all', names)).toEqual([
-      winner,
+  it('leaves out an invalid token, a one-letter text, an unreal day and a day without the clock', () => {
+    const filters = readFilters(
+      new URLSearchParams({ mint: 'not-a-mint', q: 'd', day: '2026-02-31' }),
+    );
+    const query = toRunQuery(filters, CLOCK, 0, 20, null);
+    expect(query.mint).toBeNull();
+    expect(query.q).toBeNull();
+    expect(query.anchorFrom).toBeNull();
+    const noClock = toRunQuery(
+      readFilters(new URLSearchParams({ day: '2026-11-10' })),
+      null,
+      0,
+      20,
+      null,
+    );
+    expect(noClock.anchorFrom).toBeNull();
+  });
+
+  it('sends the created range as local midnights with the end date included, unless it is reversed', () => {
+    const query = toRunQuery(
+      readFilters(new URLSearchParams({ from: '2026-11-01', to: '2026-11-03' })),
+      CLOCK,
+      0,
+      20,
+      null,
+    );
+    expect(query.createdFrom).toBe(new Date(2026, 10, 1).toISOString());
+    expect(query.createdTo).toBe(new Date(2026, 10, 4).toISOString());
+    const reversed = toRunQuery(
+      readFilters(new URLSearchParams({ from: '2026-11-03', to: '2026-11-01' })),
+      CLOCK,
+      0,
+      20,
+      null,
+    );
+    expect(reversed.createdFrom).toBeNull();
+    expect(reversed.createdTo).toBeNull();
+  });
+
+  it('names the filters in effect in plain words', () => {
+    const filters = readFilters(
+      new URLSearchParams({ status: 'NO_ENTRY', day: '2026-11-10', datasetId: 'ds-1' }),
+    );
+    expect(activeFilterLabels(filters, 'Decu · 5bYU')).toEqual([
+      'No entry',
+      'trading day Tue 10 Nov',
+      'dataset Decu · 5bYU',
     ]);
-    expect(filterRuns([winner], 'nothing-like-this', 'all', names)).toEqual([]);
   });
 });
 
@@ -90,9 +151,11 @@ describe('run list URL state', () => {
     expect(serializeSort({ key: 'pnl', descending: true })).toBe('pnl');
   });
 
-  it('reads the outcome, falling back to all', () => {
-    expect(parseOutcome('loss')).toBe('loss');
-    expect(parseOutcome('LOSS')).toBe('all');
-    expect(parseOutcome(null)).toBe('all');
+  it('reads the status, case-insensitively, also from an old outcome link', () => {
+    expect(parseStatus('LOSS')).toBe('LOSS');
+    expect(parseStatus('no-entry')).toBe('NO_ENTRY');
+    expect(parseStatus('nonsense')).toBe('all');
+    expect(parseStatus(null)).toBe('all');
+    expect(readFilters(new URLSearchParams({ outcome: 'loss' })).status).toBe('LOSS');
   });
 });

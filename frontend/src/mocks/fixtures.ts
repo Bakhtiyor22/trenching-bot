@@ -409,6 +409,10 @@ export const sampleRun: RunSummary = {
   closedCount: 2,
   realizedPnl: SAMPLE_TOTAL_PNL,
   createdAt: '2026-10-02T09:20:00Z',
+  status: 'LOSS',
+  datasetName: 'dip-sample-v3',
+  mints: [BASE_MINT, STOP_LOSS_MINT, NO_DIP_MINT],
+  anchorBlockTime: null,
 };
 
 export const sampleRunDetail: RunDetail = {
@@ -486,6 +490,10 @@ export const edgeRun: RunSummary = {
   closedCount: 0,
   realizedPnl: '0.000000000000',
   createdAt: '2026-10-01T18:05:00Z',
+  status: 'OPEN',
+  datasetName: 'edge-cases',
+  mints: [BASE_MINT],
+  anchorBlockTime: null,
 };
 
 export const edgeRunDetail: RunDetail = {
@@ -684,6 +692,10 @@ export const realRunDetail: RunDetail = {
     rejectedCount: 0,
     closedCount: 1,
     realizedPnl: SAMPLE_PNL,
+    status: 'PROFIT',
+    datasetName: null,
+    mints: [REAL_MINT],
+    anchorBlockTime: null,
   },
   config: mvpConfig,
   scenarios: realScenarios,
@@ -840,6 +852,8 @@ export const walletSellRunDetail: RunDetail = {
     rejectedCount: 2,
     closedCount: 2,
     realizedPnl: '0.026011934000',
+    status: 'PROFIT',
+    datasetName: 'chart-capture-v4',
   },
   config: {
     ...mvpConfig,

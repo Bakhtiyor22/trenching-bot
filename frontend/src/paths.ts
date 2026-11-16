@@ -14,6 +14,7 @@ export const paths = {
   newRunFor: (datasetId: string) => `/runs/new?datasetId=${encodeURIComponent(datasetId)}`,
   runs: '/runs',
   runsFor: (datasetId: string) => `/runs?datasetId=${encodeURIComponent(datasetId)}`,
+  runsOfMint: (mint: string) => `/runs?mint=${encodeURIComponent(mint)}`,
   run: (id: string) => `/runs/${encodeURIComponent(id)}`,
   solana: '/solana',
   captures: '/captures',

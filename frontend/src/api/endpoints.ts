@@ -14,10 +14,11 @@ import type {
   RunDetail,
   RunEvent,
   RunOrder,
+  RunPage,
   RunPosition,
+  RunQuery,
   RunStart,
   RunStartRequest,
-  RunSummary,
   RunUsdtView,
   SolanaCheck,
   SolanaStatus,
@@ -66,6 +67,9 @@ function chartResponse(response: ChartResponse): ChartResponse {
 export const api = {
   datasets: (page: number, size: number, signal?: AbortSignal) =>
     getJson<Page<Dataset>>(withQuery(`${API_BASE}/datasets`, { page, size }), signal),
+  /** Datasets whose name contains `q` (case-insensitive) or whose id starts with it; `q` is 2–100 characters. */
+  searchDatasets: (q: string, size: number, signal?: AbortSignal) =>
+    getJson<Page<Dataset>>(withQuery(`${API_BASE}/datasets`, { page: 0, size, q }), signal),
   dataset: (id: string, signal?: AbortSignal) =>
     getJson<Dataset>(`${API_BASE}/datasets/${enc(id)}`, signal),
   datasetChart: (id: string, request: ChartRequest, signal?: AbortSignal) =>
@@ -91,8 +95,8 @@ export const api = {
     getJson<ConfigDefaults>(`${API_BASE}/config/defaults`, signal),
 
   startRun: (body: RunStartRequest) => postJson<RunStart>(`${API_BASE}/runs`, body),
-  runs: (page: number, size: number, datasetId: string | null, signal?: AbortSignal) =>
-    getJson<Page<RunSummary>>(withQuery(`${API_BASE}/runs`, { page, size, datasetId }), signal),
+  runs: (query: RunQuery, signal?: AbortSignal) =>
+    getJson<RunPage>(withQuery(`${API_BASE}/runs`, { ...query }), signal),
   run: (id: string, signal?: AbortSignal) =>
     getJson<RunDetail>(`${API_BASE}/runs/${enc(id)}`, signal),
   runChart: (id: string, request: ChartRequest, signal?: AbortSignal) =>

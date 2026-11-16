@@ -10,10 +10,14 @@ import type {
   Observation,
   Range,
   RunStartRequest,
+  RunStatus,
+  RunSummary,
   SolanaCheck,
   SolanaStatus,
 } from '../api/types';
 import { pairKey, SAMPLE_DATASET } from '../api/endpoints';
+import { RUN_STATUSES } from '../api/types';
+import { arrivingRuns, listedRunDetail, listedRuns } from './runListFixtures';
 import { base58ByteLength } from '../lib/base58';
 import { SELL_CHECK_NEEDS_TRADES, SIGNAL_SIZE_NEEDS_TRADES } from '../lib/codes';
 import { recordsTrades, TRADES_SCHEMA_VERSION } from '../lib/datasetSchema';
@@ -28,6 +32,7 @@ import {
   edgeDataset,
   expandedRunChart,
   firstSlotGapChart,
+  type MockRunRecords,
   realRunUsdt,
   REAL_RUN_ID,
   recordedRunRecords,
@@ -175,9 +180,93 @@ function pageOf<T>(items: T[], url: URL) {
   return { items: items.slice(page * size, page * size + size), page, size, total: items.length };
 }
 
-function runDetailOr404(id: string) {
+function runDetailOr404(id: string): MockRunRecords | null {
   const records = runRecords[id] ?? recordedRunRecords[id];
-  return records ?? null;
+  if (records) return records;
+  const detail = listedRunDetail(id);
+  return detail ? { detail, events: [], observations: [], orders: [], positions: [] } : null;
+}
+
+interface RunSearch {
+  statuses: RunStatus[];
+  datasetId: string | null;
+  mint: string | null;
+  anchorFrom: number | null;
+  anchorTo: number | null;
+  createdFrom: number | null;
+  createdTo: number | null;
+  q: string | null;
+  asOf: string;
+}
+
+/** `GET /api/runs`' parameters as `RunController` reads them, or its 400 for the first bad one. */
+function parseRunSearch(url: URL): RunSearch | { refusal: Response } {
+  const refuse = (field: string, reason: string) => ({ refusal: invalidRequest(field, reason) });
+  const params = url.searchParams;
+  const statuses = params.getAll('status');
+  const unknown = statuses.find((s) => !(RUN_STATUSES as readonly string[]).includes(s));
+  if (unknown !== undefined) return refuse('status', `must be one of ${RUN_STATUSES.join(', ')}`);
+  const mint = params.get('mint');
+  const mintRefusal = mint === null ? null : base58Refusal(mint);
+  if (mintRefusal) return refuse('mint', mintRefusal);
+  const instants: Record<string, number | null> = {};
+  for (const name of ['anchorFrom', 'anchorTo', 'createdFrom', 'createdTo', 'asOf']) {
+    const value = params.get(name);
+    const ms = value === null ? null : Date.parse(value);
+    if (ms !== null && Number.isNaN(ms)) return refuse(name, 'must be an ISO-8601 instant');
+    instants[name] = ms;
+  }
+  for (const [from, to] of [
+    ['anchorFrom', 'anchorTo'],
+    ['createdFrom', 'createdTo'],
+  ] as const) {
+    if (instants[from] != null && instants[to] != null && instants[from]! >= instants[to]!)
+      return refuse(from, `must be before ${to}`);
+  }
+  const q = params.get('q');
+  const needle = q?.trim() ?? null;
+  if (needle !== null && (needle.length < 2 || needle.length > 100))
+    return refuse('q', 'must be 2 to 100 characters');
+  return {
+    statuses: statuses as RunStatus[],
+    datasetId: params.get('datasetId'),
+    mint,
+    anchorFrom: instants.anchorFrom ?? null,
+    anchorTo: instants.anchorTo ?? null,
+    createdFrom: instants.createdFrom ?? null,
+    createdTo: instants.createdTo ?? null,
+    q: needle,
+    asOf: new Date(instants.asOf ?? Date.now()).toISOString(),
+  };
+}
+
+/** Domain rule R4's text match: an id or hash by prefix of at least 4 characters, or a dataset name by substring. */
+const MIN_PREFIX_CHARS = 4;
+
+/** Every filter of `GET /api/runs` except `status`, which `statusCounts` must not apply. */
+function runMatches(run: RunSummary, search: RunSearch): boolean {
+  const created = Date.parse(run.createdAt);
+  if (created > Date.parse(search.asOf)) return false;
+  if (search.datasetId && run.datasetId !== search.datasetId) return false;
+  if (search.mint && !run.mints.includes(search.mint)) return false;
+  if (search.anchorFrom !== null || search.anchorTo !== null) {
+    if (!run.anchorBlockTime) return false;
+    const anchor = Date.parse(run.anchorBlockTime);
+    if (search.anchorFrom !== null && anchor < search.anchorFrom) return false;
+    if (search.anchorTo !== null && anchor >= search.anchorTo) return false;
+  }
+  if (search.createdFrom !== null && created < search.createdFrom) return false;
+  if (search.createdTo !== null && created >= search.createdTo) return false;
+  if (search.q) {
+    const needle = search.q.toLowerCase();
+    const byPrefix =
+      needle.length >= MIN_PREFIX_CHARS &&
+      [run.id, run.datasetId, run.configurationHash].some((v) =>
+        v.toLowerCase().startsWith(needle),
+      );
+    if (!byPrefix && !(run.datasetName ?? '').toLowerCase().includes(needle)) return false;
+  }
+  return true;
 }
 
 const BUCKET_LADDER = [1, 5, 15, 30, 60, 300, 900, 3600, 14400, 86400];
@@ -817,7 +906,16 @@ export function createHandlers(options: MockOptions = {}) {
 
     http.get('/api/datasets', async ({ request }) => {
       await wait();
-      return HttpResponse.json(pageOf(db.datasets, new URL(request.url)));
+      const url = new URL(request.url);
+      const q = url.searchParams.get('q');
+      if (q === null) return HttpResponse.json(pageOf(db.datasets, url));
+      const needle = q.trim().toLowerCase();
+      if (needle.length < 2 || needle.length > 100)
+        return invalidRequest('q', 'must be 2 to 100 characters');
+      const matches = db.datasets.filter(
+        (d) => d.name.toLowerCase().includes(needle) || d.id.toLowerCase().startsWith(needle),
+      );
+      return HttpResponse.json(pageOf(matches, url));
     }),
 
     http.post('/api/datasets/samples/:sample', async ({ params }) => {
@@ -1001,12 +1099,23 @@ export function createHandlers(options: MockOptions = {}) {
     http.get('/api/runs', async ({ request }) => {
       await wait();
       const url = new URL(request.url);
-      const datasetId = url.searchParams.get('datasetId');
-      const runs = Object.values(runRecords)
+      const search = parseRunSearch(url);
+      if ('refusal' in search) return search.refusal;
+      const started = Object.values(runRecords)
         .map((r) => r.detail.run)
-        .filter((r) => db.startedRuns.has(r.id))
-        .filter((r) => !datasetId || r.datasetId === datasetId);
-      return HttpResponse.json(pageOf(runs, url));
+        .filter((r) => db.startedRuns.has(r.id));
+      const arriving = mockState() === 'runs-arriving' ? arrivingRuns(Date.now()) : [];
+      const matching = [...arriving, ...listedRuns, ...started]
+        .filter((run) => runMatches(run, search))
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const statusCounts = Object.fromEntries(
+        RUN_STATUSES.map((status) => [status, matching.filter((r) => r.status === status).length]),
+      ) as Record<RunStatus, number>;
+      const shown =
+        search.statuses.length > 0
+          ? matching.filter((r) => search.statuses.includes(r.status))
+          : matching;
+      return HttpResponse.json({ ...pageOf(shown, url), asOf: search.asOf, statusCounts });
     }),
 
     http.get('/api/runs/:id', async ({ params }) => {
@@ -1167,8 +1276,9 @@ export function createHandlers(options: MockOptions = {}) {
       return HttpResponse.json(result);
     }),
 
-    ...createCaptureHandlers(wait),
+    // Automation first: it answers the capture operations of its own buys and passes the rest on.
     ...createAutomationHandlers(wait),
+    ...createCaptureHandlers(wait),
   ];
 }
 
