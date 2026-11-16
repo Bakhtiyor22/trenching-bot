@@ -64,7 +64,7 @@ class AutomationBackfillService(
     fun cancel(id: String, requestId: String?): AutomationBackfillRow {
         val validRequestId = AutomationRequests.requireRequestId(requestId)
         log.info("automation backfill cancel requested backfillId={} requestId={}", id, validRequestId)
-        transaction.cancel(id, clock.instant()).forEach(cancellation::cancel)
+        transaction.cancel(id, validRequestId, clock.instant()).forEach(cancellation::cancel)
         return query.get(id)
     }
 }

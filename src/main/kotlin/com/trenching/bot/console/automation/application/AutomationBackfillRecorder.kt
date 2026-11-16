@@ -124,7 +124,7 @@ class AutomationBackfillRecorder(
         val open = OpenSessions(backfill.wallet, sessions.findAllByBackfillIdAndStateOrderByCreatedAtAscFirstBuyAtAscIdAsc(backfill.id, AutomationSessionState.OPEN),
             idle, now, backfill.id)
         val byMint = storedItems(backfill.wallet, passing)
-        writer.replaceSuperseded(passing, byMint, open, idle, now, ::replaceable) { writer.isRetakeable(it, backfill.id) }
+        val replaces = writer.replaceSuperseded(passing, byMint, open, idle, now, ::replaceable, retakenBy = backfill.id)
         val created = mutableListOf<AutomationItemEntity>()
         for (action in batch.actions) {
             if (action.side == TradeSide.SELL) continue
@@ -145,7 +145,7 @@ class AutomationBackfillRecorder(
         sessions.saveAll(opened)
         writer.mergeAbsorbed(open)
         created.forEach { it.sessionId = open.current(it.sessionId) }
-        items.saveAll(created)
+        writer.saveNew(created, now, replaces)
         opened.forEach { log.info("automation session opened sessionId={} wallet={} backfillId={} firstItemId={}", it.id, it.wallet, backfill.id, it.firstItemId) }
         created.forEach { log.info("automation item discovered itemId={} sessionId={} backfillId={} mint={} state={}", it.id, it.sessionId, backfill.id, it.mint, it.state) }
         return created

@@ -20,6 +20,7 @@ import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import tools.jackson.databind.json.JsonMapper
 
@@ -51,8 +52,31 @@ class DatasetControllerTest {
         assertEquals(listOf(UNUSED), catalog.deleted)
     }
 
+    @Test
+    fun `a search text is trimmed and sent to the catalog search instead of the plain page`() {
+        val response = mvc.perform(get("/api/datasets").param("q", "  alpha ").param("page", "1").param("size", "5")).andReturn().response
+
+        assertEquals(200, response.status, response.contentAsString)
+        assertEquals(listOf(Triple("alpha", 1, 5)), catalog.searches)
+        assertEquals(0, json.readTree(response.contentAsString)["total"].asInt())
+    }
+
+    @Test
+    fun `a search text outside 2 to 100 characters is a 400 INVALID_REQUEST naming q`() {
+        listOf("a", " ", "x".repeat(101)).forEach { text ->
+            val response = mvc.perform(get("/api/datasets").param("q", text)).andReturn().response
+
+            assertEquals(400, response.status, text)
+            val body = json.readTree(response.contentAsString)
+            assertEquals("INVALID_REQUEST", body["code"].asString())
+            assertEquals(listOf("q"), body["fields"].propertyNames().toList())
+        }
+        assertEquals(emptyList(), catalog.searches)
+    }
+
     private class Catalog : ReplayDatasetCatalog {
         val deleted = mutableListOf<String>()
+        val searches = mutableListOf<Triple<String, Int, Int>>()
 
         override fun delete(id: String): Boolean {
             if (id == IN_USE) throw DatasetInUseException(id, 3)
@@ -63,6 +87,10 @@ class DatasetControllerTest {
         override fun register(name: String, json: InputStream): DatasetRegistration = error("unused")
         override fun importSample(sample: SampleDataset): DatasetRegistration = error("unused")
         override fun page(page: Int, size: Int): PageResult<DatasetSummary> = error("unused")
+        override fun search(text: String, page: Int, size: Int): PageResult<DatasetSummary> {
+            searches += Triple(text, page, size)
+            return PageResult(emptyList(), page, size, 0)
+        }
         override fun find(id: String): DatasetSummary? = error("unused")
         override fun load(id: String): ReplayDataset = error("unused")
     }

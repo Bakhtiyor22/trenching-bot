@@ -5,6 +5,7 @@ import com.trenching.bot.replay.domain.DatasetEntry
 import com.trenching.bot.replay.domain.DatasetInUseException
 import com.trenching.bot.replay.domain.DatasetSummary
 import com.trenching.bot.replay.domain.RunStorage
+import com.trenching.bot.replay.infrastructure.persistence.LikePatterns
 import com.trenching.bot.replay.infrastructure.persistence.ReplayDatasetRepository
 import com.trenching.bot.replay.infrastructure.persistence.SimulationRunRepository
 import com.trenching.bot.replay.mapper.ReplayDatasetMapper
@@ -36,6 +37,10 @@ class ReplayDatasetTransaction(
     @Transactional(readOnly = true)
     fun page(pageable: Pageable): PageResult<DatasetSummary> =
         ReplayPaging.result(repository.findAllProjectedBy(pageable), mapper::toSummary)
+
+    @Transactional(readOnly = true)
+    fun search(text: String, pageable: Pageable): PageResult<DatasetSummary> =
+        ReplayPaging.result(repository.search(LikePatterns.contains(text), LikePatterns.prefix(text), pageable), mapper::toSummary)
 
     @Transactional(readOnly = true)
     fun snapshot(id: String): String? = repository.findSnapshotById(id)

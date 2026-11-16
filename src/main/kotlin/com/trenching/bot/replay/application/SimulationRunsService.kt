@@ -4,11 +4,12 @@ import com.trenching.bot.common.PageResult
 import com.trenching.bot.replay.ReplayDatasetCatalog
 import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.domain.RunAggregates
+import com.trenching.bot.replay.domain.RunSearchQuery
+import com.trenching.bot.replay.domain.RunSearchResult
 import com.trenching.bot.replay.domain.RunStart
 import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SimulationRunNotFoundException
-import com.trenching.bot.replay.mapper.SimulationRunMapper
 import com.trenching.bot.strategy.domain.SimulationConfig
 import java.time.Instant
 import org.slf4j.LoggerFactory
@@ -19,7 +20,7 @@ class SimulationRunsService(
     private val catalog: ReplayDatasetCatalog,
     private val ledger: SimulationRunLedger,
     private val runs: SimulationRunTransaction,
-    private val mapper: SimulationRunMapper,
+    private val searches: SimulationRunSearchTransaction,
 ) : SimulationRuns {
     private val log = LoggerFactory.getLogger(SimulationRunsService::class.java)
 
@@ -28,13 +29,15 @@ class SimulationRunsService(
         val report = ReplayRunner().run(dataset, config)
         val persisted = ledger.persistWithOutcome(dataset, report, storage)
         val created = persisted.created
-        val run = mapper.toSummary(persisted.record)
+        val run = checkNotNull(runs.summary(persisted.record.id)) { "Persisted run vanished runId=${persisted.record.id}" }
         log.info("simulation run started runId={} datasetId={} created={} storage={}", run.id, datasetId, created, run.storage)
         return RunStart(run, created)
     }
 
     override fun page(page: Int, size: Int, datasetId: String?): PageResult<RunSummary> =
         runs.page(datasetId, ReplayPaging.request(page, size))
+
+    override fun search(query: RunSearchQuery): RunSearchResult = searches.search(query)
 
     override fun find(runId: String): RunSummary? = runs.summary(runId)
 

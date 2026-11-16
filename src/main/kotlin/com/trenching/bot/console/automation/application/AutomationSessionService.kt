@@ -60,7 +60,7 @@ class AutomationSessionService(
     fun close(sessionId: String, requestId: String?): AutomationSessionDetail {
         val validRequestId = AutomationRequests.requireRequestId(requestId)
         log.info("automation session close requested sessionId={} requestId={}", sessionId, validRequestId)
-        transaction.closeManually(sessionId, clock.instant()).forEach(cancellation::cancel)
+        transaction.closeManually(sessionId, validRequestId, clock.instant()).forEach(cancellation::cancel)
         return query.session(sessionId)
     }
 

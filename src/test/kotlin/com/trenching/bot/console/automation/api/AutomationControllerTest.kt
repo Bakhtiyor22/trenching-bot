@@ -19,11 +19,13 @@ import com.trenching.bot.console.automation.RecordingTaskScheduler
 import com.trenching.bot.console.automation.application.AutomationManualRun
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.domain.AutomationIds
+import com.trenching.bot.console.automation.domain.AutomationItemEventKind
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.AutomationStep
 import com.trenching.bot.console.automation.domain.BackfillState
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillEntity
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEventEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkEntity
 import com.trenching.bot.console.automation.mapper.AutomationBackfillRequestMapperImpl
 import com.trenching.bot.console.automation.mapper.AutomationResponseMapperImpl
@@ -335,6 +337,53 @@ class AutomationControllerTest : AutomationDatabaseTest() {
     @Test
     fun `an unknown item is a 404`() {
         val response = mvc.perform(get("/api/automation/items/missing")).andReturn().response
+
+        assertEquals(404, response.status, response.contentAsString)
+        assertEquals("AUTOMATION_ITEM_NOT_FOUND", body(response)["code"].asString())
+    }
+
+    @Test
+    fun `an item's events are listed in seq order with every field, and an item without any lists none`() {
+        items.saveAll(listOf(item(1, "tonight", AutomationItemState.FAILED), item(2, "tonight", AutomationItemState.DISCOVERED)))
+        itemEvents.saveAll(listOf(
+            event("item-1", 2, AutomationItemEventKind.SWEEP_ENTRY_RECORDED, EVENING.plusSeconds(60), step = AutomationStep.SWEEP, attempt = 1,
+                detail = """{"planId":"decu-sweep-1","label":"V00","runId":"run-1","outcome":"STOP_LOSS"}"""),
+            event("item-1", 3, AutomationItemEventKind.ATTEMPT_FAILED, EVENING.plusSeconds(120), toState = null, step = AutomationStep.RATES, attempt = 2,
+                failureCode = "RATES_INCOMPLETE", failureMessage = "rates were incomplete", operationId = "op-1", captureSessionId = "capture-1"),
+            event("item-1", 1, AutomationItemEventKind.STATE_CHANGED, EVENING, toState = AutomationItemState.DISCOVERED),
+        ))
+
+        val body = ok(get("/api/automation/items/item-1/events"))
+
+        assertEquals("item-1", body["itemId"].asString())
+        val events = body["events"]
+        assertEquals(listOf(1, 2, 3), List(events.size()) { events[it]["seq"].asInt() })
+        assertEquals("STATE_CHANGED", events[0]["kind"].asString())
+        assertEquals(true, events[0]["fromState"].isNull)
+        assertEquals("DISCOVERED", events[0]["toState"].asString())
+        assertEquals(EVENING.toString(), events[0]["at"].asString())
+        assertEquals(true, events[0]["detail"].isNull)
+        assertEquals("SWEEP", events[1]["step"].asString())
+        assertEquals("run-1", events[1]["detail"]["runId"].asString())
+        assertEquals("STOP_LOSS", events[1]["detail"]["outcome"].asString())
+        with(events[2]) {
+            assertEquals("ATTEMPT_FAILED", this["kind"].asString())
+            assertEquals(2, this["attempt"].asInt())
+            assertEquals("RATES_INCOMPLETE", this["failureCode"].asString())
+            assertEquals("rates were incomplete", this["failureMessage"].asString())
+            assertEquals("op-1", this["operationId"].asString())
+            assertEquals("capture-1", this["captureSessionId"].asString())
+            assertEquals(true, this["actor"].isNull)
+            assertEquals(true, this["requestId"].isNull)
+            assertEquals(true, this["note"].isNull)
+            assertEquals(true, this["requestsUsed"].isNull)
+        }
+        assertEquals(0, ok(get("/api/automation/items/item-2/events"))["events"].size())
+    }
+
+    @Test
+    fun `the events of an unknown item are a 404`() {
+        val response = mvc.perform(get("/api/automation/items/missing/events")).andReturn().response
 
         assertEquals(404, response.status, response.contentAsString)
         assertEquals("AUTOMATION_ITEM_NOT_FOUND", body(response)["code"].asString())
@@ -692,6 +741,22 @@ class AutomationControllerTest : AutomationDatabaseTest() {
             stepAttempt = 2
             captureSessionId = "capture-$n"
         }
+
+    private fun event(
+        itemId: String,
+        seq: Int,
+        kind: AutomationItemEventKind,
+        at: Instant,
+        toState: AutomationItemState? = null,
+        step: AutomationStep? = null,
+        attempt: Int? = null,
+        failureCode: String? = null,
+        failureMessage: String? = null,
+        operationId: String? = null,
+        captureSessionId: String? = null,
+        detail: String? = null,
+    ) = AutomationItemEventEntity(AutomationIds.itemEvent(itemId, seq), itemId, seq, at, kind, null, toState, step, attempt, captureSessionId, operationId,
+        null, failureCode, failureMessage, null, null, null, detail)
 
     private fun retryRequest(path: String, requestId: String) =
         post(path).contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"$requestId"}""")

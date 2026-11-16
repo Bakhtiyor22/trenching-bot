@@ -15,6 +15,8 @@ import com.trenching.bot.papertrading.domain.PaperFill
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.domain.RunAggregates
+import com.trenching.bot.replay.domain.RunSearchQuery
+import com.trenching.bot.replay.domain.RunSearchResult
 import com.trenching.bot.replay.domain.RunStart
 import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
@@ -118,6 +120,8 @@ class DashboardServiceTest {
             val newestFirst = stored.sortedByDescending { it.createdAt }
             return PageResult(newestFirst.drop(page * size).take(size), page, size, stored.size.toLong())
         }
+
+        override fun search(query: RunSearchQuery): RunSearchResult = error("not used")
 
         override fun find(runId: String): RunSummary? = stored.firstOrNull { it.id == runId }
 

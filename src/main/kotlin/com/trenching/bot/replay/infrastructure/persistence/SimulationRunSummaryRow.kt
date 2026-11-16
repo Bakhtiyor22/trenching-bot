@@ -21,4 +21,5 @@ interface SimulationRunSummaryRow {
     val createdAt: Instant
     /** Null on rows stored before run storage existed. */
     val storage: RunStorage?
+    val anchorBlockTime: Instant?
 }

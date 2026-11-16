@@ -1,7 +1,9 @@
 package com.trenching.bot.console.automation.mapper
 
 import com.trenching.bot.console.automation.domain.AutomationDueItem
+import com.trenching.bot.console.automation.domain.AutomationItemEventView
 import com.trenching.bot.console.automation.domain.AutomationItemProgress
+import com.trenching.bot.console.automation.domain.AutomationItemStanding
 import com.trenching.bot.console.automation.domain.AutomationItemView
 import com.trenching.bot.console.automation.domain.AutomationSessionView
 import com.trenching.bot.console.automation.domain.AutomationSweepRunView
@@ -12,6 +14,7 @@ import com.trenching.bot.console.automation.domain.DiscoveryWatermark
 import com.trenching.bot.console.automation.domain.SweepRunScore
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEntity
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEventEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkEntity
@@ -24,7 +27,7 @@ import org.mapstruct.MappingTarget
 import org.mapstruct.ReportingPolicy
 
 /** Automation rows to the views the services return; entities never leave the automation services. */
-@Mapper(componentModel = MappingConstants.ComponentModel.SPRING, uses = [AutomationBackfillCodec::class], unmappedTargetPolicy = ReportingPolicy.ERROR)
+@Mapper(componentModel = MappingConstants.ComponentModel.SPRING, uses = [AutomationBackfillCodec::class, AutomationEventCodec::class], unmappedTargetPolicy = ReportingPolicy.ERROR)
 interface AutomationRecordMapper {
     fun toBackfill(entity: AutomationBackfillEntity): BackfillView
 
@@ -37,6 +40,9 @@ interface AutomationRecordMapper {
     fun toProgress(entity: AutomationItemEntity): AutomationItemProgress
 
     @Mapping(target = "progress", source = ".")
+    fun toStanding(entity: AutomationItemEntity): AutomationItemStanding
+
+    @Mapping(target = "progress", source = ".")
     fun toDueItem(entity: AutomationItemEntity): AutomationDueItem
 
     /** Writes a pipeline step's outcome onto the item; its buy, ids and bookkeeping columns stay as they are. */
@@ -44,6 +50,8 @@ interface AutomationRecordMapper {
     fun applyProgress(progress: AutomationItemProgress, @MappingTarget entity: AutomationItemEntity)
 
     fun toSweepRun(entity: AutomationSweepRunEntity): AutomationSweepRunView
+
+    fun toEventView(entity: AutomationItemEventEntity): AutomationItemEventView
 
     fun toSweepScore(entity: AutomationSweepRunEntity): SweepRunScore
 

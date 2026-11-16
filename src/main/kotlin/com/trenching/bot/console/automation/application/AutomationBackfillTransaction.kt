@@ -107,13 +107,13 @@ class AutomationBackfillTransaction(
      * Any other backfill that already ended is left as it is.
      */
     @Transactional
-    fun cancel(id: String, now: Instant): List<AutomationOperationRef> {
+    fun cancel(id: String, requestId: String, now: Instant): List<AutomationOperationRef> {
         val backfill = backfills.findOneById(id) ?: throw BackfillNotFoundException(id)
         if (!cancellable(backfill)) return emptyList()
         val started = mutableListOf<AutomationOperationRef>()
         do {
             val batch = sessions.findIdsToCancel(id, AutomationSessionState.CLOSED, AutomationItemState.TERMINAL, PageRequest.of(0, AutomationLimits.CANCEL_SESSIONS_PER_READ))
-            batch.forEach { started += sessionTransaction.closeManually(it, now) }
+            batch.forEach { started += sessionTransaction.closeManually(it, requestId, now) }
         } while (batch.isNotEmpty())
         end(backfill, BackfillState.CANCELLED, now)
         return started

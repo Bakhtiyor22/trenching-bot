@@ -25,4 +25,10 @@ object AutomationLimits {
 
     /** Trading days one list of days or day verdicts covers. */
     const val MAX_DAYS_PER_LIST = 62
+
+    /** History events read for one item; an item has about twenty, its sweep entries and a few retries included. */
+    const val MAX_EVENTS_PER_ITEM = 1000
+
+    /** Items read per page of ids when history is started for the items that predate it; each one then gets a transaction of its own. */
+    const val HISTORY_START_ITEMS_PER_PAGE = 200
 }

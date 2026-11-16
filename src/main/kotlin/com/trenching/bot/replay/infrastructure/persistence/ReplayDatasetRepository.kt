@@ -13,6 +13,19 @@ interface ReplayDatasetRepository : JpaRepository<ReplayDatasetEntity, String> {
 
     fun findAllProjectedBy(pageable: Pageable): Page<ReplayDatasetSummaryRow>
 
+    /** [namePattern] and [idPattern] are LIKE patterns escaped with `!` (see `LikePatterns`); a dataset matches either. */
+    @Query("""
+        select d.id as id, d.name as name, d.trackedWallet as trackedWallet, d.schemaVersion as schemaVersion,
+            d.transactionCount as transactionCount, d.observationCount as observationCount, d.firstSlot as firstSlot,
+            d.lastSlot as lastSlot, d.pairs as pairs, d.createdAt as createdAt
+        from ReplayDatasetEntity d
+        where lower(d.name) like lower(:namePattern) escape '!' or d.id like :idPattern escape '!'
+    """)
+    fun search(@Param("namePattern") namePattern: String, @Param("idPattern") idPattern: String, pageable: Pageable): Page<ReplayDatasetSummaryRow>
+
+    @Query("select d.id as id, d.name as name from ReplayDatasetEntity d where d.id in :ids")
+    fun findNamesByIds(@Param("ids") ids: Collection<String>): List<ReplayDatasetNameRow>
+
     /** Returns 1 when the dataset was removed, 0 when no dataset has the id. */
     @Modifying
     @Query("delete from ReplayDatasetEntity d where d.id = :id")

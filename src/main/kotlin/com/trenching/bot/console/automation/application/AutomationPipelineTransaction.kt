@@ -2,9 +2,12 @@ package com.trenching.bot.console.automation.application
 
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationDueItem
+import com.trenching.bot.console.automation.domain.AutomationItemChange
 import com.trenching.bot.console.automation.domain.AutomationItemNotFoundException
+import com.trenching.bot.console.automation.domain.AutomationItemEvents
 import com.trenching.bot.console.automation.domain.AutomationItemProgress
 import com.trenching.bot.console.automation.domain.AutomationItemState
+import com.trenching.bot.console.automation.domain.AutomationItemTrace
 import com.trenching.bot.console.automation.domain.AutomationItemTransitions
 import com.trenching.bot.console.automation.domain.BackfillBudget
 import com.trenching.bot.console.automation.domain.BackfillState
@@ -28,6 +31,7 @@ class AutomationPipelineTransaction(
     private val items: AutomationItemRepository,
     private val backfills: AutomationBackfillRepository,
     private val mapper: AutomationRecordMapper,
+    private val events: AutomationItemEventWriter,
 ) {
     private val log = LoggerFactory.getLogger(AutomationPipelineTransaction::class.java)
 
@@ -48,22 +52,27 @@ class AutomationPipelineTransaction(
     }
 
     /**
-     * Stores [next] on the item if it still stands at [expected], with its capture's [requestsUsed] when given. Returns false,
-     * changing nothing, when the item moved on meanwhile; throws [com.trenching.bot.console.automation.domain.IllegalItemTransitionException]
-     * for a state change the pipeline does not allow.
+     * Stores [next] on the item if it still stands at [expected], with its capture's [requestsUsed] when given, and the events of
+     * the change that [trace] completes, in the same transaction. Returns false, changing nothing, when the item moved on meanwhile;
+     * throws [com.trenching.bot.console.automation.domain.IllegalItemTransitionException] for a state change the pipeline does not
+     * allow.
      */
     @Transactional
-    fun record(itemId: String, expected: AutomationItemProgress, next: AutomationItemProgress, requestsUsed: Int?, now: Instant): Boolean {
+    fun record(itemId: String, expected: AutomationItemProgress, next: AutomationItemProgress, requestsUsed: Int?, now: Instant,
+        trace: AutomationItemTrace = AutomationItemTrace.NONE): Boolean {
         val item = items.findOneById(itemId) ?: throw AutomationItemNotFoundException(itemId)
-        val current = mapper.toProgress(item)
+        val before = mapper.toStanding(item)
+        val current = before.progress
         if (current != expected) {
             log.warn("automation item changed meanwhile itemId={} state={} ignoredState={}", itemId, current.state, next.state)
             return false
         }
         AutomationItemTransitions.require(itemId, current.state, next.state)
+        val operationRequests = requestsUsed?.takeIf { trace.endedOperationState != null }?.let { (it - (item.requestsUsed ?: 0)).coerceAtLeast(0) }
         mapper.applyProgress(next, item)
         requestsUsed?.let { item.requestsUsed = it }
         item.updatedAt = now
+        events.append(itemId, now, AutomationItemChange(before, AutomationItemEvents.changed(current, next, trace, operationRequests)))
         log.info("automation item advanced itemId={} step={} state={}", itemId, item.step, item.state)
         return true
     }

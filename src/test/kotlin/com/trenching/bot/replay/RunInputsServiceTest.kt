@@ -12,6 +12,8 @@ import com.trenching.bot.replay.domain.DatasetSummary
 import com.trenching.bot.replay.domain.ReplayDataset
 import com.trenching.bot.replay.domain.RunAggregates
 import com.trenching.bot.replay.domain.RunStart
+import com.trenching.bot.replay.domain.RunSearchQuery
+import com.trenching.bot.replay.domain.RunSearchResult
 import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.replay.domain.SampleDataset
@@ -79,6 +81,7 @@ class RunInputsServiceTest {
         override fun find(runId: String): RunSummary? = summaries[runId]
         override fun start(datasetId: String, config: SimulationConfig, storage: RunStorage): RunStart = error("unused")
         override fun page(page: Int, size: Int, datasetId: String?): PageResult<RunSummary> = error("unused")
+        override fun search(query: RunSearchQuery): RunSearchResult = error("unused")
         override fun report(runId: String): String = error("unused")
         override fun totals(createdSince: Instant): RunAggregates = error("unused")
     }
@@ -88,6 +91,7 @@ class RunInputsServiceTest {
         override fun register(name: String, json: InputStream): DatasetRegistration = error("unused")
         override fun importSample(sample: SampleDataset): DatasetRegistration = error("unused")
         override fun page(page: Int, size: Int): PageResult<DatasetSummary> = error("unused")
+        override fun search(text: String, page: Int, size: Int): PageResult<DatasetSummary> = error("unused")
         override fun find(id: String): DatasetSummary? = error("unused")
         override fun delete(id: String): Boolean = error("unused")
     }

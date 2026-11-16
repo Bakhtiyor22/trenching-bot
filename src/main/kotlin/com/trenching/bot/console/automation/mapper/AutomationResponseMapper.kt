@@ -9,6 +9,7 @@ import com.trenching.bot.console.automation.api.dto.AutomationDayRetryResponse
 import com.trenching.bot.console.automation.api.dto.AutomationEvaluationPageResponse
 import com.trenching.bot.console.automation.api.dto.AutomationEvaluationResponse
 import com.trenching.bot.console.automation.api.dto.AutomationItemDetailResponse
+import com.trenching.bot.console.automation.api.dto.AutomationItemEventsResponse
 import com.trenching.bot.console.automation.api.dto.AutomationManualRunResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSessionDetailResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSessionPageResponse
@@ -18,6 +19,7 @@ import com.trenching.bot.console.automation.api.dto.AutomationSweepRunPageRespon
 import com.trenching.bot.console.automation.api.dto.AutomationSweepRunRowResponse
 import com.trenching.bot.console.automation.domain.AutomationBackfillRow
 import com.trenching.bot.console.automation.domain.AutomationItemDetail
+import com.trenching.bot.console.automation.domain.AutomationItemEventList
 import com.trenching.bot.console.automation.domain.DayDetail
 import com.trenching.bot.console.automation.domain.DayList
 import com.trenching.bot.console.automation.domain.DayRetryResult
@@ -44,6 +46,8 @@ interface AutomationResponseMapper {
     fun toDetail(detail: AutomationSessionDetail): AutomationSessionDetailResponse
 
     fun toItemDetail(detail: AutomationItemDetail): AutomationItemDetailResponse
+
+    fun toItemEvents(events: AutomationItemEventList): AutomationItemEventsResponse
 
     @Mapping(target = ".", source = "session")
     fun toSession(row: AutomationSessionRow): AutomationSessionResponse

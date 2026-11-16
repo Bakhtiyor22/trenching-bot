@@ -2,6 +2,8 @@ package com.trenching.bot.replay
 
 import com.trenching.bot.common.PageResult
 import com.trenching.bot.replay.domain.RunAggregates
+import com.trenching.bot.replay.domain.RunSearchQuery
+import com.trenching.bot.replay.domain.RunSearchResult
 import com.trenching.bot.replay.domain.RunStart
 import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
@@ -16,6 +18,9 @@ interface SimulationRuns {
      */
     fun start(datasetId: String, config: SimulationConfig, storage: RunStorage = RunStorage.COPY): RunStart
     fun page(page: Int, size: Int, datasetId: String?): PageResult<RunSummary>
+
+    /** Filters, counts and pages across every run, newest first, ties by id; see [RunSearchQuery] for the snapshot. */
+    fun search(query: RunSearchQuery): RunSearchResult
     fun find(runId: String): RunSummary?
     fun report(runId: String): String
     /** Totals over all stored runs; [createdSince] is inclusive. */

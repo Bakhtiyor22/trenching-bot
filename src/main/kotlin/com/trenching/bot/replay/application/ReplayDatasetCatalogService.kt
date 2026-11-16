@@ -52,6 +52,9 @@ class ReplayDatasetCatalogService(
 
     override fun page(page: Int, size: Int): PageResult<DatasetSummary> = datasets.page(ReplayPaging.request(page, size))
 
+    override fun search(text: String, page: Int, size: Int): PageResult<DatasetSummary> =
+        datasets.search(text, ReplayPaging.request(page, size))
+
     override fun find(id: String): DatasetSummary? = datasets.find(id)
 
     override fun delete(id: String): Boolean {

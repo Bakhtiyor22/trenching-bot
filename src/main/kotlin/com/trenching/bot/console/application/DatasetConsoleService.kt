@@ -51,9 +51,10 @@ class DatasetConsoleService(
         return catalog.importSample(dataset)
     }
 
-    fun page(page: Int, size: Int): PageResult<DatasetSummary> {
+    /** With [text], only the datasets whose name contains it or whose id starts with it. */
+    fun page(page: Int, size: Int, text: String?): PageResult<DatasetSummary> {
         ConsolePaging.require(page, size)
-        return catalog.page(page, size)
+        return if (text == null) catalog.page(page, size) else catalog.search(ConsoleSearchText.validated(text), page, size)
     }
 
     fun detail(id: String): DatasetDetail {

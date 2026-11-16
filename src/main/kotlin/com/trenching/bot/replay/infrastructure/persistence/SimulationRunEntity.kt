@@ -15,6 +15,7 @@ import java.time.Instant
         Index(name = "idx_simulation_runs_created_at", columnList = "created_at, id"),
         Index(name = "idx_simulation_runs_dataset", columnList = "dataset_checksum, created_at"),
         Index(name = "idx_simulation_runs_storage_dataset", columnList = "dataset_checksum, storage"),
+        Index(name = "idx_simulation_runs_anchor", columnList = "anchor_block_time, id"),
     ],
 )
 class SimulationRunEntity(
@@ -40,4 +41,16 @@ class SimulationRunEntity(
 ) {
     @Version @Column(name = "version", nullable = false)
     var version: Long? = null
+
+    /** The dataset's anchor buy time; null when it has none, and on a run not indexed yet. */
+    @Column(name = "anchor_block_time", nullable = true)
+    var anchorBlockTime: Instant? = null
+
+    /** When the run's search index (anchor and `simulation_run_tokens`) was written; null until then. */
+    @Column(name = "search_indexed_at", nullable = true)
+    var searchIndexedAt: Instant? = null
+
+    /** When the backfill found the run's dataset unreadable and gave up on it; null for a run it did not fail on. Set only while [searchIndexedAt] is null. */
+    @Column(name = "search_index_failed_at", nullable = true)
+    var searchIndexFailedAt: Instant? = null
 }

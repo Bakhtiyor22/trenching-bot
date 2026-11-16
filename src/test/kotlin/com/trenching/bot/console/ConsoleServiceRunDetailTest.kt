@@ -145,6 +145,7 @@ class ConsoleServiceRunDetailTest {
         override fun register(name: String, json: InputStream): DatasetRegistration = error("unused")
         override fun importSample(sample: SampleDataset): DatasetRegistration = error("unused")
         override fun page(page: Int, size: Int): PageResult<DatasetSummary> = error("unused")
+        override fun search(text: String, page: Int, size: Int): PageResult<DatasetSummary> = error("unused")
         override fun load(id: String): ReplayDataset = error("unused")
         override fun delete(id: String): Boolean = error("unused")
     }

@@ -37,7 +37,6 @@ class SimulationRunMapperTest {
 
         assertEquals(RunStorage.DATASET_REFERENCE, entity.storage)
         assertNull(entity.datasetSnapshot)
-        assertEquals(RunStorage.DATASET_REFERENCE, mapper.toSummary(record).storage)
     }
 
     @Test
@@ -73,6 +72,7 @@ class SimulationRunMapperTest {
         override val realizedPnl: BigDecimal = BigDecimal.ZERO
         override val createdAt = CREATED_AT
         override val storage = storage
+        override val anchorBlockTime: Instant? = null
     }
 
     private companion object {

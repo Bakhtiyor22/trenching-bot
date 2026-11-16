@@ -11,11 +11,14 @@ import com.trenching.bot.console.api.dto.RunStartResponse
 import com.trenching.bot.console.api.dto.RunUsdtViewResponse
 import com.trenching.bot.console.application.ConsoleService
 import com.trenching.bot.console.application.RunLaunchService
+import com.trenching.bot.console.application.RunSearchConsoleService
 import com.trenching.bot.console.application.RunUsdtViewService
 import com.trenching.bot.console.config.ConditionalOnConsoleEnabled
+import com.trenching.bot.console.domain.RunSearchParams
 import com.trenching.bot.console.mapper.ObservationResponseMapper
 import com.trenching.bot.console.mapper.RunResponseMapper
 import com.trenching.bot.console.mapper.RunUsdtViewMapper
+import java.time.Instant
 import org.springframework.http.ContentDisposition
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -34,6 +37,7 @@ import org.springframework.web.bind.annotation.RestController
 class RunController(
     private val runLaunchService: RunLaunchService,
     private val consoleService: ConsoleService,
+    private val runSearchService: RunSearchConsoleService,
     private val runResponseMapper: RunResponseMapper,
     private val observationResponseMapper: ObservationResponseMapper,
     private val runUsdtViewService: RunUsdtViewService,
@@ -50,7 +54,16 @@ class RunController(
         @RequestParam(defaultValue = ConsoleResponses.DEFAULT_PAGE) page: Int,
         @RequestParam(defaultValue = ConsoleResponses.DEFAULT_PAGE_SIZE) size: Int,
         @RequestParam(required = false) datasetId: String?,
-    ): RunPageResponse = runResponseMapper.toPage(consoleService.page(page, size, datasetId))
+        @RequestParam(name = "status", required = false) statuses: List<String>?,
+        @RequestParam(required = false) mint: String?,
+        @RequestParam(required = false) anchorFrom: Instant?,
+        @RequestParam(required = false) anchorTo: Instant?,
+        @RequestParam(required = false) createdFrom: Instant?,
+        @RequestParam(required = false) createdTo: Instant?,
+        @RequestParam(name = "q", required = false) text: String?,
+        @RequestParam(required = false) asOf: Instant?,
+    ): RunPageResponse = runResponseMapper.toPage(runSearchService.search(
+        RunSearchParams(page, size, datasetId, statuses.orEmpty(), mint, anchorFrom, anchorTo, createdFrom, createdTo, text, asOf)))
 
     @GetMapping("/{id}")
     fun detail(@PathVariable id: String): RunDetailResponse = runResponseMapper.toResponse(consoleService.detailWithSource(id))

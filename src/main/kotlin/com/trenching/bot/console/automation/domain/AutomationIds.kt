@@ -2,6 +2,7 @@ package com.trenching.bot.console.automation.domain
 
 import java.security.MessageDigest
 import java.util.HexFormat
+import java.util.UUID
 
 /** Ids derived from their input (plan Rules 8, 10 and 21), so a restart, a repeated scan or a repeated sweep converges on the same rows. */
 object AutomationIds {
@@ -17,6 +18,9 @@ object AutomationIds {
     fun backfill(wallet: String, requestId: String): String = sha256(wallet, requestId)
 
     fun sweepRun(itemId: String, planId: String, label: String): String = sha256(itemId, planId, label)
+
+    /** A history event's id, a name-based UUID of the item and the event's order, so it fits the column and a repeat of the write gets the same one. */
+    fun itemEvent(itemId: String, seq: Int): String = UUID.nameUUIDFromBytes("$itemId$SEPARATOR$seq".toByteArray(Charsets.UTF_8)).toString()
 
     private fun sha256(vararg parts: String): String =
         HexFormat.of().formatHex(MessageDigest.getInstance(ALGORITHM).digest(parts.joinToString(SEPARATOR).toByteArray(Charsets.UTF_8)))

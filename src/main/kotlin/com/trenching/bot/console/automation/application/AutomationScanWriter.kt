@@ -2,6 +2,9 @@ package com.trenching.bot.console.automation.application
 
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationFailures
+import com.trenching.bot.console.automation.domain.AutomationIds
+import com.trenching.bot.console.automation.domain.AutomationItemChange
+import com.trenching.bot.console.automation.domain.AutomationItemEvents
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.DiscoveryCursor
@@ -32,6 +35,7 @@ class AutomationScanWriter(
     private val items: AutomationItemRepository,
     private val sweepRuns: AutomationSweepRunRepository,
     private val mapper: AutomationRecordMapper,
+    private val events: AutomationItemEventWriter,
 ) {
     private val log = LoggerFactory.getLogger(AutomationScanWriter::class.java)
 
@@ -47,6 +51,16 @@ class AutomationScanWriter(
             failureCode = if (placed) null else AutomationFailures.MISSING_BLOCK_TIME, failureMessage = null,
             nextActionAt = if (placed) now else null, createdAt = now, updatedAt = now,
         ).also { it.backfillId = backfillId }
+    }
+
+    /**
+     * Stores the items [created], each with the event of its being found. An item that takes the place of a replaced one of the same
+     * buy has the same id, so its event carries on the sequence of the history the replaced one left. [replaces] names, for an item
+     * that took the place of one with another id, that item ([replaceSuperseded] returns it), and the event says so.
+     */
+    fun saveNew(created: List<AutomationItemEntity>, now: Instant, replaces: Map<String, String> = emptyMap()) {
+        items.saveAll(created)
+        events.appendAll(now, created.associate { it.id to AutomationItemChange.found(AutomationItemEvents.created(mapper.toProgress(it), replaces[it.id])) })
     }
 
     /** Whether the item is a buy without a block time, which never sets a span or takes part in evaluation. */
@@ -80,9 +94,13 @@ class AutomationScanWriter(
 
     /**
      * Deletes each stored item in [known] that a buy among [buys] (oldest first) takes over, so that buy is placed as the mint's
-     * item: an earlier buy of the mint, as far as [replaceable] allows, or the same or an earlier buy when [retaken] holds for the
-     * item. Then it rebuilds every session those items left (see [rebuild]). Runs before any buy is placed, so the sessions are
-     * rebuilt from stored items only.
+     * item: an earlier buy of the mint, as far as [replaceable] allows, or the same or an earlier buy when [retakenBy], the backfill
+     * that found it, may [isRetakeable] take over the item. Then it rebuilds every session those items left (see [rebuild]). Runs
+     * before any buy is placed, so the sessions are rebuilt from stored items only.
+     *
+     * Each item taken over gets a last event before it is deleted, and its events stay (plan Domain Rule H3): `REPLACED` naming the
+     * item that took its place, or, when the same buy is stored again under the same id, a `STATE_CHANGED` naming the backfill. Returns
+     * the replacement of each item that took the place of one with another id, by the new item's id, for [saveNew].
      */
     fun replaceSuperseded(
         buys: List<WalletAction>,
@@ -91,28 +109,39 @@ class AutomationScanWriter(
         idle: SessionIdleRule,
         now: Instant,
         replaceable: (AutomationItemEntity, DiscoveryCursor) -> Boolean,
-        retaken: (AutomationItemEntity) -> Boolean = { false },
-    ) {
+        retakenBy: String? = null,
+    ): Map<String, String> {
         val left = linkedSetOf<String>()
+        val replaces = linkedMapOf<String, String>()
         buys.groupBy { it.mint.value }.forEach { (mint, mintBuys) ->
             val stored = known[mint] ?: return@forEach
             val earliest = DiscoveryCursor.of(mintBuys.first())
             val storedAt = mapper.toCursor(stored)
             val takesOver = when {
                 earliest > storedAt -> false
-                retaken(stored) -> true
+                retakenBy != null && isRetakeable(stored, retakenBy) -> true
                 else -> earliest < storedAt && replaceable(stored, earliest)
             }
             if (!takesOver) return@forEach
+            recordEnd(stored, AutomationIds.item(stored.wallet, earliest), retakenBy, replaces, now)
             items.delete(stored)
             known.remove(mint)
             left += stored.sessionId
             log.info("automation item replaced by a buy of its mint itemId={} mint={} state={} backfillId={} buySignature={}",
                 stored.id, mint, stored.state, stored.backfillId, earliest.signature)
         }
-        if (left.isEmpty()) return
+        if (left.isEmpty()) return replaces
         items.flush()
         left.forEach { rebuild(it, open, idle, now) }
+        return replaces
+    }
+
+    /** The last event of [stored], which [takenBy] is about to take the place of: it was stored again under its own id, or another item replaces it. */
+    private fun recordEnd(stored: AutomationItemEntity, newItemId: String, takenBy: String?, replaces: MutableMap<String, String>, now: Instant) {
+        val before = mapper.toStanding(stored)
+        val ending = if (newItemId == stored.id) AutomationItemEvents.retaken(before.progress, takenBy) else AutomationItemEvents.replaced(before.progress, newItemId)
+        events.append(stored.id, now, AutomationItemChange(before, ending))
+        if (newItemId != stored.id) replaces[newItemId] = stored.id
     }
 
     /** Moves the items and sweep rows of every stored session another one absorbed, in bulk, then deletes it. */

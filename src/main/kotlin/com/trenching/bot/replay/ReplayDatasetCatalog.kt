@@ -13,6 +13,9 @@ interface ReplayDatasetCatalog {
     fun register(name: String, json: InputStream): DatasetRegistration
     fun importSample(sample: SampleDataset): DatasetRegistration
     fun page(page: Int, size: Int): PageResult<DatasetSummary>
+
+    /** Datasets whose name contains [text] (ignoring case) or whose id starts with it, newest first. */
+    fun search(text: String, page: Int, size: Int): PageResult<DatasetSummary>
     fun find(id: String): DatasetSummary?
     fun load(id: String): ReplayDataset
 

@@ -5,6 +5,7 @@ import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationEnabled
 import com.trenching.bot.console.automation.domain.AutomationDueItem
 import com.trenching.bot.console.automation.domain.AutomationFailures
+import com.trenching.bot.console.automation.domain.AutomationItemTrace
 import com.trenching.bot.console.automation.domain.AutomationLimits
 import com.trenching.bot.console.automation.domain.SweepEntry
 import com.trenching.bot.console.automation.domain.SweepEntryResult
@@ -64,7 +65,7 @@ class AutomationSweepService(
         val now = clock.instant()
         val next = failure?.let { item.progress.sweepFailed(AutomationFailures.SWEEP_FAILED, it.message, properties.maxStepAttempts, now) }
             ?: item.progress.simulated()
-        if (pipeline.record(item.id, item.progress, next, null, now) && failure != null) {
+        if (pipeline.record(item.id, item.progress, next, null, now, AutomationItemTrace(attemptFailed = failure != null)) && failure != null) {
             log.warn("automation sweep attempt failed itemId={} attempt={} state={} nextActionAt={}",
                 item.id, item.progress.sweepAttempt, next.state, next.nextActionAt)
         }

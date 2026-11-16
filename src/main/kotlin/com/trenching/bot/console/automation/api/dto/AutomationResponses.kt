@@ -128,6 +128,32 @@ data class AutomationSweepRunResponse(
 
 data class AutomationItemDetailResponse(val item: AutomationItemResponse, val sweepRuns: List<AutomationSweepRunResponse>)
 
+/**
+ * One event of a buy's history. [seq] orders them, from 1 and without gaps; [kind] may gain values, so clients render an unknown
+ * one generically. [detail] holds the facts of one kind: `SWEEP_ENTRY_RECORDED` has `planId`, `label`, `runId` (when it ran) and
+ * `outcome`, `OPERATION_ENDED` has `operationState`.
+ */
+data class AutomationItemEventResponse(
+    val seq: Int,
+    val at: Instant,
+    val kind: String,
+    val fromState: String?,
+    val toState: String?,
+    val step: String?,
+    val attempt: Int?,
+    val captureSessionId: String?,
+    val operationId: String?,
+    val requestsUsed: Int?,
+    val failureCode: String?,
+    val failureMessage: String?,
+    val actor: String?,
+    val requestId: String?,
+    val note: String?,
+    val detail: Map<String, String>?,
+)
+
+data class AutomationItemEventsResponse(val itemId: String, val events: List<AutomationItemEventResponse>)
+
 /** A sweep run in the sweep run list, with the buy it replayed: its [mint], [signature] and [blockTime]. P&L as in [AutomationSweepRunResponse]. */
 data class AutomationSweepRunRowResponse(
     val itemId: String,

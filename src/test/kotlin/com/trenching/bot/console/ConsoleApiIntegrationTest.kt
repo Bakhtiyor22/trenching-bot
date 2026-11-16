@@ -9,6 +9,7 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.trenching.bot.console.application.ConsoleMetrics
 import com.trenching.bot.console.application.RunLaunchService
+import com.trenching.bot.console.application.RunSearchConsoleService
 import com.trenching.bot.console.domain.PercentConversion
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.replay.SimulationRuns
@@ -503,13 +504,19 @@ class ConsoleApiIntegrationTest {
         assertTrue(badPair.body.path("fields").has("pair"))
     }
 
+    /** A run list is cut five seconds behind the clock, so a run this test just started is listed once that has passed. */
+    private fun listedRuns(datasetId: String): ConsoleReply {
+        Thread.sleep(RunSearchConsoleService.SNAPSHOT_SETTLE_TIME.plusMillis(250))
+        return http.get("/api/runs?datasetId=$datasetId")
+    }
+
     @Test
     fun `runs page by dataset`() {
         val content = variant(json, "run-list")
         val runId = startRun(content, "run-list.json")
         val datasetId = upload(content, "run-list.json").path("dataset").path("id").asString()
 
-        val page = http.get("/api/runs?datasetId=$datasetId").body
+        val page = listedRuns(datasetId).body
 
         assertEquals(1, page.path("total").asLong())
         assertEquals(runId, page.path("items").first().path("id").asString())
@@ -527,7 +534,7 @@ class ConsoleApiIntegrationTest {
         assertEquals(204, deleted.status, deleted.raw)
         assertError(404, "DATASET_NOT_FOUND", http.get("/api/datasets/$datasetId"))
         assertError(404, "DATASET_NOT_FOUND", http.delete("/api/datasets/$datasetId"))
-        assertEquals(runId, http.get("/api/runs?datasetId=$datasetId").body.path("items").first().path("id").asString())
+        assertEquals(runId, listedRuns(datasetId).body.path("items").first().path("id").asString())
         assertEquals(200, http.get("/api/runs/$runId").status)
     }
 
@@ -543,7 +550,7 @@ class ConsoleApiIntegrationTest {
         assertEquals("COPY", http.get("/api/runs/$copyRunId").body.path("run").path("storage").asString())
         assertEquals("DATASET_REFERENCE", http.get("/api/runs/$referenceRunId").body.path("run").path("storage").asString())
         assertEquals("DATASET_REFERENCE",
-            http.get("/api/runs?datasetId=$datasetId").body.path("items").items().single { it.path("id").asString() == referenceRunId }
+            listedRuns(datasetId).body.path("items").items().single { it.path("id").asString() == referenceRunId }
                 .path("storage").asString())
         val copyObservations = http.get("/api/runs/$copyRunId/observations")
         assertEquals(200, copyObservations.status, copyObservations.raw)

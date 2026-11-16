@@ -8,6 +8,7 @@ import com.trenching.bot.console.application.ConsoleAddresses
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationItemDetail
+import com.trenching.bot.console.automation.domain.AutomationItemEventList
 import com.trenching.bot.console.automation.domain.AutomationItemNotFoundException
 import com.trenching.bot.console.automation.domain.AutomationLimits
 import com.trenching.bot.console.automation.domain.AutomationSessionDetail
@@ -22,6 +23,7 @@ import com.trenching.bot.console.automation.domain.InvalidAutomationRequestExcep
 import com.trenching.bot.console.automation.domain.SessionHealth
 import com.trenching.bot.console.automation.domain.SweepOutcomes
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillRepository
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEventRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunRepository
@@ -47,6 +49,7 @@ class AutomationQueryService(
     private val sessions: AutomationSessionRepository,
     private val items: AutomationItemRepository,
     private val sweepRuns: AutomationSweepRunRepository,
+    private val itemEvents: AutomationItemEventRepository,
     private val watermarks: AutomationWatermarkRepository,
     private val backfills: AutomationBackfillRepository,
     private val mapper: AutomationRecordMapper,
@@ -109,6 +112,13 @@ class AutomationQueryService(
         val item = items.findOneById(id) ?: throw AutomationItemNotFoundException(id)
         val runs = sweepRuns.findAllByItemIdOrderByPlanIdAscLabelAsc(id, PageRequest.of(0, MAX_SWEEP_RUNS)).map(mapper::toSweepRun)
         return AutomationItemDetail(itemViews.of(item), runs)
+    }
+
+    /** The item's history in order, at most [AutomationLimits.MAX_EVENTS_PER_ITEM] events, which an item stays far below. */
+    fun itemEvents(id: String): AutomationItemEventList {
+        if (!items.existsById(id)) throw AutomationItemNotFoundException(id)
+        val events = itemEvents.findAllByItemIdOrderBySeqAsc(id, PageRequest.of(0, AutomationLimits.MAX_EVENTS_PER_ITEM)).map(mapper::toEventView)
+        return AutomationItemEventList(id, events)
     }
 
     /** The sweep runs of every plan, newest buy first, filtered by [sessionId], the buy's [mint], [label] and [outcome]. */

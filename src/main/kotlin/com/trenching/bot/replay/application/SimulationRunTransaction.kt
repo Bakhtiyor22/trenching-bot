@@ -18,7 +18,6 @@ import com.trenching.bot.papertrading.PaperOrderStore
 import com.trenching.bot.portfolio.PositionStore
 import java.math.RoundingMode
 import java.time.Instant
-import java.time.temporal.ChronoUnit
 
 @Service
 class SimulationRunTransaction(
@@ -30,6 +29,8 @@ class SimulationRunTransaction(
     private val intents: TradeIntentStore,
     private val orders: PaperOrderStore,
     private val positions: PositionStore,
+    private val summaries: RunSummaryAssembler,
+    private val searchIndex: RunSearchIndexWriter,
 ) {
     @Transactional
     fun insert(record: SimulationRunRecord, dataset: ReplayDataset, report: SimulationReport, datasetEntry: DatasetEntry): SimulationRunRecord =
@@ -40,7 +41,13 @@ class SimulationRunTransaction(
         datasets.insertIfAbsent(datasetEntry)
         val existing = repository.findOneById(record.id)
         if (existing != null) return RunPersistence(mapper.toRecord(existing), created = false)
-        val stored = repository.saveAndFlush(mapper.toEntity(record))
+        val index = RunSearchIndex.of(dataset)
+        val entity = mapper.toEntity(record).also {
+            it.anchorBlockTime = index.anchorBlockTime
+            it.searchIndexedAt = record.createdAt
+        }
+        val stored = repository.saveAndFlush(entity)
+        searchIndex.storeTokens(mapOf(record.id to index))
         wallets.record(record.id, dataset.trackedWallet, OrderedWalletTransactions.canonical(dataset.transactions), report.ingestion)
         when (record.storage) {
             RunStorage.COPY -> observations.record(record.id, OrderedMarketData.canonical(dataset.observations))
@@ -62,13 +69,13 @@ class SimulationRunTransaction(
     fun exists(id: String): Boolean = repository.existsById(id)
 
     @Transactional(readOnly = true)
-    fun summary(id: String): RunSummary? = repository.findSummaryById(id)?.let(mapper::toSummary)
+    fun summary(id: String): RunSummary? = repository.findSummaryById(id)?.let { summaries.assemble(listOf(it)).single() }
 
     @Transactional(readOnly = true)
     fun page(datasetId: String?, pageable: Pageable): PageResult<RunSummary> {
         val rows = if (datasetId == null) repository.findAllProjectedBy(pageable)
             else repository.findAllByDatasetChecksum(datasetId, pageable)
-        return ReplayPaging.result(rows, mapper::toSummary)
+        return PageResult(summaries.assemble(rows.content), rows.number, rows.size, rows.totalElements)
     }
 
     @Transactional(readOnly = true)
@@ -79,7 +86,7 @@ class SimulationRunTransaction(
         val byQuoteMint = repository.sumByQuoteMint()
         return RunAggregates(
             totalRuns = byQuoteMint.sumOf { it.runCount },
-            runsSince = repository.countByCreatedAtGreaterThanEqual(firstStorableAtOrAfter(createdSince)),
+            runsSince = repository.countByCreatedAtGreaterThanEqual(StoredInstants.ceiling(createdSince)),
             filledCount = byQuoteMint.sumOf { it.filledCount },
             rejectedCount = byQuoteMint.sumOf { it.rejectedCount },
             openCount = byQuoteMint.sumOf { it.openCount },
@@ -88,11 +95,5 @@ class SimulationRunTransaction(
                 MintAddress.of(it.quoteMint) to it.realizedPnl.setScale(DecimalPolicy.SCALE, RoundingMode.UNNECESSARY)
             },
         )
-    }
-
-    /** `created_at` holds microseconds; the driver would round a finer bound, so round it up to keep `>=` exact. */
-    private fun firstStorableAtOrAfter(instant: Instant): Instant {
-        val micros = instant.truncatedTo(ChronoUnit.MICROS)
-        return if (micros == instant) micros else micros.plus(1, ChronoUnit.MICROS)
     }
 }

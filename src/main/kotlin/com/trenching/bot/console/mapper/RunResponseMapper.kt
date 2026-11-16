@@ -1,6 +1,5 @@
 package com.trenching.bot.console.mapper
 
-import com.trenching.bot.common.PageResult
 import com.trenching.bot.console.api.dto.CloseResponse
 import com.trenching.bot.console.api.dto.FillResponse
 import com.trenching.bot.console.api.dto.OrderResponse
@@ -17,6 +16,7 @@ import com.trenching.bot.console.domain.RunEvent
 import com.trenching.bot.console.domain.RunOrder
 import com.trenching.bot.console.domain.RunPosition
 import com.trenching.bot.console.domain.RunScenario
+import com.trenching.bot.console.domain.RunSearchPage
 import com.trenching.bot.console.domain.ScenarioTimeline
 import com.trenching.bot.console.domain.SourcedRunDetail
 import com.trenching.bot.console.domain.TimedRunScenario
@@ -45,7 +45,15 @@ abstract class RunResponseMapper {
 
     abstract fun toResponse(start: RunStart): RunStartResponse
 
-    abstract fun toPage(page: PageResult<RunSummary>): RunPageResponse
+    @Mappings(value = [
+        Mapping(target = "items", source = "page.result.page.items"),
+        Mapping(target = "page", source = "page.result.page.page"),
+        Mapping(target = "size", source = "page.result.page.size"),
+        Mapping(target = "total", source = "page.result.page.total"),
+        Mapping(target = "statusCounts", source = "page.result.statusCounts"),
+        Mapping(target = "asOf", source = "page.asOf"),
+    ])
+    abstract fun toPage(page: RunSearchPage): RunPageResponse
 
     abstract fun toResponse(sourced: SourcedRunDetail): RunDetailResponse
 

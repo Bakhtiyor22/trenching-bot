@@ -18,6 +18,7 @@ import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.domain.AutomationDisabledException
 import com.trenching.bot.console.automation.domain.AutomationFailures
 import com.trenching.bot.console.automation.domain.AutomationIds
+import com.trenching.bot.console.automation.domain.AutomationItemEventKind
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.AutomationStep
@@ -27,12 +28,14 @@ import com.trenching.bot.console.automation.domain.BackfillOverlapsCoverageExcep
 import com.trenching.bot.console.automation.domain.BackfillRequest
 import com.trenching.bot.console.automation.domain.BackfillScanOutcome
 import com.trenching.bot.console.automation.domain.BackfillState
+import com.trenching.bot.console.automation.domain.DiscoveryCursor
 import com.trenching.bot.console.automation.domain.CaptureDisabledException
 import com.trenching.bot.console.automation.domain.DryRunSummary
 import com.trenching.bot.console.automation.domain.InvalidAutomationRequestException
 import com.trenching.bot.console.automation.domain.SessionCloseReason
 import com.trenching.bot.console.automation.domain.TimeRange
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillEntity
+import com.trenching.bot.console.automation.mapper.AutomationEventCodec
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkEntity
 import com.trenching.bot.console.capture.MutableClock
 import com.trenching.bot.walletactivity.WalletAction
@@ -50,6 +53,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
+import org.springframework.data.domain.PageRequest
 import org.slf4j.LoggerFactory
 import org.springframework.transaction.IllegalTransactionStateException
 
@@ -429,6 +433,53 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
         assertEquals(signature(1).value, kept.signature)
         assertNotNull(kept.backfillId)
         assertEquals(0, sessions.findAll().count { it.id == "live-1" }, "the live session its only item left is removed")
+    }
+
+    @Test
+    fun `an item an earlier buy replaces ends its history with a REPLACED event naming the new item, whose first event names it`() {
+        live()
+        sessions.save(session("live-1", AutomationSessionState.CLOSED, Instant.parse("2026-11-01T14:00:00Z")))
+        items.save(item(7, "live-1", blockTime = Instant.parse("2026-11-01T14:00:00Z"), mint = 5, signature = 700).also { it.slot = LIVE_SLOT })
+        lookup.actions += buyAt(1, "2026-10-30T14:00:00Z", mint = 5)
+        service.create(request())
+
+        backfillDiscovery(lookup, properties, clock, usage).scan()
+
+        val kept = items.findAll().single()
+        val replaced = itemEvents.findAllByItemIdOrderBySeqAsc("item-7", PageRequest.of(0, 10))
+        assertEquals(listOf(AutomationItemEventKind.HISTORY_STARTED, AutomationItemEventKind.REPLACED), replaced.map { it.kind }, "the events outlive the deleted item")
+        assertEquals(mapOf("replacedBy" to kept.id), AutomationEventCodec.detail(replaced.last().detail))
+        assertEquals(AutomationItemState.DISCOVERED, replaced.last().fromState)
+        val found = itemEvents.findAllByItemIdOrderBySeqAsc(kept.id, PageRequest.of(0, 10)).single()
+        assertEquals(AutomationItemEventKind.STATE_CHANGED, found.kind)
+        assertEquals(mapOf("replaces" to "item-7"), AutomationEventCodec.detail(found.detail))
+    }
+
+    @Test
+    fun `an item another backfill finds again under its own id records the retake, and its history carries on under that id`() {
+        live()
+        backfills.saveAndFlush(AutomationBackfillEntity("old", "req-old", WALLET, null, LocalDate.parse("2026-10-29"), LocalDate.parse("2026-10-30"),
+            rangeStart, coveredFrom, false, null, null, 5000, BackfillState.STOPPED_BUDGET, EVENING, EVENING))
+        val night = Instant.parse("2026-10-30T14:00:00Z")
+        val buy = buyAt(1, night.plusSeconds(60))
+        val itemId = AutomationIds.item(WALLET, DiscoveryCursor.of(buy))
+        sessions.save(session("old-night", AutomationSessionState.CLOSING, night).also { it.backfillId = "old"; it.lastBuyAt = night.plusSeconds(600) })
+        items.save(item(1, "old-night", blockTime = buy.blockTime, mint = 1, signature = 1, id = itemId).also { it.slot = buy.slot.value; it.backfillId = "old" })
+        lookup.actions += buy
+        val retry = service.create(request(requestId = "req-2")).backfill
+
+        backfillDiscovery(lookup, properties, clock, usage).scan()
+
+        val taken = items.findAll().single()
+        assertEquals(itemId, taken.id)
+        assertEquals(retry.id, taken.backfillId)
+        val history = itemEvents.findAllByItemIdOrderBySeqAsc(itemId, PageRequest.of(0, 10))
+        assertEquals(listOf(1, 2, 3), history.map { it.seq })
+        assertEquals(listOf(AutomationItemEventKind.HISTORY_STARTED, AutomationItemEventKind.STATE_CHANGED, AutomationItemEventKind.STATE_CHANGED), history.map { it.kind })
+        assertEquals(mapOf("reason" to "RETAKEN_BY_BACKFILL", "backfillId" to retry.id), AutomationEventCodec.detail(history[1].detail))
+        assertEquals(AutomationItemState.DISCOVERED, history[1].fromState)
+        assertEquals(AutomationItemState.DISCOVERED, history[2].toState, "the item stored afresh is found again")
+        assertNull(history[2].detail)
     }
 
     @Test
@@ -916,6 +967,11 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
         assertEquals(AutomationItemState.ABANDONED, byMint.getValue(mint(5).value).state)
         assertEquals(setOf("item-4", "item-5"), items.findAll().filter { it.sessionId == "old-night" }.map { it.id }.toSet(), "the old session keeps what it still holds")
         assertEquals(3, stored(retry.id).itemsCreated)
+        listOf(1, 2, 3).map { byMint.getValue(mint(it).value) }.forEach { taken ->
+            val found = itemEvents.findAllByItemIdOrderBySeqAsc(taken.id, PageRequest.of(0, 10)).single()
+            assertEquals(AutomationItemEventKind.STATE_CHANGED, found.kind, "the item that took over is recorded as found")
+            assertEquals(AutomationItemState.DISCOVERED, found.toState)
+        }
         val oldSession = sessions.findById("old-night").orElseThrow()
         assertEquals(night.plusSeconds(240), oldSession.firstBuyAt)
         assertEquals(night.plusSeconds(300), oldSession.lastBuyAt)
@@ -939,6 +995,9 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
         assertTrue(items.findAll().all { it.state == AutomationItemState.ABANDONED })
         assertTrue(sessions.findAll().all { it.state == AutomationSessionState.CLOSED && it.closeReason == SessionCloseReason.MANUAL })
         assertEquals(cancelled, again)
+        val abandonedEvents = itemEvents.findAll().filter { it.toState == AutomationItemState.ABANDONED }
+        assertEquals(items.count(), abandonedEvents.size.toLong(), "one event for each abandoned item")
+        assertTrue(abandonedEvents.all { it.kind == AutomationItemEventKind.STATE_CHANGED && it.requestId == "cancel-1" })
 
         val done = service.create(request(requestId = "req-2", from = "2026-10-20", to = "2026-10-21", dryRun = true)).backfill
         end(done.id, BackfillState.STOPPED_BUDGET)

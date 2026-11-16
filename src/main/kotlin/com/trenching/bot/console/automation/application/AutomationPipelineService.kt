@@ -11,6 +11,7 @@ import com.trenching.bot.console.automation.domain.AutomationFailures
 import com.trenching.bot.console.automation.domain.AutomationFirstBuy
 import com.trenching.bot.console.automation.domain.AutomationItemProgress
 import com.trenching.bot.console.automation.domain.AutomationItemState
+import com.trenching.bot.console.automation.domain.AutomationItemTrace
 import com.trenching.bot.console.automation.domain.AutomationOperationOutcome
 import com.trenching.bot.console.automation.domain.AutomationOperationRef
 import com.trenching.bot.console.automation.domain.AutomationRequests
@@ -103,8 +104,8 @@ class AutomationPipelineService(
     private fun settle(item: AutomationDueItem, operation: CaptureOperationRecord, now: Instant): AutomationDueItem? =
         when (AutomationOperationOutcome.of(operation.state)) {
             AutomationOperationOutcome.RUNNING, AutomationOperationOutcome.PAUSED -> null
-            AutomationOperationOutcome.SUCCEEDED -> succeeded(item, now)
-            AutomationOperationOutcome.FAILED -> failed(item, operation.code ?: operation.state, operation.message, requestsUsed(captureSession(item)), now)
+            AutomationOperationOutcome.SUCCEEDED -> succeeded(item, operation.state, now)
+            AutomationOperationOutcome.FAILED -> failed(item, operation.code ?: operation.state, operation.message, requestsUsed(captureSession(item)), now, operation.state)
         }
 
     private fun proceed(item: AutomationDueItem, workerFree: Boolean, walletCatchingUp: Boolean, now: Instant): AutomationStepOutcome =
@@ -220,7 +221,7 @@ class AutomationPipelineService(
         return AutomationStepOutcome.OperationStarted
     }
 
-    private fun succeeded(item: AutomationDueItem, now: Instant): AutomationDueItem? {
+    private fun succeeded(item: AutomationDueItem, operationState: String, now: Instant): AutomationDueItem? {
         val sessionId = captureSession(item)
         val classification = captureSessions.find(sessionId).qualification?.classification
         val next = if (AutomationFirstBuy.unproven(classification)) {
@@ -228,7 +229,7 @@ class AutomationPipelineService(
         } else {
             item.progress.succeeded(startsAt(item, item.progress.currentStep.next(), now), now, classification)
         }
-        return change(item, next, requestsUsed(sessionId), now)
+        return change(item, next, requestsUsed(sessionId), now, AutomationItemTrace(endedOperationState = operationState))
     }
 
     /**
@@ -252,13 +253,15 @@ class AutomationPipelineService(
         return AutomationStepOutcome.NoOperation
     }
 
-    private fun failed(item: AutomationDueItem, code: String, message: String?, requestsUsed: Int?, now: Instant): AutomationDueItem? =
-        change(item, item.progress.failed(code, message, properties.maxStepAttempts, now), requestsUsed, now)
+    /** A failed attempt of the step; [operationState] is the state the item's operation ended in, null when the capture call was refused and none ran. */
+    private fun failed(item: AutomationDueItem, code: String, message: String?, requestsUsed: Int?, now: Instant, operationState: String? = null): AutomationDueItem? =
+        change(item, item.progress.failed(code, message, properties.maxStepAttempts, now), requestsUsed, now,
+            AutomationItemTrace(endedOperationState = operationState, attemptFailed = true))
 
     /** Stores [next] unless nothing changes; returns the item as stored, or null when nothing was stored. */
-    private fun change(item: AutomationDueItem, next: AutomationItemProgress, requestsUsed: Int?, now: Instant): AutomationDueItem? {
+    private fun change(item: AutomationDueItem, next: AutomationItemProgress, requestsUsed: Int?, now: Instant, trace: AutomationItemTrace = AutomationItemTrace.NONE): AutomationDueItem? {
         if (next == item.progress && requestsUsed == null) return null
-        return if (transaction.record(item.id, item.progress, next, requestsUsed, now)) item.copy(progress = next) else null
+        return if (transaction.record(item.id, item.progress, next, requestsUsed, now, trace)) item.copy(progress = next) else null
     }
 
     private fun canStart(workerFree: Boolean): Boolean = workerFree && operations.idle()

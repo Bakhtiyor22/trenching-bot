@@ -94,7 +94,7 @@ class AutomationDiscoveryTransaction(
         val open = OpenSessions(batch.wallet,
             sessions.findAllByWalletAndBackfillIdIsNullAndStateOrderByCreatedAtAscFirstBuyAtAscIdAsc(batch.wallet, AutomationSessionState.OPEN), idle, now)
         val byMint = storedItems(batch, filter)
-        writer.replaceSuperseded(capturedBuys(batch, filter), byMint, open, idle, now, replaceable = { known, earliest -> replaceable(known, open, earliest) })
+        val replaces = writer.replaceSuperseded(capturedBuys(batch, filter), byMint, open, idle, now, replaceable = { known, earliest -> replaceable(known, open, earliest) })
         val created = mutableListOf<AutomationItemEntity>()
         var belowFilter = 0
         for (action in batch.actions) {
@@ -122,7 +122,7 @@ class AutomationDiscoveryTransaction(
         sessions.saveAll(opened)
         writer.mergeAbsorbed(open)
         created.forEach { it.sessionId = open.current(it.sessionId) }
-        items.saveAll(created)
+        writer.saveNew(created, now, replaces)
         val advanced = moveWatermark(batch, now)
         opened.forEach { log.info("automation session opened sessionId={} wallet={} firstItemId={}", it.id, it.wallet, it.firstItemId) }
         created.forEach { log.info("automation item discovered itemId={} sessionId={} mint={} state={}", it.id, it.sessionId, it.mint, it.state) }

@@ -3,6 +3,9 @@ package com.trenching.bot.console.automation.application
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationDueItem
 import com.trenching.bot.console.automation.domain.AutomationIds
+import com.trenching.bot.console.automation.domain.AutomationItemChange
+import com.trenching.bot.console.automation.domain.AutomationItemEvents
+import com.trenching.bot.console.automation.domain.AutomationItemStanding
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.SweepEntryResult
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemRepository
@@ -26,6 +29,7 @@ class AutomationSweepTransaction(
     private val items: AutomationItemRepository,
     private val sweepRuns: AutomationSweepRunRepository,
     private val mapper: AutomationRecordMapper,
+    private val events: AutomationItemEventWriter,
 ) {
     private val log = LoggerFactory.getLogger(AutomationSweepTransaction::class.java)
 
@@ -37,7 +41,7 @@ class AutomationSweepTransaction(
     @Transactional(readOnly = true)
     fun sweptLabels(itemId: String, planId: String): Set<String> = sweepRuns.findLabels(itemId, planId).toSet()
 
-    /** Stores [result] as the item's row for the entry; returns false, changing nothing, when the row already exists. */
+    /** Stores [result] as the item's row for the entry, with its event; returns false, changing nothing, when the row already exists. */
     @Transactional
     fun record(item: AutomationDueItem, planId: String, label: String, result: SweepEntryResult, now: Instant): Boolean {
         val id = AutomationIds.sweepRun(item.id, planId, label)
@@ -48,6 +52,8 @@ class AutomationSweepTransaction(
             positionState = result.positionState, isSignal = result.signal, realizedPnl = result.realizedPnl,
             worstCasePnl = result.worstCasePnl, createdAt = now,
         ))
+        val standing = items.findOneById(item.id)?.let(mapper::toStanding) ?: AutomationItemStanding(item.progress, null)
+        events.append(item.id, now, AutomationItemChange(standing, AutomationItemEvents.sweepEntry(item.progress, planId, label, result.runId, result.outcome)))
         log.info("automation sweep run recorded itemId={} planId={} label={} runId={} outcome={} signal={}",
             item.id, planId, label, result.runId, result.outcome, result.signal)
         return true

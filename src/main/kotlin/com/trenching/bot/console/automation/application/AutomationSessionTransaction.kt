@@ -1,6 +1,8 @@
 package com.trenching.bot.console.automation.application
 
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
+import com.trenching.bot.console.automation.domain.AutomationItemChange
+import com.trenching.bot.console.automation.domain.AutomationItemEvents
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationItemTransitions
 import com.trenching.bot.console.automation.domain.AutomationOperationRef
@@ -11,6 +13,7 @@ import com.trenching.bot.console.automation.infrastructure.persistence.Automatio
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionRepository
+import com.trenching.bot.console.automation.mapper.AutomationRecordMapper
 import java.time.Instant
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -22,6 +25,8 @@ import org.springframework.transaction.annotation.Transactional
 class AutomationSessionTransaction(
     private val sessions: AutomationSessionRepository,
     private val items: AutomationItemRepository,
+    private val mapper: AutomationRecordMapper,
+    private val events: AutomationItemEventWriter,
 ) {
     private val log = LoggerFactory.getLogger(AutomationSessionTransaction::class.java)
 
@@ -46,20 +51,25 @@ class AutomationSessionTransaction(
 
     /**
      * The manual end: every item not yet terminal is abandoned and the session closes `MANUAL`. A session that is already closed
-     * keeps its state and reason, but its non-terminal items (the phase 0 backlog) are abandoned all the same. Returns the capture
-     * operations the abandoned items had started, which the caller cancels once this has committed.
+     * keeps its state and reason, but its non-terminal items (the phase 0 backlog) are abandoned all the same, each with an event
+     * under the close's [requestId]. Returns the capture operations the abandoned items had started, which the caller cancels once
+     * this has committed.
      */
     @Transactional
-    fun closeManually(sessionId: String, now: Instant): List<AutomationOperationRef> {
+    fun closeManually(sessionId: String, requestId: String, now: Instant): List<AutomationOperationRef> {
         val session = sessions.findOneById(sessionId) ?: throw AutomationSessionNotFoundException(sessionId)
+        val abandoned = mutableMapOf<String, AutomationItemChange>()
         val started = items.findAllBySessionIdAndStateNotIn(sessionId, AutomationItemState.TERMINAL).mapNotNull { item ->
             AutomationItemTransitions.require(item.id, item.state, AutomationItemState.ABANDONED)
+            val before = mapper.toStanding(item)
             item.state = AutomationItemState.ABANDONED
             item.nextActionAt = null
             item.updatedAt = now
+            abandoned[item.id] = AutomationItemChange(before, AutomationItemEvents.closed(before.progress, mapper.toProgress(item), requestId))
             log.info("automation item advanced itemId={} step={} state={}", item.id, item.step, item.state)
             startedOperation(item)
         }
+        events.appendAll(now, abandoned)
         if (session.state != AutomationSessionState.CLOSED) close(session, SessionCloseReason.MANUAL, now)
         return started
     }

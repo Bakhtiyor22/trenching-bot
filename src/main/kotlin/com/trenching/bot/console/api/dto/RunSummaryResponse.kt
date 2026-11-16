@@ -4,7 +4,9 @@ import java.time.Instant
 
 /**
  * [realizedPnl] is an exact decimal string in units of [quoteMint]. [storage] is `COPY` (the run keeps its own dataset copy)
- * or `DATASET_REFERENCE` (it reads the catalog dataset).
+ * or `DATASET_REFERENCE` (it reads the catalog dataset). [status] is `PROFIT`, `LOSS`, `FLAT`, `NO_ENTRY` or `OPEN`;
+ * [datasetName] is null when the dataset left the catalog; [mints] is sorted and empty when unknown; [anchorBlockTime] is the
+ * dataset's anchor buy time, if it has one.
  */
 data class RunSummaryResponse(
     val id: String,
@@ -21,6 +23,10 @@ data class RunSummaryResponse(
     val realizedPnl: String,
     val createdAt: Instant,
     val storage: String,
+    val status: String,
+    val datasetName: String?,
+    val mints: List<String>,
+    val anchorBlockTime: Instant?,
 )
 
 data class RunStartResponse(
@@ -28,9 +34,12 @@ data class RunStartResponse(
     val created: Boolean,
 )
 
+/** [asOf] is the snapshot of the page. [statusCounts] has every status and counts with every filter except the status. */
 data class RunPageResponse(
     val items: List<RunSummaryResponse>,
     val page: Int,
     val size: Int,
     val total: Long,
+    val asOf: Instant,
+    val statusCounts: Map<String, Long>,
 )

@@ -94,6 +94,29 @@ data class AutomationSweepRunView(
 
 data class AutomationItemDetail(val item: AutomationItemView, val sweepRuns: List<AutomationSweepRunView>)
 
+/** One recorded event of an item's history, as [AutomationItemEventDraft] holds it, with its order [seq] and time [at]. */
+data class AutomationItemEventView(
+    val seq: Int,
+    val at: Instant,
+    val kind: AutomationItemEventKind,
+    val fromState: AutomationItemState?,
+    val toState: AutomationItemState?,
+    val step: AutomationStep?,
+    val attempt: Int?,
+    val captureSessionId: String?,
+    val operationId: String?,
+    val requestsUsed: Int?,
+    val failureCode: String?,
+    val failureMessage: String?,
+    val actor: String?,
+    val requestId: String?,
+    val note: String?,
+    val detail: Map<String, String>?,
+)
+
+/** An item's history, oldest event first. */
+data class AutomationItemEventList(val itemId: String, val events: List<AutomationItemEventView>)
+
 /** A sweep run in the sweep run list, with the buy it replayed. */
 data class AutomationSweepRunRow(val run: AutomationSweepRunView, val mint: String, val signature: String, val blockTime: Instant?)
 

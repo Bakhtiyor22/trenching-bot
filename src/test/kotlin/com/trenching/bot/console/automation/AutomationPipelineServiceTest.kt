@@ -16,6 +16,7 @@ import com.trenching.bot.console.automation.domain.AutomationDueItem
 import com.trenching.bot.console.automation.domain.AutomationFailures
 import com.trenching.bot.console.automation.domain.AutomationItemProgress
 import com.trenching.bot.console.automation.domain.AutomationItemState
+import com.trenching.bot.console.automation.domain.AutomationItemTrace
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.AutomationStep
 import com.trenching.bot.console.automation.domain.BackfillState
@@ -431,12 +432,12 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     fun `an operation started for an item a manual close abandoned meanwhile is cancelled at once`() {
         discover(buy(1, 100, EVENING))
         ticks(1)
-        val closingDuringTick = object : AutomationPipelineTransaction(items, backfills, records) {
+        val closingDuringTick = object : AutomationPipelineTransaction(items, backfills, records, itemEventWriter) {
             override fun due(now: Instant): List<AutomationDueItem> =
-                pipelineTransaction.due(now).onEach { sessionTransaction.closeManually(it.sessionId, now) }
+                pipelineTransaction.due(now).onEach { sessionTransaction.closeManually(it.sessionId, "close-1", now) }
 
-            override fun record(itemId: String, expected: AutomationItemProgress, next: AutomationItemProgress, requestsUsed: Int?, now: Instant): Boolean =
-                pipelineTransaction.record(itemId, expected, next, requestsUsed, now)
+            override fun record(itemId: String, expected: AutomationItemProgress, next: AutomationItemProgress, requestsUsed: Int?, now: Instant, trace: AutomationItemTrace): Boolean =
+                pipelineTransaction.record(itemId, expected, next, requestsUsed, now, trace)
         }
 
         pipeline(transaction = closingDuringTick).advance()

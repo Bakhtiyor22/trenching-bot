@@ -10,6 +10,7 @@ import com.trenching.bot.console.automation.api.dto.AutomationDayListResponse
 import com.trenching.bot.console.automation.api.dto.AutomationDayRetryResponse
 import com.trenching.bot.console.automation.api.dto.AutomationEvaluationPageResponse
 import com.trenching.bot.console.automation.api.dto.AutomationItemDetailResponse
+import com.trenching.bot.console.automation.api.dto.AutomationItemEventsResponse
 import com.trenching.bot.console.automation.api.dto.AutomationManualRunResponse
 import com.trenching.bot.console.automation.api.dto.AutomationRetryRequest
 import com.trenching.bot.console.automation.api.dto.AutomationSessionDetailResponse
@@ -77,6 +78,9 @@ class AutomationController(
 
     @GetMapping("/items/{id}")
     fun item(@PathVariable id: String): AutomationItemDetailResponse = mapper.toItemDetail(query.item(id))
+
+    @GetMapping("/items/{id}/events")
+    fun itemEvents(@PathVariable id: String): AutomationItemEventsResponse = mapper.toItemEvents(query.itemEvents(id))
 
     @GetMapping("/days")
     fun days(

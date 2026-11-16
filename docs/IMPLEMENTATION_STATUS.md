@@ -28,6 +28,24 @@ Update 2026-11-10 (capture resume and local sweep schema): a wallet, market or r
 
 Update 2026-11-12 (local schema repair): dataset runs failed on the long-lived local database because five enum CHECK constraints (`trade_intents.watch`, `paper_orders.rejection_reason`, `positions.exit_unavailable`, `positions.close_reason`, `positions.exit_trigger_reason`) still listed the constants of engine `dip-paper-v4`, so any run ending `WALLET_SOLD`, `REFERENCE_UNAVAILABLE`, `SIGNAL_BELOW_MIN_SIZE` or `SIGNAL_SIZE_UNAVAILABLE` was rejected on insert (HTTP 500 from `POST /api/runs`, `SWEEP_FAILED` in automation). It is the same drift as the 2026-11-10 NOT NULL: `ddl-auto: update` never revisits an enum check or a NOT NULL it created. `config/schema` now relaxes both at startup wherever Hibernate maintains the schema (README, Local schema repair); it repairs only checks under the name PostgreSQL generates for the column, so hand-written `ck_*` rules are never widened, and a failed repair rolls back and stops the start. `SchemaDriftStartupIntegrationTest` starts the application on a database aged to `dip-paper-v4`, the upgrade path no test covered before, and also forces a failing repair. The suite ran 2073 tests with only the 5 known Windows failures. No entity or production schema change.
 
+Update 2026-11-16 (Phase 1 of the [trace, Stop and console restructure plan](plans/20261116-automation-trace-stop-console-restructure.md): run search and buy history): the Runs page filters only ever saw the 20 runs on screen, runs drifted to later pages as the sweep wrote about 300 a day, and dataset names came from a list capped at 100. No run was ever deleted: the 14 datasets and 139 runs present on 2026-11-13 are all still stored.
+
+What landed:
+- **Run search.** `GET /api/runs` now filters, counts and pages on the server: status (`PROFIT`, `LOSS`, `FLAT`, `NO_ENTRY`, `OPEN`), token, anchor-buy time, creation time, dataset and text. Pages are cut from a stable `asOf` snapshot, set 5 s in the past.
+  - Each run's tokens and anchor buy time are written when it is stored. Older runs are indexed once at startup, before which they cannot be found by token or day; a run that cannot be read is marked failed and never retried.
+- **Buy history.** Every automation buy keeps an append-only step history, `automation_item_events`. Each event is written in the same transaction as its change, under a row lock, so two concurrent writers end in the usual version conflict.
+  - A buy from before this change starts with `HISTORY_STARTED`, added by the first change or by the startup pass. A retry no longer erases the earlier failure, and a replaced or retaken buy says so.
+
+The console's frontend half (filters, trace timeline, mint search) was committed separately. It still works against a backend without these fields.
+
+Schema: additive only, created by `ddl-auto: update` in every profile (prod included) and documented in `docs/schema/20261116-trace-stop.sql`:
+- the table `automation_item_events`;
+- the table `simulation_run_tokens`;
+- the columns `simulation_runs.anchor_block_time`, `search_indexed_at` and `search_index_failed_at`;
+- two indexes.
+
+`./gradlew test` ran 2154 tests with 1 failure, `UsageApiIntegrationTest`. That failure is not from this work: the separate Oracle deployment change lowered the provider pacing in `application.yml` while that test still expected the old values. The deployment work has since updated the test.
+
 Update 2026-11-12 (green test suite on Windows): `./gradlew test` passes on Windows, 1999 tests with none failed or skipped. The "5 known Windows failures" each had their own cause, and a fresh Windows checkout showed a sixth:
 
 1. `WalletActivityConfigurationTest` registered its clock without the `simulationClock` name that `WalletActivityConfiguration` has required since `49700e8` (2026-10-19). The test now names it.

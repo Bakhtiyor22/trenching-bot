@@ -139,4 +139,19 @@ interface AutomationItemRepository : JpaRepository<AutomationItemEntity, String>
     /** The requests of those items in ascending order; a page of one row reads the value at an index. */
     @Query("select i.requestsUsed from AutomationItemEntity i where i.wallet = :wallet and i.state in :states and i.requestsUsed is not null order by i.requestsUsed, i.id")
     fun findRequestsAscending(@Param("wallet") wallet: String, @Param("states") states: Collection<AutomationItemState>, pageable: Pageable): List<Int>
+
+    /** The ids of one page of the items after [afterId] that have no history event yet; repeatable, because an item that gets one no longer matches. */
+    @Query("""
+        select i.id from AutomationItemEntity i
+        where i.id > :afterId and not exists (select 1 from AutomationItemEventEntity e where e.itemId = i.id)
+        order by i.id
+    """)
+    fun findIdsWithoutEventsAfter(@Param("afterId") afterId: String, pageable: Pageable): List<String>
+
+    /**
+     * Locks the rows of [ids] until the transaction ends, in id order so two writers of several items cannot wait on each other. A
+     * native query: the lock is the point, and it must be taken as the statement runs, whatever the persistence context holds.
+     */
+    @Query(value = "select id from automation_items where id in (:ids) order by id for update", nativeQuery = true)
+    fun lockByIdIn(@Param("ids") ids: Collection<String>): List<String>
 }

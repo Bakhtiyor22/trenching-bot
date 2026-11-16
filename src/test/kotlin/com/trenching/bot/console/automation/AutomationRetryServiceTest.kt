@@ -11,11 +11,13 @@ import com.trenching.bot.console.automation.application.AutomationRetryTransacti
 import com.trenching.bot.console.automation.domain.AutomationFailures
 import com.trenching.bot.console.automation.domain.AutomationItemNotFoundException
 import com.trenching.bot.console.automation.domain.AutomationItemState
+import com.trenching.bot.console.automation.domain.AutomationRequests
 import com.trenching.bot.console.automation.domain.AutomationRetryRefusal
 import com.trenching.bot.console.automation.domain.AutomationRetryRefusedException
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.AutomationStep
 import com.trenching.bot.console.automation.domain.BackfillState
+import com.trenching.bot.console.automation.domain.DayRetryResult
 import com.trenching.bot.console.automation.domain.InvalidAutomationRequestException
 import com.trenching.bot.console.automation.domain.SessionCloseReason
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillEntity
@@ -33,7 +35,9 @@ import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import kotlin.reflect.KClass
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -45,6 +49,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.data.domain.PageRequest
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
 
@@ -291,6 +296,41 @@ class AutomationRetryServiceTest : AutomationDatabaseTest() {
         assertEquals(listOf(1, 0, 1), listOf(1, 2, 3).map { items.findOneById("item-$it")?.retries })
         assertEquals(AutomationItemState.FAILED, items.findOneById("item-5")?.state)
         assertTrue(items.findOneById("item-1")?.retryRequestId.orEmpty().startsWith("day-1-"))
+    }
+
+    @Test
+    fun `a day retry that overlaps a retry of one of its items reports that item unchanged, and still retries the rest of its list`() {
+        sessions.save(AutomationRows.session("session-1", AutomationSessionState.CLOSED, EVENING))
+        failedRow(1, "RATES_INCOMPLETE", blockTime = EVENING.plusSeconds(10))
+        failedRow(2, "RATES_INCOMPLETE", blockTime = EVENING.plusSeconds(20))
+        failedRow(3, "RATES_INCOMPLETE", blockTime = EVENING.plusSeconds(30))
+        val template = TransactionTemplate(transactionManager)
+        val holding = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        val result = try {
+            val overlapping = executor.submit {
+                template.execute {
+                    retryTransaction.retry("item-2", AutomationRequests.dayItem("day-1", "item-2"), true, EVENING)
+                    holding.countDown()
+                    check(release.await(30, TimeUnit.SECONDS)) { "the day retry never reached the item" }
+                }
+            }
+            assertTrue(holding.await(30, TimeUnit.SECONDS))
+            val dayRetry = executor.submit<DayRetryResult> { service().retryDay(LocalDate.parse("2026-11-02"), "day-1") }
+            awaitLockWaiterOr { dayRetry.isDone }
+            release.countDown()
+            overlapping.get(30, TimeUnit.SECONDS)
+            dayRetry.get(30, TimeUnit.SECONDS)
+        } finally {
+            executor.shutdownNow()
+        }
+
+        assertEquals(listOf("item-1", "item-3"), result.retried)
+        assertEquals(listOf("item-2"), result.unchanged)
+        assertEquals(emptyMap(), result.refused)
+        assertEquals(listOf(1, 1, 1), listOf(1, 2, 3).map { items.findOneById("item-$it")?.retries })
+        assertEquals(listOf(2, 2, 2), listOf(1, 2, 3).map { itemEvents.findAllByItemIdOrderBySeqAsc("item-$it", PageRequest.of(0, 10)).size }, "the history start and the retry, once each")
     }
 
     @Test
@@ -544,7 +584,7 @@ class AutomationRetryServiceTest : AutomationDatabaseTest() {
         items: AutomationItemRepository,
         backfills: AutomationBackfillRepository,
         private val template: TransactionTemplate,
-    ) : AutomationRetryTransaction(items, backfills, records) {
+    ) : AutomationRetryTransaction(items, backfills, records, itemEventWriter) {
         override fun retry(itemId: String, requestId: String, captureEnabled: Boolean, now: Instant) =
             checkNotNull(template.execute { super.retry(itemId, requestId, captureEnabled, now) })
 

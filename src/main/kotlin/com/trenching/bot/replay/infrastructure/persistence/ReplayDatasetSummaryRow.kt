@@ -15,3 +15,8 @@ interface ReplayDatasetSummaryRow {
     val pairs: String
     val createdAt: Instant
 }
+
+interface ReplayDatasetNameRow {
+    val id: String
+    val name: String
+}

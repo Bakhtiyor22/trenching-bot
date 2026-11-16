@@ -34,7 +34,8 @@ class DatasetController(
     fun page(
         @RequestParam(defaultValue = ConsoleResponses.DEFAULT_PAGE) page: Int,
         @RequestParam(defaultValue = ConsoleResponses.DEFAULT_PAGE_SIZE) size: Int,
-    ): DatasetPageResponse = datasetResponseMapper.toPage(datasetConsoleService.page(page, size))
+        @RequestParam(name = "q", required = false) text: String?,
+    ): DatasetPageResponse = datasetResponseMapper.toPage(datasetConsoleService.page(page, size, text))
 
     @PostMapping(consumes = [MediaType.MULTIPART_FORM_DATA_VALUE])
     fun upload(

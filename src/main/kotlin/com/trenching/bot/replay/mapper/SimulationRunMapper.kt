@@ -21,6 +21,9 @@ abstract class SimulationRunMapper {
         Mapping(target = "closedCount", source = "totals.closedCount"),
         Mapping(target = "realizedPnl", source = "totals.realizedPnl"),
         Mapping(target = "version", ignore = true),
+        Mapping(target = "anchorBlockTime", ignore = true),
+        Mapping(target = "searchIndexedAt", ignore = true),
+        Mapping(target = "searchIndexFailedAt", ignore = true),
     ])
     abstract fun toEntity(record: SimulationRunRecord): SimulationRunEntity
 
@@ -37,21 +40,12 @@ abstract class SimulationRunMapper {
                         reportSnapshot: String, resultChecksum: String, totals: RunTotals, createdAt: Instant,
                         storage: RunStorage): SimulationRunRecord
 
-    @Mappings(value = [
-        Mapping(target = "datasetId", source = "datasetChecksum"),
-        Mapping(target = "quoteMint", source = "totals.quoteMint"),
-        Mapping(target = "scenarioCount", source = "totals.scenarioCount"),
-        Mapping(target = "filledCount", source = "totals.filledCount"),
-        Mapping(target = "rejectedCount", source = "totals.rejectedCount"),
-        Mapping(target = "openCount", source = "totals.openCount"),
-        Mapping(target = "closedCount", source = "totals.closedCount"),
-        Mapping(target = "realizedPnl", source = "totals.realizedPnl"),
-    ])
-    abstract fun toSummary(record: SimulationRunRecord): RunSummary
-
+    /** A summary without its dataset name and mints, which the caller adds from their own tables. */
     @Mappings(value = [
         Mapping(target = "datasetId", source = "datasetChecksum"),
         Mapping(target = "storage", source = "storage", defaultValue = STORED_BEFORE_STORAGE),
+        Mapping(target = "datasetName", ignore = true),
+        Mapping(target = "mints", expression = "java(java.util.List.of())"),
     ])
     abstract fun toSummary(row: SimulationRunSummaryRow): RunSummary
 

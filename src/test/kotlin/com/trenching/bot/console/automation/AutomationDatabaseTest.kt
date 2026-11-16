@@ -5,6 +5,8 @@ import com.trenching.bot.console.automation.application.AutomationDiscoveryServi
 import com.trenching.bot.console.automation.application.AutomationDiscoveryTransaction
 import com.trenching.bot.console.automation.application.AutomationCoverage
 import com.trenching.bot.console.automation.application.AutomationDayService
+import com.trenching.bot.console.automation.application.AutomationHistoryStartTransaction
+import com.trenching.bot.console.automation.application.AutomationItemEventWriter
 import com.trenching.bot.console.automation.application.AutomationItemViews
 import com.trenching.bot.console.automation.application.AutomationPipelineTransaction
 import com.trenching.bot.console.automation.application.AutomationRetryService
@@ -18,6 +20,7 @@ import com.trenching.bot.console.automation.application.AutomationSessionTransac
 import com.trenching.bot.console.automation.application.AutomationSweepTransaction
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillRepository
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEventRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunRepository
@@ -39,6 +42,7 @@ import com.trenching.bot.console.automation.application.AutomationCaptureCancell
 import com.trenching.bot.console.capture.CaptureOperationService
 import java.nio.file.Path
 import java.time.Clock
+import java.time.Duration
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag
@@ -48,6 +52,7 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Import
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.ActiveProfiles
 
 /**
@@ -65,6 +70,7 @@ abstract class AutomationDatabaseTest {
     @Autowired protected lateinit var sessions: AutomationSessionRepository
     @Autowired protected lateinit var items: AutomationItemRepository
     @Autowired protected lateinit var sweepRuns: AutomationSweepRunRepository
+    @Autowired protected lateinit var itemEvents: AutomationItemEventRepository
     @Autowired protected lateinit var records: AutomationRecordMapper
     @Autowired protected lateinit var discoveryTransaction: AutomationDiscoveryTransaction
     @Autowired protected lateinit var sessionTransaction: AutomationSessionTransaction
@@ -76,6 +82,10 @@ abstract class AutomationDatabaseTest {
     @Autowired protected lateinit var backfillRecorder: AutomationBackfillRecorder
     @Autowired protected lateinit var scanWriter: AutomationScanWriter
     @Autowired protected lateinit var coverage: AutomationCoverage
+    @Autowired protected lateinit var itemEventWriter: AutomationItemEventWriter
+    @Autowired protected lateinit var historyStartTransaction: AutomationHistoryStartTransaction
+
+    @Autowired private lateinit var lockProbe: JdbcTemplate
 
     protected val runtime = AutomationRuntime()
 
@@ -85,7 +95,7 @@ abstract class AutomationDatabaseTest {
 
     @BeforeEach
     fun emptyAutomationTables() {
-        listOf(sweepRuns, items, sessions, backfills, watermarks).forEach { it.deleteAllInBatch() }
+        listOf(itemEvents, sweepRuns, items, sessions, backfills, watermarks).forEach { it.deleteAllInBatch() }
     }
 
     @AfterEach
@@ -93,11 +103,24 @@ abstract class AutomationDatabaseTest {
         idleCapture?.close()
     }
 
+    /**
+     * Waits until a session of this database waits for a row lock, or until [finished] holds, or a few seconds pass: the moment a
+     * second writer has reached the one a test holds open. Whichever ends the wait, the test asserts what happened.
+     */
+    protected fun awaitLockWaiterOr(finished: () -> Boolean) {
+        val deadline = System.nanoTime() + LOCK_WAIT_LIMIT.toNanos()
+        while (System.nanoTime() < deadline && !finished()) {
+            val waiting = lockProbe.queryForObject("select count(*) from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'", Long::class.java)
+            if (waiting != null && waiting > 0) return
+            Thread.sleep(LOCK_POLL_MILLIS)
+        }
+    }
+
     protected fun discovery(lookup: FakeWalletActivityLookup, properties: AutomationProperties, clock: Clock): AutomationDiscoveryService =
         AutomationDiscoveryService(lookup, discoveryTransaction, properties, runtime, clock)
 
     protected fun query(properties: AutomationProperties, clock: Clock, usage: ApiUsageReports = ApiUsageReports { _, _ -> error("unused") }): AutomationQueryService =
-        AutomationQueryService(sessions, items, sweepRuns, watermarks, backfills, records, sessionRows(properties), itemViews(properties), properties, runtime, usage, SolanaRpcProperties(), clock)
+        AutomationQueryService(sessions, items, sweepRuns, itemEvents, watermarks, backfills, records, sessionRows(properties), itemViews(properties), properties, runtime, usage, SolanaRpcProperties(), clock)
 
     protected fun itemViews(properties: AutomationProperties): AutomationItemViews = AutomationItemViews(backfills, records, properties)
 
@@ -129,6 +152,11 @@ abstract class AutomationDatabaseTest {
     private fun idleOperations(clock: Clock): CaptureOperationService =
         (idleCapture ?: CaptureHarness(idleCaptureRoot, clock).also { idleCapture = it }).operations
 
+    private companion object {
+        val LOCK_WAIT_LIMIT: Duration = Duration.ofSeconds(5)
+        const val LOCK_POLL_MILLIS = 25L
+    }
+
     @TestConfiguration(proxyBeanMethods = false)
     class Transactions {
         @Bean
@@ -137,7 +165,15 @@ abstract class AutomationDatabaseTest {
             items: AutomationItemRepository,
             sweepRuns: AutomationSweepRunRepository,
             mapper: AutomationRecordMapper,
-        ) = AutomationScanWriter(sessions, items, sweepRuns, mapper)
+            events: AutomationItemEventWriter,
+        ) = AutomationScanWriter(sessions, items, sweepRuns, mapper, events)
+
+        @Bean
+        fun automationItemEventWriter(events: AutomationItemEventRepository, items: AutomationItemRepository) = AutomationItemEventWriter(events, items)
+
+        @Bean
+        fun automationHistoryStartTransaction(items: AutomationItemRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter) =
+            AutomationHistoryStartTransaction(items, mapper, events)
 
         @Bean
         fun automationCoverage(watermarks: AutomationWatermarkRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper) =
@@ -171,20 +207,20 @@ abstract class AutomationDatabaseTest {
         ) = AutomationBackfillRecorder(backfills, sessions, items, writer)
 
         @Bean
-        fun automationSessionTransaction(sessions: AutomationSessionRepository, items: AutomationItemRepository) =
-            AutomationSessionTransaction(sessions, items)
+        fun automationSessionTransaction(sessions: AutomationSessionRepository, items: AutomationItemRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter) =
+            AutomationSessionTransaction(sessions, items, mapper, events)
 
         @Bean
-        fun automationPipelineTransaction(items: AutomationItemRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper) =
-            AutomationPipelineTransaction(items, backfills, mapper)
+        fun automationPipelineTransaction(items: AutomationItemRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter) =
+            AutomationPipelineTransaction(items, backfills, mapper, events)
 
         @Bean
-        fun automationSweepTransaction(items: AutomationItemRepository, sweepRuns: AutomationSweepRunRepository, mapper: AutomationRecordMapper) =
-            AutomationSweepTransaction(items, sweepRuns, mapper)
+        fun automationSweepTransaction(items: AutomationItemRepository, sweepRuns: AutomationSweepRunRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter) =
+            AutomationSweepTransaction(items, sweepRuns, mapper, events)
 
         @Bean
-        fun automationRetryTransaction(items: AutomationItemRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper) =
-            AutomationRetryTransaction(items, backfills, mapper)
+        fun automationRetryTransaction(items: AutomationItemRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter) =
+            AutomationRetryTransaction(items, backfills, mapper, events)
 
         @Bean
         fun automationRunCycles(intents: TradeIntentStore, orders: PaperOrderStore, positions: PositionStore, events: WalletEventStore) =

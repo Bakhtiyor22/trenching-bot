@@ -2,6 +2,7 @@ package com.trenching.bot.replay
 
 import com.trenching.bot.replay.application.DatasetEntryFactory
 import com.trenching.bot.replay.application.SimulationRunLedger
+import com.trenching.bot.replay.application.SimulationRunSearchTransaction
 import com.trenching.bot.replay.application.SimulationRunTransaction
 import com.trenching.bot.replay.application.SimulationRunsService
 import com.trenching.bot.replay.domain.SampleDataset
@@ -36,6 +37,7 @@ class ConcurrentRunStartIntegrationTest {
     @Autowired private lateinit var catalog: ReplayDatasetCatalog
     @Autowired private lateinit var transactions: SimulationRunTransaction
     @Autowired private lateinit var mapper: SimulationRunMapper
+    @Autowired private lateinit var searches: SimulationRunSearchTransaction
     @Autowired private lateinit var entries: DatasetEntryFactory
     @Autowired private lateinit var json: ObjectMapper
     @Autowired private lateinit var dataSource: DataSource
@@ -53,7 +55,7 @@ class ConcurrentRunStartIntegrationTest {
             }
         }
         val ledger = SimulationRunLedger(transactions, mapper, entries, json, clock)
-        val service = SimulationRunsService(catalog, ledger, transactions, mapper)
+        val service = SimulationRunsService(catalog, ledger, transactions, searches)
         val config = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 3000, 1500, java.math.BigDecimal("10000"), 4500, 1, BigDecimal("0.0017"))
         val pool = Executors.newFixedThreadPool(2)
         try {
@@ -66,7 +68,7 @@ class ConcurrentRunStartIntegrationTest {
             assertEquals(listOf(1, 11, 31, 10, 10, 5, 5), counts)
             val repeated = SimulationRunsService(catalog,
                 SimulationRunLedger(transactions, mapper, entries, json, Clock.fixed(Instant.EPOCH, ZoneOffset.UTC)),
-                transactions, mapper).start(datasetId, config)
+                transactions, searches).start(datasetId, config)
             assertFalse(repeated.created)
             assertEquals(counts, com.trenching.bot.support.runRowCounts(dataSource, runId))
         } finally {

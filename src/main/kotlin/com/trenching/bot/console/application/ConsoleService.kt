@@ -1,6 +1,5 @@
 package com.trenching.bot.console.application
 
-import com.trenching.bot.common.PageResult
 import com.trenching.bot.console.domain.RunDetail
 import com.trenching.bot.console.domain.RunEvent
 import com.trenching.bot.console.domain.RunOrder
@@ -42,11 +41,6 @@ class ConsoleService(
     private val positions: PositionStore,
     private val datasetSources: DatasetSourceService,
 ) {
-    fun page(page: Int, size: Int, datasetId: String?): PageResult<RunSummary> {
-        ConsolePaging.require(page, size)
-        return runs.page(page, size, datasetId?.takeIf { it.isNotBlank() })
-    }
-
     fun detail(runId: String): RunDetail = detailWithObservations(runId).detail
 
     /** The only view with scenario timelines, so the only one that reads the run's accepted trades for their first buy times. */
