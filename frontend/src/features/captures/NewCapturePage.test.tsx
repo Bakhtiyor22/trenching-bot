@@ -391,7 +391,9 @@ describe('capture design states', () => {
     );
     expect(await screen.findByText("Loading Decu's latest actions…")).toBeInTheDocument();
     expect(screen.getByText('at most 22 requests')).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: 'Cancel loading' }));
+    // The accordion panel stays display:none until its opening animation's first frame, and
+    // role queries skip hidden elements, so wait for the button instead of expecting it at once.
+    await user.click(await screen.findByRole('button', { name: 'Cancel loading' }));
     await waitFor(() =>
       expect(queryClient.isFetching({ queryKey: ['wallet-activity', WALLET] })).toBe(0),
     );
