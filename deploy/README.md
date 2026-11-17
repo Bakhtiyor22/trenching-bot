@@ -66,7 +66,7 @@ All later commands use the alias `trenching-oci`.
    `trenching-vcn` and accept the defaults.
 2. Open the VCN, then the **public** subnet, then its **Default Security List**. In Ingress Rules keep **only** the rule for
    TCP port 22 from `0.0.0.0/0`. Delete every other TCP/UDP rule. Keep the two ICMP "destination unreachable" rules: they
-   open no port, and without them large transfers such as the 4 GB capture upload can stall on MTU problems.
+   open no port, and without them large transfers such as the multi-GB capture upload can stall on MTU problems.
 3. Do not add a rule for 8081 or 5432, now or later. Your home IP is not fixed, so 22 stays open to all; the protection
    is key-only login (step 6) and fail2ban.
 
@@ -100,25 +100,29 @@ lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
 ls -l /dev/oracleoci/
 ```
 
-The paravirtualized volume is normally `/dev/oracleoci/oraclevdb`. Check that it is the 100G disk before you format it:
+Use the plain device name `lsblk` shows for that disk (usually `/dev/sdb`), not the `/dev/oracleoci/` names: their
+numbering does not reliably match (on the first server `oraclevda` pointed at the new volume). The steps below use
+`/dev/sdb`; replace it if `lsblk` showed another name. Check that the disk has no filesystem before you format it:
 `mkfs` erases whatever is there.
 
 ```bash
-sudo mkfs.ext4 -L trenching-data /dev/oracleoci/oraclevdb
-sudo mkdir -p /data
-sudo blkid /dev/oracleoci/oraclevdb
+sudo blkid /dev/sdb || echo "EMPTY - safe to format"
 ```
 
-Take the `UUID=` value from `blkid` and add it to fstab. `nofail` lets the VM boot even if the volume is missing:
+Only if it prints `EMPTY - safe to format`, format it and mount it by UUID, so the device name does not matter after a
+reboot. `nofail` lets the VM boot even if the volume is missing:
 
 ```bash
-echo 'UUID=<uuid from blkid> /data ext4 defaults,nofail 0 2' | sudo tee -a /etc/fstab
+sudo mkfs.ext4 -L trenching-data /dev/sdb
+sudo mkdir -p /data
+UUID=$(sudo blkid -s UUID -o value /dev/sdb); echo "UUID=$UUID"
+echo "UUID=$UUID /data ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
 sudo systemctl daemon-reload
 sudo mount -a
 df -h /data
 ```
 
-`df` must show about 100G on `/data`.
+`df` must show about 98G on `/data` (ext4 keeps a little of the 100G for itself).
 
 ## 6. Server bootstrap (server)
 
@@ -303,7 +307,7 @@ Record the row counts on the PC now. The same query runs on both sides:
 
 ```powershell
 $q = "SELECT table_name, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', table_schema, table_name), false, true, '')))[1]::text::bigint AS row_count FROM information_schema.tables WHERE table_schema = 'public' AND table_type = 'BASE TABLE' ORDER BY table_name;"
-docker exec trenching-bot-postgres psql -U trenching -d trenching_bot -At -F , -c $q | Out-File -Encoding ascii "$m\counts-pc.txt"
+docker exec trenching-bot-postgres psql -U trenching -d trenching_bot -At -F ',' -c $q | Out-File -Encoding ascii "$m\counts-pc.txt"
 Get-Content "$m\counts-pc.txt"
 ```
 
@@ -313,7 +317,8 @@ Get-Content "$m\counts-pc.txt"
 scp "$m\trenching_bot.dump" "$m\captures.tar.gz" trenching-oci:~/
 ```
 
-The capture archive is about 4 GB; allow time. If it breaks, run the same command again.
+The capture archive is several GB (the captures were 7.5 GB in 461 sessions on 2026-11-17); allow time. If it breaks,
+run the same command again.
 
 ### 8.4 Restore and unpack (server)
 
@@ -345,7 +350,8 @@ Compare-Object (Get-Content "$m\counts-pc.txt") (Get-Content "$m\counts-server.t
 ```
 
 `Compare-Object` must print nothing. Check at least `replay_datasets`, `simulation_runs`, `positions` and the
-automation tables. Count the capture sessions too: the server count should match the PC's 355.
+automation tables. Count the capture sessions too: the server count must match the PC's
+(`(Get-ChildItem build\captures\console -Directory).Count`; 461 on 2026-11-17).
 
 ```bash
 ls /data/captures/console | wc -l
