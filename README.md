@@ -67,7 +67,7 @@ The command starts Spring without an HTTP server, lets Hibernate create or updat
 
 Default `test` and `build` exclude the `live` tag. Existing PostgreSQL context/health tests remain enabled by default; tagging them `integration` lets `unitTest` run independently without weakening the full suite. `liveTest` calls only `getVersion` and confirmed `getSlot` with explicit timeouts and HTTP/1.1. It verifies connectivity and response shape, not wallet parsing, market prices, subscriptions or recovery. No account or key is needed for the public devnet smoke test.
 
-The GitHub Actions workflow runs Java 21, `build` and offline `replay` with PostgreSQL Testcontainers. A separate Node 22 frontend job installs the lockfile and runs lint, tests and build. Neither job calls live providers. A hosted CI run has not been dispatched.
+The GitHub Actions workflow runs Java 21, `build` and offline `replay` with PostgreSQL Testcontainers. A separate Node 24 (npm 11) frontend job installs the lockfile and runs lint, tests and build. Neither job calls live providers. A hosted CI run has not been dispatched.
 
 Docker is the default integration-test provider. An optional, explicitly selected native PostgreSQL 17 runtime supports environments where Docker is unavailable:
 
@@ -120,7 +120,7 @@ The always-on live instance runs on one Oracle Cloud Always Free Arm VM (Postgre
 
 The React console in `frontend/` manages stored replay datasets and immutable runs, displays exact decimal results, and polls the monitoring dashboard every five seconds. Browser sparklines retain up to 30 minutes of history. The Solana panel checks connectivity only when requested; an unset RPC is shown as "Not configured". The console has no authentication and is intended for local use. Both `/api/**` and bundled `/console/**` resources return 404 when the console is disabled.
 
-For development, install Node 22.12 or newer and use two terminals with the local PostgreSQL instance available on port 5433:
+For development, install Node 24 (npm 11 or newer; npm 10 rejects the lockfile) and use two terminals with the local PostgreSQL instance available on port 5433:
 
 ```powershell
 .\gradlew.bat bootRun # Local profile, port 8081

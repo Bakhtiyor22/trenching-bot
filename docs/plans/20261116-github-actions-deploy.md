@@ -67,7 +67,7 @@ every green push to `develop`; a Claude cloud routine was rejected).
      waits for the running one.
    - Pull requests and forks never run it, so they never see its secrets.
 
-2. **Artifact.** The job runs `./gradlew assemble -PwithConsole` on the runner (Temurin 21, Node 22). It does not rerun
+2. **Artifact.** The job runs `./gradlew assemble -PwithConsole` on the runner (Temurin 21, Node 24). It does not rerun
    the tests; the `build` job has already run them on the same commit. The jar is architecture-neutral, so building on
    x86 runners for the arm64 VM is fine.
 
@@ -155,7 +155,7 @@ on the server **before** the push that contains it. Push-to-deploy makes that "b
    - Checks: `bash -n` and `shellcheck` (if available) on the script, and the PowerShell parse check on `deploy.ps1`.
 2. **The workflow job.** It can be written in parallel with 1; the two touch no common file.
    - A `deploy` job in `.github/workflows/build.yml`, with the trigger, gating, concurrency, environment, Temurin 21,
-     Node 22, `assemble -PwithConsole`, the key and known_hosts files written with mode 600, the SSH call, and cleanup in
+     Node 24, `assemble -PwithConsole`, the key and known_hosts files written with mode 600, the SSH call, and cleanup in
      an `always()` step.
    - Third-party actions are pinned to the same major versions the workflow already uses. No new actions beyond
      checkout, setup-java, setup-gradle and setup-node.
