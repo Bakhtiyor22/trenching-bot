@@ -49,7 +49,7 @@ What the deployment has to work with:
 ### Out of scope
 
 - Public HTTPS, a domain, authentication, or access for anyone but the developer. Each of these needs F5 fixed first.
-- CI/CD deployment from GitHub Actions. This plan deploys by hand with a script.
+- CI/CD deployment from GitHub Actions. This plan deploys by hand with a script; push-to-deploy is planned in [20261116-github-actions-deploy.md](20261116-github-actions-deploy.md).
 - Flyway or any schema tooling change.
 - Telegram or other alerting (that module is deferred).
 - Any change to the strategy, capture or automation behaviour.

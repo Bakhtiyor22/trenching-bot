@@ -32,98 +32,8 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $LibsDir = Join-Path $RepoRoot 'build/libs'
 
-# Runs on the server as root. Mode deploy: <sha> <uploaded jar>. Mode rollback: no arguments.
-$RemoteScript = @'
-#!/usr/bin/env bash
-set -euo pipefail
-trap 'rm -f -- "$0"' EXIT
-
-readonly BASE=/opt/trenching-bot
-readonly SERVICE=trenching-bot
-readonly KEEP_RELEASES=5
-mode="$1"
-
-point_current() {
-  ln -sfn "$1" "$BASE/current.jar.next"
-  mv -T "$BASE/current.jar.next" "$BASE/current.jar"
-}
-
-wait_healthy() {
-  local deadline=$((SECONDS + 180))
-  while [ "$SECONDS" -lt "$deadline" ]; do
-    if curl -fsS --max-time 5 http://127.0.0.1:8081/actuator/health 2>/dev/null | grep -Eq '"status" ?: ?"UP"'; then
-      echo "Health is UP."
-      return 0
-    fi
-    sleep 3
-  done
-  return 1
-}
-
-fail_with_journal() {
-  echo "Health did not reach UP within 180 s. Last 80 journal lines:"
-  journalctl -u "$SERVICE" -n 80 --no-pager || true
-  exit 1
-}
-
-prune_releases() {
-  local current previous
-  current="$(readlink -f "$BASE/current.jar")"
-  previous="$(cat "$BASE/previous" 2>/dev/null || true)"
-  ls -1t "$BASE"/releases/*.jar | tail -n "+$((KEEP_RELEASES + 1))" | while read -r jar; do
-    if [ "$jar" != "$current" ] && [ "$jar" != "$previous" ]; then
-      rm -f -- "$jar"
-      echo "Removed old release $jar."
-    fi
-  done
-}
-
-case "$mode" in
-  deploy)
-    sha="$2"
-    uploaded="$3"
-    release="$BASE/releases/$sha.jar"
-    install -m 0644 -o trenching -g trenching "$uploaded" "$release"
-    rm -f -- "$uploaded"
-    current="$(readlink -e "$BASE/current.jar" 2>/dev/null || true)"
-    if [ -n "$current" ] && [ "$current" != "$release" ]; then
-      printf '%s\n' "$current" > "$BASE/previous"
-    fi
-    point_current "$release"
-    systemctl restart "$SERVICE"
-    wait_healthy || fail_with_journal
-    prune_releases
-    echo "Deployed $sha."
-    ;;
-  rollback)
-    if [ ! -s "$BASE/previous" ]; then
-      echo "No previous release to roll back to." >&2
-      exit 1
-    fi
-    target="$(cat "$BASE/previous")"
-    case "$target" in
-      "$BASE"/releases/*.jar) ;;
-      *) echo "Unexpected previous release path: $target" >&2; exit 1 ;;
-    esac
-    if [ ! -f "$target" ]; then
-      echo "Previous release $target no longer exists." >&2
-      exit 1
-    fi
-    current="$(readlink -e "$BASE/current.jar" 2>/dev/null || true)"
-    point_current "$target"
-    if [ -n "$current" ]; then
-      printf '%s\n' "$current" > "$BASE/previous"
-    fi
-    systemctl restart "$SERVICE"
-    wait_healthy || fail_with_journal
-    echo "Rolled back to $target."
-    ;;
-  *)
-    echo "Unknown mode: $mode" >&2
-    exit 2
-    ;;
-esac
-'@
+# The release logic lives in deploy/trenching-deploy.sh, installed on the server as this command (see deploy/README.md).
+$RemoteDeployCommand = 'sudo /usr/local/bin/trenching-deploy'
 
 function Fail([string]$Message) {
     Write-Host "ERROR: $Message" -ForegroundColor Red
@@ -149,26 +59,20 @@ function Assert-NativeSuccess([string]$What) {
     }
 }
 
-function Invoke-RemoteScript([string]$Arguments) {
-    $token = [guid]::NewGuid().ToString('N').Substring(0, 12)
-    $localScript = Join-Path ([System.IO.Path]::GetTempPath()) "trenching-deploy-$token.sh"
-    $remoteScript = "/tmp/trenching-deploy-$token.sh"
-    try {
-        $unixText = $RemoteScript -replace "`r`n", "`n"
-        [System.IO.File]::WriteAllText($localScript, $unixText, (New-Object System.Text.UTF8Encoding($false)))
-        Invoke-Native 'scp' @($localScript, "${Server}:$remoteScript") | Out-Host
-        Assert-NativeSuccess 'Uploading the remote script'
+# Runs the installed release script on the server, streams its output and returns its exit code.
+function Invoke-Remote([string]$Arguments) {
+    $remoteOutput = @()
+    Invoke-Native 'ssh' @($Server, "$RemoteDeployCommand $Arguments") | Tee-Object -Variable remoteOutput | Out-Host
+    $code = $LASTEXITCODE
+    if ($code -eq 127 -or (@($remoteOutput) -join "`n") -match 'command not found') {
+        Fail "trenching-deploy is not installed on $Server. Install it as in step 7 of deploy/README.md, then run again."
     }
-    finally {
-        Remove-Item -LiteralPath $localScript -Force -ErrorAction SilentlyContinue
-    }
-    Invoke-Native 'ssh' @($Server, "sudo bash $remoteScript $Arguments") | Out-Host
-    return $LASTEXITCODE
+    return $code
 }
 
 if ($Rollback) {
     Write-Host "Rolling back on $Server ..."
-    $code = Invoke-RemoteScript 'rollback'
+    $code = Invoke-Remote 'rollback'
     if ($code -ne 0) {
         Fail "Rollback failed (exit code $code). Check: ssh $Server 'journalctl -u trenching-bot -n 80 --no-pager'"
     }
@@ -196,9 +100,9 @@ try {
         Fail 'Untracked files exist under src/ or frontend/src/. Commit or remove them first.'
     }
 
-    $sha = (Invoke-Native 'git' @('rev-parse', '--short', 'HEAD')) -join ''
+    $sha = (Invoke-Native 'git' @('rev-parse', 'HEAD')) -join ''
     Assert-NativeSuccess 'git rev-parse'
-    if ($sha -notmatch '^[0-9a-f]{7,40}$') {
+    if ($sha -notmatch '^[0-9a-f]{40}$') {
         Fail "Unexpected commit id: $sha"
     }
 
@@ -217,13 +121,14 @@ if ($jars.Count -ne 1) {
 }
 $JarPath = $jars[0].FullName
 
+$jarSha256 = (Get-FileHash -LiteralPath $JarPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $remoteJar = "/tmp/trenching-$sha.jar"
 Write-Host "Uploading the jar to $Server ..."
 Invoke-Native 'scp' @($JarPath, "${Server}:$remoteJar") | Out-Host
 Assert-NativeSuccess 'Uploading the jar'
 
 Write-Host "Switching $Server to release $sha ..."
-$code = Invoke-RemoteScript "deploy $sha $remoteJar"
+$code = Invoke-Remote "deploy $sha $jarSha256 --no-auto-rollback --file $remoteJar"
 if ($code -ne 0) {
     Fail "Deploy of $sha failed (exit code $code). The previous release is still on disk. Run: .\deploy\deploy.ps1 -Server $Server -Rollback"
 }

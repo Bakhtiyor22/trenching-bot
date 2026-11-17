@@ -1,0 +1,3 @@
+# Installed as /etc/sudoers.d/trenching-deploy. The deploy user (the GitHub deploy key's forced command) may run the
+# release script as root and nothing else. Install with `install -m 0440` and check with `visudo -cf`.
+deploy ALL=(root) NOPASSWD: /usr/local/bin/trenching-deploy

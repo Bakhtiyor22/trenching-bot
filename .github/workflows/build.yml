@@ -44,3 +44,82 @@ jobs:
       - run: npm run format:check
       - run: npm run test
       - run: npm run build
+  # Push-to-deploy to the Oracle server (docs/plans/20261116-github-actions-deploy.md).
+  # Runs only for a push to develop after `build` and `frontend` pass, and only when the
+  # repository variable DEPLOY_ENABLED is 'true'; otherwise it shows as skipped, not failed.
+  # A head commit message containing [skip deploy] also skips it, for a change that needs
+  # SQL applied on the server first. Rerunning a skipped job stays skipped, so recover with
+  # an empty commit (git commit --allow-empty -m "deploy").
+  # DEPLOY_ENABLED is a repository variable because a job-level `if` cannot read
+  # environment variables; the three secrets live in the `production` environment.
+  deploy:
+    needs: [build, frontend]
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/develop'
+      && vars.DEPLOY_ENABLED == 'true'
+      && !contains(github.event.head_commit.message, '[skip deploy]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    concurrency:
+      group: deploy-prod
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build the jar with the console
+        run: bash ./gradlew assemble -PwithConsole --no-daemon
+      - name: Locate the jar and compute its SHA-256
+        id: jar
+        run: |
+          set -euo pipefail
+          mapfile -t jars < <(find build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*-plain.jar')
+          if [ "${#jars[@]}" -ne 1 ]; then
+            echo "Expected exactly one boot jar in build/libs, found ${#jars[@]}" >&2
+            exit 1
+          fi
+          sha256="$(sha256sum "${jars[0]}" | cut -d' ' -f1)"
+          echo "path=${jars[0]}" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sha256}" >> "$GITHUB_OUTPUT"
+      - name: Write the SSH key and known_hosts
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/deploy_known_hosts"
+      - name: Deploy over SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          JAR_PATH: ${{ steps.jar.outputs.path }}
+          SHA256: ${{ steps.jar.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          ssh -i "$RUNNER_TEMP/deploy_key" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/deploy_known_hosts" \
+            -o ConnectTimeout=15 \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=4 \
+            "deploy@${DEPLOY_HOST}" "deploy ${GITHUB_SHA} ${SHA256}" < "$JAR_PATH"
+      - name: Remove the SSH key and known_hosts
+        if: always()
+        run: rm -f "$RUNNER_TEMP/deploy_key" "$RUNNER_TEMP/deploy_known_hosts"

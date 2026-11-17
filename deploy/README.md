@@ -20,7 +20,10 @@ What is in this folder:
 | `docker-requires-data.conf` | systemd drop-in that makes Docker wait for the `/data` mount (step 6) |
 | `trenching-bot.service` | systemd unit that runs the jar as user `trenching` with `SPRING_PROFILES_ACTIVE=prod` and the (non-secret) `DATABASE_URL` |
 | `jvm.options` | JVM memory and timezone settings |
-| `deploy.ps1` | Builds from a clean commit, uploads, switches the release, waits for health; `-Rollback` |
+| `deploy.ps1` | Builds from a clean commit, uploads the jar, runs the installed `trenching-deploy` on the server; `-Rollback` |
+| `trenching-deploy.sh` | The one copy of the release logic, installed on the server as `/usr/local/bin/trenching-deploy` and run as root (step 7). Used by `deploy.ps1` and by push-to-deploy |
+| `trenching-deploy-ssh.sh` | Forced command of the GitHub deploy key, installed as `/usr/local/bin/trenching-deploy-ssh` (step 13). Accepts only `deploy <sha40> <sha256>` and `rollback` |
+| `trenching-deploy.sudoers` | sudoers drop-in that lets the `deploy` user run `trenching-deploy` as root and nothing else (step 13) |
 | `backup.sh`, `trenching-bot-backup.service`, `trenching-bot-backup.timer` | Nightly `pg_dump` into `/data/backups`, keeping 7 |
 
 ## 1. Oracle account (you do this; nobody else can)
@@ -235,6 +238,17 @@ sudo systemctl daemon-reload
 sudo systemctl enable trenching-bot
 ```
 
+Install the release script. `deploy.ps1` carries no release logic of its own: it uploads the jar and calls this installed
+script, and fails with a pointer to this step if the script is missing. Do this before the first deploy (step 9):
+
+```bash
+cd ~
+sudo install -m 0755 -o root -g root deploy/trenching-deploy.sh /usr/local/bin/trenching-deploy
+```
+
+When `deploy/trenching-deploy.sh` changes in the repository, copy it to the server and run the same `install` line again
+by hand. The push-to-deploy key deliberately cannot update it (step 13).
+
 Start PostgreSQL. Compose reads the env file only to fill in the database name and password:
 
 ```bash
@@ -354,9 +368,19 @@ deletes `frontend/node_modules` before reinstalling it. On Windows a running dev
 .\deploy\deploy.ps1 -Server trenching-oci
 ```
 
-It runs `gradlew build -PwithConsole` (use `-SkipTests` only for a commit that already passed `build`), uploads the jar to
-`/opt/trenching-bot/releases/<sha>.jar`, restarts the service, and waits up to 180 seconds for `/actuator/health` to report
-`UP`. On failure it prints the last 80 journal lines and tells you to run `-Rollback`.
+It runs `gradlew build -PwithConsole` (use `-SkipTests` only for a commit that already passed `build`), copies the jar to
+`/tmp` on the server with `scp`, then runs the installed script
+(`sudo trenching-deploy deploy <sha> <sha256> --no-auto-rollback --file /tmp/...`). The script:
+
+- names the release by the full 40-character commit SHA and installs `/opt/trenching-bot/releases/<sha40>.jar`, after
+  checking the jar's SHA-256 and zip header;
+- takes a lock, so two deploys cannot overlap, and fails at once if the lock is held;
+- does nothing if that release is already current and healthy, so a rerun is safe;
+- waits while the nightly backup (03:30 UTC) is running, up to 15 minutes, before it restarts the service;
+- restarts the service and waits up to 180 seconds for `/actuator/health` to report `UP`.
+
+A hand deploy passes `--no-auto-rollback`: on failure it prints the last 80 journal lines and stops for you to look, and
+tells you to run `-Rollback`.
 
 Check the server:
 
@@ -459,7 +483,8 @@ copy must have the same tables and the counts of the static ones (`replay_datase
 
 ## 12. Day-2
 
-**Deploy** (PC, clean commit, Vite dev server stopped, see step 9):
+**Deploy** by hand (PC, clean commit, Vite dev server stopped, see step 9). With push-to-deploy on (step 13) a push to
+`develop` does this for you; the hand deploy stays available and uses the same installed script and release names:
 
 ```powershell
 .\deploy\deploy.ps1 -Server trenching-oci
@@ -470,6 +495,9 @@ copy must have the same tables and the counts of the static ones (`replay_datase
 ```powershell
 .\deploy\deploy.ps1 -Server trenching-oci -Rollback
 ```
+
+A rollback takes the same lock and also waits for a running backup, so during the 03:30 UTC backup it can wait up to
+15 minutes before it restarts the service.
 
 The script keeps the 5 newest jars in `/opt/trenching-bot/releases`, and records the previous one in
 `/opt/trenching-bot/previous`. Running `-Rollback` twice switches back to the newer release.
@@ -515,3 +543,150 @@ raising `-Xms`.
 security list or the host firewall. The console has no login, and the local-only guard can be bypassed (architecture review
 [F5](../docs/architecture/20261112-architecture-review.md)). F5 must be fixed before any access other than the SSH tunnel:
 Tailscale, LAN or public.
+
+## 13. Push-to-deploy (GitHub Actions)
+
+Do this only after a hand deploy has worked (step 9) and `trenching-deploy` is installed (step 7). After it, every push to
+`develop` whose `build` and `frontend` jobs pass deploys by itself. The decisions are in
+[the plan](../docs/plans/20261116-github-actions-deploy.md).
+
+How it works:
+
+- The `deploy` job builds the jar with the console, then runs `ssh deploy@<ip> "deploy <sha40> <sha256>" < jar`. The
+  release name is the full commit SHA, so a push deploy and a hand deploy of the same commit are the same release.
+- The `deploy` user cannot open a shell. Its key is forced to run `trenching-deploy-ssh`, which accepts only
+  `deploy <40 hex> <64 hex>` and `rollback`, then runs the root release script through `sudo`. A leaked key can deploy a
+  jar or roll back, nothing else.
+- Port 22 stays open to all, as before. Nothing new is opened.
+
+### 13.1 The deploy user (server)
+
+If the server's `~/deploy` folder is older than the repository, copy it again from the PC:
+
+```powershell
+scp -r .\deploy trenching-oci:~/
+```
+
+```bash
+cd ~
+sudo adduser --disabled-password --gecos "" deploy
+sudo install -m 0755 -o root -g root deploy/trenching-deploy-ssh.sh /usr/local/bin/trenching-deploy-ssh
+sudo install -m 0440 -o root -g root deploy/trenching-deploy.sudoers /etc/sudoers.d/trenching-deploy
+sudo visudo -cf /etc/sudoers.d/trenching-deploy
+```
+
+`sudo useradd -m -s /bin/bash deploy` works instead of `adduser`. `visudo` must print `parsed OK`. The sudoers file
+allows only `/usr/local/bin/trenching-deploy`. The user has no password, and `PasswordAuthentication no` (step 6) already
+blocks password logins.
+
+### 13.2 A key only for GitHub (PC)
+
+```powershell
+ssh-keygen -t ed25519 -f $HOME\.ssh\trenching-deploy-github -N '""' -C github-deploy
+Get-Content $HOME\.ssh\trenching-deploy-github.pub
+```
+
+The key has no passphrase because the GitHub runner uses it unattended. `-N '""'` is how Windows PowerShell 5.1 passes an
+empty passphrase to `ssh-keygen`; a plain `-N ""` is dropped and the command would prompt. Use this key only for GitHub,
+never as your own login key, and do not copy the private file anywhere except the GitHub secret in 13.5.
+
+### 13.3 Authorize the key (server)
+
+Create the key file with the right owner and mode, then put exactly one line in it. Replace `AAAA...` with the public key
+from 13.2 (the part after `ssh-ed25519`):
+
+```bash
+sudo install -d -m 0700 -o deploy -g deploy /home/deploy/.ssh
+sudo install -m 0600 -o deploy -g deploy /dev/null /home/deploy/.ssh/authorized_keys
+sudo nano /home/deploy/.ssh/authorized_keys
+```
+
+```
+restrict,command="/usr/local/bin/trenching-deploy-ssh" ssh-ed25519 AAAA... github-deploy
+```
+
+- `restrict` turns off a terminal, port forwarding, agent forwarding and X11 for this key.
+- `command=` makes sshd run the wrapper whatever the client asks for. The wrapper only reads the client's request from
+  `SSH_ORIGINAL_COMMAND`, and refuses anything that is not `deploy <sha40> <sha256>` or `rollback`.
+- The wrapper never passes `--file` or `--no-auto-rollback`, so a push deploy always rolls back by itself on failure and
+  can only install the jar sent on stdin. The key also cannot update the release script (step 7).
+
+### 13.4 Host fingerprint (server, then PC)
+
+The job pins the server's host key instead of trusting whatever answers. On the server:
+
+```bash
+ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+On the PC, scan and compare:
+
+```powershell
+$scan = ssh-keyscan -t ed25519 <public IP>
+$scan
+$scan | ssh-keygen -lf -
+```
+
+The `SHA256:...` fingerprint from the last command must equal the server's. If it does not, stop and do not use the scan.
+The scan line (`<ip> ssh-ed25519 AAAA...`) is the value of `DEPLOY_KNOWN_HOSTS`.
+
+### 13.5 GitHub settings (you, in the web UI)
+
+Nobody else can do this, and no agent should see these values.
+
+1. Settings, Environments, New environment `production`. Deployment branches and tags: Selected branches, add `develop`.
+   Leave "Required reviewers" off: deploys are automatic by choice.
+2. In `production`, add Environment secrets:
+   - `DEPLOY_SSH_KEY`: the whole contents of `$HOME\.ssh\trenching-deploy-github` (the private file, with its BEGIN and
+     END lines);
+   - `DEPLOY_HOST`: the server's public IP;
+   - `DEPLOY_KNOWN_HOSTS`: the scan line from 13.4.
+3. Settings, Secrets and variables, Actions, Variables, New repository variable: `DEPLOY_ENABLED` = `true`. It is a
+   repository variable because a job's `if:` cannot read environment variables. Until it is set to exactly `true`, the
+   `deploy` job shows as skipped.
+
+### 13.6 Check it
+
+From the PC, the key must be refused for anything but the two commands. Both of these print
+`Refused: only 'deploy <sha40> <sha256>' and 'rollback' are allowed.` and exit with code 2 (check `$LASTEXITCODE`):
+
+```powershell
+ssh -i $HOME\.ssh\trenching-deploy-github -o IdentitiesOnly=yes deploy@<public IP>
+ssh -i $HOME\.ssh\trenching-deploy-github -o IdentitiesOnly=yes deploy@<public IP> bash
+```
+
+Then push a commit to `develop`. In GitHub, Actions, the run, the `deploy` job: the "Deploy over SSH" step ends with
+`Deployed <sha40>.` Re-run the job from the same page: it ends with `Release <sha40> is already current.` and the service
+is not restarted. The job log is also where a failed deploy shows its journal tail. On the server,
+`readlink /opt/trenching-bot/current.jar` shows the new release.
+
+### 13.7 When it fails, and when to hold it back
+
+- **The release does not become healthy within 180 s.** The script puts the previous release back, restarts, waits for
+  health, prints the journal tail and exits 1. The job fails and GitHub emails the pusher; the server keeps running the
+  previous release. On the very first deploy there is no previous release, so the failed release stays and the job just
+  fails: read the journal tail, fix, and push again.
+- **The server cannot be reached, or another deploy holds the lock.** The job fails and the server is unchanged. Re-run
+  the job.
+- **A destructive entity change** (drop, rename, narrow, retype; see **Schema** in step 12) must not deploy before its SQL
+  is applied. Put `[skip deploy]` in that commit's message and push: the job is skipped. Apply the SQL on the server, then
+  push an empty commit to deploy:
+
+```powershell
+git commit --allow-empty -m "deploy"
+git push
+```
+
+Re-running the skipped job stays skipped, because its commit message still contains `[skip deploy]`; that is why you push
+a new commit. Without `[skip deploy]`, apply the SQL before you push.
+
+### 13.8 Turn it off, rotate the key
+
+- Pause: set `DEPLOY_ENABLED` to anything other than `true`, or delete it. Hard stop: delete the key line from
+  `/home/deploy/.ssh/authorized_keys` on the server.
+- Rotate: make a new key pair (13.2), replace the line in `authorized_keys` (13.3) and the `DEPLOY_SSH_KEY` secret (13.5),
+  run a deploy to check it, then delete the old private key file.
+- If the host key changes (server rebuilt), repeat 13.4 and replace `DEPLOY_KNOWN_HOSTS`.
+
+The earlier warnings still apply: exactly one instance runs automation (step 10), and schema changes follow the rule in
+step 12. A push deploy builds on the GitHub runner, so the Vite warning in step 9 matters only for hand deploys.

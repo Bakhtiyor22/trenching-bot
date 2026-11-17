@@ -64,7 +64,9 @@ implementation, test first.
   After such a change, reset the local database with `docker compose down -v`.
   On the server, apply a destructive change (drop, rename, narrow, retype) to
   the database by hand before deploying; never run `docker compose down -v`
-  there.
+  there. With push-to-deploy, apply that SQL on the server *before* pushing
+  the change to `develop`, or put `[skip deploy]` in the commit message and
+  deploy afterwards with an empty commit.
 - [docs/schema/](docs/schema/) keeps the last Flyway SQL for reference. It also
   holds the CHECK constraints, composite foreign keys and the partial unique
   index `uq_positions_open_scenario`, which Hibernate does not create.
