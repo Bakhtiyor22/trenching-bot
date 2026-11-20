@@ -38,6 +38,11 @@ services:
         target: /var/lib/postgresql/data
         bind:
           create_host_path: false
+    # journald, so Alloy ships the database's log with the rest of the journal (step 14). `docker logs` still works.
+    logging:
+      driver: journald
+      options:
+        tag: trenching-bot-postgres
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s

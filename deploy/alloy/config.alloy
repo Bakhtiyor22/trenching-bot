@@ -1,0 +1,171 @@
+// Grafana Alloy on the Oracle server: host metrics, the app's health probe and the systemd journal, pushed to
+// Grafana Cloud. Installed as /etc/alloy/config.alloy (deploy/README.md, step 14). The push credentials come from the
+// environment (grafana-cloud.conf points systemd at the root-only file), never from this file.
+
+// ---------- Metrics ----------
+
+prometheus.exporter.unix "host" {
+  enable_collectors = ["systemd"]
+
+  systemd {
+    unit_include = "(trenching-bot|trenching-bot-backup|docker|ssh|fail2ban|alloy)\\.service"
+  }
+
+  filesystem {
+    fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|tmpfs)$"
+    mount_points_exclude = "^/(dev|proc|run|sys|snap|var/lib/docker/.+)($|/)"
+  }
+}
+
+// The same health URL the release script waits on. A 503 (DOWN), a timeout or a refused connection all make
+// probe_success 0, so a hung JVM is caught, not only a stopped service.
+prometheus.exporter.blackbox "app" {
+  config = "{ modules: { http_2xx: { prober: http, timeout: 5s } } }"
+
+  target {
+    name    = "trenching-bot"
+    address = "http://127.0.0.1:8081/actuator/health"
+    module  = "http_2xx"
+  }
+}
+
+// job="integrations/node_exporter" lets Grafana Cloud's Linux Server integration dashboards find these series.
+discovery.relabel "host" {
+  targets = prometheus.exporter.unix.host.targets
+
+  rule {
+    target_label = "instance"
+    replacement  = "trenching-oci"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "integrations/node_exporter"
+  }
+}
+
+discovery.relabel "app" {
+  targets = prometheus.exporter.blackbox.app.targets
+
+  rule {
+    target_label = "instance"
+    replacement  = "trenching-oci"
+  }
+
+  rule {
+    target_label = "job"
+    replacement  = "trenching-bot-health"
+  }
+}
+
+prometheus.scrape "host" {
+  targets         = discovery.relabel.host.output
+  scrape_interval = "60s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "app" {
+  targets         = discovery.relabel.app.output
+  scrape_interval = "60s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROMETHEUS_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROMETHEUS_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}
+
+// ---------- Logs ----------
+
+// The whole journal: the app (stdout of trenching-bot.service), the nightly backup, sshd, fail2ban, Docker and,
+// once compose.server.yml logs to journald, the PostgreSQL container.
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+
+  rule {
+    source_labels = ["__journal_container_name"]
+    target_label  = "container"
+  }
+
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+}
+
+loki.source.journal "system" {
+  max_age       = "12h"
+  relabel_rules = loki.relabel.journal.rules
+  labels        = {job = "systemd-journal", instance = "trenching-oci"}
+  forward_to    = [loki.process.journal.receiver]
+}
+
+loki.process "journal" {
+  // Nothing should log a credential, but the RPC URL carries the Helius key as api-key=..., so scrub anything shaped
+  // like one before the line leaves the server.
+  stage.replace {
+    expression = "(?i)(?:api[-_]?key|access[-_]?token|token|password|secret)=([^&\\s\"',;]+)"
+    replace    = "<redacted>"
+  }
+
+  stage.replace {
+    expression = "(?i)authorization:\\s*(?:bearer|basic)\\s+(\\S+)"
+    replace    = "<redacted>"
+  }
+
+  // The JVM writes everything to stdout, so journald files every line as "info". Join stack traces to their log line
+  // and take the level from Spring Boot's own format: "2026-11-20T10:00:00.123Z  WARN 1234 --- [...]".
+  stage.match {
+    selector = "{unit=\"trenching-bot.service\"}"
+
+    stage.multiline {
+      firstline     = "^\\d{4}-\\d{2}-\\d{2}T"
+      max_wait_time = "3s"
+    }
+
+    stage.regex {
+      expression = "^\\S+\\s+(?P<level>TRACE|DEBUG|INFO|WARN|ERROR)\\s"
+    }
+
+    stage.labels {
+      values = {level = ""}
+    }
+  }
+
+  // PostgreSQL writes everything to stderr, which journald files as "err"; take the real severity from the line.
+  stage.match {
+    selector = "{container=\"trenching-bot-postgres\"}"
+
+    stage.regex {
+      expression = "\\s(?P<level>DEBUG\\d?|LOG|INFO|NOTICE|WARNING|ERROR|FATAL|PANIC):"
+    }
+
+    stage.labels {
+      values = {level = ""}
+    }
+  }
+
+  forward_to = [loki.write.grafana_cloud.receiver]
+}
+
+loki.write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_LOKI_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+}

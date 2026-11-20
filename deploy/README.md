@@ -25,6 +25,7 @@ What is in this folder:
 | `trenching-deploy-ssh.sh` | Forced command of the GitHub deploy key, installed as `/usr/local/bin/trenching-deploy-ssh` (step 13). Accepts only `deploy <sha40> <sha256>` and `rollback` |
 | `trenching-deploy.sudoers` | sudoers drop-in that lets the `deploy` user run `trenching-deploy` as root and nothing else (step 13) |
 | `backup.sh`, `trenching-bot-backup.service`, `trenching-bot-backup.timer` | Nightly `pg_dump` into `/data/backups`, keeping 7 |
+| `alloy/config.alloy`, `alloy/grafana-cloud.conf` | Grafana Alloy config (host metrics, app health probe, journal logs to Grafana Cloud) and the systemd drop-in that hands it its credentials (step 14) |
 
 ## 1. Oracle account (you do this; nobody else can)
 
@@ -520,7 +521,8 @@ journalctl -u trenching-bot -n 200 --no-pager
 sudo tail -n 100 /data/logs/trenching-bot.log
 ```
 
-The log folder is readable only by the `trenching` user and root, hence `sudo`.
+The log folder is readable only by the `trenching` user and root, hence `sudo`. With monitoring set up (step 14), the
+same log is searchable in Grafana for 14 days.
 
 **Deploy timing and schema errors.** Avoid deploying or restarting around the 03:30 UTC backup: `pg_dump`'s locks can delay the schema update on start. After the first deploy, check the log for Hibernate DDL errors (`journalctl -u trenching-bot -n 500 --no-pager | grep -i -E 'ddl|schema'`): `update` logs a failed unique key or index and carries on instead of stopping.
 
@@ -696,3 +698,167 @@ a new commit. Without `[skip deploy]`, apply the SQL before you push.
 
 The earlier warnings still apply: exactly one instance runs automation (step 10), and schema changes follow the rule in
 step 12. A push deploy builds on the GitHub runner, so the Vite warning in step 9 matters only for hand deploys.
+
+## 14. Monitoring (Grafana Cloud)
+
+Grafana Alloy, a small agent on the server, pushes three things to a free Grafana Cloud stack:
+
+- **Host metrics**: CPU, memory, network, disk usage of `/` and `/data`, and the state of the `trenching-bot`, backup,
+  Docker, ssh, fail2ban and Alloy services.
+- **An app health probe**: `/actuator/health` every minute, so a hung JVM shows as down, not only a stopped service.
+- **The whole systemd journal**: the app, the nightly backup, sshd, fail2ban, Docker and the PostgreSQL container (after
+  14.5). Lines are scrubbed of anything shaped like a credential (`api-key=...`, `password=...`, bearer tokens) before
+  they leave the server.
+
+Nothing new listens on the internet: Alloy only connects out, and its own status page stays on `127.0.0.1:12345`. The
+free tier keeps logs and metrics for 14 days and covers far more than this server sends.
+
+### 14.1 Grafana Cloud stack (you, in the browser)
+
+1. Sign up at grafana.com (free) and create a stack in an EU region.
+2. Open the stack's page in the Grafana Cloud portal and note:
+   - **Prometheus**, **Details**: the remote write URL (ends in `/api/prom/push`) and the username (a number).
+   - **Loki**, **Details**: the URL (append `/loki/api/v1/push` if it is only the host) and the user (a number).
+3. Under **Access Policies**, create one named `trenching-oci-alloy` with the scopes `metrics:write` and `logs:write`
+   only, and add a token to it. Copy the token: Grafana shows it once.
+
+Keep all of this out of chats, issues and commits.
+
+### 14.2 Install Alloy (server)
+
+```bash
+sudo apt-get install -y gpg
+sudo mkdir -p /etc/apt/keyrings
+wget -q -O - https://apt.grafana.com/gpg.key | gpg --dearmor | sudo tee /etc/apt/keyrings/grafana.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main" | sudo tee /etc/apt/sources.list.d/grafana.list
+sudo apt-get update
+sudo apt-get install -y alloy
+sudo usermod -aG systemd-journal alloy
+```
+
+Unattended upgrades update only Ubuntu's own packages. Update Alloy now and then with
+`sudo apt-get install --only-upgrade alloy`.
+
+### 14.3 Credentials (server)
+
+Create the file empty, with the right owner and mode, then edit it yourself:
+
+```bash
+sudo install -m 600 -o root -g root /dev/null /etc/alloy/grafana-cloud.env
+sudo nano /etc/alloy/grafana-cloud.env
+```
+
+One `NAME=value` per line, no quotes, values from 14.1:
+
+- `GRAFANA_CLOUD_PROMETHEUS_URL`
+- `GRAFANA_CLOUD_PROMETHEUS_USER`
+- `GRAFANA_CLOUD_LOKI_URL`
+- `GRAFANA_CLOUD_LOKI_USER`
+- `GRAFANA_CLOUD_TOKEN`
+
+Check the names, never the values:
+
+```bash
+sudo cut -d= -f1 /etc/alloy/grafana-cloud.env
+```
+
+### 14.4 Config and start (PC, then server)
+
+Copy the deploy folder again; it now holds `alloy/`:
+
+```powershell
+scp -r .\deploy trenching-oci:~/
+```
+
+```bash
+cd ~
+sudo install -m 0644 -o root -g root deploy/alloy/config.alloy /etc/alloy/config.alloy
+sudo install -d -m 0755 /etc/systemd/system/alloy.service.d
+sudo install -m 0644 -o root -g root deploy/alloy/grafana-cloud.conf /etc/systemd/system/alloy.service.d/grafana-cloud.conf
+alloy fmt /etc/alloy/config.alloy > /dev/null && echo "config syntax OK"
+sudo systemctl daemon-reload
+sudo systemctl enable alloy
+sudo systemctl restart alloy
+sleep 20
+systemctl is-active alloy
+journalctl -u alloy -n 80 --no-pager | grep -i -E 'level=(error|warn)' || echo "no errors or warnings"
+```
+
+`config syntax OK`, `active` and `no errors or warnings` mean it is pushing. If not, the component status page shows
+which part failed. Open a tunnel from the PC, then `http://localhost:12345`:
+
+```powershell
+ssh -N -L 12345:127.0.0.1:12345 trenching-oci
+```
+
+Every component should be healthy. A `401` or `403` in the log means a wrong user, URL or token in 14.3: fix the file,
+then `sudo systemctl restart alloy`.
+
+### 14.5 PostgreSQL logs to the journal (server, optional)
+
+`compose.server.yml` sends the database's log to journald, so Alloy picks it up. The running container keeps its old log
+driver until it is recreated. Recreating it stops the database for about 10 seconds: the app logs connection errors and
+reconnects. Stay clear of the 03:30 UTC backup.
+
+```bash
+cd ~
+sudo docker compose --env-file /etc/trenching-bot/trenching-bot.env -f deploy/compose.server.yml up -d
+sudo docker compose --env-file /etc/trenching-bot/trenching-bot.env -f deploy/compose.server.yml ps
+systemctl is-active trenching-bot
+```
+
+Wait until the container is `healthy`.
+
+### 14.6 Check it in Grafana (you, in the browser)
+
+In your stack's Grafana, open **Explore**:
+
+- Prometheus: `up{instance="trenching-oci"}` returns 1 for the host, and `probe_success{instance="trenching-oci"}`
+  returns 1 for the app.
+- Loki: `{instance="trenching-oci", unit="trenching-bot.service"}` shows the app's log, with stack traces joined to their
+  line. Add `level="ERROR"` (or `WARN`) to see only those. Other services carry journald's lowercase levels (`err`,
+  `warning`, `info`), and PostgreSQL its own (`ERROR`, `FATAL`, `LOG`).
+
+For ready-made graphs, open **Connections**, **Linux Server**, and install its dashboards. The metrics already carry the
+`job="integrations/node_exporter"` label those dashboards expect, so skip its agent install steps.
+
+### 14.7 Alerts (you, in the browser)
+
+First add a contact point under **Alerting**, **Contact points**. Email is the simplest. Telegram needs a bot token from
+BotFather and your chat id, both entered only in Grafana.
+
+Then create these rules under **Alerting**, **Alert rules**, **New alert rule**. Each has a query, a condition, a pending
+period ("For") and what to do when the query returns no data.
+
+| Alert | Query | Condition | For | No data |
+| --- | --- | --- | --- | --- |
+| Server or Alloy silent | `up{instance="trenching-oci", job="integrations/node_exporter"}` | below 1 | 5m | **Alerting** |
+| App unhealthy | `probe_success{instance="trenching-oci", job="trenching-bot-health"}` | below 1 | 5m | **Alerting** |
+| `/data` filling up | `100 * (1 - node_filesystem_avail_bytes{instance="trenching-oci", mountpoint="/data"} / node_filesystem_size_bytes{instance="trenching-oci", mountpoint="/data"})` | above 85 | 15m | Alerting |
+| Boot disk filling up | the same with `mountpoint="/"` | above 85 | 15m | Alerting |
+| Memory high | `100 * (1 - node_memory_MemAvailable_bytes{instance="trenching-oci"} / node_memory_MemTotal_bytes{instance="trenching-oci"})` | above 90 | 15m | OK |
+| Idle-reclamation risk | `avg_over_time((100 * (1 - node_memory_MemAvailable_bytes{instance="trenching-oci"} / node_memory_MemTotal_bytes{instance="trenching-oci"}))[1d:5m])` | below 25 | 1h | OK |
+| Backup failed | `node_systemd_unit_state{instance="trenching-oci", name="trenching-bot-backup.service", state="failed"}` | above 0 | 0m | OK |
+| App errors | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service", level="ERROR"}[15m]))` | above 5 | 0m | **OK** |
+| Discovery stalled | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service"} \|= "automation discovery wallet=" [2h]))` | below 1 | 0m | **Alerting** |
+
+- A deploy restarts the app for about a minute; the 5-minute pending periods ride over it.
+- "App errors": no matching lines means no errors, so no data must stay OK.
+- "Discovery stalled": first check in Explore how often the line appears, and widen `[2h]` if discovery runs less often.
+  It only means something while automation is on (step 10).
+- "Idle-reclamation risk" watches the memory side of Oracle's idle rule (step 12). With the 3 GB pre-touched heap it
+  should stay well above 25 %.
+
+### 14.8 Read-only access for someone else (you, in the browser)
+
+In the Grafana Cloud portal, **Administration**, **Users**, invite them with the **Viewer** role. They see dashboards,
+logs and alerts and cannot change anything. This is separate from the console: it gives no way to start runs or spend
+provider requests.
+
+### 14.9 Turn it off, rotate the token
+
+- Pause: `sudo systemctl disable --now alloy`.
+- Rotate: add a new token to the access policy, replace `GRAFANA_CLOUD_TOKEN` in `/etc/alloy/grafana-cloud.env`,
+  `sudo systemctl restart alloy`, check as in 14.4, then delete the old token in the portal.
+- When `deploy/alloy/config.alloy` changes in the repository, copy it over and repeat the `install` and `restart` lines of
+  14.4.
