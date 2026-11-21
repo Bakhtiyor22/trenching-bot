@@ -1,5 +1,6 @@
 package com.trenching.bot.replay
 
+import com.trenching.bot.console.automation.LogCapture
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
@@ -19,6 +20,7 @@ import java.nio.file.Path
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -32,6 +34,17 @@ class RecordedWalletPlanningTest {
 
     @BeforeEach
     fun saveCapture() = RecordedWalletFixtures.save(mapper, directory)
+
+    @Test
+    fun `planning and decoding a capture write their finished lines at debug and nothing at info or above`() {
+        LogCapture("com.trenching.bot", Level.DEBUG).use { logs ->
+            RecordedWalletPlanning(recorded).plan(directory, LEAD)
+
+            assertEquals(emptyList(), logs.events.filter { it.level.isGreaterOrEqual(Level.INFO) }.map { it.formattedMessage })
+            assertTrue(logs.messages(Level.DEBUG).any { it.startsWith("Market windows planned from the wallet's buys.") }, logs.messages(Level.DEBUG).toString())
+            assertTrue(logs.messages(Level.DEBUG).any { it.startsWith("Recorded wallet capture decoded into buys.") }, logs.messages(Level.DEBUG).toString())
+        }
+    }
 
     @Test
     fun `an existing scope plans one window from the lead before its first buy`() {
@@ -111,7 +124,7 @@ class RecordedWalletPlanningTest {
 
         assertEquals("MARKET_WINDOW_INVALID", refused.category)
         val warning = appender.list.single { it.level == Level.WARN }
-        assertEquals("replay_market_plan refused reason=MARKET_WINDOW_INVALID wallet=${history.wallet.value}", warning.formattedMessage)
+        assertEquals("Market windows could not be planned from the wallet's buys, so the export stops. code=MARKET_WINDOW_INVALID wallet=${history.wallet.value}", warning.formattedMessage)
     }
 
     private fun planning(evidence: TargetTokenEvidence) = RecordedWalletPlanning(withTarget(recorded, evidence))

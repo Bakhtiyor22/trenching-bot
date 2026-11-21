@@ -61,7 +61,7 @@ class ReplayDatasetTransaction(
         if (repository.deleteDataset(id) == 0) return false
         val referenceRuns = runs.countByDatasetChecksumAndStorage(id, RunStorage.DATASET_REFERENCE)
         if (referenceRuns > 0) {
-            log.warn("replay dataset delete refused datasetId={} referenceRuns={}", id, referenceRuns)
+            log.warn("Dataset delete refused: runs still refer to it. datasetId={} referenceRuns={}", id, referenceRuns)
             throw DatasetInUseException(id, referenceRuns)
         }
         return true

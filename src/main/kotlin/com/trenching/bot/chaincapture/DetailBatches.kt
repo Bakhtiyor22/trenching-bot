@@ -1,5 +1,6 @@
 package com.trenching.bot.chaincapture
 
+import com.trenching.bot.common.LogLine
 import org.slf4j.LoggerFactory
 
 /** What one fetched batch left to apply: the completed fetches in input order, and the item whose provider failure stays retryable. */
@@ -9,7 +10,7 @@ class DetailBatch<I, R>(val completed: List<FetchedItem<I, R>>, val unavailable:
  * Runs one detail phase of a capture: the unresolved items in checkpoint-sized batches, each fetched in parallel, applied to the
  * capture's state and checkpointed before the next batch. A provider or budget failure, and a stop request, are recorded on the
  * [CaptureStop] after the completed fetches are applied and saved; any other failure is saved first and then rethrown.
- * [label] prefixes the log lines (for example `wallet_capture`).
+ * [label] starts the log line's sentence (for example `Wallet capture`).
  */
 class DetailBatches(
     private val fetch: BoundedParallelFetch,
@@ -49,11 +50,11 @@ class DetailBatches(
                 when (val failure = fetched.failure) {
                     null -> if (fetched.stopped) stop.record(CaptureCategory.STOP_REQUESTED)
                     is CaptureProviderException -> {
-                        log.warn("{} interrupted category={} signature={}", label, failure.category, failed?.let(signatureOf))
+                        logInterrupted(failure.category, failed?.let(signatureOf))
                         stop.record(failure.category, failure.retryAfter)
                     }
                     is CaptureBudgetException -> {
-                        log.warn("{} interrupted category={} signature={}", label, failure.category, failed?.let(signatureOf))
+                        logInterrupted(failure.category, failed?.let(signatureOf))
                         stop.record(failure.category)
                     }
                     else -> {
@@ -69,4 +70,8 @@ class DetailBatches(
         }
         return state
     }
+
+    /** DEBUG: the operation's end line carries the stop and its code. */
+    private fun logInterrupted(category: String, signature: String?) =
+        LogLine("{} transaction fetch was interrupted; saved progress is kept.", label).field("category", category).field("signature", signature).debug(log)
 }

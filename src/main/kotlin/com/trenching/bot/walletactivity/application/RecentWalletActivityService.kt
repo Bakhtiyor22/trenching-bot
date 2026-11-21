@@ -120,9 +120,9 @@ internal class RecentWalletActivityService(
     private fun unavailable(reason: WalletActivityUnavailable, retryAfter: Duration?) = WalletActivityResult.Unavailable(reason, retryAfter)
 
     private fun report(request: WalletActivityRequest, result: WalletActivityResult, budget: CaptureBudget) = when (result) {
-        is WalletActivityResult.Found -> log.info("wallet_activity page wallet={} limit={} scanned={} actions={} unreadable={} requests={} cacheHits={}",
+        is WalletActivityResult.Found -> log.debug("Recent wallet activity page read. wallet={} limit={} scanned={} actions={} unreadable={} requests={} cacheHits={}",
             request.wallet.value, request.limit, result.page.scanned, result.page.actions.size, result.page.unreadable, budget.requestsUsed, budget.counters.cacheHits)
-        is WalletActivityResult.Unavailable -> log.warn("wallet_activity unavailable wallet={} limit={} reason={} requests={}",
+        is WalletActivityResult.Unavailable -> log.debug("Recent wallet activity could not be read this time, so discovery skips it and tries again later. wallet={} limit={} reason={} requests={}",
             request.wallet.value, request.limit, result.reason, budget.requestsUsed)
     }
 

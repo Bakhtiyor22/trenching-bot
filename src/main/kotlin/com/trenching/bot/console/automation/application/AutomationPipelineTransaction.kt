@@ -1,7 +1,9 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationDueItem
+import com.trenching.bot.console.automation.domain.AutomationFailures
 import com.trenching.bot.console.automation.domain.AutomationItemChange
 import com.trenching.bot.console.automation.domain.AutomationItemNotFoundException
 import com.trenching.bot.console.automation.domain.AutomationItemEvents
@@ -44,6 +46,10 @@ class AutomationPipelineTransaction(
     fun due(now: Instant): List<AutomationDueItem> =
         items.findDue(AutomationItemState.IN_CAPTURE, BackfillState.CAPTURING_STATES, BackfillState.ENDED_STATES, now, BATCH).map(mapper::toDueItem)
 
+    /** Whether an item of [backfillId] already ended `FAILED` because the backfill's budget could not cover it. */
+    @Transactional(readOnly = true)
+    fun stoppedByBudget(backfillId: String): Boolean = items.existsByBackfillIdAndFailureCode(backfillId, AutomationFailures.BACKFILL_BUDGET)
+
     /** The spend of [backfillId] against its request budget (plan Rule 39): its discovery requests plus its items' captures so far. */
     @Transactional(readOnly = true)
     fun budget(backfillId: String): BackfillBudget {
@@ -64,7 +70,8 @@ class AutomationPipelineTransaction(
         val before = mapper.toStanding(item)
         val current = before.progress
         if (current != expected) {
-            log.warn("automation item changed meanwhile itemId={} state={} ignoredState={}", itemId, current.state, next.state)
+            LogLine("Buy change ignored: the buy moved on while its capture result was being stored.").field("itemId", itemId).field("mint", item.mint)
+                .field("wallet", item.wallet).field("state", current.state).field("ignoredState", next.state).debug(log)
             return false
         }
         AutomationItemTransitions.require(itemId, current.state, next.state)
@@ -73,7 +80,6 @@ class AutomationPipelineTransaction(
         requestsUsed?.let { item.requestsUsed = it }
         item.updatedAt = now
         events.append(itemId, now, AutomationItemChange(before, AutomationItemEvents.changed(current, next, trace, operationRequests)))
-        log.info("automation item advanced itemId={} step={} state={}", itemId, item.step, item.state)
         return true
     }
 

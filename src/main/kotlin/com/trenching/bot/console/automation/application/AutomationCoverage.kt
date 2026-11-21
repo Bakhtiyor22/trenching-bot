@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationLimits
 import com.trenching.bot.console.automation.domain.BackfillState
@@ -52,7 +53,9 @@ class AutomationCoverage(
         val coveredFrom = watermark.coveredFrom ?: return
         if (backfill.rangeEnd.isBefore(coveredFrom) || !reached.isBefore(coveredFrom)) return
         watermark.coveredFrom = reached
-        log.info("automation coverage extended wallet={} backfillId={} coveredFrom={} previousCoveredFrom={}", backfill.wallet, backfill.id, reached, coveredFrom)
+        val extended = LogLine("Covered days extended: a finished backfill read further back than live discovery, so the days known for the wallet start earlier.").field("wallet", backfill.wallet)
+            .field("backfillId", backfill.id).field("coveredFrom", reached).field("previousCoveredFrom", coveredFrom)
+        AfterCommit.run { extended.info(log) }
     }
 
     /** The ranges the wallet's ended capturing backfills read (plan Rule 32). */

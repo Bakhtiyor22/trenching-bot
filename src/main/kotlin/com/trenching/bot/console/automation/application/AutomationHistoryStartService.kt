@@ -36,16 +36,16 @@ class AutomationHistoryStartService(
                         if (pages.start(itemId, clock.instant())) started++ else skipped++
                     } catch (exception: RuntimeException) {
                         failed++
-                        log.warn("automation history start failed itemId={}", itemId, exception)
+                        log.warn("Starting the history of a buy failed; the other buys go on. itemId={}", itemId, exception)
                     }
                 }
                 afterId = ids.last()
             }
         } catch (exception: RuntimeException) {
-            log.error("automation history start stopped items={} skipped={} failed={}", started, skipped, failed, exception)
+            log.error("History start stopped early on an unexpected error. started={} skipped={} failed={}", started, skipped, failed, exception)
             return AutomationHistoryStartResult(started, skipped, failed)
         }
-        log.info("automation history started items={} skipped={} failed={}", started, skipped, failed)
+        log.info("History started for buys that had none. started={} skipped={} failed={}", started, skipped, failed)
         return AutomationHistoryStartResult(started, skipped, failed)
     }
 }

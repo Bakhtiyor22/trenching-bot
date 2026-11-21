@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationFailures
 import com.trenching.bot.console.automation.domain.AutomationIds
@@ -67,8 +68,9 @@ class AutomationBackfillTransaction(
             backfill.filter.minSignalLamports, AutomationBackfillCodec.mintsJson(backfill.filter.mints), backfill.requestBudget,
             BackfillState.QUEUED, now, now,
         ).also { it.filtered = backfill.filtered })
-        log.info("automation backfill queued backfillId={} wallet={} from={} to={} dryRun={} requestBudget={}",
-            id, wallet, range.from, range.to, backfill.dryRun, backfill.requestBudget)
+        val queued = LogLine("Backfill queued.").field("backfillId", id).field("wallet", wallet).field("from", range.from).field("to", range.to)
+            .field("dryRun", backfill.dryRun).field("requestBudget", backfill.requestBudget)
+        AfterCommit.run { queued.info(log) }
         return id
     }
 
@@ -124,7 +126,8 @@ class AutomationBackfillTransaction(
 
     private fun end(backfill: AutomationBackfillEntity, state: BackfillState, now: Instant) {
         backfill.end(state, now)
-        log.info("automation backfill ended backfillId={} state={} itemsCreated={}", backfill.id, state, backfill.itemsCreated)
+        val ended = LogLine("Backfill ended.").field("backfillId", backfill.id).field("state", state).field("itemsCreated", backfill.itemsCreated)
+        AfterCommit.run { ended.info(log) }
     }
 
     private fun clippedToCoverage(wallet: String, requested: TimeRange): TimeRange {

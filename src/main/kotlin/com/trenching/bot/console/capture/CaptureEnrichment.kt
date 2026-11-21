@@ -22,7 +22,7 @@ internal object CaptureEnrichment {
     }
 
     private fun unreadable(view: String, subject: String, code: String, exception: Exception) =
-        log.warn("capture_enrichment unreadable_capture_files view={} subject={} code={}", view, subject, code, exception)
+        log.warn("Capture files could not be read, so the view shows what it can without them. view={} subject={} code={}", view, subject, code, exception)
 
     private const val UNREADABLE_JSON = "UNREADABLE_JSON"
 }

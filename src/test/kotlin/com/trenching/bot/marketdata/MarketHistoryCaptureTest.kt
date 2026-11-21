@@ -1,5 +1,7 @@
 package com.trenching.bot.marketdata
 
+import ch.qos.logback.classic.Level
+import com.trenching.bot.console.automation.LogCapture
 import com.trenching.bot.chaincapture.CaptureBudgetException
 import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.chaincapture.CaptureValidationException
@@ -389,7 +391,13 @@ class MarketHistoryCaptureTest {
             }
         }
         val request = request(listOf(window(MINT, 1001, 1012, SOURCE)))
-        val interrupted = service.capture(request).manifest
+        val interrupted = LogCapture(MarketHistoryCaptureService::class.java.name, Level.DEBUG).use { logs ->
+            service.capture(request).manifest.also {
+                assertEquals(emptyList(), logs.events.filter { line -> line.level.isGreaterOrEqual(Level.INFO) }.map { line -> line.formattedMessage },
+                    "the capture console and the automation say why the capture stopped")
+                assertTrue(logs.messages(Level.DEBUG).any { line -> line.startsWith("Market trade listing was interrupted;") }, logs.messages(Level.DEBUG).toString())
+            }
+        }
         assertEquals(MarketWindowCoverage.PENDING, interrupted.windows.single().coverage)
         assertEquals(MarketListedSignature(signature(1000), 4000), interrupted.windows.single().scanCursor)
         assertFalse(interrupted.acquisitionComplete)

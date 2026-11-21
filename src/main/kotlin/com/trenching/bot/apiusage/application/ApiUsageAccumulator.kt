@@ -25,7 +25,8 @@ class ApiUsageAccumulator(private val clock: Clock) : ApiUsageRecorder {
 
     override fun record(call: ApiCall) {
         val operation = if (ApiOperationNames.isRecordable(call.operation)) call.operation else {
-            log.warn("api_usage operation_rejected provider={} task={} recordedAs={}", call.provider, call.context.task, ApiOperationNames.OTHER)
+            log.warn("A provider request was counted under a generic operation because its operation name is not allowed. provider={} task={} recordedAs={}",
+                call.provider, call.context.task, ApiOperationNames.OTHER)
             ApiOperationNames.OTHER
         }
         val now = clock.instant()

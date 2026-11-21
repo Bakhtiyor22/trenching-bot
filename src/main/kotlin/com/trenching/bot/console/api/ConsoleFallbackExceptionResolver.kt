@@ -34,7 +34,8 @@ class ConsoleFallbackExceptionResolver(
     override fun resolveException(request: HttpServletRequest, response: HttpServletResponse, handler: Any?, ex: Exception): ModelAndView? {
         if (!isConsoleHandler(handler) || DisconnectedClientHelper.isClientDisconnectedException(ex)) return null
         val errorId = UUID.randomUUID().toString()
-        log.error("unexpected console API failure errorId={} method={} path={}", errorId, request.method, request.requestURI, ex)
+        log.error("Unexpected error in the console API; the caller got an error id to look it up. errorId={} method={} path={}",
+            errorId, request.method, request.requestURI, ex)
         response.status = HttpStatus.INTERNAL_SERVER_ERROR.value()
         response.contentType = MediaType.APPLICATION_JSON_VALUE
         response.outputStream.write(objectMapper.writeValueAsBytes(

@@ -5,6 +5,7 @@ import com.trenching.bot.apiusage.ApiCallOutcome
 import com.trenching.bot.apiusage.ApiProvider
 import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.common.ExceptionCauses
+import com.trenching.bot.common.LogLine
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URI
@@ -71,12 +72,15 @@ class HttpSolanaReadRpc(
                     budget.counters.retry()
                     val backoff = Duration.ofMillis((BASE_BACKOFF_MILLIS shl (attempt - 1)) + timing.jitterMillis(attempt))
                     val delay = maxOf(backoff, reply.retryAfter ?: Duration.ZERO)
-                    log.warn("chain_capture rpc_retry operation={} category={} cause={} attempt={}", method, reply.category, reply.cause, attempt)
+                    LogLine("RPC call will be retried.").field("operation", method).field("category", reply.category).field("cause", reply.cause)
+                        .field("attempt", "$attempt/$maxAttempts").debug(log)
                     if (reply.rateLimited) limiter.holdStarts(delay, budget) else pause(delay, budget)
                 }
             }
         }
-        log.warn("chain_capture rpc_failed operation={} category={} cause={} attempts={}", method, last.category, last.cause, attempts)
+        val failed = LogLine("RPC call failed after {}: {}.", if (attempts == 1) "1 attempt" else "$attempts attempts", ProviderFailureMeanings.meaning(last.category))
+            .field("operation", method).field("category", last.category).field("cause", last.cause).field("attempts", attempts)
+        if (last.category in CaptureCategory.ANSWERS) failed.debug(log) else failed.warn(log)
         throw CaptureProviderException(last.category, last.retryAfter, budget.requestsUsed, budget.bytesUsed)
     }
 

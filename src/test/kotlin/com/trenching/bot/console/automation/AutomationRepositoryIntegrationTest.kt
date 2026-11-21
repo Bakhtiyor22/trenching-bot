@@ -188,6 +188,17 @@ class AutomationRepositoryIntegrationTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `item counts by state cover every session, only the states asked for, and leave out a state without items`() {
+        items.saveAll(listOf(
+            item(1, "s1"), item(2, "s2"), item(3, "s2", AutomationItemState.BLOCKED_BUDGET), item(4, "s3", AutomationItemState.FAILED), item(5, "s3", AutomationItemState.SIMULATED),
+        ))
+
+        val counts = items.countByState(AutomationItemState.NON_TERMINAL).associate { it.state to it.items }
+
+        assertEquals(mapOf(AutomationItemState.DISCOVERED to 2L, AutomationItemState.BLOCKED_BUDGET to 1L), counts)
+    }
+
+    @Test
     fun `idle open sessions of a wallet are found by their last buy, one page at a time`() {
         sessions.saveAll(listOf(
             session("s1", AutomationSessionState.OPEN, EVENING.minus(Duration.ofHours(3))),

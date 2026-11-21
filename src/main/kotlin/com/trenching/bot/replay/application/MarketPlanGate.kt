@@ -44,7 +44,7 @@ internal class MarketPlanGate(private val planner: ReplayMarketWindowPlanner = R
         val plan = planner.plan(history, leadSlots = leadSlots)
         val expected = MarketCaptureWindow.forFirstBuy(mint, firstBuy.slot, firstBuy.signature, plan.parameters)
         if (plan.windows != listOf(expected)) {
-            log.warn("replay_market_plan refused reason={} mint={} firstBuySignature={} firstBuySlot={} plannedWindows={}",
+            log.warn("Market plan refused: the planned window does not match the wallet's first buy of this token. code={} mint={} firstBuySignature={} firstBuySlot={} plannedWindows={}",
                 TARGET_WINDOW_MISMATCH, mint.value, firstBuy.signature.value, firstBuy.slot.value, plan.windows.size)
             throw CaptureValidationException(TARGET_WINDOW_MISMATCH)
         }

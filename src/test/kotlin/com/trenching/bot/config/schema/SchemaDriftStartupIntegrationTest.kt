@@ -188,7 +188,7 @@ class SchemaDriftStartupIntegrationTest {
         const val CATALOG = "schema_drift_catalog"
         const val KEY_PROBE = "key_probe"
         const val PROFILE = "test"
-        const val REPAIRED = "schema drift repaired"
+        const val REPAIRED = "Database schema repaired:"
         const val DATASOURCE_URL = "spring.datasource.url"
         const val SAMPLE = "/replay/samples/dip-sample-v3.json"
         const val WALLET_SOLD = "WALLET_SOLD"

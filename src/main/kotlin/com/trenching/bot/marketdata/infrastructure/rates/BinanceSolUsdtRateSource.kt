@@ -5,6 +5,7 @@ import com.trenching.bot.apiusage.ApiCallOutcome
 import com.trenching.bot.apiusage.ApiProvider
 import com.trenching.bot.apiusage.ApiTask
 import com.trenching.bot.apiusage.ApiUsageContext
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.common.ExceptionCauses
 import com.trenching.bot.marketdata.RateLookup
@@ -79,7 +80,8 @@ class BinanceSolUsdtRateSource(
                 is Fetch.Failed -> {
                     failure = fetched.reason
                     range.forEach { result[it] = RateLookup.Unavailable(fetched.reason) }
-                    log.warn("reference_rates klines failed reason={} cause={} requests={}", fetched.reason, fetched.cause, requests)
+                    LogLine("Reference rate lookup failed; those minutes have no rate and the provider is left alone for a while.")
+                        .field("reason", fetched.reason).field("cause", fetched.cause).field("requests", requests).warn(log)
                     startBackoff(fetched.reason)
                 }
                 is Fetch.Rates -> range.forEach { minute ->
@@ -90,7 +92,7 @@ class BinanceSolUsdtRateSource(
                 }
             }
         }
-        log.debug("reference_rates klines minutes={} requests={}", minutes.size, requests)
+        log.debug("Reference rate lookup finished. minutes={} requests={}", minutes.size, requests)
         return result
     }
 
@@ -102,7 +104,8 @@ class BinanceSolUsdtRateSource(
         val fetched = get(uri, TICKER_PATH, LIVE_PRICE) { body -> positive(body.path("price"))?.let { Fetch.Rates(mapOf(now to it)) } }
         return when (fetched) {
             is Fetch.Failed -> {
-                log.warn("reference_rates ticker failed reason={} cause={}", fetched.reason, fetched.cause)
+                LogLine("Current reference rate lookup failed; the provider is left alone for a while.")
+                    .field("reason", fetched.reason).field("cause", fetched.cause).warn(log)
                 startBackoff(fetched.reason)
                 RateLookup.Unavailable(fetched.reason)
             }

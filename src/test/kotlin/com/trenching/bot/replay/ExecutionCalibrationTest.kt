@@ -1,5 +1,7 @@
 package com.trenching.bot.replay
 
+import ch.qos.logback.classic.Level
+import com.trenching.bot.console.automation.LogCapture
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.Commitment
 import com.trenching.bot.common.MarketPair
@@ -60,7 +62,12 @@ class ExecutionCalibrationTest {
     fun `the curve formula and fees reproduce Decu's real captured buy exactly`() {
         RecordedWalletFixtures.save(mapper, wallet())
 
-        val report = service(plannedMarket()).calibrate(wallet(), markets())
+        val report = LogCapture("com.trenching.bot", Level.DEBUG).use { logs ->
+            service(plannedMarket()).calibrate(wallet(), markets()).also {
+                assertEquals(emptyList(), logs.events.filter { line -> line.level.isGreaterOrEqual(Level.INFO) }.map { line -> line.formattedMessage })
+                assertTrue(logs.messages(Level.DEBUG).any { line -> line.startsWith("Execution calibration finished.") }, logs.messages(Level.DEBUG).toString())
+            }
+        }
 
         val buy = report.buys.single()
         assertEquals(TransactionSignature.of(SIGNATURE), buy.signature)

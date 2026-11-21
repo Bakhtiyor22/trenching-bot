@@ -50,11 +50,11 @@ class RecordedWalletPlanning(
         val plan = when (val decision = gate.plan(history, leadSlots)) {
             is MarketPlanDecision.Planned -> decision.plan
             is MarketPlanDecision.Refused -> {
-                log.warn("replay_market_plan refused reason={} wallet={}", decision.reason, history.wallet.value)
+                log.warn("Market windows could not be planned from the wallet's buys, so the export stops. code={} wallet={}", decision.reason, history.wallet.value)
                 throw CaptureValidationException(decision.reason)
             }
         }
-        log.info("replay_market_plan sourceBuys={} windows={} horizonSlots={} maxAgeSlots={} leadSlots={}",
+        log.debug("Market windows planned from the wallet's buys. sourceBuys={} windows={} horizonSlots={} maxAgeSlots={} leadSlots={}",
             plan.sourceBuys, plan.windows.size, plan.parameters.horizonSlots, plan.parameters.maxAgeSlots, plan.parameters.leadSlots)
         return PlannedWalletHistory(history, plan)
     }

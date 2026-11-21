@@ -14,6 +14,7 @@ import com.trenching.bot.console.automation.AutomationRows.session
 import com.trenching.bot.console.automation.application.AutomationBackfillDiscoveryService
 import com.trenching.bot.console.automation.application.AutomationBackfillService
 import com.trenching.bot.console.automation.application.AutomationCoverage
+import com.trenching.bot.console.automation.application.AutomationHolds
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.domain.AutomationDisabledException
 import com.trenching.bot.console.automation.domain.AutomationFailures
@@ -537,6 +538,28 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `discovery held by the reserve over several ticks gives one warning, and its end waits for the settle time`() {
+        live()
+        lookup.actions += buyAt(1, "2026-10-30T14:00:00Z")
+        service.create(request())
+        val scanner = backfillDiscovery(lookup, properties, clock, usage)
+
+        LogCapture(AutomationHolds::class.java.name).use { logs ->
+            usage.lastDay = properties.maxRequestsPer24h - properties.backfillReserveRequests
+            repeat(5) { scanner.scan() }
+            usage.lastDay -= 1
+            scanner.scan()
+
+            assertEquals(
+                listOf("Backfill scan paused: only the live reserve is left under the request cap. requestsLast24h=${properties.maxRequestsPer24h - properties.backfillReserveRequests} " +
+                    "cap=${properties.maxRequestsPer24h} reserveRequests=${properties.backfillReserveRequests} waiting=1"),
+                logs.messages(Level.WARN),
+            )
+            assertEquals(emptyList(), logs.messages(Level.INFO))
+        }
+    }
+
+    @Test
     fun `a backfill whose items are all terminal is done, and live coverage moves back to its start`() {
         live()
         lookup.actions += buyAt(1, "2026-10-30T14:00:00Z")
@@ -1038,6 +1061,30 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
             assertEquals(listOf("1", "1"), counts, "the tick that read its pages in between reset the count")
         } finally {
             logger.detachAppender(warnings)
+        }
+    }
+
+    @Test
+    fun `a provider that keeps failing warns on the first failed tick and is debug after it, each with its count, and a read tick starts the run again`() {
+        live()
+        lookup.actions += (1..120).map { buyAt(it, Instant.parse("2026-10-30T10:00:00Z").plusSeconds(60L * it)) }
+        service.create(request())
+        val scanner = backfillDiscovery(lookup, properties(captureEnabled = true, maxDiscoveryPages = 1), clock, usage)
+
+        LogCapture(AutomationBackfillDiscoveryService::class.java.name, Level.DEBUG).use { logs ->
+            lookup.unavailableFromRequest = 1
+            repeat(3) { scanner.scan() }
+            val first = logs.events.filter { it.formattedMessage.startsWith("Backfill discovery skipped: ") }
+            assertEquals(listOf(Level.WARN, Level.DEBUG, Level.DEBUG), first.map { it.level })
+            assertEquals(listOf("1", "2", "3"), first.map { Regex("consecutiveFailures=(\\d+)").find(it.formattedMessage)?.groupValues?.get(1) })
+
+            lookup.unavailableFromRequest = null
+            scanner.scan()
+            logs.clear()
+            lookup.unavailableFromRequest = 1
+            scanner.scan()
+
+            assertEquals(listOf(Level.WARN), logs.events.map { it.level }, "a run that failed again after a read tick starts with a warning")
         }
     }
 

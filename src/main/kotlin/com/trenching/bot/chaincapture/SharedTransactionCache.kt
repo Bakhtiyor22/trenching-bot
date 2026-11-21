@@ -42,7 +42,7 @@ class SharedTransactionCache(directory: Path, private val mapper: ObjectMapper) 
         val file = root.resolve(key.fileName)
         if (!Files.isRegularFile(file, NOFOLLOW_LINKS)) return null
         val transaction = try { verified(key, file) } catch (exception: IOException) {
-            log.warn("chain_capture transaction_cache_unreadable signature={} path={} category={}", key.signature, file, exception.javaClass.simpleName)
+            log.debug("Cached transaction could not be read, so it is fetched again. signature={} path={} category={}", key.signature, file, exception.javaClass.simpleName)
             return null
         }
         if (transaction == null) discard(key, file)
@@ -79,14 +79,14 @@ class SharedTransactionCache(directory: Path, private val mapper: ObjectMapper) 
     private fun parse(bytes: ByteArray): JsonNode = mapper.reader().with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS).readTree(bytes)
 
     private fun discard(key: TransactionCacheKey, file: Path) {
-        log.warn("chain_capture transaction_cache_corrupt signature={} path={}", key.signature, file)
+        log.warn("Cached transaction failed verification, so it is deleted and fetched again. signature={} path={}", key.signature, file)
         try { Files.deleteIfExists(file) } catch (exception: IOException) {
-            log.warn("chain_capture transaction_cache_delete_failed signature={} path={} category={}", key.signature, file, exception.javaClass.simpleName)
+            log.warn("Corrupt cached transaction could not be deleted. signature={} path={} category={}", key.signature, file, exception.javaClass.simpleName)
         }
     }
 
     private fun skipped(key: TransactionCacheKey, exception: Exception) {
-        log.warn("chain_capture transaction_cache_write_skipped signature={} category={}", key.signature, exception.javaClass.simpleName)
+        log.debug("Transaction was not cached; the capture goes on without it. signature={} category={}", key.signature, exception.javaClass.simpleName)
     }
 
     private fun canonical(value: Any?): Any? = when (value) {

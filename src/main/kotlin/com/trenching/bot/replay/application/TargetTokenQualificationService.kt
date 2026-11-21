@@ -1,5 +1,6 @@
 package com.trenching.bot.replay.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.papertrading.domain.FillOutcome
 import com.trenching.bot.replay.CaptureInspection
 import com.trenching.bot.replay.CapturePaths
@@ -9,6 +10,7 @@ import com.trenching.bot.replay.domain.CaptureVerdict
 import com.trenching.bot.replay.domain.CaptureVerdictStage
 import com.trenching.bot.replay.domain.CaptureVerdictState
 import com.trenching.bot.replay.domain.CaseClassification
+import com.trenching.bot.replay.domain.CoverageEndedLines
 import com.trenching.bot.replay.domain.CoverageShortfall
 import com.trenching.bot.replay.domain.DatasetCoverage
 import com.trenching.bot.replay.domain.DipVerdict
@@ -66,16 +68,16 @@ class TargetTokenQualificationService(
             val report = runner.run(loaded, SimulationConfig.agreed())
             DatasetCoverage.undecided(report, loaded).firstOrNull()?.let { coverageEnded(it, evidence) } ?: replayed(report, evidence)
         } catch (exception: TradesRequiredException) {
-            log.warn("target_token_qualification refused reason={} dataset={} schemaVersion={}", exception.code, dataset.fileName,
-                exception.schemaVersion)
+            log.warn("Target token qualification refused: the dataset records no trades, which this rule needs. code={} dataset={} schemaVersion={}",
+                exception.code, dataset.fileName, exception.schemaVersion)
             failed(exception.code, VerdictProvenance(), evidence)
         } catch (exception: Exception) {
             val category = failureCategory(exception)
-            log.error("target_token_qualification replay_failed category={} dataset={}", category, dataset.fileName, exception)
+            log.error("Target token qualification failed unexpectedly while replaying the dataset. code={} dataset={}", category, dataset.fileName, exception)
             failed(category, VerdictProvenance(), evidence)
         }
-        log.info("target_token_qualification finished classification={} runId={} datasetChecksum={}",
-            verdict.classification, verdict.provenance.runId, verdict.provenance.datasetChecksum)
+        LogLine("Target token qualification finished.").field("classification", verdict.classification).field("runId", verdict.provenance.runId)
+            .field("datasetChecksum", verdict.provenance.datasetChecksum).debug(log)
         return verdict
     }
 
@@ -96,8 +98,7 @@ class TargetTokenQualificationService(
 
     /** The replay read past the market capture's coverage, so its outcome is not a verdict: the capture needs extending. */
     private fun coverageEnded(shortfall: CoverageShortfall, evidence: TargetTokenEvidence?): TargetTokenVerdict {
-        log.warn("target_token_qualification refused reason={} mint={} decidedAt={} throughSlot={}", VerdictReasons.MARKET_COVERAGE_ENDED,
-            shortfall.pair.base.value, shortfall.decidedAt.value, shortfall.throughSlot?.value)
+        CoverageEndedLines.refusal("Target token qualification", shortfall, ", so it needs extending").warn(log)
         val proven = (evidence?.let(TargetFirstBuyGate::assess) as? TargetFirstBuyAssessment.Proven)?.firstBuy
         return notRun(CaseClassification.INCOMPLETE_CAPTURE,
             CaptureVerdict(CaptureVerdictState.INCOMPLETE, CaptureVerdictStage.MARKET, VerdictReasons.MARKET_COVERAGE_ENDED), evidence, proven)
@@ -114,7 +115,7 @@ class TargetTokenQualificationService(
             0 -> ran(CaseClassification.NEGATIVE_CASE, DipVerdict.NotEvaluated(ingestionReason(report)), null, null, provenance, evidence)
             1 -> cycle(report, report.scenarios.single(), provenance, evidence)
             else -> {
-                log.error("target_token_qualification replay_failed category={} runId={} intents={}",
+                log.error("Target token qualification failed: the replay made more than one buy decision for the token. code={} runId={} intents={}",
                     VerdictReasons.MULTIPLE_INTENTS, report.runId, report.scenarios.size)
                 failed(VerdictReasons.MULTIPLE_INTENTS, provenance, evidence)
             }
@@ -134,8 +135,13 @@ class TargetTokenQualificationService(
         }.trade
         val proven = (evidence?.actualFirstBuy as? ActualFirstBuy.Proven)?.signature
         if (evidence != null && buy.signature != proven) {
-            log.error("target_token_qualification replay_failed category={} runId={} cycleBuy={} provenFirstBuy={}",
-                VerdictReasons.FIRST_BUY_MISMATCH, report.runId, buy.signature.value, proven?.value)
+            if (proven == null) {
+                log.error("Target token qualification failed: the replay's first buy is not a proven first buy. code={} runId={} cycleBuy={}",
+                    VerdictReasons.FIRST_BUY_MISMATCH, report.runId, buy.signature.value)
+            } else {
+                log.error("Target token qualification failed: the replay's first buy is not the wallet's proven first buy. code={} runId={} cycleBuy={} provenFirstBuy={}",
+                    VerdictReasons.FIRST_BUY_MISMATCH, report.runId, buy.signature.value, proven.value)
+            }
             return failed(VerdictReasons.FIRST_BUY_MISMATCH, provenance, evidence)
         }
         val cycleProvenance = provenance.copy(referencePrice = intent.referencePrice, firstBuySignature = buy.signature,
@@ -152,12 +158,12 @@ class TargetTokenQualificationService(
             DipWatchOutcome.SIGNAL_BELOW_MIN_SIZE ->
                 ran(CaseClassification.NEGATIVE_CASE, DipVerdict.NotQualified(intent.watch), null, null, cycleProvenance, evidence)
             DipWatchOutcome.REFERENCE_UNAVAILABLE -> {
-                log.warn("target_token_qualification replay_failed category={} runId={} cycleBuy={}",
+                log.warn("Target token qualification could not finish: the reference price of the first buy is unavailable. code={} runId={} cycleBuy={}",
                     VerdictReasons.REFERENCE_UNAVAILABLE, report.runId, buy.signature.value)
                 failed(VerdictReasons.REFERENCE_UNAVAILABLE, cycleProvenance.copy(referencePrice = null), evidence)
             }
             DipWatchOutcome.SIGNAL_SIZE_UNAVAILABLE -> {
-                log.warn("target_token_qualification replay_failed category={} runId={} cycleBuy={}",
+                log.warn("Target token qualification could not finish: the signal size of the first buy is unavailable. code={} runId={} cycleBuy={}",
                     VerdictReasons.SIGNAL_SIZE_UNAVAILABLE, report.runId, buy.signature.value)
                 failed(VerdictReasons.SIGNAL_SIZE_UNAVAILABLE, cycleProvenance, evidence)
             }

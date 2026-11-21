@@ -50,7 +50,7 @@ internal class RecordedMarketHistoryService(
                 extracted.count { it is TradeExtraction.Observed }, extracted.count { it is TradeExtraction.Excluded })
         }
         val exclusions = MarketObservationExclusion.entries.associateWith { reason -> excluded.count { it.reason == reason } }
-        log.info("market_history_decode finished windows={} usableWindows={} transactions={} observations={} exclusions={}",
+        log.debug("Recorded market capture decoded into observations. windows={} usableWindows={} transactions={} observations={} exclusions={}",
             windows.size, usable.size, transactions.size, observations.size, excluded.size)
         return MarketHistoryDecodeResult(verified.directory, manifest.complete, MarketObservationExtractorVersion.PUMPFUN_BONDING_CURVE_TRADE_V2,
             manifest.windowParameters, windows, transactions, observations, exclusions)

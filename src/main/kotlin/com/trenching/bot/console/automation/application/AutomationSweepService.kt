@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationEnabled
@@ -54,7 +55,8 @@ class AutomationSweepService(
             try {
                 sweepItem(item, plan)
             } catch (e: Exception) {
-                log.error("automation sweep failed itemId={}", item.id, e)
+                LogLine("Unexpected error while sweeping a buy; the tick goes on with the other buys.").field("itemId", item.id).field("mint", item.mint)
+                    .field("wallet", item.wallet).error(log, e)
             }
         }
     }
@@ -65,10 +67,7 @@ class AutomationSweepService(
         val now = clock.instant()
         val next = failure?.let { item.progress.sweepFailed(AutomationFailures.SWEEP_FAILED, it.message, properties.maxStepAttempts, now) }
             ?: item.progress.simulated()
-        if (pipeline.record(item.id, item.progress, next, null, now, AutomationItemTrace(attemptFailed = failure != null)) && failure != null) {
-            log.warn("automation sweep attempt failed itemId={} attempt={} state={} nextActionAt={}",
-                item.id, item.progress.sweepAttempt, next.state, next.nextActionAt)
-        }
+        pipeline.record(item.id, item.progress, next, null, now, AutomationItemTrace(attemptFailed = failure != null))
     }
 
     /** Runs one entry and stores its row; returns the unexpected failure that left the entry without a row, or null. */
@@ -82,7 +81,8 @@ class AutomationSweepService(
     }
 
     private fun logged(item: AutomationDueItem, entry: SweepEntry, failure: Exception): Exception {
-        log.error("automation sweep entry failed itemId={} label={}", item.id, entry.label, failure)
+        LogLine("Unexpected error while running a sweep entry; it has no row yet and the buy's sweep counts as a failed attempt.").field("label", entry.label)
+            .field("itemId", item.id).field("mint", item.mint).field("wallet", item.wallet).error(log, failure)
         return failure
     }
 
@@ -103,7 +103,8 @@ class AutomationSweepService(
     }
 
     private fun refused(item: AutomationDueItem, entry: SweepEntry, code: String): SweepEntryResult {
-        log.warn("automation sweep entry refused itemId={} label={} code={}", item.id, entry.label, code)
+        LogLine("Sweep entry refused by the replay; its row records the refusal and no run.").field("code", code).field("label", entry.label)
+            .field("itemId", item.id).field("mint", item.mint).field("wallet", item.wallet).debug(log)
         return SweepEntryResult.refused(code)
     }
 }

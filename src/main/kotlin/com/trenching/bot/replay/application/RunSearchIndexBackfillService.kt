@@ -26,9 +26,9 @@ class RunSearchIndexBackfillService(private val pages: RunSearchIndexBackfillTra
                 afterId = page.lastId ?: break
             }
         } catch (exception: RuntimeException) {
-            log.error("run search index backfill stopped runs={} skipped={} failed={}", indexed, skipped, failed, exception)
+            log.error("Run search index backfill stopped early because of an unexpected error. runs={} skipped={} failed={}", indexed, skipped, failed, exception)
             return
         }
-        log.info("run search index backfilled runs={} skipped={} failed={}", indexed, skipped, failed)
+        log.info("Run search index backfill finished. runs={} skipped={} failed={}", indexed, skipped, failed)
     }
 }

@@ -3,6 +3,7 @@ package com.trenching.bot.console.capture
 import com.trenching.bot.apiusage.ApiTask
 import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.chaincapture.*
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.console.api.dto.*
@@ -57,6 +58,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                         else -> original
                     }
                     if (latest != original) store.save(id, latest)
+                    if (latest != original && latest.state != CaptureNames.WAITING_RETRY) announceEnd(id, latest, latest.progress?.operationRequests)
                     session = project(session, latest)
                     if (latest.state == CaptureNames.WAITING_RETRY && latest.recovery != null && latest.recovery.attemptsUsed < latest.recovery.maxAttempts && !budgetExhausted(latest.recovery)) pending += id to latest
                 }
@@ -113,6 +115,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         }
         store.save(id, updated)
         project(store.session(id), updated).also(store::save)
+        if (updated.state != original.state) announceEnd(id, updated, updated.progress?.operationRequests, stopCode = if (action == "pause") PAUSED_BY_USER else updated.code)
         updated
     }
     private fun reserve(operation: CaptureOperationRecord, firstAttempt: Boolean): CaptureOperationRecord {
@@ -154,6 +157,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                     val blocked = current.copy(state = CaptureNames.FAILED, updatedAt = clock.instant(), endedAt = clock.instant(), code = exception.code, message = exception.message, recovery = current.recovery?.copy(nextRetryAt = null))
                     store.save(id, blocked)
                     store.save(project(store.session(id), blocked))
+                    announceEnd(id, blocked, blocked.progress?.operationRequests)
                     return@schedule
                 }
                 store.save(id, next)
@@ -288,6 +292,8 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private fun run(id: String, initial: CaptureOperationRecord) {
         var operation = initial
         var retryAfter: Duration? = null
+        var failedRequests: Int? = null
+        var unexpected: Throwable? = null
         try {
             val session = synchronized(store) { store.session(id) }
             val paths = paths(session)
@@ -357,15 +363,15 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                 is CaptureValidationException -> safeCategory(exception.category)
                 is CaptureProviderException -> safeCategory(exception.category)
                 is CaptureBudgetException -> "BUDGET_EXHAUSTED_${safeCategory(exception.category)}"
-                else -> if(interrupted) "INTERRUPTED" else "CAPTURE_FAILED"
+                else -> if(interrupted) "INTERRUPTED" else CAPTURE_FAILED
             }
             // Only a fixed replacement exception reaches logs: provider exception text can contain credentials.
-            if(code == "CAPTURE_FAILED") log.error("capture operation failed operationId={} category={}",operation.id,code,IllegalStateException("Capture operation failed").apply { stackTrace=exception.stackTrace })
-            else log.warn("capture operation stopped operationId={} category={}",operation.id,code)
+            if(code == CAPTURE_FAILED) unexpected = IllegalStateException("Capture operation failed").apply { stackTrace=exception.stackTrace }
             val provider = exception as? CaptureProviderException
             retryAfter = provider?.retryAfter
             val budgetFailure = exception as? CaptureBudgetException
             val usedRequests = provider?.requestsUsed ?: budgetFailure?.requestsUsed
+            failedRequests = usedRequests
             val usedBytes = provider?.bytesUsed ?: budgetFailure?.bytesUsed
             val accounted = if (usedRequests != null && usedBytes != null) accountUsage(operation, usedRequests, usedBytes) else operation
             val settled = if (usedRequests != null && usedBytes != null) accounted.copy(recovery = releaseReservation(accounted.recovery)) else settleUnknownReservation(accounted)
@@ -382,6 +388,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                         saved.control == CaptureNames.CANCEL_REQUESTED && operation.state in setOf(CaptureNames.RUNNING, CaptureNames.FAILED, CaptureNames.INCOMPLETE) -> operation.copy(state = CaptureNames.CANCELLED, control = null, code = "CANCELLED_BY_USER", message = "Remaining capture work was cancelled", endedAt = clock.instant(), recovery = releaseReservation(operation.recovery))
                         else -> operation.copy(control = null)
                     }
+                    val ended = operation
                     if (retryable(operation)) {
                         val nextAt = clock.instant().plus(retryDelay(operation, retryAfter))
                         operation = operation.copy(state = CaptureNames.WAITING_RETRY, endedAt = null, updatedAt = clock.instant(), recovery = operation.recovery?.copy(nextRetryAt = nextAt))
@@ -389,10 +396,49 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                     }
                     store.save(id,operation)
                     store.save(project(store.session(id),operation))
+                    announceEnd(id, ended, failedRequests ?: ended.progress?.operationRequests, unexpected)
                 } finally { activeSession=null }
             }
             followUp?.let { scheduleRetry(id, it, Duration.between(clock.instant(), it.recovery?.nextRetryAt ?: clock.instant()).coerceAtLeast(Duration.ZERO)) }
             if (operation.step == CaptureNames.EXPORT && operation.state == CaptureNames.SUCCEEDED) synchronized(store) { queueQualification(id, operation) }
+        }
+    }
+    /**
+     * Writes the end line once the operation is stored, so a failure while building it (a session read, say) can never stop the save or change
+     * the end state; the failure is logged on its own, with no provider text.
+     */
+    private fun announceEnd(id: String, operation: CaptureOperationRecord, requests: Int?, unexpected: Throwable? = null, stopCode: String? = operation.code) {
+        try {
+            logEnd(id, operation, requests, unexpected, stopCode)
+        } catch (exception: Exception) {
+            LogLine("The end of a capture step could not be logged; the operation is stored as it ended.").field("captureSessionId", id)
+                .field("operationId", operation.id).field("cause", exception.javaClass.simpleName).warn(log)
+        }
+    }
+
+    /**
+     * The one line an operation writes when it reaches an end state; the layers above log what it means for them. An unexpected failure keeps
+     * its ERROR and replaced stack even when a pause or cancel request then replaced the stored code, since [stopCode] says how it ended.
+     */
+    private fun logEnd(id: String, operation: CaptureOperationRecord, requests: Int?, unexpected: Throwable?, stopCode: String?) {
+        val code = stopCode
+        val succeeded = operation.state == CaptureNames.SUCCEEDED
+        val line = when {
+            succeeded -> LogLine("Capture step finished.")
+            code == null -> LogLine("Capture step stopped before it was complete.")
+            unexpected != null && code != CAPTURE_FAILED -> LogLine("Capture step failed unexpectedly and was then stopped: {}.", CaptureStopMeanings.meaning(code))
+            else -> LogLine("Capture step stopped: {}.", CaptureStopMeanings.meaning(code))
+        }
+        line.field("code", code).field("step", operation.step.lowercase()).field("requests", requests)
+        if (operation.step == CaptureNames.WALLET || operation.step == CaptureNames.MARKET) {
+            line.field("mint", (operation.walletSettings ?: store.sessionOrNull(id)?.wallet)?.mint)
+        }
+        if (code == OVER_CAP) line.field("maxTransactions", operation.maxTransactions)
+        line.field("captureSessionId", id).field("operationId", operation.id)
+        when {
+            succeeded -> line.debug(log)
+            unexpected != null -> line.error(log, unexpected)
+            else -> line.info(log)
         }
     }
     /**
@@ -402,11 +448,11 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private fun queueQualification(id: String, export: CaptureOperationRecord) {
         val session = store.session(id)
         if (!walletToken(session.wallet)) return
-        if (!idle()) { log.warn("capture qualification not queued sessionId={} category=WORKER_STOPPING", id); return }
+        if (!idle()) { log.warn("Capture qualification was not queued because the capture worker is stopping; qualify by hand when it is back. captureSessionId={}", id); return }
         try {
             start(id, CaptureOperationRequest("qualify-${hash(export.id.toByteArray()).take(QUALIFY_ID_HASH_LENGTH)}", CaptureNames.QUALIFY, session.marketAttemptId))
         } catch (exception: CaptureRequestException) {
-            log.warn("capture qualification not queued sessionId={} category={}", id, exception.code)
+            log.warn("Capture qualification was not queued; the export keeps its pending verdict and Qualify starts it by hand. code={} captureSessionId={}", exception.code, id)
         }
     }
     private fun exportUnchanged(export: CaptureOperationRecord): Boolean {
@@ -510,7 +556,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private fun overCapMessage(bound: Int): String =
         "A market window lists more trades than this capture's bound of $bound transactions, so none of them were fetched. " +
             "Resuming cannot finish it; a new market attempt with a larger bound can."
-    private fun safeCategory(value: String): String = if(value.matches(Regex("[A-Z][A-Z0-9_]{0,63}"))) value else "CAPTURE_FAILED"
+    private fun safeCategory(value: String): String = if(value.matches(Regex("[A-Z][A-Z0-9_]{0,63}"))) value else CAPTURE_FAILED
     override fun close() {
         synchronized(store) { closed=true }
         retryScheduler.close()
@@ -528,6 +574,8 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private companion object {
         val STOP_CONTROLS = setOf(CaptureNames.PAUSE_REQUESTED, CaptureNames.CANCEL_REQUESTED)
         const val DEADLINE = "DEADLINE"
+        const val CAPTURE_FAILED = "CAPTURE_FAILED"
+        const val PAUSED_BY_USER = "PAUSED_BY_USER"
         val OVER_CAP = MarketWindowCoverage.OVER_CAP.name
         const val CAPPED_HISTORY_MESSAGE = "The token-account listing stopped at the sample's record or page limit before the end of its history. " +
             "Saved evidence is kept; resuming cannot finish it, so start a new session with a larger sample or more wallet scan pages."

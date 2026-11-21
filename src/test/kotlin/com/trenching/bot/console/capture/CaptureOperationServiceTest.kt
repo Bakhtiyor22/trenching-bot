@@ -1,7 +1,13 @@
 package com.trenching.bot.console.capture
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.UnsynchronizedAppenderBase
+import ch.qos.logback.core.read.ListAppender
 import com.trenching.bot.apiusage.ApiTask
 import com.trenching.bot.apiusage.ApiUsageContext
+import com.trenching.bot.chaincapture.CaptureBudgetException
 import com.trenching.bot.chaincapture.CaptureProviderException
 import com.trenching.bot.chaincapture.ProviderRequestLimiter
 import com.trenching.bot.chaincapture.CaptureCheckpoint
@@ -43,6 +49,7 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.slf4j.LoggerFactory
 
 class CaptureOperationServiceTest {
     @TempDir lateinit var root: Path
@@ -818,5 +825,207 @@ class CaptureOperationServiceTest {
     private fun assertNothingFetched(operation: CaptureOperationRecord) {
         assertEquals(CaptureNames.SUCCEEDED, operation.state)
         assertNull(operation.code)
+    }
+
+    /** Runs [block] with a ListAppender on the service's logger at DEBUG and returns what it logged. */
+    private fun endLines(block: () -> Unit): List<ILoggingEvent> {
+        val logger = LoggerFactory.getLogger(CaptureOperationService::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply { start() }
+        val before = logger.level
+        logger.level = Level.DEBUG
+        logger.addAppender(appender)
+        try { block() } finally { logger.detachAppender(appender); logger.level = before }
+        return appender.list.filter { it.formattedMessage.startsWith("Capture step") }
+    }
+
+    @Test
+    fun `a succeeded operation writes one debug end line`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val operation = fixture.inspect()
+
+        val lines = endLines { fixture.executor.runAll() }
+
+        val line = lines.single()
+        assertEquals(Level.DEBUG, line.level)
+        assertEquals("Capture step finished. step=inspect requests=3 captureSessionId=session-1 operationId=${operation.id}", line.formattedMessage)
+    }
+
+    @Test
+    fun `a provider stop writes one info end line with its code and meaning`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        fixture.workflow.failure = CaptureProviderException("RATE_LIMITED", requestsUsed = 7, bytesUsed = 1)
+        val operation = fixture.inspect()
+
+        val line = endLines { fixture.executor.runAll() }.single()
+
+        assertEquals(Level.INFO, line.level)
+        assertEquals("Capture step stopped: the provider is rate limiting. code=RATE_LIMITED step=inspect requests=7 captureSessionId=session-1 operationId=${operation.id}", line.formattedMessage)
+        assertNull(line.throwableProxy)
+    }
+
+    @Test
+    fun `a budget exhausted stop reads like its category`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        fixture.workflow.failure = CaptureBudgetException("REQUESTS", requestsUsed = 4000, bytesUsed = 1)
+        fixture.inspect()
+
+        val line = endLines { fixture.executor.runAll() }.single()
+
+        assertEquals(Level.INFO, line.level)
+        assertTrue(line.formattedMessage.startsWith("Capture step stopped: the operation's request budget ran out. code=BUDGET_EXHAUSTED_REQUESTS step=inspect requests=4000"), line.formattedMessage)
+    }
+
+    @Test
+    fun `an unexpected failure writes one error end line with a replaced stack and no provider text`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        fixture.workflow.failure = IllegalStateException("https://rpc.example/?api-key=secret")
+        fixture.inspect()
+
+        val line = endLines { fixture.executor.runAll() }.single()
+
+        assertEquals(Level.ERROR, line.level)
+        assertTrue(line.formattedMessage.contains("code=CAPTURE_FAILED"), line.formattedMessage)
+        assertFalse(line.formattedMessage.contains("secret"))
+        val thrown = assertNotNull(line.throwableProxy)
+        assertEquals(IllegalStateException::class.java.name, thrown.className)
+        assertEquals("Capture operation failed", thrown.message)
+        assertTrue(thrown.stackTraceElementProxyArray.isNotEmpty())
+    }
+
+    @Test
+    fun `a market window over the trade cap writes one info end line naming the code the bound and the mint`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = marketStartable
+        val listed = ReplayMarketFixtures.manifest(listOf(oneWindow), firstCoverage = MarketWindowCoverage.OVER_CAP)
+        fixture.workflow.marketResult = MarketHistoryCaptureResult(root, listed.copy(maxTransactions = 2000, windows = listed.windows.map { it.copy(selected = 2001) }))
+        val operation = fixture.market("market-1", maxTransactions = 2000)
+
+        val line = endLines { fixture.executor.runAll() }.single()
+
+        assertEquals(Level.INFO, line.level)
+        assertEquals("Capture step stopped: the market window lists more trades than the capture's trade cap, so none were fetched. " +
+            "code=OVER_CAP step=market requests=3 mint=${CaptureTokenFixtures.MINT} maxTransactions=2000 captureSessionId=session-1 operationId=${operation.id}", line.formattedMessage)
+    }
+
+    @Test
+    fun `a cancel from the console writes one end line whether the worker or the control ends the operation`() {
+        val running = CaptureConsoleFixture(Files.createDirectories(root.resolve("running"))).apply { create() }
+        val accepted = running.inspect()
+        running.operations.control("session-1", accepted.id, "cancel", "control-1")
+        val atCheckpoint = endLines { running.executor.runAll() }.single()
+        assertEquals(Level.INFO, atCheckpoint.level)
+        assertTrue(atCheckpoint.formattedMessage.startsWith("Capture step stopped: it was cancelled from the console. code=CANCELLED_BY_USER"), atCheckpoint.formattedMessage)
+
+        val scheduler = ManualCaptureRetryScheduler()
+        val waiting = CaptureConsoleFixture(Files.createDirectories(root.resolve("waiting")), retryScheduler = scheduler).apply { create() }
+        waiting.workflow.failure = CaptureProviderException("RATE_LIMITED", Duration.ofSeconds(40), requestsUsed = 1, bytesUsed = 12)
+        val session = waiting.store.session("session-1")
+        val retried = waiting.operations.start("session-1", CaptureOperationRequest("wallet-recovery", CaptureNames.WALLET, session.walletAttemptId,
+            CaptureBudget(requestBudget = 2, byteBudget = 100), recovery = CaptureRecoveryConfig(totalRequestBudget = 6, totalByteBudget = 300, maxAttempts = 2)))
+        val retryLine = endLines { waiting.executor.runAll() }.single()
+        assertTrue(retryLine.formattedMessage.contains("code=RATE_LIMITED"), retryLine.formattedMessage)
+
+        val byHand = endLines { waiting.operations.control("session-1", retried.id, "cancel", "control-2") }.single()
+        assertTrue(byHand.formattedMessage.startsWith("Capture step stopped: it was cancelled from the console. code=CANCELLED_BY_USER"), byHand.formattedMessage)
+    }
+
+    /** An appender that sees the operation's end line before it is attached anywhere else, and may then fail the way a broken log call would. */
+    private class EndLineHook(private val onEndLine: (ILoggingEvent) -> Unit) : UnsynchronizedAppenderBase<ILoggingEvent>() {
+        val events = mutableListOf<ILoggingEvent>()
+
+        override fun append(event: ILoggingEvent) {
+            events += event
+        }
+
+        override fun doAppend(event: ILoggingEvent) {
+            if (event.formattedMessage.startsWith("Capture step")) onEndLine(event)
+            super.doAppend(event)
+        }
+    }
+
+    private fun <T> hooked(hook: EndLineHook, block: () -> T): T {
+        val logger = LoggerFactory.getLogger(CaptureOperationService::class.java) as Logger
+        val before = logger.level
+        logger.level = Level.DEBUG
+        hook.start()
+        logger.addAppender(hook)
+        try { return block() } finally { logger.detachAppender(hook); logger.level = before }
+    }
+
+    @Test
+    fun `the end line is written after the operation is stored, so it never describes a state that is not saved yet`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        fixture.workflow.failure = CaptureProviderException("RATE_LIMITED", requestsUsed = 7, bytesUsed = 1)
+        val operation = fixture.inspect()
+        var storedWhenLogged: String? = null
+        val hook = EndLineHook { storedWhenLogged = fixture.store.operation("session-1", operation.id).state }
+
+        hooked(hook) { fixture.executor.runAll() }
+
+        assertEquals(CaptureNames.FAILED, storedWhenLogged)
+    }
+
+    @Test
+    fun `a failure while the end line is written never stops the save or changes the end state, and is logged once on its own`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val operation = fixture.inspect()
+        val hook = EndLineHook { throw IllegalStateException("https://rpc.example/?api-key=secret") }
+
+        hooked(hook) { fixture.executor.runAll() }
+
+        assertEquals(CaptureNames.SUCCEEDED, fixture.store.operation("session-1", operation.id).state)
+        assertEquals(CaptureNames.SUCCEEDED, fixture.operations.find("session-1", operation.id).state)
+        assertTrue(fixture.operations.idle(), "the worker is free again")
+        val guard = hook.events.single { it.formattedMessage.startsWith("The end of a capture step could not be logged") }
+        assertEquals(Level.WARN, guard.level)
+        assertTrue(guard.formattedMessage.contains("cause=IllegalStateException"), guard.formattedMessage)
+        assertFalse(guard.formattedMessage.contains("secret"))
+    }
+
+    @Test
+    fun `an unexpected failure keeps its error and replaced stack when a cancel request then replaces the stored code`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        fixture.workflow.failure = IllegalStateException("https://rpc.example/?api-key=secret")
+        val accepted = fixture.inspect()
+        fixture.operations.control("session-1", accepted.id, "cancel", "control-1")
+
+        val line = endLines { fixture.executor.runAll() }.single()
+
+        assertEquals(CaptureNames.CANCELLED, fixture.store.operation("session-1", accepted.id).state)
+        assertEquals(Level.ERROR, line.level)
+        assertTrue(line.formattedMessage.startsWith("Capture step failed unexpectedly and was then stopped: it was cancelled from the console. code=CANCELLED_BY_USER"), line.formattedMessage)
+        assertFalse(line.formattedMessage.contains("secret"))
+        assertEquals("Capture operation failed", assertNotNull(line.throwableProxy).message)
+    }
+
+    @Test
+    fun `pausing an operation that waits for its retry says it was paused, not the code of the failure before it`() {
+        val scheduler = ManualCaptureRetryScheduler()
+        val waiting = CaptureConsoleFixture(Files.createDirectories(root.resolve("waiting")), retryScheduler = scheduler).apply { create() }
+        waiting.workflow.failure = CaptureProviderException("RATE_LIMITED", Duration.ofSeconds(40), requestsUsed = 1, bytesUsed = 12)
+        val session = waiting.store.session("session-1")
+        val retried = waiting.operations.start("session-1", CaptureOperationRequest("wallet-recovery", CaptureNames.WALLET, session.walletAttemptId,
+            CaptureBudget(requestBudget = 2, byteBudget = 100), recovery = CaptureRecoveryConfig(totalRequestBudget = 6, totalByteBudget = 300, maxAttempts = 2)))
+        waiting.executor.runAll()
+        assertEquals(CaptureNames.WAITING_RETRY, waiting.store.operation("session-1", retried.id).state)
+
+        val line = endLines { waiting.operations.control("session-1", retried.id, "pause", "control-3") }.single()
+
+        assertEquals(Level.INFO, line.level)
+        assertTrue(line.formattedMessage.startsWith("Capture step stopped: it was paused from the console. code=PAUSED_BY_USER"), line.formattedMessage)
+        assertFalse(line.formattedMessage.contains("RATE_LIMITED"), line.formattedMessage)
+    }
+
+    @Test
+    fun `recovery after a restart writes one end line for an operation it interrupts`() {
+        val fixture = CaptureConsoleFixture(root).apply { create() }
+        val operation = fixture.inspect()
+
+        val line = endLines {
+            CaptureOperationService(fixture.store, fixture.workflow, CaptureResponseMapperImpl(), fixture.json, fixture.clock, ManualExecutor(), true, true).recover()
+        }.single()
+
+        assertEquals(Level.INFO, line.level)
+        assertEquals("Capture step stopped: the application restarted while it ran. code=PROCESS_RESTART step=inspect captureSessionId=session-1 operationId=${operation.id}", line.formattedMessage)
     }
 }

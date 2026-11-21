@@ -9,8 +9,8 @@ sealed interface AutomationStepOutcome {
     data object NoOperation : AutomationStepOutcome
 
     /**
-     * The capture console refused the step's operation as not configured (no RPC URL, or reference rates switched off). The
-     * item waits as it is, with no attempt charged, until the backend is configured.
+     * The step waits for [kind] (see [AutomationHoldKind]) and the item stays as it is, with no attempt charged, until the hold ends:
+     * the request cap, a backfill's reserve, or a capture console that is not configured. [context] says why, for the hold's one line.
      */
-    data class NotConfigured(val step: AutomationStep, val reason: String) : AutomationStepOutcome
+    data class Held(val kind: AutomationHoldKind, val context: AutomationHoldContext) : AutomationStepOutcome
 }

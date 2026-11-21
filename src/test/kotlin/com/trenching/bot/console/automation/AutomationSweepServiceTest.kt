@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation
 
+import ch.qos.logback.classic.Level
 import com.trenching.bot.console.automation.AutomationFixtures.EVENING
 import com.trenching.bot.console.automation.AutomationFixtures.properties
 import com.trenching.bot.console.automation.application.AutomationSweepService
@@ -83,6 +84,19 @@ class AutomationSweepServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `sweeping a captured buy through the real replay writes one line at info and above, the buy simulated line`() {
+        captured(1, register("take-profit", takeProfit()))
+
+        LogCapture("com.trenching.bot", Level.INFO).use { logs ->
+            service().sweep()
+
+            val lines = logs.events.map { it.formattedMessage }
+            assertEquals(1, lines.size, lines.toString())
+            assertTrue(lines.single().startsWith("Buy simulated: every sweep configuration ran on it. runs=${plan.entries.size} itemId=item-1 "), lines.single())
+        }
+    }
+
+    @Test
     fun `each row carries its cycle's outcome, signal and P&L`() {
         captured(1, register("take-profit", takeProfit()))
 
@@ -146,7 +160,14 @@ class AutomationSweepServiceTest : AutomationDatabaseTest() {
     fun `an entry the replay refuses is stored with its code, no run and no P&L, and leaves the item unscored for it`() {
         captured(1, register("schema-v3", DipSample.load().only(DipSample.TAKE_PROFIT)))
 
-        service().sweep()
+        LogCapture("com.trenching.bot", Level.DEBUG).use { logs ->
+            service().sweep()
+
+            assertEquals(10, logs.messages(Level.DEBUG).count { it.startsWith("Sweep entry refused by the replay; ") })
+            assertEquals(emptyList(), logs.at(Level.WARN), "a refused entry is a row and a count on the simulated line, not a warning each")
+            val simulated = logs.messages(Level.INFO).single { it.startsWith("Buy simulated: ") }
+            assertTrue(simulated.startsWith("Buy simulated: every sweep configuration ran on it. runs=10 refused=10 itemId=item-1 "), simulated)
+        }
 
         val rows = rows(1)
         assertEquals(10, rows.size)

@@ -8,6 +8,7 @@ import com.trenching.bot.console.automation.application.AutomationCaptureCancell
 import com.trenching.bot.console.automation.api.AutomationHistoryStartRunner
 import com.trenching.bot.console.automation.application.AutomationHistoryStartService
 import com.trenching.bot.console.automation.application.AutomationHistoryStartTransaction
+import com.trenching.bot.console.automation.application.AutomationHolds
 import com.trenching.bot.console.automation.application.AutomationPipelineService
 import com.trenching.bot.console.automation.domain.AutomationFailures
 import com.trenching.bot.console.automation.domain.AutomationItemChange
@@ -58,6 +59,7 @@ class AutomationItemEventsTest : AutomationDatabaseTest() {
     @Autowired private lateinit var jdbc: JdbcTemplate
 
     private val clock = MutableClock(EVENING)
+    private val holds = AutomationHolds(clock)
     private val usage = FakeApiUsageReports()
     private val lookup = FakeWalletActivityLookup()
     private val properties = properties(captureEnabled = true)
@@ -505,7 +507,7 @@ class AutomationItemEventsTest : AutomationDatabaseTest() {
     }
 
     private fun pipeline() = AutomationPipelineService(pipelineTransaction, discoveryTransaction, capture.sessions, capture.operations, capture.datasets,
-        AutomationCaptureCancellation(capture.operations), AutomationCaptureRequestMapperImpl(), usage, properties, clock)
+        AutomationCaptureCancellation(capture.operations), AutomationCaptureRequestMapperImpl(), usage, properties, holds, clock)
 
     private fun ticks(count: Int) = repeat(count) {
         pipeline().advance()

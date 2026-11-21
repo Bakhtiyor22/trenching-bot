@@ -70,6 +70,10 @@ interface AutomationItemRepository : JpaRepository<AutomationItemEntity, String>
     """)
     fun countBySessionAndState(@Param("sessionIds") sessionIds: Collection<String>): List<AutomationItemStateCountRow>
 
+    /** The number of items in each of [states], whatever their session; one row per state that has items, bounded by the states given. */
+    @Query("select i.state as state, count(i) as items from AutomationItemEntity i where i.state in :states group by i.state")
+    fun countByState(@Param("states") states: Collection<AutomationItemState>): List<AutomationItemStateTotalRow>
+
     /** Each session's provider requests: the sum of its items' [AutomationItemEntity.requestsUsed], zero when none has any. */
     @Query("""
         select i.sessionId as sessionId, coalesce(sum(i.requestsUsed), 0) as requests from AutomationItemEntity i

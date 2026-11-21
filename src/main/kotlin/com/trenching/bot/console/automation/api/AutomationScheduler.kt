@@ -1,5 +1,7 @@
 package com.trenching.bot.console.automation.api
 
+import com.trenching.bot.config.SimulationClock
+import com.trenching.bot.console.automation.application.AutomationActivitySummary
 import com.trenching.bot.console.automation.application.AutomationBackfillDiscoveryService
 import com.trenching.bot.console.automation.application.AutomationBackfillService
 import com.trenching.bot.console.automation.application.AutomationDiscoveryService
@@ -7,7 +9,10 @@ import com.trenching.bot.console.automation.application.AutomationPipelineServic
 import com.trenching.bot.console.automation.application.AutomationSessionService
 import com.trenching.bot.console.automation.application.AutomationSweepService
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationEnabled
+import com.trenching.bot.console.automation.domain.AutomationLimits
 import org.springframework.scheduling.annotation.Scheduled
+import java.time.Clock
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Component
 
 /**
@@ -23,6 +28,8 @@ class AutomationScheduler(
     private val sweep: AutomationSweepService,
     private val backfillDiscovery: AutomationBackfillDiscoveryService,
     private val backfills: AutomationBackfillService,
+    private val summary: AutomationActivitySummary,
+    @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
 ) {
     @Scheduled(fixedDelayString = TICK_INTERVAL)
     fun tick() {
@@ -52,6 +59,11 @@ class AutomationScheduler(
     @Scheduled(fixedDelayString = DISCOVERY_INTERVAL)
     fun discover() {
         discovery.discover()
+    }
+
+    @Scheduled(fixedDelayString = AutomationLimits.SUMMARY_INTERVAL, initialDelayString = AutomationLimits.SUMMARY_INTERVAL)
+    fun logSummary() {
+        summary.log(clock.instant())
     }
 
     private companion object {

@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationItemChange
 import com.trenching.bot.console.automation.domain.AutomationItemEvents
@@ -36,7 +37,8 @@ class AutomationSessionTransaction(
         val session = sessions.findOneById(sessionId) ?: return false
         if (session.state != AutomationSessionState.OPEN) return false
         session.state = AutomationSessionState.CLOSING
-        log.info("automation session closing sessionId={} lastBuyAt={}", session.id, session.lastBuyAt)
+        LogLine("Session is closing: its idle time has passed.").field("sessionId", session.id).field("wallet", session.wallet)
+            .field("lastBuyAt", session.lastBuyAt).field("backfillId", session.backfillId).debug(log)
         return true
     }
 
@@ -66,7 +68,6 @@ class AutomationSessionTransaction(
             item.nextActionAt = null
             item.updatedAt = now
             abandoned[item.id] = AutomationItemChange(before, AutomationItemEvents.closed(before.progress, mapper.toProgress(item), requestId))
-            log.info("automation item advanced itemId={} step={} state={}", item.id, item.step, item.state)
             startedOperation(item)
         }
         events.appendAll(now, abandoned)
@@ -85,6 +86,9 @@ class AutomationSessionTransaction(
         session.state = AutomationSessionState.CLOSED
         session.closeReason = reason
         session.closedAt = now
-        log.info("automation session closed sessionId={} reason={} items={}", session.id, reason, items.countBySessionId(session.id))
+        val closed = LogLine("Session closed: {}.", reason.meaning).field("sessionId", session.id).field("wallet", session.wallet)
+            .field("items", items.countBySessionId(session.id)).field("firstBuyAt", session.firstBuyAt).field("lastBuyAt", session.lastBuyAt)
+            .field("backfillId", session.backfillId)
+        AfterCommit.run { if (session.backfillId == null) closed.info(log) else closed.debug(log) }
     }
 }

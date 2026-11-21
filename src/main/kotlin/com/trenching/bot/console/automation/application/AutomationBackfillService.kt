@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
@@ -50,7 +51,8 @@ class AutomationBackfillService(
             transaction.create(wallet, backfill, now)
         } catch (e: DataIntegrityViolationException) {
             if (!transaction.exists(id)) throw BackfillActiveException(wallet, transaction.activeId(wallet))
-            log.info("automation backfill create repeated while the first was stored backfillId={} requestId={}", id, requestId)
+            LogLine("Backfill create repeated while the first was being stored; the stored backfill is returned.").field("backfillId", id)
+                .field("requestId", requestId).debug(log)
         }
         return query.get(id)
     }
@@ -63,7 +65,7 @@ class AutomationBackfillService(
     /** Cancels the backfill; one that already ended is returned unchanged, so a repeated cancel is harmless. */
     fun cancel(id: String, requestId: String?): AutomationBackfillRow {
         val validRequestId = AutomationRequests.requireRequestId(requestId)
-        log.info("automation backfill cancel requested backfillId={} requestId={}", id, validRequestId)
+        LogLine("Backfill cancel requested from the console.").field("backfillId", id).field("requestId", validRequestId).info(log)
         transaction.cancel(id, validRequestId, clock.instant()).forEach(cancellation::cancel)
         return query.get(id)
     }

@@ -137,20 +137,21 @@ class FakeDatasetCatalog : ReplayDatasetCatalog {
  * [ManualExecutor] until [work] runs them, so a running operation can be observed, and automatic retries wait on [retries] until
  * the test runs them. [close] releases this process's file lock; a new harness over the same root then recovers the saved
  * operations, as the backend does on a restart. With [rpcConfigured] off, wallet and market operations are refused
- * `NOT_CONFIGURED`, as without `SOLANA_RPC_URL`.
+ * `NOT_CONFIGURED`, as without `SOLANA_RPC_URL`, and with [ratesConfigured] off the rates operation is.
  */
 class CaptureHarness(
     val root: Path,
     clock: Clock,
     val workflow: ScriptedCaptureWorkflow = ScriptedCaptureWorkflow(),
     rpcConfigured: Boolean = true,
+    ratesConfigured: Boolean = true,
 ) {
     private val json: JsonMapper = JsonMapper.builder().addModule(kotlinModule()).build()
     private var nextId = 0
     val executor = ManualExecutor()
     val retries = ManualCaptureRetryScheduler()
     val store = CaptureFileStore(CapturePathPolicy(root), json).also { it.initialize() }
-    val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, true, retries)
+    val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured, retries)
         .also { it.recover() }
     val sessions = CaptureSessionService(store, operations, clock, CaptureIds { "id-${++nextId}" }, true)
     val catalog = FakeDatasetCatalog()

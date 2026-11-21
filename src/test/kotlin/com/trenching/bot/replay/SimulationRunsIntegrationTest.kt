@@ -136,7 +136,14 @@ class SimulationRunsIntegrationTest {
         val runsBefore = runCount()
         val wideTakeProfit = SimulationConfig.of(BigDecimal("0.1"), 2, 1500, 5000, 1500, BigDecimal("10000"), 4500, 1, BigDecimal("0.001"))
 
-        val refused = assertFailsWith<MarketCoverageEndedException> { runs.start(datasetId, wideTakeProfit) }
+        val refused = com.trenching.bot.console.automation.LogCapture(com.trenching.bot.replay.application.SimulationRunLedger::class.java.name).use { logs ->
+            assertFailsWith<MarketCoverageEndedException> { runs.start(datasetId, wideTakeProfit) }.also {
+                val line = logs.events.single()
+                assertEquals(ch.qos.logback.classic.Level.DEBUG, line.level, "the console and the automation say it; the ledger only has it for DEBUG")
+                assertTrue(line.formattedMessage.startsWith("Simulation run refused: the market capture ends before the strategy's decision. code=MARKET_COVERAGE_ENDED " +
+                    "mint=${takeProfit.base.value} decidedAt=5500 throughSlot=1006 runId="), line.formattedMessage)
+            }
+        }
 
         assertTrue(refused.message.orEmpty().contains(takeProfit.base.value), refused.message)
         assertTrue(refused.message.orEmpty().contains("decidedAt=5500") && refused.message.orEmpty().contains("throughSlot=1006"), refused.message)

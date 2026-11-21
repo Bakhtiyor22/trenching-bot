@@ -43,13 +43,13 @@ class RunSearchIndexBackfillTransaction(
             } catch (exception: RuntimeException) {
                 if (!RunIndexReadFailure.isUnreadable(exception)) throw exception
                 unreadable += source.id
-                log.warn("run search index unreadable runId={} reason={}", source.id, exception.message)
+                log.warn("Run left out of the search index because its data cannot be read: {}. runId={}", exception.message ?: exception.javaClass.simpleName, source.id)
             }
         }
         searchIndex.storeTokens(indexes.mapNotNull { (runId, index) -> index?.let { runId to it } }.toMap())
         val at = clock.instant()
         indexes.forEach { (runId, index) ->
-            if (index == null) log.warn("run search index skipped runId={} reason=DATASET_MISSING", runId)
+            if (index == null) log.warn("Run left out of the search index because its dataset is missing. code=DATASET_MISSING runId={}", runId)
             runs.markIndexed(runId, index?.anchorBlockTime, at)
         }
         unreadable.forEach { runs.markIndexFailed(it, at) }

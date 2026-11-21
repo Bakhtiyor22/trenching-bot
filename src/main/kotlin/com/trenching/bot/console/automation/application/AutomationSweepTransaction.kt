@@ -13,7 +13,6 @@ import com.trenching.bot.console.automation.infrastructure.persistence.Automatio
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunRepository
 import com.trenching.bot.console.automation.mapper.AutomationRecordMapper
 import java.time.Instant
-import org.slf4j.LoggerFactory
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -31,8 +30,6 @@ class AutomationSweepTransaction(
     private val mapper: AutomationRecordMapper,
     private val events: AutomationItemEventWriter,
 ) {
-    private val log = LoggerFactory.getLogger(AutomationSweepTransaction::class.java)
-
     /** Captured items whose sweep is due at [now], oldest buy first; an item waiting after a failed sweep is not. */
     @Transactional(readOnly = true)
     fun due(now: Instant, limit: Int): List<AutomationDueItem> =
@@ -54,8 +51,6 @@ class AutomationSweepTransaction(
         ))
         val standing = items.findOneById(item.id)?.let(mapper::toStanding) ?: AutomationItemStanding(item.progress, null)
         events.append(item.id, now, AutomationItemChange(standing, AutomationItemEvents.sweepEntry(item.progress, planId, label, result.runId, result.outcome)))
-        log.info("automation sweep run recorded itemId={} planId={} label={} runId={} outcome={} signal={}",
-            item.id, planId, label, result.runId, result.outcome, result.signal)
         return true
     }
 }

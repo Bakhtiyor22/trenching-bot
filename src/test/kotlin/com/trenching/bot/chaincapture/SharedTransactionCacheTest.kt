@@ -28,8 +28,10 @@ class SharedTransactionCacheTest {
     private val logs = ListAppender<ILoggingEvent>()
     private val logger = LoggerFactory.getLogger(SharedTransactionCache::class.java) as Logger
 
-    @BeforeEach fun attachAppender() { logs.start(); logger.addAppender(logs) }
-    @AfterEach fun detachAppender() { logger.detachAppender(logs) }
+    private var levelBefore: Level? = null
+
+    @BeforeEach fun attachAppender() { levelBefore = logger.level; logger.level = Level.DEBUG; logs.start(); logger.addAppender(logs) }
+    @AfterEach fun detachAppender() { logger.detachAppender(logs); logger.level = levelBefore }
 
     private val transaction = validTransactionJson(signature)
 
@@ -184,8 +186,9 @@ class SharedTransactionCacheTest {
         Files.writeString(directory.resolve("cache"), "replaced by a file after the cache was created")
         val result = ChainCaptureReads.transaction(rpc, signature, CaptureBudget(10, 1_000_000))
         assertEquals(5000, result.path("meta").path("fee").asInt())
-        val warning = logs.list.single { it.level == Level.WARN }
-        assertTrue(warning.formattedMessage.contains("signature=$signature"), warning.formattedMessage)
-        assertFalse(warning.formattedMessage.contains("127.0.0.1"))
+        val skipped = logs.list.single { it.level == Level.DEBUG && it.formattedMessage.startsWith("Transaction was not cached") }
+        assertTrue(skipped.formattedMessage.contains("signature=$signature"), skipped.formattedMessage)
+        assertFalse(skipped.formattedMessage.contains("127.0.0.1"))
+        assertTrue(logs.list.none { it.level == Level.WARN }, "a cache that cannot be written is not a warning")
     }
 }

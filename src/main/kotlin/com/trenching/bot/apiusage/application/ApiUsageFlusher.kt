@@ -37,7 +37,7 @@ class ApiUsageFlusher(
                 return accumulator.drainTo(store::add)
             } catch (exception: RuntimeException) {
                 if (!isWriteRace(exception) || attempt == MAX_ATTEMPTS) throw exception
-                log.warn("api_usage flush_race attempt={}", attempt)
+                log.debug("Two writers counted the same API usage bucket at once, so its counts are written again. attempt={}/{}", attempt, MAX_ATTEMPTS)
                 attempt++
             }
         }
@@ -49,7 +49,7 @@ class ApiUsageFlusher(
     override fun close() {
         executor.shutdown()
         try {
-            if (!executor.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) log.warn("api_usage flusher_shutdown_timed_out")
+            if (!executor.awaitTermination(SHUTDOWN_WAIT_SECONDS, TimeUnit.SECONDS)) log.warn("The API usage writer did not stop in time at shutdown; the remaining counts are written once more anyway.")
         } catch (exception: InterruptedException) {
             Thread.currentThread().interrupt()
         }
@@ -59,9 +59,9 @@ class ApiUsageFlusher(
     private fun flushQuietly() {
         try {
             val buckets = flush()
-            if (buckets > 0) log.debug("api_usage flushed buckets={}", buckets)
+            if (buckets > 0) log.debug("API usage counts written to the database. buckets={}", buckets)
         } catch (exception: RuntimeException) {
-            log.error("api_usage flush_failed", exception)
+            log.error("API usage counts could not be written to the database.", exception)
         }
     }
 

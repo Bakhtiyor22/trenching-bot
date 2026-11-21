@@ -2,11 +2,13 @@ package com.trenching.bot.console.automation
 
 import com.trenching.bot.apiusage.ApiUsageReports
 import com.trenching.bot.console.automation.application.AutomationDiscoveryService
+import com.trenching.bot.console.automation.application.AutomationHolds
 import com.trenching.bot.console.automation.application.AutomationDiscoveryTransaction
 import com.trenching.bot.console.automation.application.AutomationCoverage
 import com.trenching.bot.console.automation.application.AutomationDayService
 import com.trenching.bot.console.automation.application.AutomationHistoryStartTransaction
 import com.trenching.bot.console.automation.application.AutomationItemEventWriter
+import com.trenching.bot.console.automation.application.AutomationItemLog
 import com.trenching.bot.console.automation.application.AutomationItemViews
 import com.trenching.bot.console.automation.application.AutomationPipelineTransaction
 import com.trenching.bot.console.automation.application.AutomationRetryService
@@ -17,6 +19,7 @@ import com.trenching.bot.console.automation.application.AutomationSessionRows
 import com.trenching.bot.console.automation.application.AutomationSessionService
 import com.trenching.bot.console.automation.application.AutomationRunCycles
 import com.trenching.bot.console.automation.application.AutomationSessionTransaction
+import com.trenching.bot.console.automation.application.AutomationSummaryTransaction
 import com.trenching.bot.console.automation.application.AutomationSweepTransaction
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillRepository
@@ -83,7 +86,9 @@ abstract class AutomationDatabaseTest {
     @Autowired protected lateinit var scanWriter: AutomationScanWriter
     @Autowired protected lateinit var coverage: AutomationCoverage
     @Autowired protected lateinit var itemEventWriter: AutomationItemEventWriter
+    @Autowired protected lateinit var itemLog: AutomationItemLog
     @Autowired protected lateinit var historyStartTransaction: AutomationHistoryStartTransaction
+    @Autowired protected lateinit var summaryTransaction: AutomationSummaryTransaction
 
     @Autowired private lateinit var lockProbe: JdbcTemplate
 
@@ -117,7 +122,7 @@ abstract class AutomationDatabaseTest {
     }
 
     protected fun discovery(lookup: FakeWalletActivityLookup, properties: AutomationProperties, clock: Clock): AutomationDiscoveryService =
-        AutomationDiscoveryService(lookup, discoveryTransaction, properties, runtime, clock)
+        AutomationDiscoveryService(lookup, discoveryTransaction, properties, runtime, itemLog, clock)
 
     protected fun query(properties: AutomationProperties, clock: Clock, usage: ApiUsageReports = ApiUsageReports { _, _ -> error("unused") }): AutomationQueryService =
         AutomationQueryService(sessions, items, sweepRuns, itemEvents, watermarks, backfills, records, sessionRows(properties), itemViews(properties), properties, runtime, usage, SolanaRpcProperties(), clock)
@@ -147,7 +152,8 @@ abstract class AutomationDatabaseTest {
         properties: AutomationProperties,
         clock: Clock,
         usage: ApiUsageReports = FakeApiUsageReports(),
-    ): AutomationBackfillDiscoveryService = AutomationBackfillDiscoveryService(lookup, backfillTransaction, backfillRecorder, properties, usage, clock)
+        holds: AutomationHolds = AutomationHolds(clock),
+    ): AutomationBackfillDiscoveryService = AutomationBackfillDiscoveryService(lookup, backfillTransaction, backfillRecorder, properties, usage, holds, clock)
 
     private fun idleOperations(clock: Clock): CaptureOperationService =
         (idleCapture ?: CaptureHarness(idleCaptureRoot, clock).also { idleCapture = it }).operations
@@ -169,11 +175,18 @@ abstract class AutomationDatabaseTest {
         ) = AutomationScanWriter(sessions, items, sweepRuns, mapper, events)
 
         @Bean
-        fun automationItemEventWriter(events: AutomationItemEventRepository, items: AutomationItemRepository) = AutomationItemEventWriter(events, items)
+        fun automationItemLog() = AutomationItemLog(AutomationFixtures.properties(), Clock.systemUTC())
+
+        @Bean
+        fun automationItemEventWriter(events: AutomationItemEventRepository, items: AutomationItemRepository, sweepRuns: AutomationSweepRunRepository, itemLog: AutomationItemLog) =
+            AutomationItemEventWriter(events, items, sweepRuns, itemLog)
 
         @Bean
         fun automationHistoryStartTransaction(items: AutomationItemRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter) =
             AutomationHistoryStartTransaction(items, mapper, events)
+
+        @Bean
+        fun automationSummaryTransaction(items: AutomationItemRepository) = AutomationSummaryTransaction(items)
 
         @Bean
         fun automationCoverage(watermarks: AutomationWatermarkRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper) =

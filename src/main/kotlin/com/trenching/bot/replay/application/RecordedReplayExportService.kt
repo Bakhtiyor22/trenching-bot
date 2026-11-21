@@ -42,14 +42,15 @@ class RecordedReplayExportService(
         val planned = planning.plan(history, market.windowParameters.leadSlots)
         RecordedMarketVerification.requireMatching(planned.plan, market)
         if (!DatasetTrades.allPresent(market.observations)) {
-            log.warn("recorded_replay_export refused reason={} observations={}", DatasetTrades.FIELDS_MISSING, market.observations.size)
+            log.warn("Recorded replay export refused: the captured trades lack fields a replay needs. code={} observations={}",
+                DatasetTrades.FIELDS_MISSING, market.observations.size)
             throw CaptureValidationException(DatasetTrades.FIELDS_MISSING)
         }
         val coverage = market.windows.map { MarketCoverage.of(it.window.pair, it.window.fromSlot, it.observedThrough, it.observedThroughTime) }
         val dataset = ReplayDataset(ReplayDataset.CURRENT_SCHEMA_VERSION, planned.history.wallet, planned.history.transactions,
             market.observations, rates(request, market), coverage)
         if (dataset.transactions.size > ReplayLimits.MAX_INPUT_RECORDS || dataset.observations.size > ReplayLimits.MAX_INPUT_RECORDS) {
-            log.warn("recorded_replay_export refused reason=DATASET_BOUNDS transactions={} observations={} max={}",
+            log.warn("Recorded replay export refused: the dataset would hold more records than a replay accepts. code=DATASET_BOUNDS transactions={} observations={} max={}",
                 dataset.transactions.size, dataset.observations.size, ReplayLimits.MAX_INPUT_RECORDS)
             throw CaptureValidationException("DATASET_BOUNDS")
         }
@@ -58,7 +59,7 @@ class RecordedReplayExportService(
         val written = ReplayDatasetFiles.writeOnce(request.output, json)
         val export = RecordedReplayExport(request.output, DatasetFingerprint.checksum(loaded), loaded.trackedWallet,
             planned.plan.sourceBuys, planned.plan.windows.size, loaded.transactions.size, loaded.observations.size, written)
-        log.info("recorded_replay_export finished checksum={} transactions={} observations={} windows={} written={}",
+        log.debug("Recorded replay export finished. checksum={} transactions={} observations={} windows={} written={}",
             export.checksum, export.transactions, export.observations, export.windows, export.written)
         return export
     }
@@ -69,7 +70,7 @@ class RecordedReplayExportService(
         val minutes = market.observations.map { ReferenceRate.minuteOf(it.observedTime) }.toSortedSet()
         val missing = minutes.count { it !in byMinute }
         if (missing > 0) {
-            log.warn("recorded_replay_export refused reason=REFERENCE_RATES_INCOMPLETE missingMinutes={}", missing)
+            log.warn("Recorded replay export refused: some minutes of the traded period have no SOL/USDT rate. code=REFERENCE_RATES_INCOMPLETE missingMinutes={}", missing)
             throw CaptureValidationException("REFERENCE_RATES_INCOMPLETE")
         }
         return minutes.map { byMinute.getValue(it) }

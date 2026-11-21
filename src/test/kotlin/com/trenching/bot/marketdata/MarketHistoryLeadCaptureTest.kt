@@ -146,7 +146,7 @@ class MarketHistoryLeadCaptureTest {
         assertEquals(null, first.windows.single().throughBlockTime)
         assertTrue(first.complete)
         val warning = logs.list.single { it.level == Level.WARN }
-        assertEquals("market_capture block_time_unavailable mint=$MINT slot=$TO_SLOT category=BLOCK_TIME_RESPONSE", warning.formattedMessage)
+        assertEquals("Block time is unavailable, so the window's end time is not recorded yet; a later capture pass tries again. mint=$MINT slot=$TO_SLOT category=BLOCK_TIME_RESPONSE", warning.formattedMessage)
         assertEquals(blockTime(TO_SLOT), capture(Chain()).manifest.windows.single().throughBlockTime)
     }
 
@@ -209,7 +209,7 @@ class MarketHistoryLeadCaptureTest {
         assertEquals(HISTORY.keys - BEFORE_LEAD.toSet(), chain.fetched.toSet())
         assertEquals(listOf(TO_SLOT, TO_SLOT), chain.blockTimeReads)
         val warning = logs.list.single { it.level == Level.WARN }
-        assertEquals("market_capture cutoff block_time_unavailable mint=$MINT slot=$TO_SLOT category=UNAVAILABLE", warning.formattedMessage)
+        assertEquals("Block time is unavailable, so the window's exit cutoff stays undecided and the capture continues in full. mint=$MINT slot=$TO_SLOT category=UNAVAILABLE", warning.formattedMessage)
     }
 
     @Test
@@ -227,7 +227,7 @@ class MarketHistoryLeadCaptureTest {
         assertEquals(null, manifest.windows.single().cutoff)
         assertTrue(manifest.complete)
         val warning = logs.list.single { it.level == Level.WARN }
-        assertEquals("market_capture cutoff block_time_unavailable mint=$MINT slot=$TO_SLOT category=BLOCK_TIME_RESPONSE", warning.formattedMessage)
+        assertEquals("Block time is unavailable, so the window's exit cutoff stays undecided and the capture continues in full. mint=$MINT slot=$TO_SLOT category=BLOCK_TIME_RESPONSE", warning.formattedMessage)
     }
 
     @Test

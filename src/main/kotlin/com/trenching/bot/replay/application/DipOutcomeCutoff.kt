@@ -76,7 +76,8 @@ internal class DipOutcomeCutoff(
         return try {
             decision(window, dataset, throughTime)
         } catch (exception: RuntimeException) {
-            log.error("market_capture cutoff replay_failed mint={} observedThrough={}", window.baseMint.value, through.value, exception)
+            log.error("Dip outcome check failed unexpectedly, so this market window stays undecided and its capture goes on. mint={} throughSlot={}",
+                window.baseMint.value, through.value, exception)
             CutoffDecision.Undecided
         }
     }
@@ -92,7 +93,7 @@ internal class DipOutcomeCutoff(
                 if (lookup is RateLookup.Available) knownRates[minute] = ReferenceRate(minute, lookup.rate, lookup.source)
             }
         } catch (exception: RuntimeException) {
-            log.warn("market_capture cutoff rates_unavailable minutes={}", minutes.size, exception)
+            log.warn("SOL/USDT rates could not be looked up, so the minutes without a rate are asked for again at the next check. minutes={}", minutes.size, exception)
         }
     }
 

@@ -48,12 +48,12 @@ internal class RecordedWalletHistoryService(
         val rejected = decodings.values.filterIsInstance<PumpFunBuyDecoding.Rejected>()
         val rejectedInstructions = rejected.flatMap { it.instructions }.groupingBy { it }.eachCount().toSortedMap()
         val rejections = rejected.groupingBy { it.reason.name }.eachCount().toSortedMap()
-        log.info("wallet_history_decode finished wallet={} selected={} decoded={} unsupportedRoute={} ambiguous={} rejections={}",
+        log.debug("Recorded wallet capture decoded into buys. wallet={} selected={} decoded={} unsupportedRoute={} ambiguous={} rejections={}",
             wallet.value, records.size, transactions.size,
             records.count { it.outcome == WalletHistoryDecodeOutcome.UNSUPPORTED_ROUTE },
             records.count { it.outcome == WalletHistoryDecodeOutcome.AMBIGUOUS }, rejections)
         val targetToken = targetToken(artifacts)
-        targetToken?.let { log.info("wallet_history_decode target_token mint={} tokenAccount={} tokenAccountFirstBuy={} actualFirstBuy={}",
+        targetToken?.let { log.debug("Recorded wallet capture has a target token. mint={} tokenAccount={} tokenAccountFirstBuy={} actualFirstBuy={}",
             it.mint.value, it.tokenAccount, it.tokenAccountFirstBuy, it.actualFirstBuy) }
         return WalletHistoryDecodeResult(verified.directory, wallet, manifest.selection.size, manifest.complete,
             WalletHistoryDecoderVersion.PUMPFUN_BONDING_CURVE_BUY_V2, transactions, records, buyFacts, rejectedInstructions, rejections,

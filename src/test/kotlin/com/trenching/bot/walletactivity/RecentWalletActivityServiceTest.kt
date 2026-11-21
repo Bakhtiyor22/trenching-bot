@@ -1,5 +1,7 @@
 package com.trenching.bot.walletactivity
 
+import ch.qos.logback.classic.Level
+import com.trenching.bot.console.automation.LogCapture
 import com.trenching.bot.apiusage.ApiTask
 import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.chaincapture.CaptureBudgetException
@@ -222,7 +224,11 @@ class RecentWalletActivityServiceTest {
     fun `a request beyond the bound stops the lookup as provider unavailable`() {
         val rpc = decuRpc().apply { requestsPerCall = 2 }
 
-        val result = service(rpc).recent(request(2), usage)
+        val logs = LogCapture(RecentWalletActivityService::class.java.name, Level.DEBUG)
+        val result = logs.use { service(rpc).recent(request(2), usage).also { _ ->
+            assertEquals(emptyList(), logs.events.filter { it.level.isGreaterOrEqual(Level.INFO) }.map { it.formattedMessage }, "the discovery that asked says it skipped the scan")
+            assertTrue(logs.messages(Level.DEBUG).any { it.startsWith("Recent wallet activity could not be read this time") })
+        } }
 
         assertEquals(WalletActivityResult.Unavailable(WalletActivityUnavailable.PROVIDER_UNAVAILABLE, null), result)
     }

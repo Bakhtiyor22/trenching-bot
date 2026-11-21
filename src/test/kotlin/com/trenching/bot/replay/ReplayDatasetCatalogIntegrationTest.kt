@@ -1,5 +1,7 @@
 package com.trenching.bot.replay
 
+import ch.qos.logback.classic.Level
+import com.trenching.bot.console.automation.LogCapture
 import com.trenching.bot.common.MarketPair
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
@@ -54,7 +56,12 @@ class ReplayDatasetCatalogIntegrationTest {
         dataSource.connection.use { connection ->
             connection.prepareStatement("delete from replay_datasets where id = ?").use { it.setString(1, id); it.executeUpdate() }
         }
-        val first = catalog.importSample(SampleDataset.DIP_SAMPLE_V3)
+        val first = LogCapture("com.trenching.bot", Level.DEBUG).use { logs ->
+            catalog.importSample(SampleDataset.DIP_SAMPLE_V3).also {
+                assertEquals(emptyList(), logs.events.filter { line -> line.level.isGreaterOrEqual(Level.INFO) }.map { line -> line.formattedMessage })
+                assertTrue(logs.messages(Level.DEBUG).any { line -> line.startsWith("Dataset registered.") }, logs.messages(Level.DEBUG).toString())
+            }
+        }
         val second = catalog.importSample(SampleDataset.DIP_SAMPLE_V3)
         assertTrue(first.created)
         assertFalse(second.created)

@@ -31,4 +31,10 @@ object AutomationLimits {
 
     /** Items read per page of ids when history is started for the items that predate it; each one then gets a transaction of its own. */
     const val HISTORY_START_ITEMS_PER_PAGE = 200
+
+    /** How long a hold must stay clear, with no item held, before it is said to be over: a window at the cap admits one operation, then fills again. */
+    val HOLD_SETTLE: Duration = Duration.ofHours(1)
+
+    /** How often the activity summary is logged, as the scheduler reads it (ISO-8601): every hour. */
+    const val SUMMARY_INTERVAL = "PT1H"
 }

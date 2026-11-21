@@ -30,7 +30,7 @@ class SimulationRunsService(
         val persisted = ledger.persistWithOutcome(dataset, report, storage)
         val created = persisted.created
         val run = checkNotNull(runs.summary(persisted.record.id)) { "Persisted run vanished runId=${persisted.record.id}" }
-        log.info("simulation run started runId={} datasetId={} created={} storage={}", run.id, datasetId, created, run.storage)
+        log.debug("Simulation run started. runId={} datasetId={} created={} storage={}", run.id, datasetId, created, run.storage)
         return RunStart(run, created)
     }
 

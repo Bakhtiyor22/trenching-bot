@@ -34,8 +34,7 @@ class SimulationRunLedger(
             "Invalid simulation run identity"
         }
         DatasetCoverage.undecided(report, dataset).firstOrNull()?.let { shortfall ->
-            log.warn("simulation run refused reason={} runId={} mint={} decidedAt={} throughSlot={}", VerdictReasons.MARKET_COVERAGE_ENDED,
-                report.runId, shortfall.pair.base.value, shortfall.decidedAt.value, shortfall.throughSlot?.value)
+            CoverageEndedLines.refusal("Simulation run", shortfall).field("runId", report.runId).debug(log)
             throw MarketCoverageEndedException(shortfall)
         }
         val createdAt = clock.instant().truncatedTo(ChronoUnit.MICROS)
@@ -47,7 +46,7 @@ class SimulationRunLedger(
             transactions.insertWithOutcome(record, dataset, report, datasetEntry)
         } catch (exception: DataIntegrityViolationException) {
             val winner = transactions.find(record.id) ?: throw exception
-            log.warn("duplicate simulation writer recovered runId={}", record.id)
+            log.debug("Another writer stored the same run first; using its stored run. runId={}", record.id)
             RunPersistence(winner, created = false)
         }
         if (stored.record.resultChecksum != record.resultChecksum || stored.record.datasetChecksum != record.datasetChecksum ||

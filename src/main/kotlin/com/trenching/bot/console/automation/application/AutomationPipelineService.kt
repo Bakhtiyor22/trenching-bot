@@ -2,6 +2,7 @@ package com.trenching.bot.console.automation.application
 
 import com.trenching.bot.apiusage.ApiUsagePeriod
 import com.trenching.bot.apiusage.ApiUsageReports
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.console.api.dto.CaptureRecoveryConfig
 import com.trenching.bot.console.automation.config.AutomationProperties
@@ -9,8 +10,9 @@ import com.trenching.bot.console.automation.config.ConditionalOnAutomationEnable
 import com.trenching.bot.console.automation.domain.AutomationDueItem
 import com.trenching.bot.console.automation.domain.AutomationFailures
 import com.trenching.bot.console.automation.domain.AutomationFirstBuy
+import com.trenching.bot.console.automation.domain.AutomationHoldContext
+import com.trenching.bot.console.automation.domain.AutomationHoldKind
 import com.trenching.bot.console.automation.domain.AutomationItemProgress
-import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationItemTrace
 import com.trenching.bot.console.automation.domain.AutomationOperationOutcome
 import com.trenching.bot.console.automation.domain.AutomationOperationRef
@@ -57,10 +59,13 @@ import org.springframework.stereotype.Service
  * A market operation lists under `market-max-transactions`: a window holding more trades ends it `OVER_CAP` before any is fetched,
  * and the item fails at once, since another attempt lists the same trades.
  *
- * The capture console's refusals: `CAPTURE_BUSY` and `NOT_CONFIGURED` leave the item waiting with no attempt charged (the
- * latter logged once per tick); `CAPTURE_NOT_FOUND`, a capture session or operation deleted from the console, fails the item
+ * The capture console's refusals: `CAPTURE_BUSY` and `NOT_CONFIGURED` leave the item waiting with no attempt charged;
+ * `CAPTURE_NOT_FOUND`, a capture session or operation deleted from the console, fails the item
  * at once; any other refusal is a failed attempt. An operation started for an item that changed meanwhile, for example one a
  * manual close abandoned, is cancelled, so it never spends requests the cap did not admit.
+ *
+ * Items held by the request cap, a backfill's reserve or a console that is not configured are not logged one by one: a tick counts
+ * them, and [AutomationHolds] says once when a hold starts and when it ends.
  */
 @Service
 @ConditionalOnAutomationEnabled
@@ -74,6 +79,7 @@ class AutomationPipelineService(
     private val requests: AutomationCaptureRequestMapper,
     private val usage: ApiUsageReports,
     private val properties: AutomationProperties,
+    private val holds: AutomationHolds,
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(AutomationPipelineService::class.java)
@@ -89,18 +95,18 @@ class AutomationPipelineService(
         val followed = following.mapNotNull { item -> isolated(item, now) { item to operation(item) } }
         var workerFree = followed.none { (_, operation) -> AutomationOperationOutcome.of(operation.state) == AutomationOperationOutcome.RUNNING }
         val moved = followed.mapNotNull { (item, operation) -> isolated(item, now) { settle(item, operation, now) } }
-        val unconfigured = mutableListOf<AutomationStepOutcome.NotConfigured>()
+        val tally = AutomationHoldTally().also { it.blockedDue(due) }
+        val budgetStops = AutomationBudgetStops()
         val catchingUp = discovery.catchingUp()
         (moved.filter { it.progress.dueAt(now) } + waiting).sortedBy { priority.getValue(it.id) }.forEach { item ->
-            when (val outcome = isolated(item, now) { proceed(item, workerFree, item.wallet in catchingUp, now) }) {
+            when (val outcome = isolated(item, now) { proceed(item, workerFree, item.wallet in catchingUp, now, tally, budgetStops) }) {
                 AutomationStepOutcome.OperationStarted -> workerFree = false
-                is AutomationStepOutcome.NotConfigured -> unconfigured += outcome
+                is AutomationStepOutcome.Held -> tally.held(outcome)
                 AutomationStepOutcome.NoOperation, null -> Unit
             }
         }
-        unconfigured.firstOrNull()?.let {
-            log.warn("automation capture not configured, items wait items={} step={} reason={}", unconfigured.size, it.step, it.reason)
-        }
+        tally.reportTo(holds, PIPELINE_HOLDS)
+        budgetStops.firstStops().forEach { (backfillId, items) -> logBudgetSpent(backfillId, items) }
     }
 
     /** Moves an item on from its operation's state; returns the item as stored when it moved, so it may take its next step. */
@@ -111,11 +117,19 @@ class AutomationPipelineService(
             AutomationOperationOutcome.FAILED -> failed(item, operation.code ?: operation.state, operation.message, requestsUsed(captureSession(item)), now, operation.state)
         }
 
-    private fun proceed(item: AutomationDueItem, workerFree: Boolean, walletCatchingUp: Boolean, now: Instant): AutomationStepOutcome =
+    private fun proceed(
+        item: AutomationDueItem,
+        workerFree: Boolean,
+        walletCatchingUp: Boolean,
+        now: Instant,
+        tally: AutomationHoldTally,
+        budgetStops: AutomationBudgetStops,
+    ): AutomationStepOutcome =
         when (val step = item.progress.currentStep) {
             AutomationStep.CREATE_SESSION -> if (walletCatchingUp) AutomationStepOutcome.NoOperation else createSession(item, now)
-            AutomationStep.WALLET, AutomationStep.MARKET -> acquire(item, step, workerFree, now)
-            AutomationStep.RATES, AutomationStep.EXPORT -> if (canStart(workerFree)) start(item, step, null, now) else AutomationStepOutcome.NoOperation
+            AutomationStep.WALLET, AutomationStep.MARKET -> acquire(item, step, workerFree, now, tally, budgetStops)
+            AutomationStep.RATES -> rates(item, workerFree, now, tally)
+            AutomationStep.EXPORT -> if (canStart(workerFree)) start(item, step, null, now) else AutomationStepOutcome.NoOperation
             AutomationStep.QUALIFY -> qualify(item, workerFree, now)
             AutomationStep.REGISTER -> register(item, now)
             AutomationStep.SWEEP -> throw IllegalStateException("The sweep is not a capture step itemId=${item.id}")
@@ -133,33 +147,64 @@ class AutomationPipelineService(
     }
 
     /** Wallet and market acquisition spend provider requests: the market waits for its delay, and both for room under the cap. */
-    private fun acquire(item: AutomationDueItem, step: AutomationStep, workerFree: Boolean, now: Instant): AutomationStepOutcome {
+    private fun acquire(
+        item: AutomationDueItem,
+        step: AutomationStep,
+        workerFree: Boolean,
+        now: Instant,
+        tally: AutomationHoldTally,
+        budgetStops: AutomationBudgetStops,
+    ): AutomationStepOutcome {
         val startsAt = startsAt(item, step, now)
         if (startsAt.isAfter(now)) {
             change(item, item.progress.waitingUntil(startsAt), null, now)
             return AutomationStepOutcome.NoOperation
         }
         if (!canStart(workerFree)) return AutomationStepOutcome.NoOperation
-        if (!withinBackfillBudget(item, step)) {
-            change(item, item.progress.outOfBudget("The backfill's request budget cannot cover another operation"), capturedRequests(item), now)
+        if (!withinBackfillBudget(item)) {
+            stopForBudget(item, requireNotNull(item.backfillId) { "Only a backfill's item has a budget itemId=${item.id}" }, now, budgetStops)
             return AutomationStepOutcome.NoOperation
         }
         val requestsLastDay = usage.report(ApiUsagePeriod.LAST_24_HOURS, null).totals.requests
-        if (!withinRequestCap(item, requestsLastDay)) {
-            if (item.progress.state != AutomationItemState.BLOCKED_BUDGET) {
-                log.warn("automation request cap reached itemId={} step={} backfillId={} requestsLast24h={} maxRequestsPer24h={} reserveRequests={}",
-                    item.id, step, item.backfillId, requestsLastDay, properties.maxRequestsPer24h, properties.backfillReserveRequests)
-            }
-            change(item, item.progress.blocked(), null, now)
-            return AutomationStepOutcome.NoOperation
+        val cap = properties.requestCap()
+        val backfill = item.backfillId != null
+        val context = AutomationHoldContext(requestsLastDay, properties.maxRequestsPer24h, properties.backfillReserveRequests.takeIf { backfill })
+        val refusedBy = when {
+            !cap.admits(requestsLastDay) -> AutomationHoldKind.REQUEST_CAP
+            backfill && !cap.admitsBackfill(requestsLastDay, properties.backfillReserveRequests) -> AutomationHoldKind.BACKFILL_RESERVE
+            else -> null
         }
-        return start(item, step, properties.captureRecovery(), now)
+        if (refusedBy != null) {
+            change(item, item.progress.blocked(), null, now)
+            return AutomationStepOutcome.Held(refusedBy, context)
+        }
+        tally.admitted(AutomationHoldKind.REQUEST_CAP, context)
+        if (backfill) tally.admitted(AutomationHoldKind.BACKFILL_RESERVE, context)
+        return startedAdmitted(item, step, properties.captureRecovery(), now, tally)
     }
 
-    /** A live step needs room under the cap; a backfill's step also leaves `backfill-reserve-requests` of it free for live capture (plan Rule 19, amended). */
-    private fun withinRequestCap(item: AutomationDueItem, requestsLastDay: Long): Boolean {
-        val cap = properties.requestCap()
-        return if (item.backfillId == null) cap.admits(requestsLastDay) else cap.admitsBackfill(requestsLastDay, properties.backfillReserveRequests)
+    /** Ends the item `FAILED` with `BACKFILL_BUDGET`; the backfill says once that its budget is spent, when its first item is stopped. */
+    private fun stopForBudget(item: AutomationDueItem, backfillId: String, now: Instant, budgetStops: AutomationBudgetStops) {
+        val firstOfBackfill = !transaction.stoppedByBudget(backfillId)
+        val stopped = change(item, item.progress.outOfBudget("The backfill's request budget cannot cover another operation"), capturedRequests(item), now)
+        if (stopped != null) budgetStops.stopped(backfillId, firstOfBackfill)
+    }
+
+    private fun logBudgetSpent(backfillId: String, itemsStopped: Int) {
+        val budget = transaction.budget(backfillId)
+        LogLine("Backfill stopped capturing: its request budget is spent.").field("backfillId", backfillId).field("requestBudget", budget.requestBudget)
+            .field("requestsSpent", budget.spent).field("itemsStopped", itemsStopped).warn(log)
+    }
+
+    /** The rates step spends no provider requests, so only the console's configuration can hold it. */
+    private fun rates(item: AutomationDueItem, workerFree: Boolean, now: Instant, tally: AutomationHoldTally): AutomationStepOutcome =
+        if (canStart(workerFree)) startedAdmitted(item, AutomationStep.RATES, null, now, tally) else AutomationStepOutcome.NoOperation
+
+    /** Starts the step; one the console accepted, or refused for another reason than its configuration, shows that the step's configuration is in place. */
+    private fun startedAdmitted(item: AutomationDueItem, step: AutomationStep, recovery: CaptureRecoveryConfig?, now: Instant, tally: AutomationHoldTally): AutomationStepOutcome {
+        val started = start(item, step, recovery, now)
+        if (started !is AutomationStepOutcome.Held) AutomationHoldKind.notConfiguredFor(step)?.let(tally::admitted)
+        return started
     }
 
     /**
@@ -167,14 +212,11 @@ class AutomationPipelineService(
      * must stay within its budget (plan Rule 39). A live item has no budget of its own, and a retried item is not held to its
      * backfill's: the person chose that spend (plan 20261107, Rule 16), though it still counts in the backfill's.
      */
-    private fun withinBackfillBudget(item: AutomationDueItem, step: AutomationStep): Boolean {
+    private fun withinBackfillBudget(item: AutomationDueItem): Boolean {
         val backfillId = item.backfillId ?: return true
         if (item.progress.retries > 0) return true
         val budget = transaction.budget(backfillId)
-        if (budget.admits(properties.requestCap().operationRequests)) return true
-        log.warn("automation backfill budget reached itemId={} step={} backfillId={} requestBudget={} requestsSpent={}",
-            item.id, step, backfillId, budget.requestBudget, budget.spent)
-        return false
+        return budget.admits(properties.requestCap().operationRequests)
     }
 
     /**
@@ -242,16 +284,13 @@ class AutomationPipelineService(
     private fun refused(item: AutomationDueItem, refusal: CaptureRequestException, now: Instant): AutomationStepOutcome {
         when (refusal.code) {
             CAPTURE_BUSY -> Unit
-            NOT_CONFIGURED -> return AutomationStepOutcome.NotConfigured(item.progress.currentStep, refusal.message)
-            AutomationFailures.CAPTURE_NOT_FOUND -> {
-                log.warn("automation capture deleted from the console itemId={} step={} captureSessionId={}",
-                    item.id, item.progress.currentStep, item.progress.captureSessionId)
-                change(item, item.progress.lost(refusal.code, refusal.message), capturedRequests(item), now)
-            }
-            else -> {
-                log.warn("automation capture call refused itemId={} step={} code={}", item.id, item.progress.currentStep, refusal.code)
+            NOT_CONFIGURED -> {
+                val hold = AutomationHoldKind.notConfiguredFor(item.progress.currentStep)
+                if (hold != null) return AutomationStepOutcome.Held(hold, AutomationHoldContext(reason = refusal.message))
                 failed(item, refusal.code, refusal.message, capturedRequests(item), now)
             }
+            AutomationFailures.CAPTURE_NOT_FOUND -> change(item, item.progress.lost(refusal.code, refusal.message), capturedRequests(item), now)
+            else -> failed(item, refusal.code, refusal.message, capturedRequests(item), now)
         }
         return AutomationStepOutcome.NoOperation
     }
@@ -317,12 +356,16 @@ class AutomationPipelineService(
         isolated(item, now) { refused(item, e, now) }
         null
     } catch (e: Exception) {
-        log.error("automation item step failed itemId={}", item.id, e)
+        LogLine("Unexpected error while moving a buy on; the tick goes on with the other buys.").field("step", item.progress.currentStep.name.lowercase())
+            .field("itemId", item.id).field("mint", item.mint).field("wallet", item.wallet).error(log, e)
         null
     }
 
     private companion object {
         const val CAPTURE_BUSY = "CAPTURE_BUSY"
         const val NOT_CONFIGURED = "NOT_CONFIGURED"
+        val PIPELINE_HOLDS = listOf(
+            AutomationHoldKind.REQUEST_CAP, AutomationHoldKind.BACKFILL_RESERVE, AutomationHoldKind.RPC_NOT_CONFIGURED, AutomationHoldKind.RATES_NOT_CONFIGURED,
+        )
     }
 }

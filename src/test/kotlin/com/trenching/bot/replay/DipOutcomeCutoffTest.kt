@@ -269,7 +269,7 @@ class DipOutcomeCutoffTest {
 
         assertEquals(CutoffDecision.Undecided, cutoff.evaluate(window, prefix(DipSample.TAKE_PROFIT, 1006), Slot.of(1006)) { LATE })
         val error = logs.list.single { it.level == Level.ERROR }
-        assertTrue(error.formattedMessage.startsWith("market_capture cutoff replay_failed"), error.formattedMessage)
+        assertTrue(error.formattedMessage.startsWith("Dip outcome check failed unexpectedly"), error.formattedMessage)
         assertTrue(error.throwableProxy != null)
     }
 

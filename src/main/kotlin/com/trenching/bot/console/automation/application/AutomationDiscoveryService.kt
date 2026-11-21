@@ -2,6 +2,7 @@ package com.trenching.bot.console.automation.application
 
 import com.trenching.bot.apiusage.ApiTask
 import com.trenching.bot.apiusage.ApiUsageContext
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.common.TransactionSignature
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.config.SimulationClock
@@ -44,6 +45,7 @@ class AutomationDiscoveryService(
     private val transaction: AutomationDiscoveryTransaction,
     private val properties: AutomationProperties,
     private val runtime: AutomationRuntime,
+    private val activity: AutomationItemLog,
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
 ) {
     private val log = LoggerFactory.getLogger(AutomationDiscoveryService::class.java)
@@ -53,15 +55,17 @@ class AutomationDiscoveryService(
         val now = clock.instant()
         val wallet = properties.walletAddress()
         if (!ignoreWindow && !scansNow(wallet, now)) return DiscoveryOutcome.OutsideWindow
+        activity.discoveryScanRan()
         val watermark = transaction.watermark(wallet.value)
         val bound = watermark?.bound() ?: DiscoveryBound.Since(now.minus(properties.initialLookback))
         return when (val scan = scan(wallet, bound, watermark?.resumeBefore?.let(TransactionSignature::of))) {
             is DiscoveryScan.Unavailable -> {
                 runtime.discoveryUnavailable(scan.reason)
-                log.warn("automation discovery skipped wallet={} reason={}", wallet.value, scan.reason)
+                LogLine("Discovery skipped: the activity provider could not be read, so nothing was stored and the next scan reads the same range.")
+                    .field("wallet", wallet.value).field("reason", scan.reason).warn(log)
                 DiscoveryOutcome.Unavailable(scan.reason)
             }
-            is DiscoveryScan.Read -> recorded(scan.batch, now)
+            is DiscoveryScan.Read -> recorded(scan, now)
         }
     }
 
@@ -72,10 +76,10 @@ class AutomationDiscoveryService(
             mode.scansAt(now) || transaction.closeAwaitsScan(wallet.value, properties.idleRule(), mode.window, now)
     }
 
-    private fun recorded(batch: DiscoveryBatch, now: Instant): DiscoveryOutcome {
-        val record = transaction.record(batch, properties.captureFilter(), properties.idleRule(), properties.initialLookback, now)
+    private fun recorded(scan: DiscoveryScan.Read, now: Instant): DiscoveryOutcome {
+        val record = transaction.record(scan.batch, properties.captureFilter(), properties.idleRule(), properties.initialLookback, now)
         runtime.discovered(now)
-        logRecord(batch, record)
+        logRecord(scan, record)
         return DiscoveryOutcome.Recorded(record)
     }
 
@@ -83,6 +87,8 @@ class AutomationDiscoveryService(
     private fun scan(wallet: WalletAddress, bound: DiscoveryBound, resumeBefore: TransactionSignature?): DiscoveryScan {
         val read = mutableListOf<WalletAction>()
         var before = resumeBefore
+        var pages = 0
+        var requests = 0
         repeat(properties.maxDiscoveryPages) {
             val page = when (val result = lookup.recent(WalletActivityRequest(wallet, WalletActivityLimits.DEFAULT_LIMIT, before), USAGE)) {
                 is WalletActivityResult.Found -> result.page
@@ -91,13 +97,15 @@ class AutomationDiscoveryService(
             val newestFirst = page.actions.sortedByDescending(DiscoveryCursor::of)
             val unseen = newestFirst.takeWhile { !bound.reached(it) }
             read += unseen
+            pages++
+            requests += page.requestsUsed
             val next = page.nextBefore
             if (unseen.size < newestFirst.size || next == null || bound.listingReached(page.oldestBlockTime)) {
-                return DiscoveryScan.Read(batch(wallet, read, bound, null))
+                return DiscoveryScan.Read(batch(wallet, read, bound, null), pages, requests)
             }
             before = next
         }
-        return DiscoveryScan.Read(batch(wallet, read, bound, before?.value))
+        return DiscoveryScan.Read(batch(wallet, read, bound, before?.value), pages, requests)
     }
 
     private fun batch(wallet: WalletAddress, read: List<WalletAction>, bound: DiscoveryBound, resumeBefore: String?): DiscoveryBatch {
@@ -105,14 +113,19 @@ class AutomationDiscoveryService(
         return DiscoveryBatch(wallet.value, oldestFirst, oldestFirst.lastOrNull()?.let(DiscoveryCursor::of), bound, resumeBefore)
     }
 
-    private fun logRecord(batch: DiscoveryBatch, record: DiscoveryRecord) {
-        if (batch.complete) {
-            log.info("automation discovery wallet={} actions={} items={} belowFilter={} sessionsOpened={} watermarkAdvanced={}",
-                batch.wallet, batch.actions.size, record.itemsCreated, record.belowFilter, record.sessionsOpened, record.watermarkAdvanced)
-        } else {
-            log.warn("automation discovery reached max pages wallet={} actions={} items={} maxPages={} resumeBefore={}",
-                batch.wallet, batch.actions.size, record.itemsCreated, properties.maxDiscoveryPages, batch.resumeBefore)
+    /** A scan that found buys is an event (the buys say which); one that found none, or that the page limit cut short, is routine catch-up. */
+    private fun logRecord(scan: DiscoveryScan.Read, record: DiscoveryRecord) {
+        val found = record.itemsCreated
+        val buys = if (found == 1) "buy" else "buys"
+        val line = when {
+            scan.batch.complete && found == 0 -> LogLine("Discovery found no new buys.")
+            scan.batch.complete -> LogLine("Discovery found {} new {}.", found, buys)
+            found == 0 -> LogLine("Discovery found no new buys yet; it stopped at the page limit and the catch-up continues on the next scan.")
+            else -> LogLine("Discovery found {} new {}; it stopped at the page limit and the catch-up continues on the next scan.", found, buys)
         }
+        line.field("read", scan.batch.actions.size).field("belowFilter", record.belowFilter).field("pages", scan.pages).field("requests", scan.requests)
+            .field("wallet", scan.batch.wallet)
+        if (found > 0) line.info(log) else line.debug(log)
     }
 
     private companion object {

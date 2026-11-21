@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation
 
+import ch.qos.logback.classic.Level
 import com.trenching.bot.console.api.dto.CaptureCreateRequest
 import com.trenching.bot.console.api.dto.CaptureWalletSettings
 import com.trenching.bot.console.automation.AutomationFixtures.EVENING
@@ -9,14 +10,17 @@ import com.trenching.bot.console.automation.AutomationFixtures.mint
 import com.trenching.bot.console.automation.AutomationFixtures.properties
 import com.trenching.bot.console.automation.AutomationFixtures.signature
 import com.trenching.bot.console.automation.application.AutomationCaptureCancellation
+import com.trenching.bot.console.automation.application.AutomationHolds
 import com.trenching.bot.console.automation.application.AutomationPipelineService
 import com.trenching.bot.console.automation.application.AutomationPipelineTransaction
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.domain.AutomationDueItem
 import com.trenching.bot.console.automation.domain.AutomationFailures
+import com.trenching.bot.console.automation.domain.AutomationHoldKind
 import com.trenching.bot.console.automation.domain.AutomationItemProgress
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationItemTrace
+import com.trenching.bot.console.automation.domain.AutomationLimits
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.AutomationStep
 import com.trenching.bot.console.automation.domain.BackfillState
@@ -50,6 +54,7 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     @TempDir lateinit var root: Path
 
     private val clock = MutableClock(EVENING)
+    private val holds = AutomationHolds(clock)
     private val usage = FakeApiUsageReports()
     private val lookup = FakeWalletActivityLookup()
     private val properties = properties(captureEnabled = true)
@@ -233,6 +238,74 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `a market operation that ends incomplete with OVER_CAP gives exactly one automation warning that names the code`() {
+        capture.workflow.marketOverCap = true
+        discover(buy(1, 100, EVENING))
+
+        LogCapture().use { logs ->
+            ticks(5)
+            clock.now = EVENING.plus(MARKET_DELAY)
+            ticks(4)
+
+            val warnings = logs.messages(Level.WARN)
+            assertEquals(1, warnings.size, warnings.toString())
+            assertTrue(warnings.single().startsWith("Buy failed at the market step and will not be retried: "), warnings.single())
+            assertTrue(warnings.single().contains("code=OVER_CAP"), warnings.single())
+            assertTrue(warnings.single().contains("itemId=${item(1).id} mint=${mint(1).value} wallet=$WALLET"), warnings.single())
+        }
+    }
+
+    @Test
+    fun `a failed first attempt gives one warning with attempt 1 of 2 and the retry runs on`() {
+        capture.workflow.fail(CaptureStepCommand.Wallet::class, "WALLET_BROKEN", times = 1)
+        discover(buy(1, 100, EVENING))
+
+        LogCapture().use { logs ->
+            ticks(4)
+
+            val warnings = logs.messages(Level.WARN)
+            assertEquals(1, warnings.size, warnings.toString())
+            assertTrue(warnings.single().startsWith("Buy capture will retry the wallet step: "), warnings.single())
+            assertTrue(warnings.single().contains("code=WALLET_BROKEN step=wallet attempt=1/2"), warnings.single())
+        }
+    }
+
+    @Test
+    fun `a buy captured end to end logs Buy captured at info and no step-by-step info line`() {
+        discover(buy(1, 100, EVENING))
+
+        LogCapture().use { logs ->
+            ticks(5)
+            clock.now = EVENING.plus(MARKET_DELAY)
+            ticks(10)
+
+            val info = logs.messages(Level.INFO)
+            assertEquals(AutomationItemState.CAPTURED, item(1).state)
+            assertEquals(1, info.count { it.startsWith("Buy captured and registered as a dataset; the sweep runs next. datasetId=") }, info.toString())
+            assertTrue(info.none { it.contains("item advanced") }, info.toString())
+            assertTrue(logs.events.none { it.formattedMessage.contains("automation item advanced") })
+            assertTrue(logs.at(Level.DEBUG).any { it.formattedMessage.startsWith("Capture session created.") })
+        }
+    }
+
+    @Test
+    fun `a buy found and captured first time writes only its discovery, session, found and captured lines at info and above in the whole application`() {
+        LogCapture("com.trenching.bot", Level.INFO).use { logs ->
+            discover(buy(1, 100, EVENING))
+            ticks(5)
+            clock.now = EVENING.plus(MARKET_DELAY)
+            ticks(10)
+
+            assertEquals(AutomationItemState.CAPTURED, item(1).state)
+            val lines = logs.events.map { it.formattedMessage }
+            val expected = listOf("Session opened.", "Discovery found 1 new buy.", "Buy found.", "Buy captured and registered as a dataset; the sweep runs next.")
+            assertEquals(expected.size, lines.size, lines.toString())
+            expected.forEach { sentence -> assertEquals(1, lines.count { it.startsWith("$sentence ") }, "$sentence in $lines") }
+            assertTrue(lines.all { it.contains("wallet=$WALLET") }, lines.toString())
+        }
+    }
+
+    @Test
     fun `a failed step is retried once under the next attempt and then fails the item with the operation's code`() {
         capture.workflow.fail(CaptureStepCommand.Wallet::class, "WALLET_BROKEN", times = 2)
         discover(buy(1, 100, EVENING))
@@ -267,6 +340,123 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
         assertEquals(AutomationItemState.CAPTURING, item(1).state)
         assertEquals(requestId("wallet", 1), item(1).operationId)
         assertEquals(AutomationItemState.BLOCKED_BUDGET, item(2).state, "one operation at a time, oldest buy first")
+    }
+
+    @Test
+    fun `100 live items held by the request cap in one tick give one warning and no line per item`() {
+        sessions.save(AutomationRows.session("session-live", AutomationSessionState.OPEN, EVENING))
+        (1..100).forEach { items.save(AutomationRows.item(it, "session-live", blockTime = EVENING.minusSeconds(3600L + it), nextActionAt = EVENING)) }
+        ticks(1)
+        usage.lastDay = properties.maxRequestsPer24h
+
+        LogCapture().use { logs ->
+            ticks(3)
+
+            val warnings = logs.messages(Level.WARN)
+            assertEquals(100, items.findAll().count { it.state == AutomationItemState.BLOCKED_BUDGET })
+            assertEquals(
+                listOf("Capture paused: the 24-hour request cap is used up; waiting buys go on as older requests age out. requestsLast24h=${properties.maxRequestsPer24h} " +
+                    "cap=${properties.maxRequestsPer24h} waiting=100"),
+                warnings,
+            )
+            assertTrue(logs.events.none { it.formattedMessage.contains("request cap reached") }, logs.messages(Level.INFO).toString())
+        }
+    }
+
+    @Test
+    fun `when the cap has room again an item starts, and the hold ends with one info after it stayed clear for the settle time`() {
+        discover(buy(1, 100, EVENING), buy(2, 101, EVENING.plusSeconds(60)))
+        usage.lastDay = properties.maxRequestsPer24h
+        ticks(3)
+
+        LogCapture().use { logs ->
+            usage.lastDay = 0
+            ticks(1)
+            assertTrue(logs.at(Level.INFO).none { it.formattedMessage.startsWith("Capture resumed") }, "a hold must stay clear for a while before it is over")
+            clock.now = clock.now.plus(AutomationLimits.HOLD_SETTLE).plusSeconds(60)
+            ticks(1)
+
+            assertEquals(1, logs.messages(Level.INFO).count { it.startsWith("Capture resumed: the request cap has room again after ") }, logs.messages(Level.INFO).toString())
+        }
+    }
+
+    @Test
+    fun `a cap hold whose blocked items left by another route starts clearing and ends after the settle time though nothing was admitted`() {
+        discover(buy(1, 100, EVENING), buy(2, 101, EVENING.plusSeconds(60)))
+        usage.lastDay = properties.maxRequestsPer24h
+        ticks(3)
+        assertEquals(listOf(AutomationHoldKind.REQUEST_CAP), holds.current().map { it.kind })
+
+        LogCapture().use { logs ->
+            items.findAll().forEach { it.state = AutomationItemState.FAILED; items.save(it) }
+            ticks(1)
+            assertEquals(emptyList(), holds.current(), "no due item waits for the cap any more")
+            assertTrue(logs.at(Level.INFO).none { it.formattedMessage.startsWith("Capture resumed") }, "it must stay clear for a while first")
+            clock.now = clock.now.plus(AutomationLimits.HOLD_SETTLE).plusSeconds(60)
+            ticks(1)
+
+            assertEquals(1, logs.messages(Level.INFO).count { it.startsWith("Capture resumed: the request cap has room again after ") }, logs.messages(Level.INFO).toString())
+        }
+    }
+
+    @Test
+    fun `a backfill item refused by the cap itself is a request cap hold, not a backfill reserve hold`() {
+        backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)))
+        usage.lastDay = properties.maxRequestsPer24h
+
+        LogCapture().use { logs ->
+            ticks(3)
+
+            assertEquals(1, logs.at(Level.WARN).size, logs.messages(Level.WARN).toString())
+            assertTrue(logs.messages(Level.WARN).single().startsWith("Capture paused: the 24-hour request cap is used up;"), logs.messages(Level.WARN).single())
+            assertEquals(listOf(AutomationHoldKind.REQUEST_CAP), holds.current().map { it.kind })
+        }
+    }
+
+    @Test
+    fun `a backfill item refused only by the reserve is a backfill reserve hold, and a live item admitted meanwhile does not end it`() {
+        backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)))
+        usage.lastDay = properties.maxRequestsPer24h - properties.backfillReserveRequests - properties.recovery.requests + 1
+
+        LogCapture().use { logs ->
+            ticks(3)
+
+            assertEquals(1, logs.at(Level.WARN).size, logs.messages(Level.WARN).toString())
+            assertTrue(logs.messages(Level.WARN).single().startsWith("Backfill capture paused: only the live reserve is left under the request cap."), logs.messages(Level.WARN).single())
+            assertEquals(listOf(AutomationHoldKind.BACKFILL_RESERVE), holds.current().map { it.kind })
+        }
+    }
+
+    @Test
+    fun `with reference rates off the rates step is held under its own hold and says why once`() {
+        capture.close()
+        capture = CaptureHarness(root, clock, ratesConfigured = false)
+        discover(buy(1, 100, EVENING))
+
+        LogCapture().use { logs ->
+            ticks(5)
+            clock.now = EVENING.plus(MARKET_DELAY)
+            ticks(10)
+
+            assertEquals(AutomationStep.RATES, item(1).step)
+            assertEquals(listOf("Capture paused: the capture console is not configured (Reference rate capture is disabled). waiting=1"), logs.messages(Level.WARN))
+            assertEquals(listOf(AutomationHoldKind.RATES_NOT_CONFIGURED), holds.current().map { it.kind })
+        }
+    }
+
+    @Test
+    fun `a capture console that is not configured gives one warning however many ticks pass`() {
+        capture.close()
+        capture = CaptureHarness(root, clock, rpcConfigured = false)
+        discover(buy(1, 100, EVENING))
+
+        LogCapture().use { logs ->
+            ticks(60)
+
+            assertEquals(1, logs.at(Level.WARN).size, logs.messages(Level.WARN).toString())
+            assertTrue(logs.messages(Level.WARN).single().startsWith("Capture paused: the capture console is not configured ("), logs.messages(Level.WARN).single())
+            assertTrue(logs.messages(Level.WARN).single().endsWith(" waiting=1"), logs.messages(Level.WARN).single())
+        }
     }
 
     @Test
@@ -559,6 +749,31 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `a backfill whose budget stops its items warns once that the budget is spent, never again for later items, and the items' own lines are debug`() {
+        val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 2000, discoveryRequests = 801)
+        backfillItem(51, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(2)), backfillId = backfill, requestBudget = 2000, discoveryRequests = 801)
+
+        LogCapture().use { logs ->
+            ticks(4)
+
+            assertEquals(
+                listOf("Backfill stopped capturing: its request budget is spent. backfillId=$backfill requestBudget=2000 requestsSpent=801 itemsStopped=2"),
+                logs.messages(Level.WARN),
+            )
+            val itemLines = logs.messages(Level.DEBUG).filter { it.startsWith("Buy failed at the wallet step and will not be retried: the backfill's request budget") }
+            assertEquals(2, itemLines.size, logs.messages(Level.DEBUG).toString())
+            assertTrue(logs.at(Level.INFO).none { it.formattedMessage.startsWith("Buy failed") })
+
+            backfillItem(52, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(1)), backfillId = backfill, requestBudget = 2000, discoveryRequests = 801)
+            logs.clear()
+            ticks(4)
+
+            assertEquals(AutomationFailures.BACKFILL_BUDGET, item(52).failureCode)
+            assertEquals(emptyList(), logs.at(Level.WARN), "the budget was already said to be spent")
+        }
+    }
+
+    @Test
     fun `cancelling a backfill abandons its item and cancels the capture operation the item had started`() {
         val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)))
         ticks(1)
@@ -585,7 +800,7 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
 
     private fun pipeline(settings: AutomationProperties = properties, transaction: AutomationPipelineTransaction = pipelineTransaction) =
         AutomationPipelineService(transaction, discoveryTransaction, capture.sessions, capture.operations, capture.datasets, AutomationCaptureCancellation(capture.operations),
-            AutomationCaptureRequestMapperImpl(), usage, settings, clock)
+            AutomationCaptureRequestMapperImpl(), usage, settings, holds, clock)
 
     /** One scheduler tick after another, each followed by the capture worker running what was queued. */
     private fun ticks(count: Int) = repeat(count) {

@@ -26,15 +26,16 @@ class ExecutionCalibrationService(
         val planned = planning.plan(history, market.windowParameters.leadSlots)
         RecordedMarketVerification.requireMatching(planned.plan, market)
         if (!RecordedMarketVerification.coversCalibration(planned.history.buyFacts, market)) {
-            log.warn("execution_calibration refused reason={} wallet={}", VerdictReasons.MARKET_COVERAGE_ENDED, planned.history.wallet.value)
+            log.warn("Execution calibration refused: the market capture ends before the wallet's buys are covered. code={} wallet={}",
+                VerdictReasons.MARKET_COVERAGE_ENDED, planned.history.wallet.value)
             throw CaptureValidationException(VerdictReasons.MARKET_COVERAGE_ENDED)
         }
         val buys = ExecutionCalibration.buys(planned.history.buyFacts, market.observations, RecordedMarketVerification.observedThrough(market))
         val report = CalibrationReport(planned.history.wallet, planned.history.decoder, market.extractor, ExecutionCalibration.summary(buys), buys)
         val summary = report.summary
-        log.info("execution_calibration finished buys={} mathExact={} mathMismatches={} latencyChecked={} noPriorState={} unpredictable={}",
+        log.debug("Execution calibration finished. buys={} mathExact={} mathMismatches={} latencyChecked={} noPriorState={} unpredictable={}",
             summary.buys, summary.mathExact, summary.mathMismatches, summary.latencyChecked, summary.noPriorState, summary.unpredictable)
-        if (summary.mathMismatches > 0) log.warn("execution_calibration curve_math_mismatch count={}", summary.mathMismatches)
+        if (summary.mathMismatches > 0) log.warn("Execution calibration found buys whose bonding-curve math does not match the recorded trade. mismatches={}", summary.mathMismatches)
         return report
     }
 }

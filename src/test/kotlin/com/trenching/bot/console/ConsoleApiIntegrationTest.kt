@@ -134,9 +134,10 @@ class ConsoleApiIntegrationTest {
         assertEquals(coverageEndedBefore + 1, counter(ConsoleMetrics.RUNS, ConsoleMetrics.COVERAGE_ENDED))
         val refusal = logs.list.single()
         assertEquals(Level.WARN, refusal.level)
-        val (loggedDataset, mint, decidedAt, throughSlot) = refusal.argumentArray.map(Any::toString)
-        assertEquals(listOf(datasetId, takeProfit.base.value, "1006"), listOf(loggedDataset, mint, throughSlot))
-        assertTrue(decidedAt.toLong() > 1006, decidedAt)
+        val message = refusal.formattedMessage
+        assertTrue(message.startsWith("Run refused: the market capture ends before the strategy's decision. code=MARKET_COVERAGE_ENDED mint=${takeProfit.base.value} decidedAt="), message)
+        assertTrue(message.endsWith(" throughSlot=1006 datasetId=$datasetId"), message)
+        assertTrue(Regex("decidedAt=(\\d+)").find(message)?.groupValues?.get(1)?.toLong()?.let { it > 1006 } == true, message)
     }
 
     @Test

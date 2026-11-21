@@ -18,6 +18,9 @@ enum class AutomationItemState(val terminal: Boolean) {
     companion object {
         val TERMINAL: Set<AutomationItemState> = entries.filter { it.terminal }.toSet()
 
+        /** The states an item can still leave: everything but [TERMINAL]. */
+        val NON_TERMINAL: Set<AutomationItemState> = entries.filterNot { it.terminal }.toSet()
+
         /** The states of an item whose capture finished, the sample a dry run's estimate is taken from. */
         val CAPTURE_FINISHED: Set<AutomationItemState> = setOf(CAPTURED, SIMULATED)
 

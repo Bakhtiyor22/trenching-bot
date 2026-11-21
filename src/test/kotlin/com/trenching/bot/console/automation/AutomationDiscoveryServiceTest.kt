@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation
 
+import ch.qos.logback.classic.Level
 import com.trenching.bot.apiusage.ApiTask
 import com.trenching.bot.apiusage.ApiUsageContext
 import com.trenching.bot.console.automation.AutomationFixtures.EVENING
@@ -36,6 +37,31 @@ import org.junit.jupiter.api.Test
 class AutomationDiscoveryServiceTest : AutomationDatabaseTest() {
     private val clock = MutableClock(EVENING)
     private val lookup = FakeWalletActivityLookup()
+
+    @Test
+    fun `a scan that finds nothing logs nothing at info`() {
+        LogCapture().use { logs ->
+            discovery(lookup, properties(), clock).discover()
+
+            assertTrue(logs.at(Level.INFO).isEmpty(), logs.messages(Level.INFO).toString())
+            assertTrue(logs.messages(Level.DEBUG).any { it.startsWith("Discovery found no new buys.") })
+        }
+    }
+
+    @Test
+    fun `a scan with two live buys logs one discovery line and one Buy found line for each`() {
+        lookup.actions += buy(1, 100, EVENING.minusSeconds(600))
+        lookup.actions += buy(2, 101, EVENING.minusSeconds(590))
+
+        LogCapture().use { logs ->
+            discovery(lookup, properties(), clock).discover()
+
+            val info = logs.messages(Level.INFO)
+            assertEquals(1, info.count { it.startsWith("Discovery found 2 new buys. read=2 belowFilter=0 pages=1 requests=2 wallet=$WALLET") }, info.toString())
+            assertEquals(2, info.count { it.startsWith("Buy found. ") }, info.toString())
+            assertEquals(1, info.count { it.startsWith("Session opened.") }, info.toString())
+        }
+    }
 
     @Test
     fun `reads pages of twenty newest first, attributed to wallet activity`() {
@@ -711,6 +737,33 @@ class AutomationDiscoveryServiceTest : AutomationDatabaseTest() {
         assertNull(runtime.heartbeat().discoveryProblem)
         assertEquals(EVENING, runtime.heartbeat().lastDiscoveryAt)
         assertEquals(1, items.count())
+    }
+
+    @Test
+    fun `each scan that runs is counted for the hourly summary, whether it read the provider or not, and one outside the window is not`() {
+        itemLog.drain(clock.instant())
+        val service = discovery(lookup, properties(), clock)
+
+        service.discover()
+        lookup.unavailable = WalletActivityUnavailable.PROVIDER_RATE_LIMITED
+        service.discover()
+        clock.now = Instant.parse("2026-11-02T07:00:00Z")
+        service.discover()
+
+        assertEquals(2, itemLog.drain(clock.instant()).discoveryScans)
+    }
+
+    @Test
+    fun `a skipped scan warns once, in words the runbook alert counts`() {
+        lookup.unavailable = WalletActivityUnavailable.PROVIDER_RATE_LIMITED
+
+        LogCapture().use { logs ->
+            discovery(lookup, properties(), clock).discover()
+
+            val warnings = logs.messages(Level.WARN)
+            assertEquals(1, warnings.size, warnings.toString())
+            assertTrue(warnings.single().startsWith("Discovery skipped: "), warnings.single())
+        }
     }
 
     @Test

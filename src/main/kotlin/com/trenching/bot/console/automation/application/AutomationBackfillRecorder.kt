@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationIds
 import com.trenching.bot.console.automation.domain.AutomationItemState
@@ -92,8 +93,9 @@ class AutomationBackfillRecorder(
                 if (backfill.dryRun) finishDryRun(backfill, BackfillState.STOPPED_BUDGET, now) else backfill.end(BackfillState.STOPPED_BUDGET, now)
             }
         }
-        log.info("automation backfill scanned backfillId={} actions={} buys={} passing={} items={} requests={} state={}",
-            backfill.id, batch.actions.size, buys.size, passing.size, created.size, batch.requests, backfill.state)
+        val scanned = LogLine("Backfill scanned a tick: {} buys found, {} pass the filter, {} items created.", buys.size, passing.size, created.size)
+            .field("backfillId", backfill.id).field("actions", batch.actions.size).field("requests", batch.requests).field("state", backfill.state)
+        AfterCommit.run { scanned.info(log) }
         return BackfillRecord(created.size, skipped, backfill.state)
     }
 
@@ -146,8 +148,10 @@ class AutomationBackfillRecorder(
         writer.mergeAbsorbed(open)
         created.forEach { it.sessionId = open.current(it.sessionId) }
         writer.saveNew(created, now, replaces)
-        opened.forEach { log.info("automation session opened sessionId={} wallet={} backfillId={} firstItemId={}", it.id, it.wallet, backfill.id, it.firstItemId) }
-        created.forEach { log.info("automation item discovered itemId={} sessionId={} backfillId={} mint={} state={}", it.id, it.sessionId, backfill.id, it.mint, it.state) }
+        opened.forEach { session ->
+            LogLine("Backfill session opened.").field("sessionId", session.id).field("wallet", session.wallet).field("backfillId", backfill.id)
+                .field("items", created.count { it.sessionId == session.id }).field("firstBuyAt", session.firstBuyAt).field("lastBuyAt", session.lastBuyAt).debug(log)
+        }
         return created
     }
 
@@ -165,7 +169,8 @@ class AutomationBackfillRecorder(
     private fun closeSessions(backfill: AutomationBackfillEntity) {
         sessions.findAllByBackfillIdAndStateOrderByCreatedAtAscFirstBuyAtAscIdAsc(backfill.id, AutomationSessionState.OPEN).forEach {
             it.state = AutomationSessionState.CLOSING
-            log.info("automation session closing sessionId={} backfillId={} lastBuyAt={}", it.id, backfill.id, it.lastBuyAt)
+            LogLine("Backfill session is closing: the scan will find nothing more for it.").field("sessionId", it.id).field("backfillId", backfill.id)
+                .field("lastBuyAt", it.lastBuyAt).debug(log)
         }
     }
 
@@ -184,8 +189,9 @@ class AutomationBackfillRecorder(
             .filterNot { writer.isRetakeable(it, backfill.id) }.map { it.mint }.toSet()
         val toCapture = mints.count { it !in held }
         backfill.estimatedRequests = CaptureEstimate.requests(median, toCapture.toLong())
-        log.info("automation backfill dry run estimated backfillId={} mints={} mintsToCapture={} medianRequests={} estimatedRequests={}",
-            backfill.id, mints.size, toCapture, median, backfill.estimatedRequests)
+        val estimated = LogLine("Backfill dry run estimated its capture cost.").field("backfillId", backfill.id).field("mints", mints.size)
+            .field("mintsToCapture", toCapture).field("medianRequests", median).field("estimatedRequests", backfill.estimatedRequests)
+        AfterCommit.run { estimated.info(log) }
         backfill.end(state, now)
     }
 

@@ -1,5 +1,6 @@
 package com.trenching.bot.config.schema
 
+import com.trenching.bot.common.LogLine
 import java.sql.Connection
 import org.hibernate.Session
 import org.hibernate.SessionFactory
@@ -27,7 +28,8 @@ class SchemaDriftIntegrator(private val repair: SchemaDriftRepair) : Integrator 
                     session.doReturningWork { connection: Connection -> repair.repair(connection, mapped) }
                 }
                 repairs.forEach {
-                    log.warn("schema drift repaired table={} column={} relaxed={} added={}", it.table, it.column, it.relaxed, it.added.joinToString(","))
+                    LogLine("Database schema repaired: a leftover constraint from an older build was relaxed to match the code.").field("table", it.table)
+                        .field("column", it.column).field("relaxed", it.relaxed).field("added", it.added.joinToString(",").ifEmpty { null }).warn(log)
                 }
             }
         })

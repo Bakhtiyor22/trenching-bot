@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
@@ -72,23 +73,18 @@ class AutomationRetryService(
 
     private fun retryOnce(itemId: String, requestId: String): AutomationRetryResult {
         val now = clock.instant().truncatedTo(ChronoUnit.MICROS)
-        val result = try {
+        return try {
             transaction.retry(itemId, requestId, properties.captureEnabled, now)
         } catch (e: OptimisticLockingFailureException) {
             retryAgain(itemId, requestId, now)
         }
-        if (result is AutomationRetryResult.Retried) {
-            log.info("automation item retried itemId={} step={} previousFailure={} retries={} requestId={}",
-                result.itemId, result.step, result.previousFailure, result.retries, result.requestId)
-        }
-        return result
     }
 
     private fun retryAgain(itemId: String, requestId: String, now: Instant): AutomationRetryResult =
         try {
             transaction.retry(itemId, requestId, properties.captureEnabled, now)
         } catch (e: OptimisticLockingFailureException) {
-            log.warn("automation item retry lost to concurrent changes twice itemId={}", itemId)
+            LogLine("Buy retry lost to concurrent changes twice; the item is read again to say why.").field("itemId", itemId).warn(log)
             transaction.afterConflict(itemId, requestId, properties.captureEnabled)
         }
 }

@@ -1,5 +1,7 @@
 package com.trenching.bot.replay
 
+import ch.qos.logback.classic.Level
+import com.trenching.bot.console.automation.LogCapture
 import com.trenching.bot.common.Slot
 import com.trenching.bot.marketdata.domain.ObservedTrade
 import com.trenching.bot.marketdata.domain.TradeSide
@@ -58,7 +60,12 @@ class TargetTokenQualificationServiceTest {
     @Test
     fun `a take profit cycle is a qualifying dip with the report's fill, exit and pnl`() {
         val dataset = dataset(DipSample.TAKE_PROFIT)
-        val verdict = qualify(DipSample.TAKE_PROFIT, dataset)
+        val verdict = LogCapture("com.trenching.bot", Level.DEBUG).use { logs ->
+            qualify(DipSample.TAKE_PROFIT, dataset).also {
+                assertEquals(emptyList(), logs.events.filter { line -> line.level.isGreaterOrEqual(Level.INFO) }.map { line -> line.formattedMessage })
+                assertTrue(logs.messages(Level.DEBUG).any { line -> line.startsWith("Target token qualification finished.") }, logs.messages(Level.DEBUG).toString())
+            }
+        }
         val report = ReplayRunner().run(load(dataset), SimulationConfig.agreed())
         val scenario = report.scenarios.single()
         val fill = (scenario.outcome as FillOutcome.Filled).fill

@@ -48,8 +48,9 @@ internal class ReferenceRateCaptureService(
             observer.checkpoint(com.trenching.bot.chaincapture.CaptureCheckpoint(
                 phase = if (manifest.complete) "RATES_COMPLETE" else "RATES_INCOMPLETE", at = clock.instant(),
                 processed = records.count { it.rate != null }, selected = records.size))
-            log.info("reference_rates capture finished minutes={} requested={} unavailable={} complete={}",
-                records.size, missing.size, records.count { it.rate == null }, manifest.complete)
+            val unavailable = records.count { it.rate == null }
+            if (manifest.complete) log.debug("Reference rates capture finished: every minute has a rate. minutes={} requested={}", records.size, missing.size)
+            else log.debug("Reference rates capture finished: some minutes have no rate yet. minutes={} requested={} unavailable={}", records.size, missing.size, unavailable)
             ReferenceRateCaptureResult(directory, manifest)
         }
     }

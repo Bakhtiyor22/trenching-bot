@@ -152,10 +152,13 @@ See `trading-domain.md` for the full model.
 53. **Domain errors extend one base exception per module**, one subclass per case, message with the
     relevant ids/values.
 54. **`catch (e: Throwable)` is a BLOCKER.** It catches `Error`s and coroutine cancellation.
-55. **`ERROR` with the throwable as the last argument for unexpected failures; `WARN` for
-    expected-but-abnormal** (retry, skipped/unconfigured feature, missing price).
+55. **`ERROR` with the throwable as the last argument for unexpected failures.** Every other level
+    follows the level table in `errors-and-logging.md`, "Log message style": `WARN` is work the bot
+    cannot do or lost, written once when it starts, and anything that repeats per page, request,
+    retry or tick is `DEBUG`.
 56. **Structured, parameterized logs** (`log.info("fill rejected intentId={} reason={}", ...)`),
-    never string concatenation or interpolation, never secrets.
+    never string concatenation or interpolation, never secrets. Message wording, key names and level
+    meaning: `errors-and-logging.md`, "Log message style".
 
 ## J. Change discipline
 

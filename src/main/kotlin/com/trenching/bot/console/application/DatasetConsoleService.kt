@@ -1,5 +1,6 @@
 package com.trenching.bot.console.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.common.PageResult
 import com.trenching.bot.console.domain.DatasetDetail
 import com.trenching.bot.console.domain.EmptyDatasetUploadException
@@ -30,7 +31,7 @@ class DatasetConsoleService(
     fun upload(name: String?, fileName: String?, size: Long, content: InputStream): DatasetRegistration = content.use {
         if (size == 0L) {
             countUpload(ConsoleMetrics.INVALID)
-            log.warn("dataset upload rejected reason=empty fileName={}", fileName)
+            LogLine("Dataset upload rejected: the file is empty.").field("fileName", fileName).warn(log)
             throw EmptyDatasetUploadException()
         }
         val label = name?.takeIf { it.isNotBlank() } ?: fileName.orEmpty()

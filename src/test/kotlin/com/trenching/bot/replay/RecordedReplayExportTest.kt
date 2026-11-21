@@ -1,5 +1,7 @@
 package com.trenching.bot.replay
 
+import ch.qos.logback.classic.Level
+import com.trenching.bot.console.automation.LogCapture
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.Slot
@@ -67,7 +69,14 @@ class RecordedReplayExportTest {
         RecordedWalletFixtures.save(mapper, wallet())
         saveRealMarketCapture()
 
-        val export = service().export(request())
+        val export = LogCapture("com.trenching.bot", Level.DEBUG).use { logs ->
+            service().export(request()).also {
+                assertEquals(emptyList(), logs.events.filter { line -> line.level.isGreaterOrEqual(Level.INFO) }.map { line -> line.formattedMessage })
+                listOf("Recorded replay export finished.", "Recorded market capture decoded into observations.").forEach { sentence ->
+                    assertTrue(logs.messages(Level.DEBUG).any { line -> line.startsWith(sentence) }, "$sentence in ${logs.messages(Level.DEBUG)}")
+                }
+            }
+        }
 
         val json = Files.readString(output())
         val dataset = Files.newInputStream(output()).use { ReplayDatasetLoader(mapper).load(it) }
@@ -117,9 +126,14 @@ class RecordedReplayExportTest {
             anchor.signature, anchor.slot.value, anchor.instructionIndex, window.fromSlot.value, window.toSlot.value,
             ReplayMarketFixtures.PARAMETERS, directory.resolve("case.json"))
 
-        val result = RecordedCaseReplayExportService(
-            WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper), recordedMarkets, recordedRates, mapper,
-        ).export(request)
+        val result = LogCapture("com.trenching.bot", Level.DEBUG).use { logs ->
+            RecordedCaseReplayExportService(
+                WalletHistoryCaptureConfiguration().recordedWalletHistory(mapper), recordedMarkets, recordedRates, mapper,
+            ).export(request).also {
+                assertEquals(emptyList(), logs.events.filter { line -> line.level.isGreaterOrEqual(Level.INFO) }.map { line -> line.formattedMessage })
+                assertTrue(logs.messages(Level.DEBUG).any { line -> line.startsWith("Recorded case export finished.") }, logs.messages(Level.DEBUG).toString())
+            }
+        }
         val dataset = Files.newInputStream(result.output).use { ReplayDatasetLoader(mapper).load(it) }
 
         assertEquals(MarketCaseId.from(window), result.caseId)

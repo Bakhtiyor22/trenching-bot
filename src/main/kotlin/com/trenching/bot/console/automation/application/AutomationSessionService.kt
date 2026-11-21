@@ -59,7 +59,7 @@ class AutomationSessionService(
      */
     fun close(sessionId: String, requestId: String?): AutomationSessionDetail {
         val validRequestId = AutomationRequests.requireRequestId(requestId)
-        log.info("automation session close requested sessionId={} requestId={}", sessionId, validRequestId)
+        log.info("Session close requested from the console. sessionId={} requestId={}", sessionId, validRequestId)
         transaction.closeManually(sessionId, validRequestId, clock.instant()).forEach(cancellation::cancel)
         return query.session(sessionId)
     }
@@ -68,7 +68,7 @@ class AutomationSessionService(
         try {
             step()
         } catch (e: Exception) {
-            log.error("automation session step failed sessionId={}", sessionId, e)
+            log.error("Unexpected error while closing a session; the tick goes on with the other sessions. sessionId={}", sessionId, e)
         }
     }
 

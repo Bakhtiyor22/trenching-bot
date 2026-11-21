@@ -193,10 +193,10 @@ class CaptureCaseService(
                 else -> "CAPTURE_FAILED"
             }
             if (code == "CAPTURE_FAILED") {
-                log.error("case operation failed operationId={} category={}", operation.id, code,
+                log.error("Case capture step stopped: {}. code={} step={} captureSessionId={} operationId={}", CaptureStopMeanings.meaning(code), code, operation.step.lowercase(), id, operation.id,
                     IllegalStateException("Case operation failed").apply { stackTrace = exception.stackTrace })
             } else {
-                log.warn("case operation stopped operationId={} category={}", operation.id, code)
+                log.info("Case capture step stopped: {}. code={} step={} captureSessionId={} operationId={}", CaptureStopMeanings.meaning(code), code, operation.step.lowercase(), id, operation.id)
             }
             operation = operation.copy(state = CaptureNames.FAILED, updatedAt = clock.instant(), endedAt = clock.instant(),
                 code = code, message = "Case operation stopped: $code. Inspect saved evidence before retrying.")

@@ -61,7 +61,7 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
         val taken = CaptureNamePolicy.takenKeys(store.sessionRecords(), excluding = id)
         if (CaptureNamePolicy.key(name) in taken) CaptureValidation.nameTaken(CaptureNamePolicy.suggestion(name, taken))
         store.save(session.copy(name = name, nameKey = CaptureNamePolicy.key(name), renameRequests = session.renameRequests + (request.requestId to name)))
-        log.info("capture_renamed sessionId={} requestId={}", id, request.requestId)
+        log.info("Capture renamed. captureSessionId={} requestId={}", id, request.requestId)
         view(store.session(id))
     }
     fun checkName(name: String): CaptureNameCheck = synchronized(store) {
@@ -99,7 +99,7 @@ class CaptureSessionService(private val store: CaptureFileStore, private val ope
         operations.requireNotRunning(id)
         cases.requireNotRunning(id)
         val files = store.remove(id, ids.next())
-        log.info("capture_deleted sessionId={} managedFiles={}", id, files)
+        log.info("Capture deleted with its managed files. captureSessionId={} managedFiles={}", id, files)
     }
     fun find(id: String): CaptureSessionView = synchronized(store) { view(store.session(id)) }
     /** Every session is summarized, because the status filter, the attention order and [CaptureSessionPage.statusCounts] need them all. */

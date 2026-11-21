@@ -38,7 +38,7 @@ class ReplayDatasetCatalogService(
         val dataset = if (created) entry.summary else checkNotNull(datasets.find(entry.summary.id)) {
             "Existing replay dataset vanished datasetId=${entry.summary.id}"
         }
-        log.info("replay dataset registered datasetId={} created={}", dataset.id, created)
+        log.debug("Dataset registered. datasetId={} created={}", dataset.id, created)
         return DatasetRegistration(dataset, created)
     }
 
@@ -59,7 +59,7 @@ class ReplayDatasetCatalogService(
 
     override fun delete(id: String): Boolean {
         val deleted = datasets.delete(id)
-        if (deleted) log.info("replay dataset deleted datasetId={}", id)
+        if (deleted) log.info("Dataset deleted. datasetId={}", id)
         return deleted
     }
 
@@ -85,7 +85,7 @@ class ReplayDatasetCatalogService(
         when (exception) {
             is IllegalArgumentException, is DateTimeException, is ArithmeticException, is JacksonException -> {
                 val message = exception.message ?: exception.javaClass.simpleName
-                log.warn("replay dataset rejected reason={}", message)
+                log.warn("Dataset rejected because it is not valid replay data: {}.", message)
                 throw DatasetInvalidException(message, exception)
             }
             else -> throw exception

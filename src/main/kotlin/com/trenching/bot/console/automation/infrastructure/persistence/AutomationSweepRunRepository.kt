@@ -17,6 +17,10 @@ private const val SWEEP_RUN_FILTER = """
 interface AutomationSweepRunRepository : JpaRepository<AutomationSweepRunEntity, String> {
     fun findAllByItemIdOrderByPlanIdAscLabelAsc(itemId: String, pageable: Pageable): List<AutomationSweepRunEntity>
 
+    /** How many sweep rows an item has, a row for each entry of its plan, and how many of them have a run; one aggregate over at most the plan's entries. */
+    @Query("select count(r) as entries, count(r.runId) as ran from AutomationSweepRunEntity r where r.itemId = :itemId")
+    fun tally(@Param("itemId") itemId: String): AutomationSweepTallyRow
+
     /** The labels an item already has a row for under a plan; bounded by the plan's entries. */
     @Query("select r.label from AutomationSweepRunEntity r where r.itemId = :itemId and r.planId = :planId")
     fun findLabels(@Param("itemId") itemId: String, @Param("planId") planId: String): List<String>

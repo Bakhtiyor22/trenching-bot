@@ -39,7 +39,7 @@ class AutomationManualRun(
             runtime.manualRunFinished()
             throw e
         }
-        log.info("automation manual discovery queued")
+        log.info("Manual discovery run queued.")
         return ManualRunResult.QUEUED
     }
 
@@ -47,7 +47,7 @@ class AutomationManualRun(
         try {
             service.discover(ignoreWindow = true)
         } catch (e: Exception) {
-            log.error("automation manual discovery failed", e)
+            log.error("Manual discovery run failed with an unexpected error.", e)
         } finally {
             runtime.manualRunFinished()
         }

@@ -16,6 +16,7 @@ import com.trenching.bot.chaincapture.FetchedItem
 import com.trenching.bot.chaincapture.SignatureListing
 import com.trenching.bot.chaincapture.SolanaReadRpc
 import com.trenching.bot.chaincapture.SolanaRpcSettings
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.marketdata.*
 import com.trenching.bot.marketdata.domain.MarketCutoffRules
 import com.trenching.bot.marketdata.domain.MarketWindowRules
@@ -38,7 +39,7 @@ internal class MarketHistoryCaptureService(
     private val log = LoggerFactory.getLogger(MarketHistoryCaptureService::class.java)
     private val evidence = MarketTransactionEvidence()
     private val extractor = PumpFunTradeObservationExtractor()
-    private val detailBatches = DetailBatches(BoundedParallelFetch(), observer, concurrency, MarketCaptureFormat.DETAIL_CHECKPOINT_INTERVAL, "market_capture")
+    private val detailBatches = DetailBatches(BoundedParallelFetch(), observer, concurrency, MarketCaptureFormat.DETAIL_CHECKPOINT_INTERVAL, "Market capture")
 
     override fun capture(request: MarketHistoryCaptureRequest): MarketHistoryCaptureResult {
         val windows = validate(request)
@@ -87,8 +88,9 @@ internal class MarketHistoryCaptureService(
                         ?.also { pace = it } ?: return manifest
                     val wait = MarketWindowScan.untilEnd(window, confirmedTip, slotPace.slotDuration)
                     heldFor = maxOf(heldFor ?: wait, wait)
-                    log.info("market_capture window held mint={} fromSlot={} toSlot={} tipSlot={} slotMs={} estimatedWaitMs={}",
-                        window.baseMint, window.fromSlot, window.toSlot, confirmedTip, slotPace.slotDuration?.toMillis(), wait.toMillis())
+                    LogLine("Market window has not ended on chain yet, so it is held for a later pass.")
+                        .field("mint", window.baseMint).field("fromSlot", window.fromSlot).field("toSlot", window.toSlot).field("tipSlot", confirmedTip)
+                        .field("slotMs", slotPace.slotDuration?.toMillis()).field("estimatedWaitMs", wait.toMillis()).debug(log)
                 }
                 if (window != manifest.windows[index]) {
                     manifest = withWindow(manifest, index, window)
@@ -110,7 +112,7 @@ internal class MarketHistoryCaptureService(
                 checkpoint(request, summarized(manifest, budget), budget)
             }
             if (window.coverage == MarketWindowCoverage.HORIZON_NOT_ELAPSED) continue
-            log.info("market_capture window mint={} fromSlot={} toSlot={} coverage={} scanned={} skippedFailed={} skippedNewer={} selected={}",
+            log.debug("Market window trade listing finished. mint={} fromSlot={} toSlot={} coverage={} scanned={} skippedFailed={} skippedNewer={} selected={}",
                 window.baseMint, window.fromSlot, window.toSlot, window.coverage, window.scanned, window.skippedFailed, window.skippedNewer, window.selected)
             if (window.coverage == MarketWindowCoverage.COMPLETE) {
                 manifest = fetchDetails(request, manifest, budget, blockTimes, stop, index)
@@ -138,7 +140,7 @@ internal class MarketHistoryCaptureService(
         if (!MarketCaptureFormat.recordsBlockTimes(manifest.schemaVersion) || window.throughBlockTime != null || !settled(manifest, window)) return manifest
         val slot = MarketCutoffRules.observedThrough(window)
         val time = blockTimes.at(slot) { category ->
-            log.warn("market_capture block_time_unavailable mint={} slot={} category={}", window.baseMint, slot, category)
+            log.warn("Block time is unavailable, so the window's end time is not recorded yet; a later capture pass tries again. mint={} slot={} category={}", window.baseMint, slot, category)
         } ?: return manifest
         val updated = manifest.copy(windows = manifest.windows.toMutableList().apply { set(index, window.copy(throughBlockTime = time)) })
         checkpoint(request, summarized(updated, budget), budget)
@@ -158,17 +160,20 @@ internal class MarketHistoryCaptureService(
     private fun <T : Any> discoveryRead(window: MarketWindowRecord, stop: CaptureStop, read: () -> T): T? = try {
         read()
     } catch (exception: CaptureProviderException) {
-        log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
+        logListingInterrupted(exception.category, window)
         stop.record(exception.category, exception.retryAfter)
         null
     } catch (exception: CaptureBudgetException) {
-        log.warn("market_capture discovery interrupted category={} mint={}", exception.category, window.baseMint)
+        logListingInterrupted(exception.category, window)
         stop.record(exception.category)
         null
     }
 
+    private fun logListingInterrupted(category: String, window: MarketWindowRecord) =
+        log.debug("Market trade listing was interrupted; saved progress is kept and a later pass resumes it. category={} mint={}", category, window.baseMint)
+
     private fun extend(manifest: MarketHistoryManifest, scanPages: Int): MarketHistoryManifest {
-        log.info("market_capture extending scanPages={} previousScanPages={}", scanPages, manifest.scanPageLimit)
+        log.debug("Market capture raises its page limit and reopens windows the old limit cut off. scanPages={} previousScanPages={}", scanPages, manifest.scanPageLimit)
         return manifest.copy(scanPageLimit = scanPages, windows = manifest.windows.map(MarketWindowScan::extended))
     }
 
@@ -180,7 +185,7 @@ internal class MarketHistoryCaptureService(
         manifest.windows.indices.fold(manifest) { current, index ->
             val cutoff = current.windows[index].cutoff
             if (cutoff == null || accepts(request, cutoff)) current else {
-                log.info("market_capture cutoff reopened mint={} throughSlot={} outcome={} configurationHash={} mode={}",
+                log.debug("Market window exit cutoff is reopened because this run does not accept it. mint={} throughSlot={} outcome={} configurationHash={} mode={}",
                     current.windows[index].baseMint, cutoff.throughSlot, cutoff.outcome, cutoff.configurationHash, request.cutoffMode)
                 MarketCutoffRules.reopened(current, index)
             }
@@ -277,17 +282,25 @@ internal class MarketHistoryCaptureService(
     }
 
     private fun logPhase(window: MarketWindowRecord, measurements: CaptureMeasurements) {
-        log.info("market_capture details mint={} fromSlot={} toSlot={} requestsSent={} cacheHits={} rateLimitedResponses={} retries={} elapsedMs={} concurrency={}",
+        log.debug("Market transaction fetch phase finished. mint={} fromSlot={} toSlot={} requestsSent={} cacheHits={} rateLimitedResponses={} retries={} elapsedMs={} concurrency={}",
             window.baseMint, window.fromSlot, window.toSlot, measurements.requestsSent, measurements.cacheHits, measurements.rateLimitedResponses,
             measurements.retries, measurements.elapsed.toMillis(), concurrency)
     }
     private fun finish(request: MarketHistoryCaptureRequest, saved: MarketHistoryManifest, budget: CaptureBudget, stop: CaptureStop): MarketHistoryCaptureResult {
         val manifest = summarized(saved, budget)
         checkpoint(request, manifest, budget)
-        log.info("market_capture finished windows={} transactions={} acquisitionComplete={} complete={} requests={} bytes={} stopReason={}",
-            manifest.windows.size, manifest.records.size, manifest.acquisitionComplete, manifest.complete, budget.requestsUsed, budget.bytesUsed,
-            stop.reason)
+        outcomeLine(manifest, stop.reason).field("windows", manifest.windows.size).field("transactions", manifest.records.size)
+            .field("requests", budget.requestsUsed).field("bytes", budget.bytesUsed).field("code", stop.reason)
+            .field("mint", manifest.windows.singleOrNull()?.baseMint).debug(log)
         return MarketHistoryCaptureResult(request.directory.toAbsolutePath().normalize(), manifest, stop.reason, stop.retryAfter)
+    }
+
+    private fun outcomeLine(manifest: MarketHistoryManifest, stopReason: String?): LogLine = when {
+        stopReason != null -> LogLine("Market capture stopped early; saved progress is kept.")
+        manifest.windows.any { it.coverage == MarketWindowCoverage.OVER_CAP } ->
+            LogLine("Market capture refused a window: it lists more trades than the capture's trade cap.").field("maxTransactions", manifest.maxTransactions)
+        manifest.complete -> LogLine("Market capture finished: every window is complete.")
+        else -> LogLine("Market capture finished with windows still incomplete.")
     }
 
     /** Sets the cumulative usage, the completion flags and the schema version the manifest's content needs. */

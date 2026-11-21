@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationFailures
 import com.trenching.bot.console.automation.domain.AutomationIds
@@ -70,8 +71,9 @@ class AutomationScanWriter(
     /** Whether no capture step has touched [known], so an earlier buy may take its place; logs why not. */
     fun isUntouched(known: AutomationItemEntity, earliest: DiscoveryCursor): Boolean {
         if (known.step == null && (isUntimed(known) || known.state == AutomationItemState.DISCOVERED)) return true
-        log.warn("automation earlier buy found after capture started, item kept itemId={} mint={} state={} step={} earlierSignature={}",
-            known.id, known.mint, known.state, known.step, earliest.signature)
+        LogLine("Earlier buy of the token found after capture of its stored buy started; the stored buy is kept.").field("itemId", known.id)
+            .field("mint", known.mint).field("wallet", known.wallet).field("state", known.state).field("step", known.step?.name?.lowercase())
+            .field("earlierSignature", earliest.signature).warn(log)
         return false
     }
 
@@ -127,8 +129,6 @@ class AutomationScanWriter(
             items.delete(stored)
             known.remove(mint)
             left += stored.sessionId
-            log.info("automation item replaced by a buy of its mint itemId={} mint={} state={} backfillId={} buySignature={}",
-                stored.id, mint, stored.state, stored.backfillId, earliest.signature)
         }
         if (left.isEmpty()) return replaces
         items.flush()
@@ -151,7 +151,7 @@ class AutomationScanWriter(
             items.moveSession(session.id, into)
             sweepRuns.moveSession(session.id, into)
             sessions.delete(session)
-            log.info("automation sessions merged sessionId={} absorbedSessionId={}", into, session.id)
+            LogLine("Sessions merged: a buy joined two sessions into one.").field("sessionId", into).field("absorbedSessionId", session.id).debug(log)
         }
     }
 
@@ -168,7 +168,7 @@ class AutomationScanWriter(
         val left = items.findBuysBySessionId(sessionId)
         if (left.isEmpty()) {
             sessions.delete(session)
-            log.info("automation session removed, every item of it was replaced sessionId={} state={}", session.id, session.state)
+            LogLine("Session removed: every buy in it was replaced by an earlier buy.").field("sessionId", session.id).field("state", session.state).debug(log)
             return
         }
         val timed = left.mapNotNull { it.blockTime }
@@ -177,8 +177,8 @@ class AutomationScanWriter(
             session.lastBuyAt = timed.max()
         }
         if (left.none { it.id == session.firstItemId }) session.firstItemId = left.first().id
-        log.info("automation session rebuilt after items were replaced sessionId={} state={} firstItemId={} firstBuyAt={} lastBuyAt={}",
-            session.id, session.state, session.firstItemId, session.firstBuyAt, session.lastBuyAt)
+        LogLine("Session rebuilt: some of its buys were replaced by earlier buys.").field("sessionId", session.id).field("state", session.state)
+            .field("firstItemId", session.firstItemId).field("firstBuyAt", session.firstBuyAt).field("lastBuyAt", session.lastBuyAt).debug(log)
     }
 
     /** Stores what [OpenSessions.regroup] changed in the session [sessionId]: the sessions split off it, its removal or its closing. */
@@ -188,15 +188,17 @@ class AutomationScanWriter(
             sessions.save(part)
             items.moveItems(itemIds, part.id)
             sweepRuns.moveItems(itemIds, part.id)
-            log.info("automation session split sessionId={} splitSessionId={} items={}", sessionId, part.id, itemIds.size)
+            LogLine("Session split: a gap between its buys grew past the idle time or a trading day ended.").field("sessionId", sessionId)
+                .field("splitSessionId", part.id).field("items", itemIds.size).debug(log)
         }
         regrouping.emptied?.let {
             sessions.delete(it)
-            log.info("automation session removed, every item of it was replaced sessionId={}", it.id)
+            LogLine("Session removed: every buy in it was replaced by an earlier buy.").field("sessionId", it.id).debug(log)
         }
         regrouping.closing?.let {
-            log.info("automation session state changed, only buys without a block time are left sessionId={} wallet={} fromState={} toState={} firstItemId={}",
-                it.id, it.wallet, AutomationSessionState.OPEN, it.state, it.firstItemId)
+            val closing = LogLine("Session state changed: only buys without a block time are left in it, so it is no longer open.").field("sessionId", it.id)
+                .field("wallet", it.wallet).field("fromState", AutomationSessionState.OPEN).field("toState", it.state).field("firstItemId", it.firstItemId)
+            AfterCommit.run { closing.info(log) }
         }
     }
 }

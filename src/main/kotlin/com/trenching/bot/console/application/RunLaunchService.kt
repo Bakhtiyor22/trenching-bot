@@ -9,6 +9,8 @@ import com.trenching.bot.console.domain.InvalidConsoleRequestException
 import com.trenching.bot.console.domain.SimulationConfigLimits
 import com.trenching.bot.replay.ReplayDatasetCatalog
 import com.trenching.bot.replay.SimulationRuns
+import com.trenching.bot.common.LogLine
+import com.trenching.bot.replay.domain.CoverageEndedLines
 import com.trenching.bot.replay.domain.DatasetNotFoundException
 import com.trenching.bot.replay.domain.MarketCoverageEndedException
 import com.trenching.bot.replay.domain.RunStart
@@ -40,7 +42,8 @@ class RunLaunchService(
         val config = when (val validation = validator.validate(request.config)) {
             is ConfigValidation.Valid -> validation.config
             is ConfigValidation.Invalid -> {
-                log.warn("console run rejected datasetId={} code={} invalidFields={}", datasetId, validation.code, validation.fields.keys)
+                log.warn("Run rejected: the configuration is invalid. datasetId={} code={} invalidFields={}",
+                    datasetId, validation.code, validation.fields.keys.joinToString(","))
                 throw ConfigInvalidException(validation.fields, validation.code)
             }
         }
@@ -48,7 +51,8 @@ class RunLaunchService(
         val started = timed { run(datasetId, config) }
         meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME,
             if (started.created) ConsoleMetrics.CREATED else ConsoleMetrics.EXISTING).increment()
-        log.info("console run started runId={} datasetId={} created={} presetId={}", started.run.id, datasetId, started.created, presetId)
+        LogLine("Run started from the console.").field("runId", started.run.id).field("datasetId", datasetId).field("created", started.created)
+            .field("presetId", presetId).info(log)
         return started
     }
 
@@ -61,16 +65,16 @@ class RunLaunchService(
     } catch (exception: MarketCoverageEndedException) {
         meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, ConsoleMetrics.COVERAGE_ENDED).increment()
         val shortfall = exception.shortfall
-        log.warn("console run refused datasetId={} mint={} decidedAt={} throughSlot={} reason=MARKET_COVERAGE_ENDED",
-            datasetId, shortfall.pair.base.value, shortfall.decidedAt.value, shortfall.throughSlot?.value)
+        CoverageEndedLines.refusal("Run", shortfall).field("datasetId", datasetId).warn(log)
         throw exception
     } catch (exception: TradesRequiredException) {
         meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, refusalOutcome(exception)).increment()
-        log.warn("console run refused datasetId={} schemaVersion={} reason={}", datasetId, exception.schemaVersion, exception.code)
+        log.warn("Run refused: the dataset records no trades, which this setting needs. datasetId={} schemaVersion={} code={}",
+            datasetId, exception.schemaVersion, exception.code)
         throw exception
     } catch (exception: RuntimeException) {
         meterRegistry.counter(ConsoleMetrics.RUNS, ConsoleMetrics.OUTCOME, ConsoleMetrics.FAILED).increment()
-        log.error("console run failed datasetId={} strategyVersion={}", datasetId, config.strategyVersion, exception)
+        log.error("Run failed unexpectedly. datasetId={} strategyVersion={}", datasetId, config.strategyVersion, exception)
         throw exception
     }
 

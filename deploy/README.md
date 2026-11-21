@@ -524,6 +524,18 @@ sudo tail -n 100 /data/logs/trenching-bot.log
 The log folder is readable only by the `trenching` user and root, hence `sudo`. With monitoring set up (step 14), the
 same log is searchable in Grafana for 14 days.
 
+Look at the hourly summary first. While automation is on it writes one line an hour with what it found, captured and
+failed, what waits, and the requests of the last 24 hours against the cap:
+
+```bash
+journalctl -u trenching-bot --no-pager | grep AutomationActivitySummary | tail -n 5
+```
+
+In Grafana Loki: `{unit="trenching-bot.service"} |= "AutomationActivitySummary"`. A `WARN` summary means capture is held
+(usually the 24-hour request cap, named with how long it has lasted); `{unit="trenching-bot.service", level="WARN"}` then
+shows when the hold started. An `INFO` summary means the bot is working, and an idle hour still writes one
+(`nothing new`, with `discoveryScans=`); no summary for two hours means the automation is not running.
+
 **Deploy timing and schema errors.** Avoid deploying or restarting around the 03:30 UTC backup: `pg_dump`'s locks can delay the schema update on start. After the first deploy, check the log for Hibernate DDL errors (`journalctl -u trenching-bot -n 500 --no-pager | grep -i -E 'ddl|schema'`): `update` logs a failed unique key or index and carries on instead of stopping.
 
 **Reboot check.** After kernel updates, or whenever you want proof that recovery works:
@@ -840,12 +852,18 @@ period ("For") and what to do when the query returns no data.
 | Idle-reclamation risk | `avg_over_time((100 * (1 - node_memory_MemAvailable_bytes{instance="trenching-oci"} / node_memory_MemTotal_bytes{instance="trenching-oci"}))[1d:5m])` | below 25 | 1h | OK |
 | Backup failed | `node_systemd_unit_state{instance="trenching-oci", name="trenching-bot-backup.service", state="failed"}` | above 0 | 0m | OK |
 | App errors | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service", level="ERROR"}[15m]))` | above 5 | 0m | **OK** |
-| Discovery stalled | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service"} \|= "automation discovery wallet=" [2h]))` | below 1 | 0m | **Alerting** |
+| Automation silent | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service"} \|= "AutomationActivitySummary" [2h]))` | below 1 | 0m | **Alerting** |
+| Discovery failing | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service"} \|= "Discovery skipped" [1h]))` | above 2 | 0m | **OK** |
 
 - A deploy restarts the app for about a minute; the 5-minute pending periods ride over it.
 - "App errors": no matching lines means no errors, so no data must stay OK.
-- "Discovery stalled": first check in Explore how often the line appears, and widen `[2h]` if discovery runs less often.
-  It only means something while automation is on (step 10).
+- "Automation silent": the hourly summary is written every hour while automation is on, an idle hour too (`Last hour:
+  nothing new; 6 discovery scans.`), so two hours without one means the automation is not running or its scheduler is
+  stuck. It only means something while automation is on (step 10).
+- "Discovery failing": each scan the activity provider could not be read for writes one `Discovery skipped` `WARN`.
+  Scans run only inside the polling window in window mode (outside it they are zero and normal; the summary's
+  `discoveryScans=` says how many ran), so this alert counts failures and never silence; no matching lines means no
+  failures, so no data must stay OK.
 - "Idle-reclamation risk" watches the memory side of Oracle's idle rule (step 12). With the 3 GB pre-touched heap it
   should stay well above 25 %.
 

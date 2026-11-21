@@ -68,7 +68,7 @@ internal class WindowCutoffEvaluator(
 
     /** A missing time leaves the window undecided, so the capture continues in full. */
     private fun blockTime(record: MarketWindowRecord, slot: Long): Instant? = blockTimes.at(slot) { category ->
-        log.warn("market_capture cutoff block_time_unavailable mint={} slot={} category={}", record.baseMint, slot, category)
+        log.warn("Block time is unavailable, so the window's exit cutoff stays undecided and the capture continues in full. mint={} slot={} category={}", record.baseMint, slot, category)
     }
 
     private fun apply(manifest: MarketHistoryManifest, record: MarketWindowRecord, decision: CutoffDecision.Decided, decidable: LongRange): MarketHistoryManifest {
@@ -79,7 +79,7 @@ internal class WindowCutoffEvaluator(
         val decided = MarketCutoffRules.decided(manifest, index,
             MarketWindowCutoff(slot, decision.outcome, identity.engineVersion, identity.configurationHash))
         val outcomes = decided.records.associate { it.signature to it.outcome }
-        log.info("market_capture cutoff mint={} throughSlot={} outcome={} configurationHash={} notNeeded={}", record.baseMint, slot,
+        log.debug("Market window exit cutoff decided; later trades are not fetched. mint={} throughSlot={} outcome={} configurationHash={} notNeeded={}", record.baseMint, slot,
             decision.outcome, identity.configurationHash, record.selection.count { outcomes[it.signature] == MarketTransactionOutcome.NOT_NEEDED })
         return decided
     }

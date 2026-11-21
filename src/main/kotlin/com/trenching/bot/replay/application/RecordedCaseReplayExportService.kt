@@ -54,7 +54,7 @@ internal class RecordedCaseReplayExportService(
             throw CaptureValidationException("MARKET_CAPTURE_MISMATCH")
         }
         if (!DatasetTrades.allPresent(decoded.observations)) {
-            log.warn("recorded_case_export refused reason={} caseId={}", DatasetTrades.FIELDS_MISSING, request.caseId.value)
+            log.warn("Recorded case export refused: the captured trades lack fields a replay needs. code={} caseId={}", DatasetTrades.FIELDS_MISSING, request.caseId.value)
             throw CaptureValidationException(DatasetTrades.FIELDS_MISSING)
         }
         val caseRates = rates(request.ratesCaptureDirectory, decoded.observations)
@@ -70,7 +70,7 @@ internal class RecordedCaseReplayExportService(
         val result = CaptureCaseExport(request.output, DatasetFingerprint.checksum(loaded), request.caseId,
             planned.history.wallet, window.baseMint, anchor.signature, anchor.slot.value, anchor.instructionIndex, window.fromSlot.value,
             window.toSlot.value, planned.plan.parameters, decoded.extractor, loaded.transactions.size, loaded.observations.size, written)
-        log.info("recorded_case_export finished caseId={} checksum={} transactions={} observations={} written={}",
+        log.debug("Recorded case export finished. caseId={} checksum={} transactions={} observations={} written={}",
             result.caseId.value, result.checksum, result.transactions, result.observations, result.written)
         return result
     }

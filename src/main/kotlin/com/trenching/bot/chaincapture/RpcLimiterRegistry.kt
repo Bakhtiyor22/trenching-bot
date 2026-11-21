@@ -18,7 +18,7 @@ class RpcLimiterRegistry(val timing: CaptureTiming = SystemCaptureTiming) {
             Entry(settings.maxConcurrentRequests, settings.minRequestInterval, ProviderRequestLimiter.of(settings, timing))
         }
         if (entry.maxConcurrentRequests != settings.maxConcurrentRequests || entry.minRequestInterval != settings.minRequestInterval) {
-            log.warn("chain_capture limiter_settings_ignored maxConcurrentRequests={} minRequestIntervalMillis={} requestedMaxConcurrentRequests={} requestedMinRequestIntervalMillis={}",
+            log.warn("A caller asked for different pacing for an endpoint that already has a limiter, so its pacing is ignored. maxConcurrentRequests={} minRequestIntervalMillis={} requestedMaxConcurrentRequests={} requestedMinRequestIntervalMillis={}",
                 entry.maxConcurrentRequests, entry.minRequestInterval.toMillis(), settings.maxConcurrentRequests, settings.minRequestInterval.toMillis())
         }
         return entry.limiter

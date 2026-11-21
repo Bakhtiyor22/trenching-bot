@@ -92,8 +92,13 @@ management:
       probes:
         enabled: true
 
-# Written only where a profile sets logging.file.name; harmless otherwise.
+# Line prefix: time, level, thread, class. The journal adds its own time, host and PID, and there is one application.
+# Grafana Alloy (deploy/alloy/config.alloy) starts a line at "^\d{4}-\d{2}-\d{2}T" and reads the level after the first word; LogPatternTest pins both.
+# The file only exists where a profile sets logging.file.name; harmless otherwise.
 logging:
+  pattern:
+    console: "%clr(%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX}){faint} %clr(%5p) %clr([%t]){faint} %clr(%logger{0}){cyan}%clr(:){faint} %m%n%wEx"
+    file: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %5p [%t] %logger{0}: %m%n%wEx"
   logback:
     rollingpolicy:
       max-file-size: 10MB

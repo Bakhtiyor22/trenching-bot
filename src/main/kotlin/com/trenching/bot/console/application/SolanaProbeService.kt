@@ -79,7 +79,7 @@ class SolanaProbeService(
         try {
             probe.check()
         } catch (e: RuntimeException) {
-            log.error("solana probe failed unexpectedly operation={} host={}", OPERATION_CHECK, probe.host, safeFailure(e))
+            log.error("Solana connection check failed unexpectedly. operation={} host={}", OPERATION_CHECK, probe.host, safeFailure(e))
             UNEXPECTED
         }
 
@@ -87,7 +87,7 @@ class SolanaProbeService(
         try {
             probe.checkAddress(address)
         } catch (e: RuntimeException) {
-            log.error("solana probe failed unexpectedly operation={} host={} address={}",
+            log.error("Solana address check failed unexpectedly. operation={} host={} address={}",
                 OPERATION_ADDRESS_CHECK, probe.host, address.value, safeFailure(e))
             AddressCheckOutcome.Failed(UNEXPECTED)
         }
@@ -110,7 +110,7 @@ class SolanaProbeService(
 
     private fun logCheck(outcome: ProbeOutcome) {
         when (outcome) {
-            is ProbeOutcome.Ok -> log.info("solana probe ok host={} cluster={} slot={} latencyMs={} version={}",
+            is ProbeOutcome.Ok -> log.info("Solana connection check succeeded. host={} cluster={} slot={} latencyMs={} version={}",
                 probe.host, outcome.cluster.label, outcome.slot, outcome.latencyMs, outcome.version)
             is ProbeOutcome.Failure -> logFailure(OPERATION_CHECK, outcome)
         }
@@ -118,11 +118,15 @@ class SolanaProbeService(
 
     private fun logAddressCheck(address: WalletAddress, outcome: AddressCheckOutcome) {
         when (outcome) {
-            is AddressCheckOutcome.Checked -> log.info(
-                "solana address check host={} address={} signature={} slot={} missingFields={}",
-                probe.host, address.value, outcome.signature, outcome.slot, outcome.missingFields)
+            is AddressCheckOutcome.Checked ->
+                if (outcome.missingFields.isEmpty()) log.info(
+                    "Solana address check read every field of its latest successful transaction. host={} address={} signature={} slot={}",
+                    probe.host, address.value, outcome.signature, outcome.slot)
+                else log.info(
+                    "Solana address check could not read some fields of its latest successful transaction. host={} address={} signature={} slot={} missingFields={}",
+                    probe.host, address.value, outcome.signature, outcome.slot, outcome.missingFields.joinToString(","))
             is AddressCheckOutcome.NoSuccessfulTransaction -> log.info(
-                "solana address check found no successful transaction host={} address={} signaturesExamined={}",
+                "Solana address check found no successful transaction among the latest ones. host={} address={} signaturesExamined={}",
                 probe.host, address.value, outcome.signaturesExamined)
             is AddressCheckOutcome.Failed -> logFailure(OPERATION_ADDRESS_CHECK, outcome.failure)
         }
@@ -130,12 +134,12 @@ class SolanaProbeService(
 
     private fun logFailure(operation: String, failure: ProbeOutcome.Failure) {
         when (failure) {
-            ProbeOutcome.NotConfigured -> log.warn("solana probe skipped operation={} reason=not_configured", operation)
-            ProbeOutcome.RateLimited, ProbeOutcome.Timeout -> log.warn("solana probe failed operation={} host={} outcome={}",
+            ProbeOutcome.NotConfigured -> log.warn("Solana check skipped: no RPC provider is configured. operation={} code=not_configured", operation)
+            ProbeOutcome.RateLimited, ProbeOutcome.Timeout -> log.warn("Solana check failed: the provider rate limited the call or did not answer in time. operation={} host={} outcome={}",
                 operation, probe.host, failure.status)
-            is ProbeOutcome.RpcError -> log.warn("solana probe failed operation={} host={} outcome={} code={} message={}",
+            is ProbeOutcome.RpcError -> log.warn("Solana check failed: the provider answered with an error. operation={} host={} outcome={} code={} message={}",
                 operation, probe.host, failure.status, failure.code, failure.message)
-            is ProbeOutcome.Unavailable -> log.warn("solana probe failed operation={} host={} outcome={} reason={}",
+            is ProbeOutcome.Unavailable -> log.warn("Solana check failed: the provider is unavailable. operation={} host={} outcome={} reason={}",
                 operation, probe.host, failure.status, failure.reason)
         }
     }

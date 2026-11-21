@@ -16,6 +16,7 @@ import com.trenching.bot.chaincapture.SignatureListing
 import com.trenching.bot.chaincapture.SignatureListingEntry
 import com.trenching.bot.chaincapture.SolanaReadRpc
 import com.trenching.bot.chaincapture.SolanaRpcSettings
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.protocol.solana.SolanaPrograms
 import com.trenching.bot.walletactivity.*
@@ -39,7 +40,7 @@ internal class WalletHistoryCaptureService(
     private val log = LoggerFactory.getLogger(WalletHistoryCaptureService::class.java)
     private val store = WalletHistoryArtifactStore(objectMapper)
     private val evidence = WalletTransactionEvidence()
-    private val detailBatches = DetailBatches(BoundedParallelFetch(), observer, concurrency, WalletCaptureFormat.DETAIL_CHECKPOINT_INTERVAL, "wallet_capture")
+    private val detailBatches = DetailBatches(BoundedParallelFetch(), observer, concurrency, WalletCaptureFormat.DETAIL_CHECKPOINT_INTERVAL, "Wallet capture")
     private val verification = WalletTokenVerificationCapture(rpc, store, CapturedArtifactReader(store, PumpFunBuyDecoder()), concurrency, observer)
 
     override fun capture(request: WalletHistoryCaptureRequest): WalletHistoryCaptureResult {
@@ -82,7 +83,7 @@ internal class WalletHistoryCaptureService(
             apply = { manifest, batch -> withDetails(request, manifest, batch.completed, batch.unavailable) },
             checkpoint = { checkpoint(request, usage(it, budget), budget) },
             report = { phase ->
-                log.info("wallet_capture details wallet={} scope={} requestsSent={} cacheHits={} rateLimitedResponses={} retries={} elapsedMs={} concurrency={}",
+                log.debug("Wallet transaction fetch phase finished. wallet={} scope={} requestsSent={} cacheHits={} rateLimitedResponses={} retries={} elapsedMs={} concurrency={}",
                     saved.wallet, saved.scope, phase.requestsSent, phase.cacheHits, phase.rateLimitedResponses, phase.retries, phase.elapsed.toMillis(), concurrency)
             },
         )
@@ -134,7 +135,7 @@ internal class WalletHistoryCaptureService(
     private fun tokenProgram(mint: MintAddress, budget: CaptureBudget): String {
         val owner = ChainCaptureReads.mintOwner(rpc, mint.value, budget)
         if (owner !in SolanaPrograms.TOKEN_PROGRAMS) throw CaptureValidationException("MINT_PROGRAM_UNSUPPORTED")
-        log.info("wallet_capture token_program mint={} tokenProgram={}", mint.value, owner)
+        log.debug("Token program of the target mint read. mint={} tokenProgram={}", mint.value, owner)
         return owner
     }
 
@@ -144,11 +145,11 @@ internal class WalletHistoryCaptureService(
             val page = try {
                 ChainCaptureReads.signaturePage(rpc, manifest.listingAddress, before = manifest.scanCursor?.signature, until = null, budget)
             } catch (exception: CaptureProviderException) {
-                log.warn("wallet_capture discovery interrupted category={}", exception.category)
+                logListingInterrupted(exception.category)
                 stop.record(exception.category, exception.retryAfter)
                 return manifest
             } catch (exception: CaptureBudgetException) {
-                log.warn("wallet_capture discovery interrupted category={}", exception.category)
+                logListingInterrupted(exception.category)
                 stop.record(exception.category)
                 return manifest
             }
@@ -161,6 +162,9 @@ internal class WalletHistoryCaptureService(
         }
         return stopped(manifest, WalletHistoryDiscoveryStop.SCAN_BOUND)
     }
+
+    private fun logListingInterrupted(category: String) =
+        log.debug("Wallet history listing was interrupted; saved progress is kept and a later pass resumes it. category={}", category)
 
     // Discovery only checkpoints after full pages, so an incomplete scan always covers whole pages.
     private fun scannedPages(manifest: WalletHistoryManifest): Int = manifest.scannedSignatures / ChainCaptureFormat.SIGNATURE_PAGE_SIZE
@@ -194,11 +198,16 @@ internal class WalletHistoryCaptureService(
         val manifest = usage(saved, budget)
         val complete = manifest.complete
         checkpoint(request, manifest, budget)
-        log.info("wallet_capture finished scope={} selected={} scanned={} skippedFailed={} discoveryStop={} complete={} requests={} bytes={} stopReason={}",
-            manifest.scope, manifest.selection.size, manifest.scannedSignatures, manifest.skippedFailed, manifest.discoveryStop, complete, budget.requestsUsed, budget.bytesUsed,
-            stop.reason)
+        val outcome = when {
+            stop.reason != null -> LogLine("Wallet capture stopped early; saved progress is kept.")
+            complete -> LogLine("Wallet capture finished: every selected transaction is fetched.")
+            else -> LogLine("Wallet capture finished with transactions still to fetch.")
+        }
+        outcome.field("scope", manifest.scope).field("selected", manifest.selection.size).field("scanned", manifest.scannedSignatures)
+            .field("skippedFailed", manifest.skippedFailed).field("discoveryStop", manifest.discoveryStop).field("requests", budget.requestsUsed)
+            .field("bytes", budget.bytesUsed).field("code", stop.reason).debug(log)
         if (WalletHistoryCompletion.historyNotExhausted(manifest)) {
-            log.warn("wallet_capture history_not_exhausted scope={} discoveryStop={} selected={} limit={} scanned={} scanPageLimit={}",
+            log.warn("Wallet history was cut off by the sample or page limit, so older transactions may exist; resuming cannot finish it. scope={} discoveryStop={} selected={} limit={} scanned={} scanPageLimit={}",
                 manifest.scope, manifest.discoveryStop, manifest.selection.size, manifest.limit, manifest.scannedSignatures, manifest.scanPageLimit)
         }
         return WalletHistoryCaptureResult(request.directory.toAbsolutePath().normalize(), manifest, stop.reason, stop.retryAfter)

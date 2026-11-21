@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationIds
 import com.trenching.bot.console.automation.domain.AutomationSessionState
@@ -124,8 +125,11 @@ class AutomationDiscoveryTransaction(
         created.forEach { it.sessionId = open.current(it.sessionId) }
         writer.saveNew(created, now, replaces)
         val advanced = moveWatermark(batch, now)
-        opened.forEach { log.info("automation session opened sessionId={} wallet={} firstItemId={}", it.id, it.wallet, it.firstItemId) }
-        created.forEach { log.info("automation item discovered itemId={} sessionId={} mint={} state={}", it.id, it.sessionId, it.mint, it.state) }
+        opened.forEach { session ->
+            val line = LogLine("Session opened.").field("sessionId", session.id).field("wallet", session.wallet)
+                .field("items", created.count { it.sessionId == session.id }).field("firstBuyAt", session.firstBuyAt).field("lastBuyAt", session.lastBuyAt)
+            AfterCommit.run { line.info(log) }
+        }
         return DiscoveryRecord(created.size, belowFilter, opened.size, advanced)
     }
 
@@ -139,7 +143,9 @@ class AutomationDiscoveryTransaction(
         val current = watermarks.findOneByWallet(wallet)?.takeIf { it.coveredFrom == null } ?: return
         val discoveryBegan = sessions.findEarliestCreatedAt(wallet) ?: current.updatedAt
         current.coveredFrom = discoveryBegan.minus(initialLookback)
-        log.info("automation coverage start set, the watermark had none wallet={} coveredFrom={}", wallet, current.coveredFrom)
+        val line = LogLine("Start of the covered days set: none was stored for the wallet, so the start of its first scan's lookback stands in.").field("wallet", wallet)
+            .field("coveredFrom", current.coveredFrom)
+        AfterCommit.run { line.info(log) }
     }
 
     /** The scan's buys the capture filter passes, oldest first. */
@@ -161,8 +167,8 @@ class AutomationDiscoveryTransaction(
     private fun replaceable(known: AutomationItemEntity, open: OpenSessions, earliest: DiscoveryCursor): Boolean {
         if (!writer.isUntouched(known, earliest)) return false
         if (open.isOpen(known.sessionId) || writer.isUntimed(known) && isClosing(known.sessionId)) return true
-        log.warn("automation earlier buy found after its item's session stopped taking buys, item kept itemId={} sessionId={} mint={} earlierSignature={}",
-            known.id, known.sessionId, known.mint, earliest.signature)
+        LogLine("Earlier buy of the token found after its stored buy's session stopped taking buys; the stored buy is kept.").field("itemId", known.id)
+            .field("sessionId", known.sessionId).field("mint", known.mint).field("wallet", known.wallet).field("earlierSignature", earliest.signature).warn(log)
         return false
     }
 

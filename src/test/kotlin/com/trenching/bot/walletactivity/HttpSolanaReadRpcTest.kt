@@ -1,5 +1,6 @@
 package com.trenching.bot.walletactivity
 
+import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.Logger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
@@ -401,17 +402,53 @@ class HttpSolanaReadRpcTest {
                 ), mapper, clock, timing, legacyPacing(timing))
                 val logs = ListAppender<ILoggingEvent>().also { it.start() }
                 val logger = LoggerFactory.getLogger(HttpSolanaReadRpc::class.java) as Logger
+                val levelBefore = logger.level
+                logger.level = Level.DEBUG
                 logger.addAppender(logs)
                 try {
                     val failure = assertFailsWith<CaptureProviderException> { client.call("getGenesisHash", emptyList(), budget) }
                     assertEquals("IO", failure.category)
-                } finally { logger.detachAppender(logs) }
+                } finally { logger.detachAppender(logs); logger.level = levelBefore }
                 assertEquals(3, budget.requestsUsed)
                 val messages = logs.list.map { it.formattedMessage }
                 assertEquals(3, messages.count { Regex("cause=\\w*Timeout\\w*Exception\\b").containsMatchIn(it) }, messages.toString())
-                assertTrue(messages.any { it.startsWith("chain_capture rpc_failed operation=getGenesisHash category=IO") }, messages.toString())
+                assertEquals(listOf(Level.DEBUG, Level.DEBUG, Level.WARN), logs.list.map { it.level }, "retries are DEBUG; only the failure after the last attempt is a WARN")
+                assertEquals(listOf("RPC call will be retried. operation=getGenesisHash category=IO"), messages.take(1).map { it.substringBefore(" cause=") })
+                assertTrue(messages.take(2).all { it.endsWith(" attempt=1/3") || it.endsWith(" attempt=2/3") }, messages.toString())
+                assertTrue(messages.last().startsWith("RPC call failed after 3 attempts: the connection to the provider failed. operation=getGenesisHash category=IO"), messages.toString())
+                assertTrue(messages.last().endsWith(" attempts=3"), messages.toString())
                 assertTrue(messages.none { "127.0.0.1" in it }, "the endpoint never reaches the log")
             } finally { release.countDown() }
+        }
+    }
+
+    @Test
+    fun `an answer the callers read as an answer is logged at debug, any other failure after a single attempt is a warning that says one attempt`() {
+        val answers = mapOf(
+            """{"jsonrpc":"2.0","id":1,"error":{"code":-32007,"message":"Slot 1 was skipped"}}""" to Level.DEBUG,
+            """{"jsonrpc":"2.0","id":1,"error":{"code":-32015,"message":"Unsupported version"}}""" to Level.DEBUG,
+            """{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params"}}""" to Level.WARN,
+        )
+        answers.forEach { (body, level) ->
+            fakeServer { exchange ->
+                val bytes = body.toByteArray()
+                exchange.sendResponseHeaders(200, bytes.size.toLong())
+                exchange.responseBody.use { it.write(bytes) }
+            }.use { server ->
+                val logs = ListAppender<ILoggingEvent>().also { it.start() }
+                val logger = LoggerFactory.getLogger(HttpSolanaReadRpc::class.java) as Logger
+                val levelBefore = logger.level
+                logger.level = Level.DEBUG
+                logger.addAppender(logs)
+                try {
+                    assertFailsWith<CaptureProviderException>(body) { rpc(server).call("getTransaction", emptyList(), CaptureBudget(1, 1024)) }
+                } finally { logger.detachAppender(logs); logger.level = levelBefore }
+
+                val event = logs.list.single()
+                assertEquals(level, event.level, body)
+                assertTrue(event.formattedMessage.startsWith("RPC call failed after 1 attempt: "), event.formattedMessage)
+                assertTrue(event.formattedMessage.contains(" operation=getTransaction "), event.formattedMessage)
+            }
         }
     }
 

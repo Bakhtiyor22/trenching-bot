@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.application
 
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationOperationOutcome
 import com.trenching.bot.console.automation.domain.AutomationOperationRef
@@ -26,11 +27,13 @@ class AutomationCaptureCancellation(private val operations: CaptureOperationServ
                 AutomationOperationOutcome.RUNNING, AutomationOperationOutcome.PAUSED -> Unit
             }
             val cancelled = operations.control(operation.captureSessionId, operation.operationId, CANCEL, operation.cancelRequestId)
-            log.info("automation operation cancelled itemId={} operationId={} state={}", operation.itemId, operation.operationId, cancelled.state)
+            LogLine("Capture operation cancelled: no buy follows it any more.").field("itemId", operation.itemId).field("operationId", operation.operationId)
+                .field("state", cancelled.state).info(log)
         } catch (e: CaptureRequestException) {
-            log.warn("automation operation cancel refused itemId={} operationId={} code={}", operation.itemId, operation.operationId, e.code)
+            LogLine("Capture operation cancel was refused by the capture console; the operation is left as it is.").field("code", e.code)
+                .field("itemId", operation.itemId).field("operationId", operation.operationId).warn(log)
         } catch (e: Exception) {
-            log.error("automation operation cancel failed itemId={} operationId={}", operation.itemId, operation.operationId, e)
+            LogLine("Unexpected error while cancelling a capture operation.").field("itemId", operation.itemId).field("operationId", operation.operationId).error(log, e)
         }
     }
 

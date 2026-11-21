@@ -16,6 +16,7 @@ import com.trenching.bot.chaincapture.ParallelFetchResult
 import com.trenching.bot.chaincapture.SignatureListing
 import com.trenching.bot.chaincapture.SignatureListingEntry
 import com.trenching.bot.chaincapture.SolanaReadRpc
+import com.trenching.bot.common.LogLine
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.walletactivity.AccumulatorScan
 import com.trenching.bot.walletactivity.ActualFirstBuy
@@ -73,7 +74,7 @@ internal class WalletTokenVerificationCapture(
         val verification = manifest.verification ?: VerificationStart.of(wallet,
             ActualFirstBuyVerification.target(assessment.tokenAccountFirstBuy(manifest, artifacts.inspected))).also {
             manifest = checkpoint(manifest.copy(verification = it))
-            log.info("wallet_capture verification_started wallet={} mint={} firstBuy={}", wallet.value, target.mint.value, it.firstBuy?.signature)
+            LogLine("First-buy verification started.").field("wallet", wallet.value).field("mint", target.mint.value).field("firstBuy", it.firstBuy?.signature).debug(log)
         }
         val firstBuy = verification.firstBuy ?: return manifest
         if (verification.result != null) return manifest
@@ -97,7 +98,7 @@ internal class WalletTokenVerificationCapture(
 
         fun execute(): WalletHistoryManifest = try { loop() } finally {
             if (measurements.batches > 0) {
-                log.info("wallet_capture verification_details wallet={} mint={} requestsSent={} cacheHits={} rateLimitedResponses={} retries={} elapsedMs={} concurrency={}",
+                log.debug("First-buy verification fetch phase finished. wallet={} mint={} requestsSent={} cacheHits={} rateLimitedResponses={} retries={} elapsedMs={} concurrency={}",
                     manifest.wallet, target.mint.value, measurements.total.requestsSent, measurements.total.cacheHits, measurements.total.rateLimitedResponses,
                     measurements.total.retries, measurements.total.elapsed.toMillis(), concurrency)
             }
@@ -109,7 +110,7 @@ internal class WalletTokenVerificationCapture(
                 val verdict = ActualFirstBuyVerification.verdict(verification, firstBuy, kinds)
                 if (verdict != ActualFirstBuy.NotVerified) {
                     save(verification.copy(result = ActualFirstBuyVerification.stored(verdict)))
-                    log.info("wallet_capture verification_finished wallet={} mint={} fetches={} result={}",
+                    log.debug("First-buy verification finished. wallet={} mint={} fetches={} result={}",
                         manifest.wallet, target.mint.value, verification.fetches, verdict)
                     return manifest
                 }
@@ -335,7 +336,7 @@ internal class WalletTokenVerificationCapture(
         }
 
         private fun interrupted(category: String): WalletHistoryManifest {
-            log.warn("wallet_capture verification interrupted category={} wallet={}", category, manifest.wallet)
+            log.debug("First-buy verification was interrupted; saved progress is kept and a later pass resumes it. category={} wallet={}", category, manifest.wallet)
             stop.record(category)
             return manifest
         }

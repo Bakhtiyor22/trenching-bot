@@ -185,7 +185,7 @@ class OutcomeBoundedCaptureTest {
         assertNull(manifest.windows.single().throughBlockTime)
         assertTrue(manifest.complete)
         assertTrue(logs.list.none { it.level == Level.ERROR })
-        assertEquals(listOf(SLOT + 99, SLOT + 199).map { "market_capture cutoff block_time_unavailable mint=$MINT slot=$it category=BLOCK_TIME_RESPONSE" },
+        assertEquals(listOf(SLOT + 99, SLOT + 199).map { "Block time is unavailable, so the window's exit cutoff stays undecided and the capture continues in full. mint=$MINT slot=$it category=BLOCK_TIME_RESPONSE" },
             logs.list.filter { it.level == Level.WARN }.map { it.formattedMessage })
     }
 

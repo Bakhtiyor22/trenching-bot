@@ -5,6 +5,7 @@ import com.trenching.bot.console.automation.AutomationFixtures.WALLET
 import com.trenching.bot.console.automation.AutomationFixtures.buy
 import com.trenching.bot.console.automation.AutomationFixtures.properties
 import com.trenching.bot.console.automation.application.AutomationCaptureCancellation
+import com.trenching.bot.console.automation.application.AutomationHolds
 import com.trenching.bot.console.automation.application.AutomationPipelineService
 import com.trenching.bot.console.automation.application.AutomationRetryService
 import com.trenching.bot.console.automation.application.AutomationRetryTransaction
@@ -59,6 +60,7 @@ class AutomationRetryServiceTest : AutomationDatabaseTest() {
     @Autowired private lateinit var transactionManager: PlatformTransactionManager
 
     private val clock = MutableClock(EVENING)
+    private val holds = AutomationHolds(clock)
     private val usage = FakeApiUsageReports()
     private val lookup = FakeWalletActivityLookup()
     private val properties = properties(captureEnabled = true)
@@ -613,7 +615,7 @@ class AutomationRetryServiceTest : AutomationDatabaseTest() {
     }
 
     private fun pipeline() = AutomationPipelineService(pipelineTransaction, discoveryTransaction, capture.sessions, capture.operations, capture.datasets,
-        AutomationCaptureCancellation(capture.operations), AutomationCaptureRequestMapperImpl(), usage, properties, clock)
+        AutomationCaptureCancellation(capture.operations), AutomationCaptureRequestMapperImpl(), usage, properties, holds, clock)
 
     private fun ticks(count: Int) = repeat(count) {
         pipeline().advance()
