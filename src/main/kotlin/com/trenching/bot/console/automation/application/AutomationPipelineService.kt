@@ -54,6 +54,9 @@ import org.springframework.stereotype.Service
  * block time plus `market-delay`; wallet and market operations start only within the rolling request cap (a backfill's item also
  * leaves `backfill-reserve-requests` of it free) and, for a backfill's item, its backfill's own request budget: an item the budget cannot cover ends `FAILED` with `BACKFILL_BUDGET` (a retried item is exempt). Each item is handled on its own: an unexpected failure is logged and the tick goes on.
  *
+ * A market operation lists under `market-max-transactions`: a window holding more trades ends it `OVER_CAP` before any is fetched,
+ * and the item fails at once, since another attempt lists the same trades.
+ *
  * The capture console's refusals: `CAPTURE_BUSY` and `NOT_CONFIGURED` leave the item waiting with no attempt charged (the
  * latter logged once per tick); `CAPTURE_NOT_FOUND`, a capture session or operation deleted from the console, fails the item
  * at once; any other refusal is a failed attempt. An operation started for an item that changed meanwhile, for example one a
@@ -209,7 +212,7 @@ class AutomationPipelineService(
     private fun start(item: AutomationDueItem, step: AutomationStep, recovery: CaptureRecoveryConfig?, now: Instant): AutomationStepOutcome {
         val sessionId = captureSession(item)
         val request = requests.operation(requestId(item), captureStep(step), attemptId(captureSessions.find(sessionId), step),
-            properties.captureBudget(), recovery)
+            properties.captureBudget(), recovery, properties.marketMaxTransactions.takeIf { step == AutomationStep.MARKET })
         val operation = try {
             operations.start(sessionId, request)
         } catch (e: CaptureRequestException) {

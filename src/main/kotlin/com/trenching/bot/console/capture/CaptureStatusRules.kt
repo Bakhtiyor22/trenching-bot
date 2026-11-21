@@ -16,6 +16,7 @@ import com.trenching.bot.console.capture.CaptureStepStage.DATASET
 import com.trenching.bot.console.capture.CaptureStepStage.MARKETS
 import com.trenching.bot.console.capture.CaptureStepStage.RATES
 import com.trenching.bot.console.capture.CaptureStepStage.WALLET
+import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.replay.CaptureStageState
 import com.trenching.bot.walletactivity.TokenAccountGap
 
@@ -27,7 +28,7 @@ object CaptureStatusRules {
     private val ACQUISITION_STAGES = listOf(WALLET, MARKETS, RATES)
     private val LIMIT_STOPS = setOf("REQUESTS", "BYTES", "RESPONSE_BYTES")
     private const val DEADLINE_STOP = "DEADLINE"
-    private val UNRESUMABLE_STOP = TokenAccountGap.HISTORY_NOT_EXHAUSTED.name
+    private val UNRESUMABLE_STOPS = setOf(TokenAccountGap.HISTORY_NOT_EXHAUSTED.name, MarketWindowCoverage.OVER_CAP.name)
     private const val PERCENT = 100L
 
     private enum class OperationState {
@@ -70,7 +71,7 @@ object CaptureStatusRules {
         return when (operation.code) {
             DEADLINE_STOP -> Verdict(CaptureSummaryStatus.STOPPED_DEADLINE, reason, stage, resume, operation)
             in LIMIT_STOPS -> Verdict(CaptureSummaryStatus.STOPPED_LIMIT, reason, stage, resume, operation)
-            UNRESUMABLE_STOP -> Verdict(CaptureSummaryStatus.NEEDS_ATTENTION, reason, stage, action(INSPECT, stage), operation)
+            in UNRESUMABLE_STOPS -> Verdict(CaptureSummaryStatus.NEEDS_ATTENTION, reason, stage, action(INSPECT, stage), operation)
             else -> Verdict(CaptureSummaryStatus.NEEDS_ATTENTION, reason, stage, resume, operation)
         }
     }

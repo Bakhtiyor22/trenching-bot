@@ -623,8 +623,13 @@ class CaptureOperationServiceTest {
     private val walletReady = CaptureStageSummary(CaptureStageState.READY)
     private val marketStartable = FakeCaptureWorkflow.inspection(walletReady, CaptureStageSummary(CaptureStageState.NOT_STARTED, canStart = true))
 
-    private fun CaptureConsoleFixture.market(requestId: String, cutoffMode: String? = null) =
-        operations.start("session-1", CaptureOperationRequest(requestId, CaptureNames.MARKET, store.session("session-1").marketAttemptId, cutoffMode = cutoffMode))
+    private fun CaptureConsoleFixture.market(requestId: String, cutoffMode: String? = null, maxTransactions: Int? = null, recovery: CaptureRecoveryConfig? = null) =
+        operations.start("session-1", CaptureOperationRequest(requestId, CaptureNames.MARKET, store.session("session-1").marketAttemptId,
+            cutoffMode = cutoffMode, maxTransactions = maxTransactions, recovery = recovery))
+
+    private fun CaptureConsoleFixture.marketBounds() = workflow.executed.filterIsInstance<CaptureStepCommand.Markets>().map { it.request.maxTransactions }
+
+    private val oneWindow = MarketCaptureWindow.of(MintAddress.of(CaptureTokenFixtures.MINT), Slot.of(101), Slot.of(4600), TransactionSignature.of("1".repeat(64)))
 
     private fun CaptureConsoleFixture.marketModes() = workflow.executed.filterIsInstance<CaptureStepCommand.Markets>().map { it.request.cutoffMode }
 
@@ -651,6 +656,59 @@ class CaptureOperationServiceTest {
             fixture.workflow.executed.filterIsInstance<CaptureStepCommand.Markets>().map { it.request.usage })
         assertEquals("DECIDED", fixture.operations.find("session-1", "market-1").cutoffMode)
         assertEquals("FULL", fixture.operations.find("session-1", "market-2").cutoffMode)
+    }
+
+    @Test
+    fun `a market operation lists under the request's transaction bound, and a capture that already listed keeps the bound it listed under`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        fixture.workflow.inspection = marketStartable
+        fixture.workflow.marketResult = MarketHistoryCaptureResult(root, ReplayMarketFixtures.manifest(listOf(oneWindow)))
+
+        fixture.market("market-1", maxTransactions = 2000)
+        fixture.executor.runAll()
+        fixture.workflow.inspection = marketStartable.copy(
+            marketCapture = MarketHistoryCaptureResult(root, ReplayMarketFixtures.manifest(listOf(oneWindow)).copy(maxTransactions = 50_000)))
+        fixture.market("market-2")
+        fixture.executor.runAll()
+        fixture.market("market-3", maxTransactions = 2000)
+        fixture.executor.runAll()
+
+        assertEquals(listOf(2000, 50_000, 50_000), fixture.marketBounds())
+        assertEquals(listOf(2000, 50_000, 50_000), listOf("market-1", "market-2", "market-3").map { fixture.operations.find("session-1", it).maxTransactions })
+    }
+
+    @Test
+    fun `a market transaction bound is a per-field error when out of range or sent with a step other than MARKET`() {
+        val fixture = CaptureConsoleFixture(root).apply { createToken() }
+        val attemptId = fixture.store.session("session-1").marketAttemptId
+
+        val refusals = listOf(
+            failure { fixture.market("market-1", maxTransactions = 0) },
+            failure { fixture.market("market-2", maxTransactions = 50_001) },
+            failure { fixture.operations.start("session-1", CaptureOperationRequest("inspect-1", CaptureNames.INSPECT, attemptId, maxTransactions = 2000)) },
+        )
+
+        assertEquals(List(3) { 400 to setOf("maxTransactions") }, refusals.map { it.status to it.fields.keys })
+        assertTrue(fixture.executor.queued.isEmpty())
+    }
+
+    @Test
+    fun `a market window listing more trades than the bound ends the operation incomplete with OVER_CAP, which recovery does not retry`() {
+        val scheduler = ManualCaptureRetryScheduler()
+        val fixture = CaptureConsoleFixture(root, retryScheduler = scheduler).apply { createToken() }
+        fixture.workflow.inspection = marketStartable
+        val listed = ReplayMarketFixtures.manifest(listOf(oneWindow), firstCoverage = MarketWindowCoverage.OVER_CAP)
+        fixture.workflow.marketResult = MarketHistoryCaptureResult(root, listed.copy(maxTransactions = 2000, windows = listed.windows.map { it.copy(selected = 2001) }))
+
+        val accepted = fixture.market("market-1", maxTransactions = 2000,
+            recovery = CaptureRecoveryConfig(totalRequestBudget = 1200, totalByteBudget = 300_000_000, maxAttempts = 3))
+        fixture.executor.runAll()
+
+        val finished = fixture.operations.find("session-1", accepted.id)
+        assertEquals(CaptureNames.INCOMPLETE, finished.state)
+        assertEquals(MarketWindowCoverage.OVER_CAP.name, finished.code)
+        assertTrue(finished.message.orEmpty().contains("2000"), finished.message)
+        assertTrue(scheduler.pending.isEmpty())
     }
 
     @Test

@@ -37,6 +37,20 @@ class AutomationItemProgressTest {
     }
 
     @Test
+    fun `a market window over the item's transaction bound fails the item at once, whatever attempts are left`() {
+        val market = wallet.copy(step = AutomationStep.MARKET, operationId = "auto-market-a-1")
+
+        val failed = market.failed(AutomationFailures.OVER_CAP, "Too many trades", maxAttempts = 2, now = now)
+
+        assertEquals(AutomationItemState.FAILED, failed.state)
+        assertEquals(AutomationStep.MARKET, failed.step)
+        assertEquals(1, failed.stepAttempt)
+        assertEquals("auto-market-a-1", failed.operationId)
+        assertEquals(AutomationFailures.OVER_CAP, failed.failureCode)
+        assertNull(failed.nextActionAt)
+    }
+
+    @Test
     fun `a discovered item's refused session creation is its first attempt`() {
         val discovered = AutomationItemProgress(AutomationItemState.DISCOVERED, null, 0, null, null, null, null, null, null, now)
 

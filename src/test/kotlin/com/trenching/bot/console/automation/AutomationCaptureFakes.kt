@@ -23,6 +23,8 @@ import com.trenching.bot.console.capture.ManualExecutor
 import com.trenching.bot.console.mapper.CaptureResponseMapperImpl
 import com.trenching.bot.marketdata.MarketCaptureWindow
 import com.trenching.bot.marketdata.MarketHistoryCaptureResult
+import com.trenching.bot.marketdata.MarketHistoryManifest
+import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.marketdata.ReferenceRateCaptureResult
 import com.trenching.bot.marketdata.ReferenceRateManifest
 import com.trenching.bot.replay.CaptureInspection
@@ -63,6 +65,9 @@ class ScriptedCaptureWorkflow : CaptureWorkflow {
     var verdictClassification = CaseClassification.INCOMPLETE_CAPTURE
     var qualifyClassification = CaseClassification.QUALIFYING_DIP
 
+    /** Market commands list more trades than their bound, so their window ends over cap with nothing fetched. */
+    var marketOverCap = false
+
     /** The next [times] commands of [kind] fail with the capture category [code]. */
     fun fail(kind: KClass<out CaptureStepCommand>, code: String, times: Int = 1) {
         repeat(times) { failures.getOrPut(kind) { ArrayDeque() }.addLast(code) }
@@ -75,9 +80,7 @@ class ScriptedCaptureWorkflow : CaptureWorkflow {
             is CaptureStepCommand.Inspect -> CaptureStepResult.Inspected(inspect(command.paths))
             is CaptureStepCommand.Wallet -> CaptureStepResult.Wallet(WalletHistoryCaptureResult(command.request.directory,
                 CaptureTokenFixtures.manifest(WalletHistoryScope.WALLET_TOKEN_ACCOUNT, CaptureTokenFixtures.MINT)))
-            is CaptureStepCommand.Markets -> CaptureStepResult.Markets(MarketHistoryCaptureResult(command.request.directory,
-                ReplayMarketFixtures.manifest(listOf(MarketCaptureWindow.of(MintAddress.of(CaptureTokenFixtures.MINT), Slot.of(101), Slot.of(4600),
-                    TransactionSignature.of("1".repeat(64)))))))
+            is CaptureStepCommand.Markets -> CaptureStepResult.Markets(MarketHistoryCaptureResult(command.request.directory, marketManifest(command.request.maxTransactions)))
             is CaptureStepCommand.Rates -> CaptureStepResult.Rates(ReferenceRateCaptureResult(command.directory,
                 ReferenceRateManifest(1, "2026-11-02T15:40:00Z", emptyList(), true)))
             is CaptureStepCommand.Export -> {
@@ -90,6 +93,14 @@ class ScriptedCaptureWorkflow : CaptureWorkflow {
         }
     }
 
+    /** The capture of one window; over cap, it lists [OVER_CAP_SELECTED] trades under the command's [maxTransactions] and fetches none. */
+    private fun marketManifest(maxTransactions: Int): MarketHistoryManifest {
+        val window = MarketCaptureWindow.of(MintAddress.of(CaptureTokenFixtures.MINT), Slot.of(101), Slot.of(4600), TransactionSignature.of("1".repeat(64)))
+        if (!marketOverCap) return ReplayMarketFixtures.manifest(listOf(window))
+        val overCap = ReplayMarketFixtures.manifest(listOf(window), firstCoverage = MarketWindowCoverage.OVER_CAP)
+        return overCap.copy(maxTransactions = maxTransactions, windows = overCap.windows.map { it.copy(selected = OVER_CAP_SELECTED) })
+    }
+
     override fun inspect(paths: CapturePaths): CaptureInspection = CaptureInspection(STARTABLE, STARTABLE, STARTABLE, canCalibrate = false, canExport = true)
 
     override fun verdict(inspection: CaptureInspection, datasetExported: Boolean): TargetTokenVerdict =
@@ -97,6 +108,7 @@ class ScriptedCaptureWorkflow : CaptureWorkflow {
 
     private companion object {
         const val EXPORTED = """{"schemaVersion":6}"""
+        const val OVER_CAP_SELECTED = 14_593
         val STARTABLE = CaptureStageSummary(CaptureStageState.NOT_STARTED, canStart = true)
     }
 }

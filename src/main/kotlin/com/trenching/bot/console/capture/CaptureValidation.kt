@@ -11,7 +11,10 @@ import java.time.ZoneOffset
 
 object CaptureValidation {
     const val WALLET_REQUESTS_MAX = 1000L
-    val bounds = mapOf("walletLimitMax" to WalletHistoryCaptureLimits.MAX_TRANSACTIONS.toLong(), "walletPagesMax" to 50L, "walletRequestsMax" to WALLET_REQUESTS_MAX, "walletBytesMax" to 524288000L, "marketPagesMax" to 500L, "marketTransactionsMax" to 50000L, "marketRequestsMax" to 60000L, "marketBytesMax" to 4294967296L, "operationTimeoutMinutesMax" to SolanaRpcSettings.MAX_OPERATION_TIMEOUT_MINUTES, "recoveryRequestsMax" to 60000L, "recoveryBytesMax" to 4294967296L, "recoveryAttemptsMax" to 8L)
+    const val MARKET_TRANSACTIONS_MAX = 50000L
+    /** The market transaction bound's field, also its key in a market inspection summary. */
+    const val MAX_TRANSACTIONS = "maxTransactions"
+    val bounds = mapOf("walletLimitMax" to WalletHistoryCaptureLimits.MAX_TRANSACTIONS.toLong(), "walletPagesMax" to 50L, "walletRequestsMax" to WALLET_REQUESTS_MAX, "walletBytesMax" to 524288000L, "marketPagesMax" to 500L, "marketTransactionsMax" to MARKET_TRANSACTIONS_MAX, "marketRequestsMax" to 60000L, "marketBytesMax" to 4294967296L, "operationTimeoutMinutesMax" to SolanaRpcSettings.MAX_OPERATION_TIMEOUT_MINUTES, "recoveryRequestsMax" to 60000L, "recoveryBytesMax" to 4294967296L, "recoveryAttemptsMax" to 8L)
     private const val NAME_FIELD = "name"
     fun wallet(value: CaptureWalletSettings) {
         walletAddress(value.wallet)
@@ -32,7 +35,8 @@ object CaptureValidation {
         try { ZoneId.of(it) } catch (_: DateTimeException) { invalid("timeZone", "must be an IANA time zone such as Europe/Berlin") }
     } ?: ZoneOffset.UTC
     fun nameTaken(suggestion: String): Nothing = throw CaptureRequestException(409, "NAME_TAKEN", "Capture name is already taken", mapOf(NAME_FIELD to "is already taken"), suggestion)
-    fun market(value: CaptureMarketSettings) { range("scanPages", value.scanPages.toLong(), 500); range("maxTransactions", value.maxTransactions.toLong(), 50000) }
+    fun market(value: CaptureMarketSettings) { range("scanPages", value.scanPages.toLong(), 500); marketTransactions(value.maxTransactions) }
+    fun marketTransactions(value: Int) = range(MAX_TRANSACTIONS, value.toLong(), MARKET_TRANSACTIONS_MAX)
     fun budget(step: String, value: CaptureBudget) {
         val wallet = step == CaptureNames.WALLET
         range("requestBudget", value.requestBudget.toLong(), if (wallet) WALLET_REQUESTS_MAX else 60000)

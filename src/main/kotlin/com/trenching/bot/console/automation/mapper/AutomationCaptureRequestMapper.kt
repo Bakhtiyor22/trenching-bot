@@ -30,14 +30,15 @@ interface AutomationCaptureRequestMapper {
     @Mapping(target = "timeZone", ignore = true)
     fun session(requestId: String, wallet: CaptureWalletSettings, cutoffMode: String): CaptureCreateRequest
 
-    /** An operation on the session's current attempt; only wallet and market operations take [recovery]. */
+    /** An operation on the session's current attempt; only wallet and market operations take [recovery], and only market ones [maxTransactions]. */
     @Mapping(target = "requestId", source = "requestId")
     @Mapping(target = "step", source = "step")
     @Mapping(target = "attemptId", source = "attemptId")
     @Mapping(target = "budget", source = "budget")
     @Mapping(target = "recovery", source = "recovery")
+    @Mapping(target = "maxTransactions", source = "maxTransactions")
     @Mapping(target = "scanPages", ignore = true)
     @Mapping(target = "caseId", ignore = true)
     @Mapping(target = "cutoffMode", ignore = true)
-    fun operation(requestId: String, step: String, attemptId: String?, budget: CaptureBudget, recovery: CaptureRecoveryConfig?): CaptureOperationRequest
+    fun operation(requestId: String, step: String, attemptId: String?, budget: CaptureBudget, recovery: CaptureRecoveryConfig?, maxTransactions: Int?): CaptureOperationRequest
 }

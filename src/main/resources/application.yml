@@ -52,6 +52,8 @@ trenching:
       requests: 1200
       bytes: 300MB
       attempts: 3
+    # A buy whose 30-minute market window lists more trades fails OVER_CAP before any is fetched; at most recovery.requests x max-step-attempts.
+    market-max-transactions: 2000
     sweep-plan: decu-sweep-1
     evaluation-window-sessions: 7
     min-signals: 10

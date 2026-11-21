@@ -1,6 +1,11 @@
 package com.trenching.bot.console.automation.domain
 
-/** Failure codes automation sets on an item itself; a failed capture call stores that call's code instead. */
+import com.trenching.bot.marketdata.MarketWindowCoverage
+
+/**
+ * Failure codes automation sets on an item itself; a failed capture call stores that call's code instead. [FINAL_CAPTURE_CODES]
+ * are the capture codes no further attempt can change.
+ */
 object AutomationFailures {
     const val MISSING_BLOCK_TIME = "MISSING_BLOCK_TIME"
 
@@ -12,6 +17,14 @@ object AutomationFailures {
 
     /** A backfill item's capture step would pass its backfill's request budget (plan Rule 39); the item is unscored. */
     const val BACKFILL_BUDGET = "BACKFILL_BUDGET"
+
+    /**
+     * The capture console's code for a market window that lists more trades than `market-max-transactions`: none were fetched, and
+     * another attempt lists the same trades under the same bound.
+     */
+    val OVER_CAP: String = MarketWindowCoverage.OVER_CAP.name
+
+    val FINAL_CAPTURE_CODES: Set<String> = setOf(OVER_CAP)
 
     /** The longest failure message an item stores (plan Rule 17); a longer one is cut. */
     const val MAX_MESSAGE_LENGTH = 512

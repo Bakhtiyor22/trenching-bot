@@ -160,6 +160,7 @@ class CaptureStatusRulesTest {
             Case("wallet done, markets not started", input(walletReady, operation(CaptureNames.WALLET, CaptureNames.SUCCEEDED)), NOT_STARTED, MARKETS, START_MARKETS),
             Case("markets stopped by requests", input(inspection(READY, CaptureStageState.INCOMPLETE), operation(CaptureNames.MARKET, CaptureNames.INCOMPLETE, "REQUESTS")), STOPPED_LIMIT, MARKETS, RESUME_MARKETS),
             Case("markets failed", input(inspection(READY, CaptureStageState.INCOMPLETE), operation(CaptureNames.MARKET, CaptureNames.FAILED, "IO")), NEEDS_ATTENTION, MARKETS, RESUME_MARKETS),
+            Case("markets over cap", input(inspection(READY, CaptureStageState.UNUSABLE), operation(CaptureNames.MARKET, CaptureNames.INCOMPLETE, "OVER_CAP")), NEEDS_ATTENTION, MARKETS, INSPECT),
             Case("markets incomplete after an inspection", input(inspection(READY, CaptureStageState.INCOMPLETE), operation(CaptureNames.INSPECT, CaptureNames.SUCCEEDED)), PAUSED, MARKETS, RESUME_MARKETS),
             Case("markets invalid", input(inspection(READY, CaptureStageState.INVALID), operation(CaptureNames.INSPECT, CaptureNames.SUCCEEDED)), NEEDS_ATTENTION, MARKETS, INSPECT),
             Case("markets unusable", input(inspection(READY, CaptureStageState.UNUSABLE)), NEEDS_ATTENTION, MARKETS, INSPECT),

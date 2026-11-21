@@ -49,12 +49,12 @@ data class AutomationItemProgress(
     )
 
     /**
-     * The current step failed with [code]: it runs again now under the next attempt or, once [maxAttempts] are spent, the item
-     * fails and keeps the failed operation for its audit.
+     * The current step failed with [code]: it runs again now under the next attempt or, once [maxAttempts] are spent or when the
+     * code is one of [AutomationFailures.FINAL_CAPTURE_CODES], the item fails and keeps the failed operation for its audit.
      */
     fun failed(code: String, message: String?, maxAttempts: Int, now: Instant): AutomationItemProgress {
         val failure = copy(step = currentStep, failureCode = code, failureMessage = AutomationFailures.message(message))
-        return if (currentAttempt < maxAttempts) {
+        return if (currentAttempt < maxAttempts && code !in AutomationFailures.FINAL_CAPTURE_CODES) {
             failure.copy(state = AutomationItemState.CAPTURING, stepAttempt = currentAttempt + 1, operationId = null, nextActionAt = now)
         } else {
             failure.copy(state = AutomationItemState.FAILED, stepAttempt = currentAttempt, nextActionAt = null)

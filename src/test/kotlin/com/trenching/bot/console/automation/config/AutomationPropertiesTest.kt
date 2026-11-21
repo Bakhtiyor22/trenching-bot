@@ -49,6 +49,7 @@ class AutomationPropertiesTest {
         assertEquals(5000L, properties.maxRequestsPer24h)
         assertEquals(CaptureBudget(400, 104_857_600, 10), properties.captureBudget())
         assertEquals(CaptureRecoveryConfig(1200, 314_572_800, 3), properties.captureRecovery())
+        assertEquals(2000, properties.marketMaxTransactions)
         assertEquals(SweepPlans.DECU_SWEEP_1, properties.activePlan())
         assertEquals(listOf(7, 10), listOf(properties.evaluationWindowSessions, properties.minSignals))
         assertEquals(0, properties.minNetPnlSol.signum())
@@ -82,6 +83,15 @@ class AutomationPropertiesTest {
     fun `the largest backfill budget must pay for a capturing backfill's first operation and discovery page`() {
         assertEquals(1222L, bind(mapOf("backfill-max-requests" to "1222")).backfillRules().captureMinBudget, "1,200 recovery + one page of 22")
         assertTrue(failure(mapOf("backfill-max-requests" to "1221")).contains("backfill-max-requests"))
+    }
+
+    @Test
+    fun `the market transaction bound must fit the market step's whole request allowance, every attempt's recovery`() {
+        val error = failure(mapOf("market-max-transactions" to "2401"))
+
+        assertTrue(error.contains("market-max-transactions") && error.contains("2400"), error)
+        assertEquals(2400, bind(mapOf("market-max-transactions" to "2400")).marketMaxTransactions)
+        assertEquals(3600, bind(mapOf("market-max-transactions" to "3600", "max-step-attempts" to "3")).marketMaxTransactions)
     }
 
     @Test
@@ -185,6 +195,7 @@ class AutomationPropertiesTest {
             "operation-budget.timeout" to "90s", "recovery.attempts" to "9", "evaluation-window-sessions" to "61", "min-signals" to "0", "min-net-pnl-sol" to "-0.1",
             "capture-min-signal-sol" to "0", "backfill-max-days" to "0", "backfill-max-days" to "63", "backfill-max-requests" to "99",
             "backfill-max-requests" to "500001", "backfill-reserve-requests" to "-1", "backfill-reserve-requests" to "5000",
+            "market-max-transactions" to "0",
         ).forEach { (key, value) ->
             assertFailsWith<BindException>("$key=$value") { bind(mapOf(key to value)) }
         }
@@ -201,6 +212,7 @@ class AutomationPropertiesTest {
         properties.maxRequestsPer24h, properties.captureBudget(), properties.captureRecovery(), properties.sweepPlan,
         properties.evaluationWindowSessions, properties.minSignals, properties.minNetPnlSol.signum(), properties.pollAlways,
         properties.tradingDayStart, properties.backfillMaxDays, properties.backfillMaxRequests, properties.backfillReserveRequests,
+        properties.marketMaxTransactions,
     )
 
     private fun failure(values: Map<String, String>): String =

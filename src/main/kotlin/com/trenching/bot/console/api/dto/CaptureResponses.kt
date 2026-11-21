@@ -22,8 +22,12 @@ data class CaptureRecoveryConfig(val totalRequestBudget: Int, val totalByteBudge
         const val DEFAULT_MAX_ATTEMPTS = 3
     }
 }
-/** [cutoffMode] overrides the market attempt's for one MARKET operation; `FULL` on a decided window captures the rest of it. */
-data class CaptureOperationRequest(val requestId: String, val step: String, val attemptId: String? = null, val budget: CaptureBudget = CaptureBudget(), val scanPages: Int? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val recovery: CaptureRecoveryConfig? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val caseId: String? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val cutoffMode: String? = null)
+/**
+ * [cutoffMode] overrides the market attempt's for one MARKET operation; `FULL` on a decided window captures the rest of it.
+ * [maxTransactions] overrides the market attempt's transaction bound for a MARKET operation whose attempt has not listed yet; a
+ * capture that has listed keeps the bound it listed under.
+ */
+data class CaptureOperationRequest(val requestId: String, val step: String, val attemptId: String? = null, val budget: CaptureBudget = CaptureBudget(), val scanPages: Int? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val recovery: CaptureRecoveryConfig? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val caseId: String? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val cutoffMode: String? = null, @get:JsonInclude(JsonInclude.Include.NON_NULL) val maxTransactions: Int? = null)
 data class CaptureOperationControlRequest(val requestId: String)
 data class CaptureCaseCommandRequest(val requestId: String)
 data class CaptureStageResponse(val state: String, val reason: String?, val canStart: Boolean, val canResume: Boolean, val requiresNewAttempt: Boolean)

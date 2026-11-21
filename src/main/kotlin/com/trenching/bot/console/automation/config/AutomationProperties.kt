@@ -33,7 +33,9 @@ import org.springframework.util.unit.DataSize
  * Automated discovery, capture and sweep of one wallet's buys (`docs/plans/archive/20261102-decu-capture-sweep-automation.md`).
  * Nothing runs unless [enabled] and the console is enabled under the local or prod profile; [captureEnabled] false is phase 0,
  * discovery only. [operationBudget] and [recovery] are sent with each wallet and market operation automation starts and must
- * pass the capture console's own bounds for both. Startup fails on any value out of bounds, naming the property.
+ * pass the capture console's own bounds for both. [marketMaxTransactions] is the most trades a buy's market window may list: a
+ * busier window ends over cap after its listing, before any trade is fetched, and the bound stays within what the market step's
+ * attempts may spend. Startup fails on any value out of bounds, naming the property.
  *
  * [pollAlways] makes scheduled discovery scan at every interval; otherwise it scans inside [pollFrom]-[pollTo] only. A trading day
  * starts at [tradingDayStart] in [zone]. [evaluationWindowSessions], kept under its original name, is the number of trading days
@@ -64,6 +66,7 @@ class AutomationProperties(
     val maxRequestsPer24h: Long = 5000,
     val operationBudget: OperationBudget = OperationBudget(),
     val recovery: Recovery = Recovery(),
+    val marketMaxTransactions: Int = 2000,
     val sweepPlan: String = SweepPlans.DECU_SWEEP_1.id,
     val evaluationWindowSessions: Int = 7,
     val minSignals: Int = 10,
@@ -96,6 +99,11 @@ class AutomationProperties(
             CaptureValidation.budget(CaptureNames.MARKET, captureBudget())
         }
         requireCaptureBounds("recovery") { CaptureValidation.recovery(captureRecovery(), CaptureNames.WALLET) }
+        requireCaptureBounds("market-max-transactions") { CaptureValidation.marketTransactions(marketMaxTransactions) }
+        require(marketMaxTransactions <= marketStepRequests()) {
+            "$PREFIX.market-max-transactions must be at most ${marketStepRequests()}, the market step's whole request allowance " +
+                "(recovery.requests times max-step-attempts), so a window within the bound can be fetched"
+        }
         activePlan().requireCaptureMinimumWithin(captureMinSignalSol)
         require(evaluationWindowSessions in 1..MAX_WINDOW_SESSIONS) { "$PREFIX.evaluation-window-sessions (trading days) must be between 1 and $MAX_WINDOW_SESSIONS" }
         require(backfillMaxDays in 1..MAX_BACKFILL_DAYS) { "$PREFIX.backfill-max-days must be between 1 and $MAX_BACKFILL_DAYS" }
@@ -154,6 +162,9 @@ class AutomationProperties(
 
     /** [recovery] in the capture console's request shape. */
     fun captureRecovery(): CaptureRecoveryConfig = CaptureRecoveryConfig(recovery.requests, recovery.bytes.toBytes(), recovery.attempts)
+
+    /** The most one item's market step may spend: one [recovery] allowance for each of its [maxStepAttempts]. */
+    private fun marketStepRequests(): Long = recovery.requests.toLong() * maxStepAttempts
 
     private fun requireWithin(name: String, value: Duration, min: Duration, max: Duration) =
         require(value >= min && value <= max) { "$PREFIX.$name must be between $min and $max" }

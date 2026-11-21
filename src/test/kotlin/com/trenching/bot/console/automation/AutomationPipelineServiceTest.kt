@@ -138,6 +138,28 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
         assertEquals(2, acquisitions.size)
         assertTrue(acquisitions.all { it.budget == properties.captureBudget() })
         assertTrue(acquisitions.all { it.recovery?.totalRequestBudget == properties.recovery.requests && it.recovery.maxAttempts == properties.recovery.attempts })
+        assertEquals(mapOf(CaptureNames.WALLET to null, CaptureNames.MARKET to properties.marketMaxTransactions),
+            acquisitions.associate { it.step to it.maxTransactions })
+        assertEquals(listOf(properties.marketMaxTransactions),
+            capture.workflow.executed.filterIsInstance<CaptureStepCommand.Markets>().map { it.request.maxTransactions })
+    }
+
+    @Test
+    fun `a buy whose market window lists more trades than one buy may fetch fails at once with OVER_CAP after one market operation`() {
+        capture.workflow.marketOverCap = true
+        discover(buy(1, 100, EVENING))
+
+        ticks(5)
+        clock.now = EVENING.plus(MARKET_DELAY)
+        ticks(4)
+
+        val item = item(1)
+        assertEquals(AutomationItemState.FAILED, item.state)
+        assertEquals(AutomationStep.MARKET, item.step)
+        assertEquals(1, item.stepAttempt)
+        assertEquals(AutomationFailures.OVER_CAP, item.failureCode)
+        assertTrue(item.failureMessage.orEmpty().contains("${properties.marketMaxTransactions}"), item.failureMessage)
+        assertEquals(listOf(requestId("market", 1)), operations(item).filter { it.step == CaptureNames.MARKET }.map { it.requestId })
     }
 
     @Test

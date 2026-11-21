@@ -19,7 +19,7 @@ class CaptureInspectionMapper(private val mapper: CaptureResponseMapper) {
         }
         val market = buildMap {
             value.marketCapture?.manifest?.let { manifest ->
-                put("windows", manifest.windows.size.toString()); put("requestsUsed", manifest.requestsUsed.toString()); put("bytesUsed", manifest.bytesUsed.toString()); put("scanPages", manifest.scanPageLimit.toString()); put("maxTransactions", manifest.maxTransactions.toString())
+                put("windows", manifest.windows.size.toString()); put("requestsUsed", manifest.requestsUsed.toString()); put("bytesUsed", manifest.bytesUsed.toString()); put("scanPages", manifest.scanPageLimit.toString()); put(CaptureValidation.MAX_TRANSACTIONS, manifest.maxTransactions.toString())
                 manifest.windows.forEachIndexed { index, window ->
                     val key = "window.$index"
                     put("$key.mint", window.baseMint); put("$key.fromSlot", window.fromSlot.toString()); put("$key.toSlot", window.toSlot.toString()); put("$key.coverage", window.coverage.name); put("$key.scanned", window.scanned.toString()); put("$key.selected", window.selected.toString())

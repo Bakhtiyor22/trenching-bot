@@ -9,6 +9,8 @@ import com.trenching.bot.console.api.dto.*
 import com.trenching.bot.console.mapper.CaptureResponseMapper
 import com.trenching.bot.marketdata.MarketCaptureReasons
 import com.trenching.bot.marketdata.MarketCutoffMode
+import com.trenching.bot.marketdata.MarketHistoryManifest
+import com.trenching.bot.marketdata.MarketWindowCoverage
 import com.trenching.bot.replay.*
 import com.trenching.bot.replay.domain.RecordedReplayExportRequest
 import com.trenching.bot.replay.domain.ReplayMarketCaptureRequest
@@ -228,7 +230,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         val cutoffMode = marketCutoffMode(session, request)
         val at = clock.instant()
         val recovery = request.recovery?.let { CaptureRecoveryRecord(it.totalRequestBudget, it.totalByteBudget, it.maxAttempts) }
-        val operation = CaptureOperationRecord(store.id(request.requestId),request.requestId,fingerprint,request.step,request.attemptId,CaptureNames.RUNNING,at,at,budget=request.budget,scanPages=request.scanPages,walletAttemptId=session.walletAttemptId,marketAttemptId=session.marketAttemptId,ratesAttemptId=session.ratesAttemptId,recovery=recovery,cutoffMode=cutoffMode?.name)
+        val operation = CaptureOperationRecord(store.id(request.requestId),request.requestId,fingerprint,request.step,request.attemptId,CaptureNames.RUNNING,at,at,budget=request.budget,scanPages=request.scanPages,walletAttemptId=session.walletAttemptId,marketAttemptId=session.marketAttemptId,ratesAttemptId=session.ratesAttemptId,recovery=recovery,cutoffMode=cutoffMode?.name,maxTransactions=marketTransactionBound(session, request))
         val reserved = reserve(operation, firstAttempt = true)
         store.save(id,reserved,true)
         store.save(session.copy(operationId=reserved.id))
@@ -239,6 +241,8 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private fun validate(session: CaptureSessionRecord, request: CaptureOperationRequest) {
         if (request.step !in setOf(CaptureNames.WALLET,CaptureNames.MARKET,CaptureNames.RATES,CaptureNames.INSPECT,CaptureNames.EXPORT,CaptureNames.CALIBRATE,CaptureNames.QUALIFY)) CaptureValidation.invalid("step","unsupported operation")
         if (request.cutoffMode != null && request.step != CaptureNames.MARKET) CaptureValidation.invalid(CaptureCutoffModes.FIELD,"only a MARKET operation takes a cutoff mode")
+        if (request.maxTransactions != null && request.step != CaptureNames.MARKET) CaptureValidation.invalid(CaptureValidation.MAX_TRANSACTIONS,"only a MARKET operation takes a transaction bound")
+        request.maxTransactions?.let(CaptureValidation::marketTransactions)
         val selected = when(request.step) { CaptureNames.WALLET -> session.walletAttemptId; CaptureNames.RATES -> session.ratesAttemptId; else -> session.marketAttemptId }
         if (request.attemptId != selected) CaptureValidation.conflict("STALE_ATTEMPT","Select the current capture attempt")
         if (request.step in setOf(CaptureNames.WALLET,CaptureNames.MARKET) && !rpcConfigured) CaptureValidation.conflict("NOT_CONFIGURED","Configure SOLANA_RPC_URL in the backend process")
@@ -262,9 +266,19 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     }
     private fun marketCutoffMode(session: CaptureSessionRecord, request: CaptureOperationRequest): MarketCutoffMode? {
         if (request.step != CaptureNames.MARKET) return null
-        val settings = requireNotNull(store.attempt(session.id, requireNotNull(session.marketAttemptId)).market) { "Market attempt has no settings sessionId=${session.id}" }
-        return CaptureCutoffModes.forOperation(request.cutoffMode, settings, ratesConfigured)
+        return CaptureCutoffModes.forOperation(request.cutoffMode, marketSettings(session), ratesConfigured)
     }
+    /**
+     * The transaction bound a MARKET operation lists under: the one its attempt's capture already listed under, which a resume must
+     * keep, else the request's, else the attempt's own.
+     */
+    private fun marketTransactionBound(session: CaptureSessionRecord, request: CaptureOperationRequest): Int? {
+        if (request.step != CaptureNames.MARKET) return null
+        val listed = session.inspection?.marketSummary?.get(CaptureValidation.MAX_TRANSACTIONS)?.toIntOrNull()
+        return listed ?: request.maxTransactions ?: marketSettings(session).maxTransactions
+    }
+    private fun marketSettings(session: CaptureSessionRecord): CaptureMarketSettings =
+        requireNotNull(store.attempt(session.id, requireNotNull(session.marketAttemptId)).market) { "Market attempt has no settings sessionId=${session.id}" }
     /** Lets the capture see a saved pause or cancel request between detail requests instead of only at its next checkpoint. */
     private fun stoppable(id: String, operationId: String, delegate: CaptureCheckpointObserver) = object : CaptureCheckpointObserver {
         override fun checkpoint(checkpoint: CaptureCheckpoint) = delegate.checkpoint(checkpoint)
@@ -326,12 +340,13 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
                 else -> null
             }?.let(::safeCategory)
             val cappedHistory = if (stopReason == null) (result as? CaptureStepResult.Wallet)?.capture?.manifest?.let(::cappedHistoryCode) else null
+            val overCapBound = if (stopReason == null) (result as? CaptureStepResult.Markets)?.capture?.manifest?.let(::overCapBound) else null
             val artifact = when(result) {
                 is CaptureStepResult.Exported -> generated(session,"dataset.json")
                 is CaptureStepResult.Calibrated -> generated(session,"calibration.json")
                 else -> null
             }
-            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason ?: cappedHistory,message=stopReason?.let { stopMessage(it, retryAfter) } ?: cappedHistory?.let { CAPPED_HISTORY_MESSAGE },inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null,qualification=qualification,recovery=releaseReservation(operation.recovery))
+            operation = operation.copy(state=if(complete) CaptureNames.SUCCEEDED else CaptureNames.INCOMPLETE,updatedAt=clock.instant(),endedAt=clock.instant(),code=stopReason ?: cappedHistory ?: overCapBound?.let { OVER_CAP },message=stopReason?.let { stopMessage(it, retryAfter) } ?: cappedHistory?.let { CAPPED_HISTORY_MESSAGE } ?: overCapBound?.let(::overCapMessage),inspection=inspectionMapper.map(inspected),walletSettings=wallet,artifact=artifact,checksum=artifact?.let { hashFile(it) },calibration=if(result is CaptureStepResult.Calibrated) json.readTree(result.json) else null,qualification=qualification,recovery=releaseReservation(operation.recovery))
         } catch(exception: Exception) {
             if (exception is CaptureOperationStop) {
                 operation = store.operation(id, operation.id)
@@ -442,7 +457,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         }
         CaptureNames.MARKET -> {
             val attempt=store.attempt(session.id,requireNotNull(session.marketAttemptId)); val settings=requireNotNull(attempt.market)
-            CaptureStepCommand.Markets(ReplayMarketCaptureRequest(walletCaptureDirectory=paths.wallet,directory=requireNotNull(paths.market),scanPages=operation.scanPages ?: settings.scanPages,maxTransactions=settings.maxTransactions,
+            CaptureStepCommand.Markets(ReplayMarketCaptureRequest(walletCaptureDirectory=paths.wallet,directory=requireNotNull(paths.market),scanPages=operation.scanPages ?: settings.scanPages,maxTransactions=operation.maxTransactions ?: settings.maxTransactions,
                 requestBudget=operation.budget.requestBudget,byteBudget=operation.budget.byteBudget,operationTimeout=timeout(operation),cutoffMode=CaptureCutoffModes.saved(operation.cutoffMode),usage=usage(session,ApiTask.MARKET_STEP)))
         }
         CaptureNames.RATES -> CaptureStepCommand.Rates(paths.wallet,requireNotNull(paths.market),requireNotNull(paths.rates),usage(session,ApiTask.RATES_STEP))
@@ -489,6 +504,12 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     /** A wallet + token capture that finished its requests but stopped listing before the end of its history; resuming cannot complete it. */
     private fun cappedHistoryCode(manifest: WalletHistoryManifest): String? =
         TokenAccountGap.HISTORY_NOT_EXHAUSTED.name.takeIf { WalletHistoryCompletion.historyNotExhausted(manifest) }
+    /** The bound a market capture listed under when a window held more trades than it, so none of that window was fetched; resuming cannot complete it. */
+    private fun overCapBound(manifest: MarketHistoryManifest): Int? =
+        manifest.maxTransactions.takeIf { manifest.windows.any { it.coverage == MarketWindowCoverage.OVER_CAP } }
+    private fun overCapMessage(bound: Int): String =
+        "A market window lists more trades than this capture's bound of $bound transactions, so none of them were fetched. " +
+            "Resuming cannot finish it; a new market attempt with a larger bound can."
     private fun safeCategory(value: String): String = if(value.matches(Regex("[A-Z][A-Z0-9_]{0,63}"))) value else "CAPTURE_FAILED"
     override fun close() {
         synchronized(store) { closed=true }
@@ -507,6 +528,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
     private companion object {
         val STOP_CONTROLS = setOf(CaptureNames.PAUSE_REQUESTED, CaptureNames.CANCEL_REQUESTED)
         const val DEADLINE = "DEADLINE"
+        val OVER_CAP = MarketWindowCoverage.OVER_CAP.name
         const val CAPPED_HISTORY_MESSAGE = "The token-account listing stopped at the sample's record or page limit before the end of its history. " +
             "Saved evidence is kept; resuming cannot finish it, so start a new session with a larger sample or more wallet scan pages."
         const val QUALIFY_ID_HASH_LENGTH = 32
