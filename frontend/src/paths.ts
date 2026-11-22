@@ -5,6 +5,8 @@ export const ROUTER_BASENAME = '/console';
 export const COMPARE_PARAM = 'runs';
 /** The comparison view shows at most this many runs side by side. */
 export const MAX_COMPARED_RUNS = 3;
+/** The query parameter that opens a variation's edit form. */
+export const VARIATION_EDIT_PARAM = 'edit';
 
 export const paths = {
   dashboard: '/',
@@ -30,6 +32,11 @@ export const paths = {
   automationBackfill: (id: string) => `/automation/backfills/${encodeURIComponent(id)}`,
   automationItem: (id: string) => `/automation/items/${encodeURIComponent(id)}`,
   automationSweepRuns: '/automation/sweep-runs',
+  automationVariations: '/automation/variations',
+  automationVariation: (label: string) => `/automation/variations/${encodeURIComponent(label)}`,
+  /** The variation's page with its edit form open. */
+  automationVariationEdit: (label: string) =>
+    `/automation/variations/${encodeURIComponent(label)}?${VARIATION_EDIT_PARAM}=1`,
   runChart: (id: string) => `/runs/${encodeURIComponent(id)}/chart`,
   compare: '/compare',
   compareRuns: (ids: string[]) =>

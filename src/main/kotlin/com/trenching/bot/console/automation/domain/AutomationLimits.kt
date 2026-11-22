@@ -26,6 +26,9 @@ object AutomationLimits {
     /** Trading days one list of days or day verdicts covers. */
     const val MAX_DAYS_PER_LIST = 62
 
+    /** Variations read for a plan, active and archived; a plan grows by one per edit, by hand. */
+    const val MAX_VARIATIONS_PER_PLAN = 500
+
     /** History events read for one item; an item has about twenty, its sweep entries and a few retries included. */
     const val MAX_EVENTS_PER_ITEM = 1000
 

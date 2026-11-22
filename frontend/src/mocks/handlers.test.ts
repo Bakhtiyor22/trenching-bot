@@ -1,5 +1,6 @@
 import { File as NodeFile } from 'node:buffer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { automationApi, type VariationConfigRequest } from '../api/automation';
 import { API_BASE, ApiError, request } from '../api/client';
 import { api, pairKey } from '../api/endpoints';
 import type { ChartRequest, DatasetRegistration, RunStartRequest } from '../api/types';
@@ -15,6 +16,16 @@ import {
   WALLET,
 } from './fixtures';
 import { runPreset } from './setupHandlers';
+import {
+  createAutomationDb,
+  MOCK_AGREED_CONFIG,
+  MOCK_EDIT_AT,
+  MOCK_LABELS,
+  mockVariation,
+} from './automationFixtures';
+import { resetAutomationMocks } from './automationHandlers';
+import { variationConfigRequest } from '../features/automation/automationModel';
+import { formValuesFrom } from '../features/runs/runForm';
 
 // The backend's own messages (ConsoleConfigValidator, ConfigErrorCode), so the mock cannot drift into friendlier ones.
 const DECIMAL_FORMAT = 'must be a plain decimal string such as "100" or "0.5"';
@@ -616,6 +627,190 @@ describe('mock POST /api/solana/address-check', () => {
       code: 'SOLANA_NOT_CONFIGURED',
       message: 'Solana RPC is not configured; set SOLANA_RPC_URL',
       fields: {},
+    });
+  });
+});
+
+describe('mock variation endpoints', () => {
+  const v04 = () => automationApi.variation('V04');
+  const editOf = async (label: string, change: Partial<VariationConfigRequest>) => {
+    const current = await automationApi.variation(label);
+    return {
+      requestId: `ui-edit-${crypto.randomUUID()}`,
+      config: { ...variationConfigRequest(formValuesFrom(current.config, null)), ...change },
+    };
+  };
+
+  it('lists the variations by sequence, filtered by state, and refuses an unknown state', async () => {
+    const all = await automationApi.variations(null);
+    expect(all.planId).toBe('decu-sweep-1');
+    expect(all.items.map((v) => v.label)).toEqual([...MOCK_LABELS, 'V10']);
+    const archived = await automationApi.variations('ARCHIVED');
+    expect(archived.items.map((v) => v.label)).toEqual(['V07']);
+    expect(archived.items[0]).toMatchObject({ replacedByLabel: 'V10', archivedAt: MOCK_EDIT_AT });
+    expect((await automationApi.variations('ACTIVE')).items).toHaveLength(10);
+    expect(
+      await failureOf(() =>
+        request(`${API_BASE}/automation/variations?state=GONE`).then(() => null),
+      ),
+    ).toMatchObject({
+      status: 400,
+      code: 'INVALID_REQUEST',
+      fields: { state: expect.any(String) },
+    });
+  });
+
+  it('reads one variation, or 404 for a label that never existed', async () => {
+    expect(await v04()).toMatchObject({
+      label: 'V04',
+      state: 'ACTIVE',
+      differsFromAgreed: ['takeProfitBps'],
+      config: { takeProfitBps: 8000, takeProfitPercent: '80' },
+    });
+    expect(await failureOf(() => automationApi.variation('V99'))).toMatchObject({
+      status: 404,
+      code: 'AUTOMATION_VARIATION_NOT_FOUND',
+    });
+  });
+
+  it('archives and creates on an edit (201), and answers a repeat with the same variation (200)', async () => {
+    const body = await editOf('V04', { takeProfitPercent: '80', stopLossPercent: '50' });
+    const first = await automationApi.editVariation('V04', body);
+    expect(first.created).toBe(true);
+    expect(first.variation).toMatchObject({
+      label: 'V11',
+      state: 'ACTIVE',
+      replacesLabel: 'V04',
+      changedFromReplaced: ['stopLossBps'],
+      differsFromAgreed: ['takeProfitBps', 'stopLossBps'],
+      config: { takeProfitBps: 8000, stopLossBps: 5000, stopLossPercent: '50' },
+    });
+    expect(first.variation.activeFrom).not.toBeNull();
+    expect(await v04()).toMatchObject({ state: 'ARCHIVED', replacedByLabel: 'V11' });
+    const repeat = await automationApi.editVariation('V04', body);
+    expect(repeat).toEqual({ variation: first.variation, created: false });
+    expect((await automationApi.variations(null)).items).toHaveLength(12);
+    // The archived variation keeps its runs.
+    const runs = await automationApi.sweepRuns({ label: 'V04', page: 0, size: 100 });
+    expect(runs.total).toBeGreaterThan(0);
+  });
+
+  it('refuses every case of the contract with its code', async () => {
+    const refusal = async (label: string, change: Partial<VariationConfigRequest>) =>
+      failureOf(async () => automationApi.editVariation(label, await editOf(label, change)));
+    expect(await refusal('V07', { stopLossPercent: '50' })).toMatchObject({
+      status: 409,
+      code: 'VARIATION_ARCHIVED',
+    });
+    expect(await refusal('V00', { stopLossPercent: '50' })).toMatchObject({
+      status: 409,
+      code: 'VARIATION_BASELINE',
+    });
+    expect(await refusal('V04', {})).toMatchObject({ status: 409, code: 'VARIATION_UNCHANGED' });
+    expect(await refusal('V04', { takeProfitPercent: '35' })).toMatchObject({
+      status: 409,
+      code: 'VARIATION_DUPLICATE',
+      fields: { label: 'V03' },
+    });
+    expect(await refusal('V04', { minSignalSol: null })).toMatchObject({
+      status: 400,
+      code: 'CONFIG_INVALID',
+      fields: { minSignalSol: 'must be set' },
+    });
+    expect(await refusal('V04', { minSignalSol: '1.2' })).toMatchObject({
+      status: 400,
+      code: 'CONFIG_INVALID',
+      fields: { minSignalSol: expect.stringMatching(/capture filter/) },
+    });
+    expect(await refusal('V04', { stopLossPercent: '80.555' })).toMatchObject({
+      status: 400,
+      code: 'INVALID_PERCENT',
+    });
+    const missing = await editOf('V04', {});
+    delete (missing.config as Record<string, unknown>).latencySlots;
+    expect(await failureOf(() => automationApi.editVariation('V04', missing))).toMatchObject({
+      status: 400,
+      code: 'CONFIG_INVALID',
+      fields: { latencySlots: 'must be set' },
+    });
+    expect(
+      await failureOf(async () =>
+        automationApi.editVariation('V04', { ...(await editOf('V04', {})), requestId: ' ' }),
+      ),
+    ).toMatchObject({
+      status: 400,
+      code: 'INVALID_REQUEST',
+      fields: { requestId: expect.any(String) },
+    });
+    expect(
+      await failureOf(async () => automationApi.editVariation('V99', await editOf('V04', {}))),
+    ).toMatchObject({
+      status: 404,
+      code: 'AUTOMATION_VARIATION_NOT_FOUND',
+    });
+    // A plan that already numbers 500 variations stores no further edit.
+    const seeded = (await automationApi.variations(null)).items.length;
+    resetAutomationMocks({
+      ...createAutomationDb(),
+      variations: [
+        ...createAutomationDb().variations,
+        ...Array.from({ length: 500 - seeded }, (_, i) =>
+          mockVariation(`V${seeded + i}`, MOCK_AGREED_CONFIG, { state: 'ARCHIVED' }),
+        ),
+      ],
+    });
+    expect(await refusal('V04', { stopLossPercent: '50' })).toMatchObject({
+      status: 409,
+      code: 'VARIATION_LIMIT_REACHED',
+    });
+    expect((await automationApi.variations(null)).items).toHaveLength(500);
+    resetAutomationMocks();
+    // Nothing was stored by any refusal.
+    expect((await automationApi.variations(null)).items).toHaveLength(11);
+  });
+});
+
+describe('mock GET /api/automation/sweep-runs', () => {
+  it('filters by plan and by block time, from inclusive and to exclusive', async () => {
+    const from = '2026-10-29T07:00:00.000Z';
+    const to = '2026-10-30T07:00:00.000Z';
+    const page = await automationApi.sweepRuns({
+      planId: 'decu-sweep-1',
+      from,
+      to,
+      page: 0,
+      size: 100,
+    });
+    expect(page.total).toBeGreaterThan(0);
+    for (const row of page.items) {
+      expect(Date.parse(row.blockTime!)).toBeGreaterThanOrEqual(Date.parse(from));
+      expect(Date.parse(row.blockTime!)).toBeLessThan(Date.parse(to));
+    }
+    expect(
+      (await automationApi.sweepRuns({ planId: 'decu-sweep-2', page: 0, size: 10 })).total,
+    ).toBe(0);
+  });
+
+  it('runs a replaced variation only on buys before its edit, and its replacement only after', async () => {
+    const before = await automationApi.sweepRuns({ label: 'V07', page: 0, size: 100 });
+    const after = await automationApi.sweepRuns({ label: 'V10', page: 0, size: 100 });
+    expect(before.items.every((r) => Date.parse(r.blockTime!) < Date.parse(MOCK_EDIT_AT))).toBe(
+      true,
+    );
+    expect(after.items.every((r) => Date.parse(r.blockTime!) >= Date.parse(MOCK_EDIT_AT))).toBe(
+      true,
+    );
+    expect(after.total).toBeGreaterThan(0);
+  });
+
+  it('refuses a from that is not before to', async () => {
+    const at = '2026-10-29T07:00:00.000Z';
+    expect(
+      await failureOf(() => automationApi.sweepRuns({ from: at, to: at, page: 0, size: 10 })),
+    ).toMatchObject({
+      status: 400,
+      code: 'INVALID_REQUEST',
+      fields: { from: 'must be before to' },
     });
   });
 });

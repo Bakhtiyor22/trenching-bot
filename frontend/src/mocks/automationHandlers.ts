@@ -4,30 +4,41 @@ import type {
   AutomationDayRetryResult,
   AutomationItem,
   AutomationSessionDetail,
+  AutomationVariation,
   BackfillCreateRequest,
   EvaluationStatus,
   RetryRefusal,
+  VariationConfigRequest,
+  VariationEditRequest,
 } from '../api/automation';
+import type { Config } from '../api/types';
 import { isSolanaAddress } from '../lib/base58';
+import { compareDecimals, isDecimalString } from '../lib/decimal';
+import { bpsToPercent } from '../lib/percent';
 import {
   compareEvaluations,
   createAutomationDb,
   dayDetail,
   dayRows,
   daySummary,
+  differingProperties,
   discoveryOnly,
   mockAddDays,
   mockDayOf,
   mockDayStart,
+  mockVariation,
   type AutomationDb,
 } from './automationFixtures';
+import { SOL_MINT } from './fixtures';
 import { mockCaptureOperation, mockItemEvents } from './automationEventFixtures';
 import { mockState } from './previewState';
 
 /**
  * `/api/automation` mocks with the backend's filters, sorts, paging, refusals and day scoring. Mock states:
  * `automation-off` answers 404 like a backend with automation disabled; `automation-phase0` is discovery only (every day
- * pending); `automation-empty` has no buys yet; `automation-idle` has no active backfill, so a new one can start.
+ * pending); `automation-empty` has no buys yet; `automation-idle` has no active backfill, so a new one can start;
+ * `variation-conflict` loses every variation edit to a concurrent one (409 AUTOMATION_CONFLICT); `variation-limit`
+ * refuses every edit as if the plan already held its 500 variations (409 VARIATION_LIMIT_REACHED).
  */
 
 let db: AutomationDb = createAutomationDb();
@@ -42,6 +53,42 @@ const DEFAULT_DAYS = 14;
 
 /** The request id of each item's last retry, as the backend keeps it in `retry_request_id`. */
 const retryRequestIds = new Map<string, string>();
+/** The variation each edit request id created, as `uq_automation_variations_request` keeps it. */
+const editRequestIds = new Map<string, string>();
+const MAX_EDIT_REQUEST_ID = 64;
+/** `AutomationLimits.MAX_VARIATIONS_PER_PLAN`: sequences 0 to 499. */
+const MAX_VARIATIONS_PER_PLAN = 500;
+const CAPTURE_MIN_SIGNAL_SOL = '1.5';
+/** The backend's smallest backfill budgets: a dry run, and a capture (`recovery.requests` 2400 + 22 per discovery). */
+const MIN_DRY_RUN_BUDGET = 100;
+const MIN_CAPTURE_BUDGET = 2422;
+/** The properties an edit must send; the clocks may be null (untimed) but must be present. */
+const REQUIRED_EDIT_FIELDS = [
+  'notional',
+  'maxAgeSlots',
+  'dipPercent',
+  'takeProfitPercent',
+  'stopLossPercent',
+  'minMarketCapUsd',
+  'horizonSlots',
+  'latencySlots',
+  'transactionCostSol',
+  'quoteMint',
+  'dipWindowMs',
+  'maxHoldMs',
+  'hardExitStartMs',
+  'priceMeasure',
+  'followWalletSells',
+  'minSignalSol',
+] as const;
+const LEVEL_PAIRS = [
+  ['dipBps', 'dipPercent'],
+  ['takeProfitBps', 'takeProfitPercent'],
+  ['stopLossBps', 'stopLossPercent'],
+] as const;
+
+/** A configuration's own checks, as the run start's mock makes them; null when it is valid. */
+export type ConfigCheck = (config: VariationConfigRequest) => Response | null;
 const REQUEST_ID = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/;
 
 export function resetAutomationMocks(next: AutomationDb = createAutomationDb()): void {
@@ -49,6 +96,104 @@ export function resetAutomationMocks(next: AutomationDb = createAutomationDb()):
   runQueuedAt = null;
   startedAt.clear();
   retryRequestIds.clear();
+  editRequestIds.clear();
+}
+
+/** Percent "80" → 8000 bps, exactly, as `PercentConversion` does; already validated. */
+function percentToBps(percent: string): number {
+  const [whole = '0', fraction = ''] = percent.split('.');
+  return Number(whole) * 100 + Number(fraction.padEnd(2, '0').slice(0, 2));
+}
+
+/** The stored configuration an edit's request describes: the agreed strategy's name and version, levels in both units. */
+function configOf(request: VariationConfigRequest, base: Config): Config {
+  const config: Config = {
+    ...base,
+    notional: request.notional!,
+    maxAgeSlots: request.maxAgeSlots!,
+    minMarketCapUsd: request.minMarketCapUsd!,
+    horizonSlots: request.horizonSlots!,
+    latencySlots: request.latencySlots!,
+    transactionCostSol: request.transactionCostSol!,
+    quoteMint: request.quoteMint!,
+    dipWindowMs: request.dipWindowMs ?? null,
+    maxHoldMs: request.maxHoldMs ?? null,
+    hardExitStartMs: request.hardExitStartMs ?? null,
+    priceMeasure: request.priceMeasure ?? 'TRADE_AVERAGE',
+    followWalletSells: request.followWalletSells ?? false,
+    minSignalSol: request.minSignalSol ?? null,
+  };
+  for (const [bpsField, percentField] of LEVEL_PAIRS) {
+    const percent = request[percentField];
+    const bps = percent != null ? percentToBps(percent) : request[bpsField]!;
+    config[bpsField] = bps;
+    config[percentField] = bpsToPercent(bps);
+  }
+  return config;
+}
+
+/**
+ * The complete-configuration checks an edit adds to the run start's: every field present (a level as percent or
+ * bps), a minimum signal size at or above the capture filter, and wrapped SOL as the quote.
+ */
+function completeConfigRefusal(config: VariationConfigRequest | undefined): Response | null {
+  if (config == null || typeof config !== 'object')
+    return error(400, 'CONFIG_INVALID', 'Simulation configuration is invalid', {
+      config: 'must be set',
+    });
+  const fields: Record<string, string> = {};
+  const record = config as Record<string, unknown>;
+  for (const field of REQUIRED_EDIT_FIELDS) {
+    const level = LEVEL_PAIRS.find(([, percent]) => percent === field);
+    const present = field in record || (level != null && level[0] in record);
+    if (!present) fields[field] = 'must be set';
+  }
+  if (!fields.minSignalSol) {
+    const min = config.minSignalSol;
+    if (min == null) fields.minSignalSol = 'must be set';
+    else if (isDecimalString(min) && compareDecimals(min, CAPTURE_MIN_SIGNAL_SOL) < 0)
+      fields.minSignalSol = `must be at least the capture filter, ${CAPTURE_MIN_SIGNAL_SOL} SOL`;
+  }
+  if (!fields.quoteMint && config.quoteMint !== SOL_MINT) fields.quoteMint = 'must be wrapped SOL';
+  return Object.keys(fields).length > 0
+    ? error(400, 'CONFIG_INVALID', 'Simulation configuration is invalid', fields)
+    : null;
+}
+
+/** "V" and the sequence, at least two digits: V10, V11, … */
+function labelOf(seq: number): string {
+  return `V${String(seq).padStart(2, '0')}`;
+}
+
+function sameConfig(a: Config, b: Config): boolean {
+  return differingProperties(a, b).length === 0;
+}
+
+/** The sequence the next variation gets: one more than the highest. */
+function nextSeq(): number {
+  return Math.max(...db.variations.map((v) => Number(v.label.slice(1)))) + 1;
+}
+
+/** Plan Domain Rule 2: archive `old` and insert its replacement, in one step. */
+function applyEdit(
+  old: AutomationVariation,
+  config: Config,
+  requestId: string,
+): AutomationVariation {
+  const now = new Date().toISOString();
+  const seq = nextSeq();
+  const created = mockVariation(labelOf(seq), config, {
+    replacesLabel: old.label,
+    changedFromReplaced: differingProperties(config, old.config),
+    activeFrom: now,
+    createdAt: now,
+  });
+  old.state = 'ARCHIVED';
+  old.archivedAt = now;
+  old.replacedByLabel = created.label;
+  db.variations.push(created);
+  editRequestIds.set(requestId, created.label);
+  return created;
 }
 
 /** The backend's retry rule, in its order: not failed, a failure no retry can fix, a backfill still scanning, capture off. */
@@ -162,11 +307,30 @@ function page<T>(rows: T[], url: URL) {
   };
 }
 
-function inRange(iso: string, url: URL): boolean {
+function inRange(iso: string | null, url: URL): boolean {
   const from = url.searchParams.get('from');
   const to = url.searchParams.get('to');
+  // A buy without a block time is left out whenever a bound is given (plan Rule 14).
+  if (iso == null) return !from && !to;
   const t = Date.parse(iso);
   return (!from || t >= Date.parse(from)) && (!to || t < Date.parse(to));
+}
+
+/** `from` not before `to` is a 400 on `from`, as the sweep-run list answers it. */
+function instantRangeRefusal(url: URL): Response | null {
+  const from = url.searchParams.get('from');
+  const to = url.searchParams.get('to');
+  for (const [key, value] of [
+    ['from', from],
+    ['to', to],
+  ] as const)
+    if (value != null && Number.isNaN(Date.parse(value)))
+      return error(400, 'INVALID_REQUEST', 'Request parameter has an invalid value', {
+        [key]: 'has an invalid value',
+      });
+  if (from && to && Date.parse(from) >= Date.parse(to))
+    return error(400, 'INVALID_REQUEST', 'from must be before to', { from: 'must be before to' });
+  return null;
 }
 
 /** The requested trading days, oldest first, or a 400 body when the span is wrong. */
@@ -243,7 +407,7 @@ function validate(body: Partial<BackfillCreateRequest>): Record<string, string> 
     if (mockDayStart(mockAddDays(body.toDay, 1)) > Date.now())
       fields.toDay = 'must be a finished trading day';
   }
-  const min = body.dryRun ? 100 : 1222;
+  const min = body.dryRun ? MIN_DRY_RUN_BUDGET : MIN_CAPTURE_BUDGET;
   if (body.requestBudget == null || body.requestBudget < min || body.requestBudget > 20_000)
     fields.requestBudget = `must be between ${min} and 20000`;
   if (body.minSignalSol != null && Number(body.minSignalSol) < 1.5)
@@ -253,7 +417,10 @@ function validate(body: Partial<BackfillCreateRequest>): Record<string, string> 
   return fields;
 }
 
-export function createAutomationHandlers(wait: () => Promise<void>) {
+export function createAutomationHandlers(
+  wait: () => Promise<void>,
+  configRefusal: ConfigCheck = () => null,
+) {
   const off = () =>
     mockState() === 'automation-off' ? new HttpResponse(null, { status: 404 }) : null;
   return [
@@ -423,10 +590,13 @@ export function createAutomationHandlers(wait: () => Promise<void>) {
       const blocked = off();
       if (blocked) return blocked;
       const url = new URL(request.url);
+      const refused = instantRangeRefusal(url);
+      if (refused) return refused;
       const data = current();
       const items = new Map(data.items.map((i) => [i.id, i]));
       const sessionId = url.searchParams.get('sessionId');
       const mint = url.searchParams.get('mint');
+      const planId = url.searchParams.get('planId');
       const label = url.searchParams.get('label');
       const outcome = url.searchParams.get('outcome');
       const rows = data.sweepRuns
@@ -438,8 +608,10 @@ export function createAutomationHandlers(wait: () => Promise<void>) {
           (r) =>
             (!sessionId || r.sessionId === sessionId) &&
             (!mint || r.mint === mint) &&
+            (!planId || r.planId === planId) &&
             (!label || r.label === label) &&
-            (!outcome || r.outcome === outcome),
+            (!outcome || r.outcome === outcome) &&
+            inRange(r.blockTime, url),
         )
         .sort(
           (a, b) =>
@@ -447,6 +619,84 @@ export function createAutomationHandlers(wait: () => Promise<void>) {
             a.label.localeCompare(b.label),
         );
       return HttpResponse.json(page(rows, url));
+    }),
+    http.get('/api/automation/variations', async ({ request }) => {
+      await wait();
+      const blocked = off();
+      if (blocked) return blocked;
+      const state = new URL(request.url).searchParams.get('state');
+      if (state != null && state !== 'ACTIVE' && state !== 'ARCHIVED')
+        return error(400, 'INVALID_REQUEST', 'Request parameter has an invalid value', {
+          state: 'must be ACTIVE or ARCHIVED',
+        });
+      const data = current();
+      return HttpResponse.json({
+        planId: data.status.sweepPlanId,
+        items: data.variations.filter((v) => !state || v.state === state),
+      });
+    }),
+    http.get('/api/automation/variations/:label', async ({ params }) => {
+      await wait();
+      const blocked = off();
+      if (blocked) return blocked;
+      const found = current().variations.find((v) => v.label === params.label);
+      return found
+        ? HttpResponse.json(found)
+        : error(
+            404,
+            'AUTOMATION_VARIATION_NOT_FOUND',
+            `No automation variation ${String(params.label)}`,
+          );
+    }),
+    http.post('/api/automation/variations/:label/edit', async ({ params, request }) => {
+      await wait();
+      const blocked = off();
+      if (blocked) return blocked;
+      const label = String(params.label);
+      const old = db.variations.find((v) => v.label === label);
+      if (!old)
+        return error(404, 'AUTOMATION_VARIATION_NOT_FOUND', `No automation variation ${label}`);
+      const body = (await request.json().catch(() => ({}))) as Partial<VariationEditRequest>;
+      const requestId = body.requestId;
+      if (typeof requestId !== 'string' || requestId.trim() === '')
+        return error(400, 'INVALID_REQUEST', 'requestId is missing', {
+          requestId: 'must not be blank',
+        });
+      if (requestId.length > MAX_EDIT_REQUEST_ID)
+        return error(400, 'INVALID_REQUEST', 'requestId is too long', {
+          requestId: `must be at most ${MAX_EDIT_REQUEST_ID} characters`,
+        });
+      const repeated = editRequestIds.get(requestId);
+      if (repeated)
+        return HttpResponse.json(
+          db.variations.find((v) => v.label === repeated),
+          { status: 200 },
+        );
+      if (mockState() === 'variation-conflict')
+        return error(409, 'AUTOMATION_CONFLICT', 'The variation was changed concurrently');
+      if (old.state === 'ARCHIVED')
+        return error(409, 'VARIATION_ARCHIVED', `Variation ${label} is archived`);
+      if (old.differsFromAgreed.length === 0)
+        return error(409, 'VARIATION_BASELINE', `Variation ${label} is the agreed baseline`);
+      const refusal = completeConfigRefusal(body.config) ?? configRefusal(body.config!);
+      if (refusal) return refusal;
+      const config = configOf(body.config!, old.config);
+      if (sameConfig(config, old.config))
+        return error(409, 'VARIATION_UNCHANGED', `The configuration equals ${label}'s own`);
+      const twin = db.variations.find(
+        (v) => v.state === 'ACTIVE' && v.label !== label && sameConfig(v.config, config),
+      );
+      if (twin)
+        return error(409, 'VARIATION_DUPLICATE', `Variation ${twin.label} has this configuration`, {
+          label: twin.label,
+        });
+      if (mockState() === 'variation-limit' || nextSeq() >= MAX_VARIATIONS_PER_PLAN)
+        return error(
+          409,
+          'VARIATION_LIMIT_REACHED',
+          `The plan already holds ${MAX_VARIATIONS_PER_PLAN} variations`,
+        );
+      return HttpResponse.json(applyEdit(old, config, requestId), { status: 201 });
     }),
     http.get('/api/automation/backfills', async ({ request }) => {
       await wait();

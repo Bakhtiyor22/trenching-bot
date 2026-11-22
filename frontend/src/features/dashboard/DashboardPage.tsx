@@ -45,8 +45,8 @@ import {
   defaultScoredDay,
   statusGlyph,
   statusText,
-  variationChange,
 } from '../automation/automationModel';
+import { VariationLabel } from '../automation/AutomationShared';
 import { clusterLabel, outcomeLabel, outcomeTone } from '../solana/solanaOutcome';
 import {
   cumulativePnlOption,
@@ -593,16 +593,7 @@ function AutomationSummary() {
                       >
                         {statusText[scored.bestStatus]}
                       </StatusChip>
-                      {scored.bestLabel && (
-                        <Text size="sm">
-                          <Text span ff="monospace" fw={500}>
-                            {scored.bestLabel}
-                          </Text>{' '}
-                          <Text span c="dimmed">
-                            {variationChange(s.sweepPlanId, scored.bestLabel) ?? ''}
-                          </Text>
-                        </Text>
-                      )}
+                      {scored.bestLabel && <VariationLabel label={scored.bestLabel} />}
                     </Group>
                   ) : (
                     <Text size="sm" c="dimmed">

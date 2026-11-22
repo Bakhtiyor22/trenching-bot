@@ -83,6 +83,14 @@ function absolute(url: string): string {
 
 /** Fetches a URL and parses the JSON body, turning every failure into an {@link ApiError}. */
 export async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
+  return (await requestWithStatus<T>(url, init)).body;
+}
+
+/** {@link request} that also gives the HTTP status, for endpoints that answer 201 for new and 200 for a repeat. */
+export async function requestWithStatus<T>(
+  url: string,
+  init: RequestInit = {},
+): Promise<{ status: number; body: T }> {
   let response: Response;
   try {
     response = await fetch(absolute(url), {
@@ -95,9 +103,9 @@ export async function request<T>(url: string, init: RequestInit = {}): Promise<T
   }
   if (!response.ok) throw await toApiError(response);
   const text = await response.text();
-  if (!text) return undefined as T;
+  if (!text) return { status: response.status, body: undefined as T };
   try {
-    return JSON.parse(text) as T;
+    return { status: response.status, body: JSON.parse(text) as T };
   } catch {
     throw new ApiError(
       response.status,
@@ -117,6 +125,19 @@ export function postJson<T>(url: string, body?: unknown): Promise<T> {
     headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+}
+
+/** A POST answered 201 when it created something and 200 when it repeated an earlier request. */
+export async function postJsonCreated<T>(
+  url: string,
+  body: unknown,
+): Promise<{ body: T; created: boolean }> {
+  const answer = await requestWithStatus<T>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return { body: answer.body, created: answer.status === 201 };
 }
 
 /** Sends a DELETE. A 404 means it is already gone, which a confirmed delete treats as done. */

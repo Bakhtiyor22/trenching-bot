@@ -17,13 +17,9 @@ import { Chart } from '../../components/Chart';
 import { formatSignedDecimal, MINUS, toChartNumber } from '../../lib/decimal';
 import { paths } from '../../paths';
 import { FONT_MONO } from '../../theme';
-import { BASELINE_LABEL, statusGrid, statusText, variationChange } from './automationModel';
-import { EvaluationChip, SIGNALS_NEEDED, SolValue } from './AutomationShared';
-
-function label(planId: string, l: string): string {
-  const change = variationChange(planId, l);
-  return change ? `${l} · ${change}` : l;
-}
+import { statusGrid, statusText, variationName } from './automationModel';
+import { EvaluationChip, SIGNALS_NEEDED, SolValue, VariationLink } from './AutomationShared';
+import { useVariationBook } from './useVariationBook';
 
 /** An axis tick with a sign: "+0.1", "0", "−0.1". */
 function signedTick(value: number): string {
@@ -31,15 +27,14 @@ function signedTick(value: number): string {
 }
 
 /**
- * Trend option B: one variation's rolling worst-case P&L against the default (V00), the other variations as faint
- * context, with a labelled zero line. Every day of the range is a category, so a day without rows is a gap in the line
+ * Trend option B: one variation's rolling worst-case P&L against the default (the baseline), the other variations as
+ * faint context, with a labelled zero line. Every day of the range is a category, so a day without rows is a gap in the line
  * (as in the status grid), never squeezed out. Hollow points mark windows under 10 signals (No result) or still pending.
  * The signals sit in a second, separate chart, never on a second y-axis.
  */
 export function VariationTrend({
   days,
   evaluations,
-  planId,
   labels,
   selected,
   onSelect,
@@ -47,23 +42,26 @@ export function VariationTrend({
   /** The trading days shown, any order. */
   days: string[];
   evaluations: AutomationEvaluation[];
-  planId: string;
   labels: string[];
   selected: string;
   onSelect: (label: string) => void;
 }) {
   const navigate = useNavigate();
   const t = useChartTokens();
+  const book = useVariationBook();
+  // Without a known baseline the selected variation is drawn alone, with the others as context.
+  const baseline = book.baseline ?? selected;
+  const label = (l: string) => variationName(book, l);
   const [view, setView] = useState<'chart' | 'table'>('chart');
   const grid = statusGrid(days, evaluations, labels);
   const columns = grid.columns;
   const cells = (l: string) =>
     grid.rows.find((r) => r.label === l)?.cells ?? columns.map(() => null);
   const focus = cells(selected);
-  const base = cells(BASELINE_LABEL);
+  const base = cells(baseline);
   const x = columns.map((col) => col.short);
   const num = (e: AutomationEvaluation | null) => (e ? toChartNumber(e.worstCasePnl) : null);
-  const others = labels.filter((l) => l !== selected && l !== BASELINE_LABEL);
+  const others = labels.filter((l) => l !== selected && l !== baseline);
   const scored = (e: AutomationEvaluation | null | undefined) =>
     e != null && e.signals >= SIGNALS_NEEDED && e.status !== 'PENDING';
 
@@ -82,7 +80,7 @@ export function VariationTrend({
         return [
           `<b>${columns[i]?.label ?? ''}</b>`,
           line(selected, focus[i]),
-          selected === BASELINE_LABEL ? '' : line(BASELINE_LABEL, base[i]),
+          selected === baseline ? '' : line(baseline, base[i]),
         ]
           .filter(Boolean)
           .join('<br/>');
@@ -108,11 +106,11 @@ export function VariationTrend({
         silent: true,
         z: 1,
       })),
-      ...(selected === BASELINE_LABEL
+      ...(selected === baseline
         ? []
         : [
             {
-              name: BASELINE_LABEL,
+              name: baseline,
               type: 'line' as const,
               data: base.map(num),
               symbol: 'circle',
@@ -123,7 +121,7 @@ export function VariationTrend({
                 show: true,
                 color: t.dimmed,
                 fontFamily: FONT_MONO,
-                formatter: BASELINE_LABEL,
+                formatter: baseline,
               },
               z: 2,
             },
@@ -217,22 +215,25 @@ export function VariationTrend({
           label="Variation"
           value={selected}
           onChange={(v) => v && onSelect(v)}
-          data={labels.map((l) => ({ value: l, label: label(planId, l) }))}
+          data={labels.map((l) => ({ value: l, label: label(l) }))}
           allowDeselect={false}
           w={{ base: '100%', sm: 260 }}
         />
+        <VariationLink label={selected} size="xs">
+          {selected}: settings &amp; runs →
+        </VariationLink>
         <Group gap="md" wrap="wrap" align="center">
           <Group gap={6} wrap="nowrap">
             <Box w={18} h={2} bg={t.accent} />
             <Text size="xs" c="dimmed">
-              {label(planId, selected)}
+              {label(selected)}
             </Text>
           </Group>
-          {selected !== BASELINE_LABEL && (
+          {selected !== baseline && (
             <Group gap={6} wrap="nowrap">
               <Box w={18} h={2} bg={t.dimmed} />
               <Text size="xs" c="dimmed">
-                {label(planId, BASELINE_LABEL)}
+                {label(baseline)}
               </Text>
             </Group>
           )}
@@ -260,14 +261,14 @@ export function VariationTrend({
         </Text>
       ) : view === 'table' ? (
         <ScrollArea type="auto">
-          <Table verticalSpacing="xs" aria-label={`${selected} against ${BASELINE_LABEL} by day`}>
+          <Table verticalSpacing="xs" aria-label={`${selected} against ${baseline} by day`}>
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>Day</Table.Th>
                 <Table.Th>{selected} status</Table.Th>
                 <Table.Th ta="right">{selected} worst case</Table.Th>
                 <Table.Th ta="right">Signals</Table.Th>
-                <Table.Th ta="right">{BASELINE_LABEL} worst case</Table.Th>
+                <Table.Th ta="right">{baseline} worst case</Table.Th>
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
@@ -296,7 +297,7 @@ export function VariationTrend({
       ) : (
         <>
           <Chart
-            ariaLabel={`Worst-case net P&L of ${selected} and ${BASELINE_LABEL} for the 7 days ending each day, from ${x[0]} to ${x[x.length - 1]}. Latest: ${selected} ${latest ? `${formatSignedDecimal(latest.worstCasePnl)} SOL` : 'not scored'}.`}
+            ariaLabel={`Worst-case net P&L of ${selected} and ${baseline} for the 7 days ending each day, from ${x[0]} to ${x[x.length - 1]}. Latest: ${selected} ${latest ? `${formatSignedDecimal(latest.worstCasePnl)} SOL` : 'not scored'}.`}
             height={300}
             option={lineOption}
             onEvents={{ click: openDay }}

@@ -127,6 +127,19 @@ export const routes: RouteObject[] = [
         }),
       },
       {
+        path: 'automation/variations',
+        lazy: async () => ({
+          Component: (await import('./features/automation/VariationsPage')).VariationsPage,
+        }),
+      },
+      {
+        path: 'automation/variations/:label',
+        lazy: async () => ({
+          Component: (await import('./features/automation/VariationDetailPage'))
+            .VariationDetailPage,
+        }),
+      },
+      {
         path: 'captures/:id',
         lazy: async () => ({
           Component: (await import('./features/captures/CaptureDetailPage')).CaptureDetailPage,

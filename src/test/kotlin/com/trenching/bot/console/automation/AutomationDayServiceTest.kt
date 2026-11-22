@@ -28,6 +28,7 @@ class AutomationDayServiceTest : AutomationDatabaseTest() {
     private val plan = SweepPlans.DECU_SWEEP_1
     private val labels = plan.entries.map { it.label }
     private val seed by lazy { AutomationDaySeed(sessions, items, sweepRuns) }
+    private val edits by lazy { AutomationVariationRows(variationRows, variationMapper) }
 
     @Test
     fun `a day lists its sessions, buys, counts, requests and completeness, newest day first`() {
@@ -248,6 +249,50 @@ class AutomationDayServiceTest : AutomationDatabaseTest() {
         val day = dayService().days(LocalDate.parse("2026-11-10"), LocalDate.parse("2026-11-10")).days.single()
 
         assertEquals(701, day.sessions)
+    }
+
+    @Test
+    fun `after an edit on day D the archived label has rows through D and none after, the new label from D on`() {
+        seed.week()
+        seedCoverage(coveredFrom = local("2026-11-01", "12:00"))
+        val created = edits.edit("V04", local("2026-11-09", "15:00"), "req-1")
+
+        val rows = dayService().evaluations(LocalDate.parse("2026-11-05"), DAY, null, null, "day,desc", 0, 500).items
+        fun days(label: String) = rows.filter { it.label == label }.map { it.day.toString() }.sorted()
+
+        assertEquals(listOf("2026-11-05", "2026-11-06", "2026-11-07", "2026-11-08", "2026-11-09"), days("V04"))
+        assertEquals(listOf("2026-11-09", "2026-11-10", "2026-11-11"), days(created.label))
+        assertEquals(listOf("2026-11-05", "2026-11-06", "2026-11-07", "2026-11-08", "2026-11-09", "2026-11-10", "2026-11-11"), days("V00"))
+        assertEquals(9 * 7 + 5 + 3, rows.size, "nine labels alive all week, V04 for five days, its replacement for three")
+    }
+
+    @Test
+    fun `a verdict decided before the edit reads the same after it, and the buys before the new label's creation count unscored under it`() {
+        seed.week()
+        seedCoverage(coveredFrom = local("2026-11-01", "12:00"))
+        val service = dayService()
+        val before = service.evaluations(LocalDate.parse("2026-11-05"), LocalDate.parse("2026-11-09"), null, null, "day,desc", 0, 500).items
+
+        val created = edits.edit("V04", local("2026-11-09", "15:00"), "req-1")
+        val after = service.evaluations(LocalDate.parse("2026-11-05"), LocalDate.parse("2026-11-09"), null, null, "day,desc", 0, 500).items
+
+        assertEquals(before, after.filter { it.label != created.label }, "every decided row of the days through D is as it was")
+        val newcomer = after.single { it.label == created.label }
+        assertEquals(LocalDate.parse("2026-11-09"), newcomer.day)
+        assertEquals(listOf(0, 0, 10), listOf(newcomer.tally.signals, newcomer.tally.scored, newcomer.tally.unscored), "five days of two buys, none with a row for it")
+        assertEquals("NO_RESULT", newcomer.status)
+    }
+
+    @Test
+    fun `a day's best row is chosen among that day's rows`() {
+        seed.week()
+        seedCoverage(coveredFrom = local("2026-11-01", "12:00"))
+        edits.edit("V07", local("2026-11-10", "15:00"), "req-1")
+
+        val days = dayService().days(LocalDate.parse("2026-11-10"), DAY).days.associateBy { it.day.toString() }
+
+        assertEquals("V07", days.getValue("2026-11-10").bestLabel, "the archive day still has its row")
+        assertEquals("V06", days.getValue("2026-11-11").bestLabel, "the day after, the best of the rows alive")
     }
 
     private fun local(date: String, time: String): Instant = AutomationDaySeed.local(date, time)

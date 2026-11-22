@@ -1277,7 +1277,7 @@ export function createHandlers(options: MockOptions = {}) {
     }),
 
     // Automation first: it answers the capture operations of its own buys and passes the rest on.
-    ...createAutomationHandlers(wait),
+    ...createAutomationHandlers(wait, configRefusal),
     ...createCaptureHandlers(wait),
   ];
 }

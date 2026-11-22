@@ -45,22 +45,22 @@ trenching:
     max-step-attempts: 2
     max-requests-per-24h: 5000
     operation-budget:
-      requests: 400
+      requests: 800
       bytes: 100MB
       timeout: 10m
     recovery:
-      requests: 1200
+      requests: 2400
       bytes: 300MB
       attempts: 3
     # A buy whose 30-minute market window lists more trades fails OVER_CAP before any is fetched; at most recovery.requests x max-step-attempts.
-    market-max-transactions: 2000
+    market-max-transactions: 4000
     sweep-plan: decu-sweep-1
     evaluation-window-sessions: 7
     min-signals: 10
     min-net-pnl-sol: 0
     backfill-max-days: 31
     backfill-max-requests: 20000
-    backfill-reserve-requests: 1400
+    backfill-reserve-requests: 2600
 
 # Provider pacing is shared by every capture and discovery against the same RPC endpoint in this process. The Helius free tier
 # refused requests at 4 in flight and 8 starts a second (hundreds of 429s a day); 2 in flight and a start every 250 ms

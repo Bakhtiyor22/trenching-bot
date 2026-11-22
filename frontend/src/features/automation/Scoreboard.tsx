@@ -1,7 +1,7 @@
 import { Card, Group, ScrollArea, Stack, Table, Text, UnstyledButton } from '@mantine/core';
 import { useMediaQuery } from '@mantine/hooks';
 import type { AutomationEvaluation } from '../../api/automation';
-import { BASELINE_LABEL, pnlScale, variationChange } from './automationModel';
+import { pnlScale } from './automationModel';
 import {
   EvaluationChip,
   PnlBarCell,
@@ -9,7 +9,9 @@ import {
   SignalsMeter,
   SIGNALS_NEEDED,
   SolValue,
+  VariationLink,
 } from './AutomationShared';
+import { useVariationBook } from './useVariationBook';
 
 /** Below this width the scoreboard becomes one card per variation. */
 const NARROW = '(max-width: 48em)';
@@ -19,8 +21,13 @@ const SELECTED = {
   boxShadow: 'inset 3px 0 0 var(--mantine-primary-color-filled)',
 } as const;
 
-function VariationName({ evaluation }: { evaluation: AutomationEvaluation }) {
-  const change = variationChange(evaluation.planId, evaluation.label);
+function VariationName({
+  evaluation,
+  change,
+}: {
+  evaluation: AutomationEvaluation;
+  change: string | null;
+}) {
   return (
     <span>
       <Text span ff="monospace" fw={600} size="sm">
@@ -36,10 +43,19 @@ function VariationName({ evaluation }: { evaluation: AutomationEvaluation }) {
   );
 }
 
+/** "Settings & runs →", the way from a scoreboard row to the variation's own page. */
+function OpenVariation({ label }: { label: string }) {
+  return (
+    <VariationLink label={label} size="xs">
+      Settings &amp; runs →
+    </VariationLink>
+  );
+}
+
 /**
  * Every variation of one trading day's 7-day window, in the backend's order (Success › No success › No result ›
  * Pending, then worst case descending). The P&L bars share one scale, so their lengths compare across rows; a pending
- * row keeps its counts so far, faded. Choosing a row selects it for the trend view.
+ * row keeps its counts so far, faded. Choosing a row selects it for the trend view; its link opens the variation.
  */
 export function Scoreboard({
   evaluations,
@@ -51,6 +67,7 @@ export function Scoreboard({
   onSelect?: (label: string) => void;
 }) {
   const narrow = useMediaQuery(NARROW) ?? false;
+  const book = useVariationBook();
   const scale = pnlScale(evaluations.flatMap((e) => [e.worstCasePnl, e.realizedPnl]));
   if (narrow) {
     return (
@@ -76,7 +93,7 @@ export function Scoreboard({
             >
               <Stack gap={8}>
                 <Group justify="space-between" wrap="nowrap" gap="xs">
-                  <VariationName evaluation={e} />
+                  <VariationName evaluation={e} change={book.describe(e.label)} />
                   <EvaluationChip status={e.status} pendingDay={e.pendingDay} />
                 </Group>
                 <PnlBarCell
@@ -98,6 +115,7 @@ export function Scoreboard({
                 </Group>
               </Stack>
             </UnstyledButton>
+            <OpenVariation label={e.label} />
           </Card>
         ))}
       </Stack>
@@ -128,7 +146,7 @@ export function Scoreboard({
                   cursor: onSelect ? 'pointer' : undefined,
                   ...(e.label === selectedLabel
                     ? SELECTED
-                    : e.label === BASELINE_LABEL
+                    : e.label === book.baseline
                       ? { background: 'var(--console-neutral-soft)' }
                       : undefined),
                 }}
@@ -140,16 +158,19 @@ export function Scoreboard({
                   className="console-sticky"
                   style={e.label === selectedLabel ? SELECTED : undefined}
                 >
-                  {onSelect ? (
-                    <UnstyledButton
-                      onClick={() => onSelect(e.label)}
-                      aria-label={`Show ${e.label} over time`}
-                    >
-                      <VariationName evaluation={e} />
-                    </UnstyledButton>
-                  ) : (
-                    <VariationName evaluation={e} />
-                  )}
+                  <Stack gap={2} align="flex-start">
+                    {onSelect ? (
+                      <UnstyledButton
+                        onClick={() => onSelect(e.label)}
+                        aria-label={`Show ${e.label} over time`}
+                      >
+                        <VariationName evaluation={e} change={book.describe(e.label)} />
+                      </UnstyledButton>
+                    ) : (
+                      <VariationName evaluation={e} change={book.describe(e.label)} />
+                    )}
+                    <OpenVariation label={e.label} />
+                  </Stack>
                 </Table.Th>
                 <Table.Td>
                   <EvaluationChip status={e.status} pendingDay={e.pendingDay} />

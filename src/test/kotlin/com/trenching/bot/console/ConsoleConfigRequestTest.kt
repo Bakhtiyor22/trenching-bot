@@ -354,6 +354,107 @@ class ConsoleConfigRequestTest {
         assertIs<ConfigValidation.Valid>(validate(body))
     }
 
+    private val captureMinimum = BigDecimal("1.5")
+
+    private fun complete(body: String): ConfigValidation = validator.validateVariation(json.readValue<ConsoleConfigRequest>(body), captureMinimum)
+
+    private fun completeFields(body: String): Map<String, String> = assertIs<ConfigValidation.Invalid>(complete(body)).fields
+
+    /** The console's edit form's body: every field, the levels as percents, an unset clock as null. */
+    private fun completeBody(vararg without: String, extra: Map<String, String> = emptyMap()): String {
+        val fields = linkedMapOf(
+            "notional" to "\"0.1\"", "maxAgeSlots" to "2", "dipPercent" to "\"20\"", "takeProfitPercent" to "\"80\"",
+            "stopLossPercent" to "\"50\"", "minMarketCapUsd" to "\"10000\"", "horizonSlots" to "4500", "latencySlots" to "1",
+            "transactionCostSol" to "\"0.001\"", "quoteMint" to "\"So11111111111111111111111111111111111111112\"",
+            "dipWindowMs" to "30000", "maxHoldMs" to "180000", "hardExitStartMs" to "240000", "priceMeasure" to "\"POST_TRADE\"",
+            "followWalletSells" to "true", "minSignalSol" to "\"1.9\"",
+        )
+        fields.putAll(extra)
+        without.forEach(fields::remove)
+        return fields.entries.joinToString(",", "{", "}") { "\"${it.key}\":${it.value}" }
+    }
+
+    @Test
+    fun `the complete mode builds the configuration from a body that carries every field`() {
+        val valid = assertIs<ConfigValidation.Valid>(complete(completeBody()))
+
+        assertEquals(SimulationConfig.agreed().copyLevels(takeProfitBps = 8000, stopLossBps = 5000), valid.config)
+    }
+
+    @Test
+    fun `the complete mode takes a level as basis points as well as a percent`() {
+        val body = completeBody("dipPercent", "takeProfitPercent", extra = mapOf("dipBps" to "2000", "takeProfitBps" to "8000"))
+
+        assertEquals(8000, assertIs<ConfigValidation.Valid>(complete(body)).config.takeProfitBps)
+    }
+
+    @Test
+    fun `the complete mode reports each missing field instead of taking the mvp value, while the default mode still takes it`() {
+        val required = listOf("notional", "maxAgeSlots", "minMarketCapUsd", "horizonSlots", "latencySlots", "transactionCostSol", "quoteMint",
+            "priceMeasure", "followWalletSells", "minSignalSol", "dipWindowMs", "maxHoldMs", "hardExitStartMs")
+
+        required.forEach { field ->
+            assertEquals(setOf(field), completeFields(completeBody(field)).keys, "missing $field")
+        }
+        assertEquals(setOf("dipBps"), completeFields(completeBody("dipPercent")).keys)
+        assertEquals(setOf("takeProfitBps"), completeFields(completeBody("takeProfitPercent")).keys)
+        assertEquals(setOf("stopLossBps"), completeFields(completeBody("stopLossPercent")).keys)
+        assertEquals(ConfigErrorCode.CONFIG_INVALID, assertIs<ConfigValidation.Invalid>(complete(completeBody("dipPercent"))).code)
+        assertEquals(required.toSet() + setOf("dipBps", "takeProfitBps", "stopLossBps"), completeFields("{}").keys)
+        assertEquals(SimulationConfig.mvp(), config("{}"))
+    }
+
+    @Test
+    fun `the complete mode reports every missing field when there is no config at all`() {
+        val invalid = assertIs<ConfigValidation.Invalid>(validator.validateVariation(null, captureMinimum))
+
+        assertEquals(16, invalid.fields.size)
+    }
+
+    @Test
+    fun `an unset timed clock is sent as null and the config keeps it untimed`() {
+        val body = completeBody(extra = mapOf("dipWindowMs" to "null", "maxHoldMs" to "null", "hardExitStartMs" to "null"))
+
+        val config = assertIs<ConfigValidation.Valid>(complete(body)).config
+
+        assertEquals(listOf(null, null, null), listOf(config.dipWindowMs, config.maxHoldMs, config.hardExitStartMs))
+    }
+
+    @Test
+    fun `the complete mode still reports a hold without its hard exit start as a pair error`() {
+        assertEquals(setOf("hardExitStartMs"), completeFields(completeBody(extra = mapOf("hardExitStartMs" to "null"))).keys)
+    }
+
+    @Test
+    fun `the complete mode refuses a null minimum signal size and one below the capture filter's, accepting the filter's own`() {
+        assertEquals(setOf("minSignalSol"), completeFields(completeBody(extra = mapOf("minSignalSol" to "null"))).keys)
+        assertEquals(setOf("minSignalSol"), completeFields(completeBody(extra = mapOf("minSignalSol" to "\"1.499999999\""))).keys)
+        assertEquals(BigDecimal("1.5").setScale(12), assertIs<ConfigValidation.Valid>(complete(completeBody(extra = mapOf("minSignalSol" to "\"1.50\"")))).config.minSignalSol)
+    }
+
+    @Test
+    fun `the complete mode refuses a quote mint that is not wrapped SOL`() {
+        val fields = completeFields(completeBody(extra = mapOf("quoteMint" to "\"11111111111111111111111111111112\"")))
+
+        assertEquals(setOf("quoteMint"), fields.keys)
+    }
+
+    @Test
+    fun `the complete mode keeps the percent, conflict and unknown field codes`() {
+        val percent = assertIs<ConfigValidation.Invalid>(complete(completeBody(extra = mapOf("takeProfitPercent" to "\"80.555\""))))
+        val conflict = assertIs<ConfigValidation.Invalid>(complete(completeBody(extra = mapOf("takeProfitBps" to "7000"))))
+        val unknown = assertIs<ConfigValidation.Invalid>(complete(completeBody(extra = mapOf("feeBps" to "5"))))
+
+        assertEquals(ConfigErrorCode.INVALID_PERCENT to setOf("takeProfitPercent"), percent.code to percent.fields.keys)
+        assertEquals(ConfigErrorCode.CONFLICTING_FIELDS to setOf("takeProfitPercent"), conflict.code to conflict.fields.keys)
+        assertEquals(ConfigErrorCode.CONFIG_INVALID to setOf("feeBps"), unknown.code to unknown.fields.keys)
+    }
+
+    private fun SimulationConfig.copyLevels(takeProfitBps: Int, stopLossBps: Int): SimulationConfig =
+        SimulationConfig.of(notional, maxAgeSlots, dipBps, takeProfitBps, stopLossBps, minMarketCapUsd, horizonSlots, latencySlots,
+            transactionCostSol, quoteMint = quoteMint, dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs, hardExitStartMs = hardExitStartMs,
+            priceMeasure = priceMeasure, followWalletSells = followWalletSells, minSignalSol = minSignalSol)
+
     private fun SimulationConfig.copyOf(dipWindowMs: Long? = this.dipWindowMs, maxHoldMs: Long? = this.maxHoldMs,
                                         hardExitStartMs: Long? = this.hardExitStartMs): SimulationConfig =
         SimulationConfig.of(notional, maxAgeSlots, dipBps, takeProfitBps, stopLossBps, minMarketCapUsd, horizonSlots, latencySlots,

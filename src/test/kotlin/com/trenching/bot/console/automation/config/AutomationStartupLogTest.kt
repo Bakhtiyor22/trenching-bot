@@ -26,8 +26,8 @@ class AutomationStartupLogTest {
         assertTrue(message.startsWith("Automation is on: discovery scans every 10m between 18:00 and 05:00 (+05:00), and capture is on. "), message)
         assertTrue(message.contains("enabled=true captureEnabled=true wallet="), message)
         assertTrue(message.contains(" discovery=window discoveryInterval=10m pollFrom=18:00 pollTo=05:00 zone=+05:00 tickInterval=1m "), message)
-        assertTrue(message.endsWith(" marketDelay=35m marketMaxTransactions=2000 maxStepAttempts=2 sweepPlan=${properties().sweepPlan} rpcConfigured=true"), message)
-        assertTrue(message.contains("maxRequestsPer24h=5000 backfillReserveRequests=1400"), message)
+        assertTrue(message.endsWith(" marketDelay=35m marketMaxTransactions=4000 maxStepAttempts=2 sweepPlan=${properties().sweepPlan} rpcConfigured=true"), message)
+        assertTrue(message.contains("maxRequestsPer24h=5000 backfillReserveRequests=2600"), message)
         assertFalse(message.contains("SECRET-KEY-VALUE") || message.contains("https://") || message.contains("api-key"), message)
     }
 

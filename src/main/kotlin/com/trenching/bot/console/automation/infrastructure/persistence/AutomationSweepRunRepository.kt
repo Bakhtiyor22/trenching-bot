@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.infrastructure.persistence
 
+import java.time.Instant
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
@@ -7,11 +8,16 @@ import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 
-/** The sweep run list filter: each given value must match; the mint is the replayed buy's. */
+/**
+ * The sweep run list filter: each given value must match; the mint and block time are the replayed buy's, [from] inclusive and
+ * [to] exclusive. A buy without a block time fails a given bound, as a null compares unknown.
+ */
 private const val SWEEP_RUN_FILTER = """
     from AutomationSweepRunEntity r join AutomationItemEntity i on i.id = r.itemId
     where (:sessionId is null or r.sessionId = :sessionId) and (:mint is null or i.mint = :mint)
       and (:label is null or r.label = :label) and (:outcome is null or r.outcome = :outcome)
+      and (:planId is null or r.planId = :planId)
+      and (cast(:from as Instant) is null or i.blockTime >= :from) and (cast(:to as Instant) is null or i.blockTime < :to)
 """
 
 interface AutomationSweepRunRepository : JpaRepository<AutomationSweepRunEntity, String> {
@@ -45,6 +51,9 @@ interface AutomationSweepRunRepository : JpaRepository<AutomationSweepRunEntity,
         @Param("mint") mint: String?,
         @Param("label") label: String?,
         @Param("outcome") outcome: String?,
+        @Param("planId") planId: String?,
+        @Param("from") from: Instant?,
+        @Param("to") to: Instant?,
         pageable: Pageable,
     ): Page<AutomationSweepRunEntity>
 }

@@ -1,4 +1,4 @@
-import { ApiError } from '../../api/client';
+import { ApiError, NETWORK_ERROR } from '../../api/client';
 import { STEPS } from '../../api/automation';
 import type {
   AutomationBackfill,
@@ -8,11 +8,37 @@ import type {
   AutomationItemState,
   AutomationSession,
   AutomationStatus,
+  AutomationVariation,
+  AutomationVariationList,
   EvaluationStatus,
+  VariationConfigRequest,
 } from '../../api/automation';
-import { compareDecimals, decimalSign, isDecimalString, toChartNumber } from '../../lib/decimal';
-import { humanizeCode } from '../../lib/format';
+import type { Config, ConfigLimits } from '../../api/types';
+import {
+  compareDecimals,
+  decimalSign,
+  formatDecimal,
+  isDecimalString,
+  toChartNumber,
+} from '../../lib/decimal';
+import { humanizeCode, mintLabel } from '../../lib/format';
+import { formatPercent } from '../../lib/percent';
 import { reasonText } from '../captures/captureReasons';
+import {
+  changedSettings,
+  formatSettingValue,
+  PRICE_MEASURE_VALUES,
+  SETTING_LABELS,
+  type SettingField,
+} from '../runs/configLabels';
+import {
+  formValuesFrom,
+  secondsFieldOf,
+  secondsText,
+  toRunStartRequest,
+  validateRunForm,
+  type RunFormValues,
+} from '../runs/runForm';
 
 /**
  * Pure helpers of the Automation pages: the automation's own time zone, trading days, buy-state buckets, scoreboard
@@ -348,30 +374,263 @@ export function automationMode(
   return status.captureEnabled ? 'CAPTURING' : 'DISCOVERY_ONLY';
 }
 
+/** The setting a configuration property of the API is edited and shown as (`takeProfitBps` → `takeProfitPercent`). */
+export function settingOfProperty(property: string): SettingField | null {
+  const field = secondsFieldOf(property) ?? property.replace(/Bps$/, 'Percent');
+  return field in SETTING_LABELS ? (field as SettingField) : null;
+}
+
+/** "5 min", "60 s", "0.5 s"; whole minutes from two minutes up, so a dip window of 60 s stays in seconds. */
+export function clockText(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return 'off';
+  return ms >= 2 * 60_000 && ms % 60_000 === 0 ? `${ms / 60_000} min` : `${secondsText(ms)} s`;
+}
+
+const plural = (n: number, one: string, many: string) =>
+  `${formatDecimal(String(n))} ${n === 1 ? one : many}`;
+
+/** One setting of `config` in a few words, as variation names read: "take profit 80%", "hold 5 min". */
+export function settingShortText(field: SettingField, config: Config): string {
+  const values = formValuesFrom(config, null);
+  switch (field) {
+    case 'dipPercent':
+      return `dip ${formatPercent(values.dipPercent)}`;
+    case 'takeProfitPercent':
+      return `take profit ${formatPercent(values.takeProfitPercent)}`;
+    case 'stopLossPercent':
+      return `stop loss ${formatPercent(values.stopLossPercent)}`;
+    case 'dipWindowSeconds':
+      return `dip window ${clockText(config.dipWindowMs)}`;
+    case 'maxHoldSeconds':
+      return `hold ${clockText(config.maxHoldMs)}`;
+    case 'hardExitStartSeconds':
+      return `exit ${clockText(config.hardExitStartMs)}`;
+    case 'minSignalSol':
+      return values.minSignalSol ? `min signal ${values.minSignalSol} SOL` : 'no min signal';
+    case 'minMarketCapUsd':
+      return `min market cap $${formatDecimal(values.minMarketCapUsd)}`;
+    case 'notional':
+      return `size ${values.notional} SOL`;
+    case 'transactionCostSol':
+      return `cost ${values.transactionCostSol} SOL per transaction`;
+    case 'horizonSlots':
+      return `horizon ${plural(config.horizonSlots, 'slot', 'slots')}`;
+    case 'latencySlots':
+      return `latency ${plural(config.latencySlots, 'slot', 'slots')}`;
+    case 'maxAgeSlots':
+      return `max price age ${plural(config.maxAgeSlots, 'slot', 'slots')}`;
+    case 'priceMeasure':
+      return PRICE_MEASURE_VALUES[config.priceMeasure].toLowerCase();
+    case 'followWalletSells':
+      return config.followWalletSells ? "follows Decu's sells" : "ignores Decu's sells";
+    case 'quoteMint':
+      return `quote ${mintLabel(config.quoteMint)}`;
+  }
+}
+
+/** The settings named by configuration properties, each once, in the order given (bps and percent twins merge). */
+export function settingsOfProperties(properties: readonly string[]): SettingField[] {
+  const fields: SettingField[] = [];
+  for (const property of properties) {
+    const field = settingOfProperty(property);
+    if (field && !fields.includes(field)) fields.push(field);
+  }
+  return fields;
+}
+
+/** A property no setting shows (the strategy name, say) in words: "strategy version 2". */
+function propertyShortText(property: string, config: Config): string {
+  const value = (config as unknown as Record<string, unknown>)[property];
+  return `${property.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()} ${String(value ?? '—')}`;
+}
+
+/** Some properties of `config` in a few words each, joined: "take profit 80%, stop loss 50%". */
+export function propertiesText(properties: readonly string[], config: Config): string {
+  const fields = settingsOfProperties(properties);
+  const unknown = properties.filter((p) => settingOfProperty(p) === null);
+  return [
+    ...fields.map((field) => settingShortText(field, config)),
+    ...unknown.map((p) => propertyShortText(p, config)),
+  ].join(', ');
+}
+
+/** What a variation changes from the agreed strategy, in a few words, or "agreed (default)" when nothing. */
+export function variationText(
+  variation: Pick<AutomationVariation, 'differsFromAgreed' | 'config'>,
+): string {
+  return variation.differsFromAgreed.length === 0
+    ? 'agreed (default)'
+    : propertiesText(variation.differsFromAgreed, variation.config);
+}
+
+/** The backend's bound on a plan's variations (`AutomationLimits.MAX_VARIATIONS_PER_PLAN`): sequence 0 to 499. */
+export const MAX_VARIATIONS_PER_PLAN = 500;
+
+/** The plan's variations as the pages need them: names, order, the baseline and lookups. */
+export interface VariationBook {
+  planId: string | null;
+  /** By sequence, active and archived. */
+  variations: AutomationVariation[];
+  /**
+   * The variation every other one is compared with: the active one that differs from nothing agreed. Null while the
+   * variations are not loaded, or when none is agreed.
+   */
+  baseline: string | null;
+  find(label: string): AutomationVariation | undefined;
+  /** The variation's short text, or null for a label the book does not hold. */
+  describe(label: string): string | null;
+  /** `labels` in sequence order; labels the book does not hold go last, sorted. */
+  order(labels: Iterable<string>): string[];
+}
+
+export function variationBook(list: AutomationVariationList | null | undefined): VariationBook {
+  const variations = list?.items ?? [];
+  const byLabel = new Map(variations.map((v) => [v.label, v]));
+  const rank = new Map(variations.map((v, i) => [v.label, i]));
+  const baseline =
+    variations.find((v) => v.state === 'ACTIVE' && v.differsFromAgreed.length === 0)?.label ?? null;
+  return {
+    planId: list?.planId ?? null,
+    variations,
+    baseline,
+    find: (label) => byLabel.get(label),
+    describe: (label) => {
+      const variation = byLabel.get(label);
+      return variation ? variationText(variation) : null;
+    },
+    order: (labels) =>
+      [...new Set(labels)].sort(
+        (a, b) =>
+          (rank.get(a) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b) ?? Number.MAX_SAFE_INTEGER) ||
+          a.localeCompare(b),
+      ),
+  };
+}
+
 /**
- * What each variation of `decu-sweep-1` changes from the agreed strategy (backend `SweepPlans.DECU_SWEEP_1`). Plans are
- * immutable by id, so this copy only grows; a label of another plan shows without a description.
+ * The label the next edit would create: "V" and one more than the highest number, at least two digits. Only a
+ * forecast for the form's text; another edit saved first takes it, and the backend names the label it created.
  */
-const PLAN_CHANGES: Record<string, Record<string, string>> = {
-  'decu-sweep-1': {
-    V00: 'agreed (default)',
-    V01: 'dip 15%',
-    V02: 'dip 25%',
-    V03: 'take profit +35%',
-    V04: 'take profit +80%',
-    V05: 'stop loss −25%',
-    V06: 'hold 5 min, exit 6 min',
-    V07: 'dip window 60 s',
-    V08: 'min signal 1.5 SOL',
-    V09: 'min market cap $20k',
-  },
+export function nextVariationLabel(book: VariationBook): string | null {
+  const numbers = book.variations
+    .map((v) => /^V(\d+)$/.exec(v.label)?.[1])
+    .filter((n): n is string => n != null)
+    .map(Number);
+  if (numbers.length === 0) return null;
+  return `V${String(Math.max(...numbers) + 1).padStart(2, '0')}`;
+}
+
+/** "V04 · take profit 80%", or the bare label when its text is unknown. */
+export function variationName(book: VariationBook, label: string): string {
+  const text = book.describe(label);
+  return text ? `${label} · ${text}` : label;
+}
+
+/** One setting changed in the edit form: its label and both values in words ("Take profit", "55%", "80%"). */
+export interface SettingChange {
+  field: SettingField;
+  label: string;
+  from: string;
+  to: string;
+}
+
+/** Each setting `values` changes from `config`, in the form's order of settings. */
+export function settingChanges(values: RunFormValues, config: Config): SettingChange[] {
+  const before = formValuesFrom(config, values.datasetId);
+  return changedSettings(values, config).map((field) => ({
+    field,
+    label: SETTING_LABELS[field],
+    from: formatSettingValue(field, before[field]),
+    to: formatSettingValue(field, values[field]),
+  }));
+}
+
+/**
+ * The edit form's own checks: the run form's limits, without a dataset, and a minimum signal size every variation
+ * needs, at or above the capture filter (automation never captures a smaller buy, so a lower minimum could not apply).
+ */
+export function validateVariationForm(
+  values: RunFormValues,
+  limits: ConfigLimits,
+  captureMinSol: string = BACKFILL_LIMITS.captureMinSol,
+): Record<string, string> {
+  const errors = validateRunForm(values, limits);
+  delete errors.datasetId;
+  const minSignal = values.minSignalSol.trim();
+  if (minSignal === '')
+    errors.minSignalSol = `Required for a variation: at least the capture filter, ${captureMinSol} SOL`;
+  else if (
+    !errors.minSignalSol &&
+    isDecimalString(minSignal) &&
+    compareDecimals(minSignal, captureMinSol) < 0
+  )
+    errors.minSignalSol = `Must be at least the capture filter, ${captureMinSol} SOL`;
+  return errors;
+}
+
+/** The configuration an edit posts: every field, as a run start sends them. */
+export function variationConfigRequest(values: RunFormValues): VariationConfigRequest {
+  return toRunStartRequest(values).config!;
+}
+
+/**
+ * A refused edit's field reasons keyed by the form's own names: a `config.` prefix is dropped, a level in basis points
+ * goes on its percent input (the clocks in milliseconds are placed by `placeFieldErrors`).
+ */
+export function editFieldReasons(fields: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, reason] of Object.entries(fields)) {
+    const field = key
+      .replace(/^config\./, '')
+      .replace(/^(dip|takeProfit|stopLoss)Bps$/, '$1Percent');
+    out[field] = out[field] ? `${out[field]}; ${reason}` : reason;
+  }
+  return out;
+}
+
+/** Why an edit was refused or failed, in plain words, for the variation `label`. */
+export function variationEditErrorText(error: unknown, label: string): string {
+  if (!(error instanceof ApiError))
+    return error instanceof Error ? error.message : 'Unexpected error.';
+  switch (error.code) {
+    case 'VARIATION_ARCHIVED':
+      return `${label} has been archived meanwhile, so it can't be edited any more. Its replacement, shown above once the page refreshes, can be.`;
+    case 'VARIATION_UNCHANGED':
+      return `These settings are exactly ${label}'s own. Change at least one setting to save a new variation.`;
+    case 'VARIATION_DUPLICATE': {
+      const other = error.fields.label;
+      return `${other ? `Active variation ${other}` : 'Another active variation'} already has exactly these settings, so a copy would only replay the same strategy twice.`;
+    }
+    case 'VARIATION_BASELINE':
+      return `${label} is the agreed baseline every other variation is compared with, so it can't be edited.`;
+    case 'AUTOMATION_CONFLICT':
+      return `Another edit of ${label} was saved at the same moment, so this one was not. Reload the variation and edit it again.`;
+    case 'AUTOMATION_VARIATION_NOT_FOUND':
+      return `The backend has no variation ${label}.`;
+    case 'VARIATION_LIMIT_REACHED':
+      return `The plan has reached its limit of ${MAX_VARIATIONS_PER_PLAN} variations, so no new one can be saved. Nothing was saved.`;
+    case 'CONFIG_INVALID':
+    case 'INVALID_PERCENT':
+    case 'CONFLICTING_FIELDS':
+      return 'The backend refused some settings. Nothing was saved.';
+    case NETWORK_ERROR:
+      return 'The backend could not be reached, so it is not known whether the edit was saved. Saving again sends the same request: it cannot create the variation twice.';
+    default:
+      return error.message;
+  }
+}
+
+const EDIT_UNPLACED_SUBJECTS: Record<string, string> = {
+  requestId: 'The request id',
+  label: 'The variation',
 };
 
-/** The label every plan treats as its baseline. */
-export const BASELINE_LABEL = 'V00';
-
-export function variationChange(planId: string, label: string): string | null {
-  return PLAN_CHANGES[planId]?.[label] ?? null;
+/** A refused edit's reasons that no input shows ("The request id must not be blank."), one sentence each. */
+export function unplacedReasonsText(unplaced: ReadonlyArray<{ field: string; reason: string }>) {
+  return unplaced
+    .filter(({ field }) => field !== 'label')
+    .map(({ field, reason }) => `${EDIT_UNPLACED_SUBJECTS[field] ?? field} ${reason}.`)
+    .join(' ');
 }
 
 export interface PnlBar {
@@ -548,11 +807,6 @@ export function compareWorstDesc(
   return compareDecimals(b.worstCasePnl, a.worstCasePnl) || a.label.localeCompare(b.label);
 }
 
-/** The labels of a known plan in order; empty for a plan this console does not describe. */
-export function planLabels(planId: string): string[] {
-  return Object.keys(PLAN_CHANGES[planId] ?? {});
-}
-
 export type StepMark = 'done' | 'current' | 'failed' | 'skipped' | 'pending';
 
 /** Each pipeline step's mark for an item: done before its step, then its step as current, failed or skipped. */
@@ -577,7 +831,7 @@ export type GridDays = (typeof GRID_DAY_CHOICES)[number];
 /** Request budget and range limits of a backfill (backend `AutomationProperties` and the plan's amendments). */
 export const BACKFILL_LIMITS = {
   minDryRunBudget: 100,
-  minCaptureBudget: 1222,
+  minCaptureBudget: 2422,
   maxBudget: 20_000,
   maxDays: 31,
   maxMints: 50,
@@ -761,6 +1015,38 @@ export function dateProblem(value: string | null | undefined): string | null {
   if (!value) return 'Enter a date.';
   if (!DATE_KEY.test(value)) return `${value} is not a date written YYYY-MM-DD.`;
   return isRealDate(value) ? null : `${value} is not a real date.`;
+}
+
+/**
+ * A trading-day range typed in a filter, both days included, as the instants the sweep-run API takes: `from` at the
+ * start of its day (inclusive) and `to` at the start of the day after (exclusive). An empty side is open; a side that
+ * is not a real date, or a start after the end, gets an error and is not sent.
+ */
+export interface DayFilter {
+  fromInstant: string | null;
+  toInstant: string | null;
+  errors: { from?: string; to?: string };
+}
+
+export function dayFilter(
+  from: string | null | undefined,
+  to: string | null | undefined,
+  zone: string,
+  start = DEFAULT_DAY_START,
+): DayFilter {
+  const errors: DayFilter['errors'] = {};
+  if (from) errors.from = dateProblem(from) ?? undefined;
+  if (to) errors.to = dateProblem(to) ?? undefined;
+  if (!errors.from) delete errors.from;
+  if (!errors.to) delete errors.to;
+  if (from && to && !errors.from && !errors.to && daysBetween(from, to) < 0)
+    errors.to = 'The end day is before the start day.';
+  const ok = Object.keys(errors).length === 0;
+  return {
+    fromInstant: ok && from ? dayStartInstant(from, zone, start) : null,
+    toInstant: ok && to ? dayStartInstant(addDays(to, 1), zone, start) : null,
+    errors,
+  };
 }
 
 /** A 1-based page number from the URL; anything that is not a whole number of at least 1 becomes 1. */

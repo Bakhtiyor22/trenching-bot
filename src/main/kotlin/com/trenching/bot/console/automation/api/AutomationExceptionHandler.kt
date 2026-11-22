@@ -11,6 +11,13 @@ import com.trenching.bot.console.automation.domain.BackfillNotFoundException
 import com.trenching.bot.console.automation.domain.BackfillOverlapsCoverageException
 import com.trenching.bot.console.automation.domain.CaptureDisabledException
 import com.trenching.bot.console.automation.domain.InvalidAutomationRequestException
+import com.trenching.bot.console.automation.domain.InvalidVariationConfigException
+import com.trenching.bot.console.automation.domain.VariationArchivedException
+import com.trenching.bot.console.automation.domain.VariationBaselineException
+import com.trenching.bot.console.automation.domain.VariationDuplicateException
+import com.trenching.bot.console.automation.domain.VariationLimitReachedException
+import com.trenching.bot.console.automation.domain.VariationNotFoundException
+import com.trenching.bot.console.automation.domain.VariationUnchangedException
 import com.trenching.bot.console.mapper.ConsoleErrorMapper
 import org.springframework.dao.OptimisticLockingFailureException
 import org.springframework.http.HttpStatus
@@ -72,12 +79,50 @@ class AutomationExceptionHandler(private val mapper: ConsoleErrorMapper) {
     fun retryRefused(e: AutomationRetryRefusedException): ConsoleErrorResponse = mapper.toResponse(e.refusal.code, e.message.orEmpty(), e.fields)
 
     @ExceptionHandler
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    fun variationNotFound(e: VariationNotFoundException): ConsoleErrorResponse =
+        mapper.toResponse(VARIATION_NOT_FOUND, e.message.orEmpty(), emptyMap())
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.BAD_REQUEST)
+    fun invalidVariationConfig(e: InvalidVariationConfigException): ConsoleErrorResponse = mapper.toResponse(e.code.name, e.code.message, e.fields)
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun variationArchived(e: VariationArchivedException): ConsoleErrorResponse = mapper.toResponse(VARIATION_ARCHIVED, e.message.orEmpty(), emptyMap())
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun variationUnchanged(e: VariationUnchangedException): ConsoleErrorResponse = mapper.toResponse(VARIATION_UNCHANGED, e.message.orEmpty(), emptyMap())
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun variationDuplicate(e: VariationDuplicateException): ConsoleErrorResponse =
+        mapper.toResponse(VARIATION_DUPLICATE, e.message.orEmpty(), mapOf(LABEL to e.label))
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun variationBaseline(e: VariationBaselineException): ConsoleErrorResponse = mapper.toResponse(VARIATION_BASELINE, e.message.orEmpty(), emptyMap())
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
+    fun variationLimitReached(e: VariationLimitReachedException): ConsoleErrorResponse =
+        mapper.toResponse(VARIATION_LIMIT_REACHED, e.message.orEmpty(), emptyMap())
+
+    @ExceptionHandler
     @ResponseStatus(HttpStatus.CONFLICT)
     fun concurrentChange(e: OptimisticLockingFailureException): ConsoleErrorResponse = mapper.toResponse(CONFLICT, CONFLICT_MESSAGE, emptyMap())
 
     private companion object {
         const val SESSION_NOT_FOUND = "AUTOMATION_SESSION_NOT_FOUND"
         const val ITEM_NOT_FOUND = "AUTOMATION_ITEM_NOT_FOUND"
+        const val VARIATION_NOT_FOUND = "AUTOMATION_VARIATION_NOT_FOUND"
+        const val VARIATION_ARCHIVED = "VARIATION_ARCHIVED"
+        const val VARIATION_UNCHANGED = "VARIATION_UNCHANGED"
+        const val VARIATION_DUPLICATE = "VARIATION_DUPLICATE"
+        const val VARIATION_BASELINE = "VARIATION_BASELINE"
+        const val VARIATION_LIMIT_REACHED = "VARIATION_LIMIT_REACHED"
+        const val LABEL = "label"
         const val INVALID_REQUEST = "INVALID_REQUEST"
         const val CONFLICT = "AUTOMATION_CONFLICT"
         const val AUTOMATION_DISABLED = "AUTOMATION_DISABLED"

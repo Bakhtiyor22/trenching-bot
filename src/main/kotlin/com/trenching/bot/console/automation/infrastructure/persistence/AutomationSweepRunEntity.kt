@@ -30,6 +30,7 @@ import org.springframework.data.domain.Persistable
     indexes = [
         Index(name = "idx_automation_sweep_runs_run", columnList = "run_id"),
         Index(name = "idx_automation_sweep_runs_session", columnList = "session_id, plan_id, label"),
+        Index(name = "idx_automation_sweep_runs_label_plan", columnList = "label, plan_id"),
     ],
 )
 class AutomationSweepRunEntity(

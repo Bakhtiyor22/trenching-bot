@@ -17,6 +17,9 @@ import com.trenching.bot.console.automation.api.dto.AutomationSessionDetailRespo
 import com.trenching.bot.console.automation.api.dto.AutomationSessionPageResponse
 import com.trenching.bot.console.automation.api.dto.AutomationStatusResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSweepRunPageResponse
+import com.trenching.bot.console.automation.api.dto.AutomationVariationEditRequest
+import com.trenching.bot.console.automation.api.dto.AutomationVariationListResponse
+import com.trenching.bot.console.automation.api.dto.AutomationVariationResponse
 import com.trenching.bot.console.automation.application.AutomationBackfillQueryService
 import com.trenching.bot.console.automation.application.AutomationBackfillService
 import com.trenching.bot.console.automation.application.AutomationDayService
@@ -24,15 +27,19 @@ import com.trenching.bot.console.automation.application.AutomationManualRun
 import com.trenching.bot.console.automation.application.AutomationQueryService
 import com.trenching.bot.console.automation.application.AutomationRetryService
 import com.trenching.bot.console.automation.application.AutomationSessionService
+import com.trenching.bot.console.automation.application.AutomationVariationService
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationSessionSort
 import com.trenching.bot.console.automation.domain.EvaluationSort
 import com.trenching.bot.console.automation.mapper.AutomationBackfillRequestMapper
 import com.trenching.bot.console.automation.mapper.AutomationResponseMapper
+import com.trenching.bot.console.automation.mapper.AutomationVariationRequestMapper
+import com.trenching.bot.console.automation.mapper.AutomationVariationResponseMapper
 import java.time.Instant
 import java.time.LocalDate
 import org.springframework.format.annotation.DateTimeFormat
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -55,6 +62,9 @@ class AutomationController(
     private val retries: AutomationRetryService,
     private val mapper: AutomationResponseMapper,
     private val backfillRequests: AutomationBackfillRequestMapper,
+    private val variations: AutomationVariationService,
+    private val variationResponses: AutomationVariationResponseMapper,
+    private val variationRequests: AutomationVariationRequestMapper,
 ) {
     @GetMapping("/status")
     fun status(): AutomationStatusResponse = mapper.toStatus(query.status())
@@ -109,9 +119,25 @@ class AutomationController(
         @RequestParam(required = false) mint: String?,
         @RequestParam(required = false) label: String?,
         @RequestParam(required = false) outcome: String?,
+        @RequestParam(required = false) planId: String?,
+        @RequestParam(required = false) from: Instant?,
+        @RequestParam(required = false) to: Instant?,
         @RequestParam(defaultValue = ConsoleResponses.DEFAULT_PAGE) page: Int,
         @RequestParam(defaultValue = ConsoleResponses.DEFAULT_PAGE_SIZE) size: Int,
-    ): AutomationSweepRunPageResponse = mapper.toSweepRunPage(query.sweepRuns(sessionId, mint, label, outcome, page, size))
+    ): AutomationSweepRunPageResponse = mapper.toSweepRunPage(query.sweepRuns(sessionId, mint, label, outcome, planId, from, to, page, size))
+
+    @GetMapping("/variations")
+    fun listVariations(@RequestParam(required = false) state: String?): AutomationVariationListResponse =
+        variationResponses.toList(variations.listViews(state))
+
+    @GetMapping("/variations/{label}")
+    fun variation(@PathVariable label: String): AutomationVariationResponse = variationResponses.toResponse(variations.findView(label))
+
+    @PostMapping("/variations/{label}/edit")
+    fun editVariation(@PathVariable label: String, @RequestBody request: AutomationVariationEditRequest): ResponseEntity<AutomationVariationResponse> {
+        val result = variations.edit(label, variationRequests.toEdit(request))
+        return ConsoleResponses.createdOrExisting(result.created, variationResponses.toResponse(result.variation))
+    }
 
     @PostMapping("/backfills")
     @ResponseStatus(HttpStatus.CREATED)

@@ -7,6 +7,9 @@ import {
   type AutomationEvaluation,
 } from '../../api/automation';
 import { ApiError } from '../../api/client';
+import { MOCK_AGREED_CONFIG, createAutomationDb } from '../../mocks/automationFixtures';
+import { configDefaults } from '../../mocks/fixtures';
+import { formValuesFrom } from '../runs/runForm';
 import { isSolanaAddress } from '../../lib/base58';
 import {
   nextTryText,
@@ -22,8 +25,21 @@ import {
   dayRange,
   daysBetween,
   dateProblem,
+  dayFilter,
   dayStartInstant,
   defaultScoredDay,
+  clockText,
+  editFieldReasons,
+  nextVariationLabel,
+  propertiesText,
+  settingChanges,
+  settingsOfProperties,
+  validateVariationForm,
+  variationBook,
+  variationConfigRequest,
+  variationEditErrorText,
+  variationName,
+  variationText,
   isFilteredBackfill,
   isRealDate,
   parseBackfillPrefill,
@@ -33,7 +49,6 @@ import {
   outcomeLabel,
   parseMints,
   pendingText,
-  planLabels,
   pnlBar,
   pnlScale,
   retriesText,
@@ -45,7 +60,6 @@ import {
   statusGrid,
   stepMarks,
   tradingDayOf,
-  variationChange,
   zoneDateTime,
   zoneLabel,
   zoneTime,
@@ -246,13 +260,126 @@ describe('buys', () => {
   });
 });
 
-describe('variations and outcomes', () => {
-  it('describes the variations of decu-sweep-1 only', () => {
-    expect(variationChange('decu-sweep-1', 'V03')).toBe('take profit +35%');
-    expect(variationChange('decu-sweep-2', 'V03')).toBeNull();
-    expect(planLabels('decu-sweep-1')).toHaveLength(10);
+const variations = createAutomationDb().variations;
+const variationList = { planId: 'decu-sweep-1', items: variations };
+const v = (label: string) => variations.find((x) => x.label === label)!;
+
+describe('variations from the API', () => {
+  it('derives a short text from differsFromAgreed and the config', () => {
+    expect(variationText(v('V00'))).toBe('agreed (default)');
+    expect(variationText(v('V04'))).toBe('take profit 80%');
+    expect(variationText(v('V06'))).toBe('hold 5 min, exit 6 min');
+    expect(variationText(v('V07'))).toBe('dip window 60 s');
+    expect(variationText(v('V08'))).toBe('min signal 1.5 SOL');
+    expect(variationText(v('V09'))).toBe('min market cap $20,000');
+    const edited = {
+      differsFromAgreed: ['takeProfitBps', 'stopLossBps'],
+      config: {
+        ...MOCK_AGREED_CONFIG,
+        takeProfitBps: 8000,
+        takeProfitPercent: '80',
+        stopLossBps: 5000,
+        stopLossPercent: '50',
+      },
+    };
+    expect(variationText(edited)).toBe('take profit 80%, stop loss 50%');
   });
 
+  it('merges bps and percent twins, and names a property no setting shows', () => {
+    expect(settingsOfProperties(['dipBps', 'dipPercent', 'maxHoldMs'])).toEqual([
+      'dipPercent',
+      'maxHoldSeconds',
+    ]);
+    expect(propertiesText(['strategyVersion'], MOCK_AGREED_CONFIG)).toBe('strategy version 1');
+    expect(clockText(null)).toBe('off');
+    expect(clockText(90_000)).toBe('90 s');
+    expect(clockText(120_000)).toBe('2 min');
+    expect(clockText(500)).toBe('0.5 s');
+  });
+
+  it('finds the baseline, orders labels by sequence and names labels it does not know bare', () => {
+    const book = variationBook(variationList);
+    expect(book.baseline).toBe('V00');
+    expect(book.describe('V10')).toBe('dip window 90 s');
+    expect(book.describe('V99')).toBeNull();
+    expect(variationName(book, 'V04')).toBe('V04 · take profit 80%');
+    expect(variationName(book, 'V99')).toBe('V99');
+    expect(book.order(['V10', 'V99', 'V02', 'V00'])).toEqual(['V00', 'V02', 'V10', 'V99']);
+    expect(nextVariationLabel(book)).toBe('V11');
+    const empty = variationBook(undefined);
+    expect(empty.baseline).toBeNull();
+    expect(nextVariationLabel(empty)).toBeNull();
+  });
+
+  it('lists each changed setting with both values', () => {
+    const values = { ...formValuesFrom(v('V04').config, null), stopLossPercent: '50' };
+    expect(settingChanges(values, v('V04').config)).toEqual([
+      { field: 'stopLossPercent', label: 'Stop loss', from: '40%', to: '50%' },
+    ]);
+  });
+
+  it('requires a minimum signal size at or above the capture filter, and never a dataset', () => {
+    const values = formValuesFrom(v('V04').config, null);
+    const { limits } = configDefaults;
+    expect(validateVariationForm(values, limits)).toEqual({});
+    expect(validateVariationForm({ ...values, minSignalSol: '' }, limits).minSignalSol).toMatch(
+      /Required/,
+    );
+    expect(validateVariationForm({ ...values, minSignalSol: '1.2' }, limits).minSignalSol).toMatch(
+      /at least the capture filter, 1.5 SOL/,
+    );
+  });
+
+  it('posts every field of the configuration', () => {
+    const body = variationConfigRequest(formValuesFrom(v('V04').config, null));
+    expect(body).toMatchObject({
+      takeProfitPercent: '80',
+      stopLossPercent: '40',
+      minSignalSol: '1.9',
+    });
+    expect(Object.keys(body)).toHaveLength(16);
+  });
+
+  it('places a refused field on the input that shows it', () => {
+    expect(
+      editFieldReasons({ 'config.takeProfitBps': 'too high', minSignalSol: 'must be set' }),
+    ).toEqual({ takeProfitPercent: 'too high', minSignalSol: 'must be set' });
+  });
+
+  it('dates a trading-day range as the instants the sweep-run list takes', () => {
+    expect(dayFilter('2026-10-29', '2026-10-30', ZONE)).toEqual({
+      fromInstant: '2026-10-29T07:00:00.000Z',
+      toInstant: '2026-10-31T07:00:00.000Z',
+      errors: {},
+    });
+    expect(dayFilter(null, null, ZONE)).toEqual({ fromInstant: null, toInstant: null, errors: {} });
+    expect(dayFilter('2026-02-31', null, ZONE).errors.from).toMatch(/not a real date/);
+    const backwards = dayFilter('2026-10-30', '2026-10-29', ZONE);
+    expect(backwards.errors.to).toMatch(/before the start/);
+    expect(backwards.fromInstant).toBeNull();
+  });
+
+  it('explains each edit refusal in plain words', () => {
+    const refusal = (code: string, fields: Record<string, string> = {}) =>
+      variationEditErrorText(new ApiError(409, code, 'x', fields), 'V04');
+    expect(refusal('VARIATION_ARCHIVED')).toMatch(/V04 has been archived/);
+    expect(refusal('VARIATION_UNCHANGED')).toMatch(/exactly V04's own/);
+    expect(refusal('VARIATION_DUPLICATE', { label: 'V02' })).toMatch(
+      /Active variation V02 already/,
+    );
+    expect(refusal('VARIATION_BASELINE')).toMatch(/agreed baseline/);
+    expect(refusal('AUTOMATION_CONFLICT')).toMatch(/at the same moment/);
+    expect(refusal('VARIATION_LIMIT_REACHED')).toBe(
+      'The plan has reached its limit of 500 variations, so no new one can be saved. Nothing was saved.',
+    );
+    expect(refusal('CONFIG_INVALID')).toMatch(/refused some settings/);
+    expect(variationEditErrorText(new ApiError(0, 'NETWORK_ERROR', 'down'), 'V04')).toMatch(
+      /cannot create the variation twice/,
+    );
+  });
+});
+
+describe('outcomes', () => {
   it('names outcomes in plain words, the new signal outcomes included', () => {
     expect(outcomeLabel('SIGNAL_BELOW_MIN_SIZE')).toBe('Buy too small · not a signal');
     expect(outcomeLabel('HORIZON_REACHED')).toBe('Still open at the end');
@@ -315,8 +442,8 @@ describe('backfills', () => {
 
   it('starts a capture from the estimate, within the budget limits', () => {
     expect(captureBudgetFor(3150)).toBe(3150);
-    expect(captureBudgetFor(400)).toBe(1222);
-    expect(captureBudgetFor(null)).toBe(1222);
+    expect(captureBudgetFor(400)).toBe(2422);
+    expect(captureBudgetFor(null)).toBe(2422);
     expect(captureBudgetFor(50_000)).toBe(20_000);
   });
 });

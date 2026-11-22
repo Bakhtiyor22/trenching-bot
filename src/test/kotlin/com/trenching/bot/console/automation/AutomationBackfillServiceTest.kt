@@ -503,15 +503,15 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
     fun `discovery that would pass the budget stops the scan with the budget exhausted, keeping the items already found`() {
         live()
         lookup.actions += (1..120).map { buyAt(it, Instant.parse("2026-10-30T10:00:00Z").plusSeconds(60L * it)) }
-        lookup.pageRequests = 400
-        val created = service.create(request(budget = 1222)).backfill
+        lookup.pageRequests = 800
+        val created = service.create(request(budget = 2422)).backfill
 
         val outcome = backfillDiscovery(lookup, properties, clock, usage).scan()
 
         val stopped = stored(created.id)
         assertEquals(BackfillState.STOPPED_BUDGET, (outcome as BackfillScanOutcome.Recorded).record.state)
         assertEquals(BackfillState.STOPPED_BUDGET, stopped.state)
-        assertEquals(1600, stopped.discoveryRequests, "four pages of 400; a fifth might cost 22 and pass 1,222, though the fourth was admitted at 1,200")
+        assertEquals(3200, stopped.discoveryRequests, "four pages of 800; a fifth might cost 22 and pass 2,422, though the fourth was admitted at 2,400")
         assertEquals(signature(41).value, stopped.resumeBefore)
         assertNull(stopped.activeWallet)
         assertEquals(80, items.count())
@@ -715,10 +715,10 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
     fun `a capturing backfill's budget must pay for one operation and a discovery page`() {
         live()
 
-        val failure = assertFailsWith<InvalidAutomationRequestException> { service.create(request(budget = 1221)) }
+        val failure = assertFailsWith<InvalidAutomationRequestException> { service.create(request(budget = 2421)) }
 
         assertEquals("requestBudget", failure.field)
-        assertEquals(BackfillState.QUEUED, service.create(request(budget = 1222)).backfill.state)
+        assertEquals(BackfillState.QUEUED, service.create(request(budget = 2422)).backfill.state)
     }
 
     @Test
@@ -805,8 +805,8 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
     fun `a scan stopped by its budget counts the part it read as covered, and live coverage stays where it was`() {
         live()
         lookup.actions += (1..120).map { buyAt(it, Instant.parse("2026-10-30T10:00:00Z").plusSeconds(60L * it)) }
-        lookup.pageRequests = 400
-        val created = service.create(request(budget = 1222)).backfill
+        lookup.pageRequests = 800
+        val created = service.create(request(budget = 2422)).backfill
 
         backfillDiscovery(lookup, properties, clock, usage).scan()
 
@@ -831,8 +831,8 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
     fun `a retry over a range a stopped backfill partly covered re-reads all of it, takes over the stopped backfill's items, and finishes without counting the range twice`() {
         live()
         lookup.actions += (1..120).map { buyAt(it, Instant.parse("2026-10-30T10:00:00Z").plusSeconds(60L * it)) }
-        lookup.pageRequests = 400
-        val stopped = service.create(request(budget = 1222)).backfill
+        lookup.pageRequests = 800
+        val stopped = service.create(request(budget = 2422)).backfill
         backfillDiscovery(lookup, properties, clock, usage).scan()
         lookup.pageRequests = null
 
@@ -1005,8 +1005,8 @@ class AutomationBackfillServiceTest : AutomationDatabaseTest() {
     fun `cancelling a stopped backfill whose items still wait abandons them and closes their sessions, and a stopped one with nothing left to do is returned as it is`() {
         live()
         lookup.actions += (1..120).map { buyAt(it, Instant.parse("2026-10-30T10:00:00Z").plusSeconds(60L * it)) }
-        lookup.pageRequests = 400
-        val created = service.create(request(budget = 1222)).backfill
+        lookup.pageRequests = 800
+        val created = service.create(request(budget = 2422)).backfill
         backfillDiscovery(lookup, properties, clock, usage).scan()
         clock.now = EVENING.plusSeconds(30)
 

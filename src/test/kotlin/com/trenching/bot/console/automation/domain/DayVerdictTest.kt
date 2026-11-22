@@ -1,7 +1,11 @@
 package com.trenching.bot.console.automation.domain
 
 import java.math.BigDecimal
+import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.LocalTime
+import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -11,8 +15,13 @@ import org.junit.jupiter.api.Test
 class DayVerdictTest {
     private val plan = SweepPlans.DECU_SWEEP_1
     private val rule = EvaluationRule(minSignals = 10, minNetPnlSol = BigDecimal.ZERO)
-    private val scoring = DayScoring(plan, windowDays = 7, rule)
+    private val calendar = TradingCalendar(LocalTime.NOON, ZoneOffset.ofHours(5))
+    private val seeded = Variation.seed(plan, Instant.EPOCH)
+    private val scoring = scoring(windowDays = 7, rule)
     private val today = TradingDay(LocalDate.parse("2026-11-10"))
+
+    private fun scoring(windowDays: Int, rule: EvaluationRule, variations: List<Variation> = seeded) =
+        DayScoring(plan.id, variations, calendar, windowDays, rule)
 
     @Test
     fun `seven complete days give the approved verdict per configuration`() {
@@ -66,6 +75,35 @@ class DayVerdictTest {
     }
 
     @Test
+    fun `a day has rows only for the variations alive on it, in sequence order, tallied over the whole window`() {
+        val archived = seeded.single { it.label == "V04" }.copy(state = VariationState.ARCHIVED, archivedAt = local(today.date, "15:00"), replacedByLabel = "V10")
+        val replacement = Variation(plan.id, "V10", 10, VariationState.ACTIVE, archived.config, local(today.date, "15:00"), null, "V04", null, local(today.date, "15:00"))
+        val variations = seeded.map { if (it.label == "V04") archived else it } + replacement
+        val edited = scoring(7, rule, variations)
+        val facts = week(signalsPerDay = 2) + listOf(today.minusDays(7), today.plusDays(1)).associateWith { dayWith(it, 0, "0") }
+
+        fun labels(day: TradingDay) = edited.verdicts(day, facts).map { it.label }
+
+        assertEquals(plan.entries.map { it.label }, labels(today.minusDays(1)), "before the edit V04 has its row and V10 none")
+        assertEquals(plan.entries.map { it.label } + "V10", labels(today), "on the edit day both have one")
+        assertEquals(plan.entries.map { it.label } - "V04" + "V10", labels(today.plusDays(1)), "after it V04 has none")
+        val newcomer = edited.verdicts(today, facts).single { it.label == "V10" }.tally
+        assertEquals(listOf(0, 0, 14), listOf(newcomer.signals, newcomer.scored, newcomer.unscored), "buys before its creation count unscored for it")
+        assertEquals(14, edited.verdicts(today, facts).single { it.label == "V04" }.tally.signals)
+    }
+
+    @Test
+    fun `a verdict decided before an edit reads the same after it`() {
+        val facts = week(signalsPerDay = 2)
+        val before = scoring.verdicts(today, facts)
+        val archived = seeded.single { it.label == "V04" }.copy(state = VariationState.ARCHIVED, archivedAt = local(today.plusDays(1).date, "15:00"), replacedByLabel = "V10")
+        val replacement = Variation(plan.id, "V10", 10, VariationState.ACTIVE, archived.config, local(today.plusDays(1).date, "15:00"), null, "V04", null, Instant.EPOCH)
+        val edited = scoring(7, rule, seeded.map { if (it.label == "V04") archived else it } + replacement)
+
+        assertEquals(before, edited.verdicts(today, facts))
+    }
+
+    @Test
     fun `a day with no buys is complete when covered and counts zero signals`() {
         val gap = DayFacts(today.minusDays(3), covered = true, sessions = emptyList(), items = emptyList())
         val facts = week(signalsPerDay = 2) + (gap.day to gap)
@@ -99,7 +137,7 @@ class DayVerdictTest {
         val facts = week(signalsPerDay = 2).toMutableMap()
         facts[today.minusDays(3)] = facts.getValue(today.minusDays(3)).copy(covered = false)
 
-        val three = DayScoring(plan, windowDays = 3, EvaluationRule(minSignals = 4, minNetPnlSol = BigDecimal.ZERO)).verdicts(today, facts).first()
+        val three = scoring(windowDays = 3, EvaluationRule(minSignals = 4, minNetPnlSol = BigDecimal.ZERO)).verdicts(today, facts).first()
 
         assertEquals(6, three.tally.signals)
         assertEquals(listOf(today.minusDays(2).date, today.minusDays(1).date, today.date), three.windowDays)
@@ -154,6 +192,8 @@ class DayVerdictTest {
         val mixed = week(signalsPerDay = 2) { label -> if (label == "V09") "0.001" else "-9" }
         assertEquals("V09", DayStandings.best(scoring.verdicts(today, mixed))?.label)
     }
+
+    private fun local(date: LocalDate, time: String): Instant = LocalDateTime.parse("${date}T$time:00").toInstant(ZoneOffset.ofHours(5))
 
     private fun windowDates(): List<LocalDate> = (6 downTo 0).map { today.minusDays(it.toLong()).date }
 

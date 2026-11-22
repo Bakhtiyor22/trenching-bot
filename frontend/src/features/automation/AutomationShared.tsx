@@ -34,7 +34,6 @@ import {
   shortSol,
   statusGlyph,
   statusText,
-  variationChange,
   zoneDateTime,
   zoneLabel,
   zoneTime,
@@ -42,6 +41,7 @@ import {
   type BuyBucket,
 } from './automationModel';
 import { BackfillRefusal } from './BackfillShared';
+import { useVariationBook } from './useVariationBook';
 
 const EVALUATION_TONE: Record<EvaluationStatus, StatusTone> = {
   SUCCESS: 'success',
@@ -409,6 +409,7 @@ const TABS = [
   { to: paths.automation, label: 'Overview', end: true },
   { to: paths.automationDays, label: 'Days' },
   { to: paths.automationBackfills, label: 'Backfills' },
+  { to: paths.automationVariations, label: 'Variations' },
   { to: paths.automationSweepRuns, label: 'Sweep runs' },
 ];
 
@@ -421,7 +422,7 @@ function slot(value: FrameSlot, status: AutomationStatus | undefined): ReactNode
 }
 
 const DEFAULT_DESCRIPTION =
-  "Decu's buys are found, captured and replayed under 10 strategy variations. Each variation is scored over the last 7 trading days; nothing is adopted automatically.";
+  "Decu's buys are found, captured and replayed under every active strategy variation. Each variation is scored over the last 7 trading days; nothing is adopted automatically.";
 
 /**
  * The Automation section's frame: the one page header (breadcrumb, title, mode chip, "Times in UTC+5", actions, the
@@ -600,8 +601,71 @@ export function DayLink({
   );
 }
 
+/**
+ * A link to a variation's page (its settings and runs), named by its label. `children` replaces the label; an
+ * `aria-label` says where it goes when the visible text is only an arrow.
+ */
+export function VariationLink({
+  label,
+  children,
+  size = 'sm',
+}: {
+  label: string;
+  children?: ReactNode;
+  size?: 'xs' | 'sm';
+}) {
+  return (
+    <Anchor
+      component={Link}
+      to={paths.automationVariation(label)}
+      size={size}
+      ff={children ? undefined : 'monospace'}
+      fw={children ? undefined : 600}
+      aria-label={children ? `Open variation ${label}: settings and runs` : undefined}
+      onClick={(event) => event.stopPropagation()}
+    >
+      {children ?? label}
+    </Anchor>
+  );
+}
+
+/** A variation's label as a link to its page, followed by what it changes ("take profit 80%") when known. */
+export function VariationLabel({ label }: { label: string }) {
+  const book = useVariationBook();
+  const text = book.describe(label);
+  return (
+    <span>
+      <VariationLink label={label} />
+      {text && (
+        <Text span size="xs" c="dimmed">
+          {' '}
+          {text}
+        </Text>
+      )}
+    </span>
+  );
+}
+
+/** Active, or Archived with the label of its replacement; never colour alone. */
+export function VariationStateChip({
+  state,
+  replacedBy,
+}: {
+  state: 'ACTIVE' | 'ARCHIVED';
+  replacedBy?: string | null;
+}) {
+  return state === 'ACTIVE' ? (
+    <StatusChip tone="running">Active</StatusChip>
+  ) : (
+    <StatusChip tone="neutral" glyph="▣">
+      {replacedBy ? `Archived · replaced by ${replacedBy}` : 'Archived'}
+    </StatusChip>
+  );
+}
+
 /** A day's best verdict and variation, or Pending with the day it waits for. */
-export function BestOfDay({ day, planId }: { day: AutomationDaySummary; planId: string }) {
+export function BestOfDay({ day }: { day: AutomationDaySummary }) {
+  const book = useVariationBook();
   if (!day.bestStatus)
     return (
       <Text size="sm" c="dimmed">
@@ -620,11 +684,9 @@ export function BestOfDay({ day, planId }: { day: AutomationDaySummary; planId: 
   return (
     <Group gap={6} wrap="nowrap">
       <EvaluationChip status={day.bestStatus} />
-      <Text span ff="monospace" size="sm" fw={600}>
-        {day.bestLabel}
-      </Text>
+      {day.bestLabel && <VariationLink label={day.bestLabel} />}
       <Text span size="xs" c="dimmed" visibleFrom="md">
-        {day.bestLabel ? variationChange(planId, day.bestLabel) : null}
+        {day.bestLabel ? book.describe(day.bestLabel) : null}
       </Text>
     </Group>
   );

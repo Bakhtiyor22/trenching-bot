@@ -1,6 +1,7 @@
 package com.trenching.bot.console.automation
 
 import com.trenching.bot.apiusage.ApiUsageReports
+import com.trenching.bot.console.application.ConsoleConfigValidator
 import com.trenching.bot.console.automation.application.AutomationDiscoveryService
 import com.trenching.bot.console.automation.application.AutomationHolds
 import com.trenching.bot.console.automation.application.AutomationDiscoveryTransaction
@@ -20,6 +21,10 @@ import com.trenching.bot.console.automation.application.AutomationSessionService
 import com.trenching.bot.console.automation.application.AutomationRunCycles
 import com.trenching.bot.console.automation.application.AutomationSessionTransaction
 import com.trenching.bot.console.automation.application.AutomationSummaryTransaction
+import com.trenching.bot.console.automation.application.AutomationVariationSeedTransaction
+import com.trenching.bot.console.automation.application.AutomationVariationService
+import com.trenching.bot.console.automation.application.AutomationVariationTransaction
+import com.trenching.bot.console.automation.application.AutomationVariationViews
 import com.trenching.bot.console.automation.application.AutomationSweepTransaction
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillRepository
@@ -27,8 +32,10 @@ import com.trenching.bot.console.automation.infrastructure.persistence.Automatio
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunRepository
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationVariationRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkRepository
 import com.trenching.bot.console.automation.mapper.AutomationRecordMapper
+import com.trenching.bot.console.automation.mapper.AutomationVariationMapper
 import com.trenching.bot.console.config.SolanaRpcProperties
 import com.trenching.bot.papertrading.PaperOrderStore
 import com.trenching.bot.portfolio.PositionStore
@@ -61,7 +68,8 @@ import org.springframework.test.context.ActiveProfiles
 /**
  * The automation services against PostgreSQL. Automation loads only under the local profile, so the transactional beans
  * are declared here (and proxied as in the application); each test builds the plain services around them with its own
- * clock, properties and fake wallet activity. Every test starts from empty automation tables.
+ * clock, properties and fake wallet activity. Every test starts from empty automation tables and the plan's seeded variations,
+ * V00 to V09 as the application's first start stores them; a test that edits writes the archived row and its replacement itself.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE, properties = ["spring.application.name=automation"])
 @Tag("integration")
@@ -74,6 +82,10 @@ abstract class AutomationDatabaseTest {
     @Autowired protected lateinit var items: AutomationItemRepository
     @Autowired protected lateinit var sweepRuns: AutomationSweepRunRepository
     @Autowired protected lateinit var itemEvents: AutomationItemEventRepository
+    @Autowired protected lateinit var variationRows: AutomationVariationRepository
+    @Autowired protected lateinit var variationMapper: AutomationVariationMapper
+    @Autowired protected lateinit var variationSeed: AutomationVariationSeedTransaction
+    @Autowired protected lateinit var variationTransaction: AutomationVariationTransaction
     @Autowired protected lateinit var records: AutomationRecordMapper
     @Autowired protected lateinit var discoveryTransaction: AutomationDiscoveryTransaction
     @Autowired protected lateinit var sessionTransaction: AutomationSessionTransaction
@@ -100,7 +112,8 @@ abstract class AutomationDatabaseTest {
 
     @BeforeEach
     fun emptyAutomationTables() {
-        listOf(itemEvents, sweepRuns, items, sessions, backfills, watermarks).forEach { it.deleteAllInBatch() }
+        listOf(itemEvents, sweepRuns, items, sessions, backfills, watermarks, variationRows).forEach { it.deleteAllInBatch() }
+        variations(AutomationFixtures.properties(), Clock.systemUTC()).seed()
     }
 
     @AfterEach
@@ -134,8 +147,11 @@ abstract class AutomationDatabaseTest {
 
     protected fun sessionRows(properties: AutomationProperties): AutomationSessionRows = AutomationSessionRows(items, records, properties)
 
+    protected fun variations(properties: AutomationProperties, clock: Clock, seeding: AutomationVariationSeedTransaction = variationSeed): AutomationVariationService =
+        AutomationVariationService(variationRows, seeding, variationTransaction, AutomationVariationViews(variationRows, variationMapper), variationMapper, ConsoleConfigValidator(), properties, clock)
+
     protected fun dayService(properties: AutomationProperties, clock: Clock): AutomationDayService =
-        AutomationDayService(sessions, items, sweepRuns, coverage, sessionRows(properties), itemViews(properties), records, properties, clock)
+        AutomationDayService(sessions, items, sweepRuns, variations(properties, clock), coverage, sessionRows(properties), itemViews(properties), records, properties, clock)
 
     protected fun sessionService(properties: AutomationProperties, clock: Clock, operations: CaptureOperationService = idleOperations(clock)): AutomationSessionService =
         AutomationSessionService(sessionTransaction, discoveryTransaction, sessions, AutomationCaptureCancellation(operations), query(properties, clock),
@@ -173,6 +189,14 @@ abstract class AutomationDatabaseTest {
             mapper: AutomationRecordMapper,
             events: AutomationItemEventWriter,
         ) = AutomationScanWriter(sessions, items, sweepRuns, mapper, events)
+
+        @Bean
+        fun automationVariationSeedTransaction(variations: AutomationVariationRepository, mapper: AutomationVariationMapper) =
+            AutomationVariationSeedTransaction(variations, mapper)
+
+        @Bean
+        fun automationVariationTransaction(variations: AutomationVariationRepository, mapper: AutomationVariationMapper) =
+            AutomationVariationTransaction(variations, mapper, AutomationVariationViews(variations, mapper))
 
         @Bean
         fun automationItemLog() = AutomationItemLog(AutomationFixtures.properties(), Clock.systemUTC())

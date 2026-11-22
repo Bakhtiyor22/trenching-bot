@@ -27,7 +27,9 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 
 /**
- * Replays the active sweep plan on captured items (plan Rules 21–23), on every tick while `capture-enabled` is on. At most
+ * Replays the active variations on captured items (plan Rules 21–23), on every tick while `capture-enabled` is on. A tick reads
+ * the active variations once, when it starts (editable-variations plan Rules 4–6): an edit that lands during it applies to the
+ * next tick, and a tick that finds none sweeps nothing and changes no item. At most
  * [AutomationLimits.SWEEP_ITEMS_PER_TICK] items whose sweep is due are swept per tick, oldest buy first. Each entry the item has
  * no row for yet runs as a dataset-referenced run, in entry order, and gets one row; runs are idempotent, so a repeat returns the
  * same run ids. An entry the replay refuses, including for a dataset that is gone or unreadable, is stored with its refusal code
@@ -43,6 +45,7 @@ class AutomationSweepService(
     private val pipeline: AutomationPipelineTransaction,
     private val runs: SimulationRuns,
     private val cycles: AutomationRunCycles,
+    private val variations: AutomationVariationService,
     private val properties: AutomationProperties,
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
 ) {
@@ -50,7 +53,8 @@ class AutomationSweepService(
 
     fun sweep() {
         if (!properties.captureEnabled) return
-        val plan = properties.activePlan()
+        val plan = variations.activePlan()
+        if (plan.entries.isEmpty()) return
         transaction.due(clock.instant(), AutomationLimits.SWEEP_ITEMS_PER_TICK).forEach { item ->
             try {
                 sweepItem(item, plan)

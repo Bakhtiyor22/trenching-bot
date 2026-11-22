@@ -20,10 +20,10 @@ import {
   statusGlyph,
   statusGrid,
   statusText,
-  variationChange,
   type GridDays,
 } from './automationModel';
-import { EvaluationChip, SolValue } from './AutomationShared';
+import { EvaluationChip, SolValue, VariationLink } from './AutomationShared';
+import { useVariationBook } from './useVariationBook';
 
 function cellLabel(label: string, day: string, e: AutomationEvaluation | null): string {
   if (!e) return `${label}, ${day}: no row`;
@@ -65,12 +65,12 @@ export function StatusGridLegend() {
 /**
  * Trend option A: one row per variation, one column per trading day (oldest left), each cell the status of the 7-day
  * window ending that day. A run of ✓ across a row means the variation is consistent, not lucky. Days without buys are
- * real columns, since they count toward the window. Cells link to their day; the table view lists the same values.
+ * real columns, since they count toward the window. Cells link to their day, the arrow after a label to the variation's
+ * page; the table view lists the same values.
  */
 export function StatusGrid({
   days,
   evaluations,
-  planId,
   labels,
   selectedLabel,
   onSelectLabel,
@@ -80,7 +80,6 @@ export function StatusGrid({
   /** The trading days shown, any order. */
   days: string[];
   evaluations: AutomationEvaluation[];
-  planId: string;
   labels: string[];
   selectedLabel: string | null;
   onSelectLabel: (label: string) => void;
@@ -88,6 +87,7 @@ export function StatusGrid({
   onSpanChange: (value: GridDays) => void;
 }) {
   const [tableView, setTableView] = useState(false);
+  const book = useVariationBook();
   const grid = statusGrid(days, evaluations, labels);
   const viewport = useRef<HTMLDivElement>(null);
   const newest = grid.columns.at(-1)?.key;
@@ -151,7 +151,9 @@ export function StatusGrid({
                   return (
                     <Table.Tr key={`${column.key}-${row.label}`}>
                       <Table.Td>{column.label}</Table.Td>
-                      <Table.Td ff="monospace">{row.label}</Table.Td>
+                      <Table.Td>
+                        <VariationLink label={row.label} />
+                      </Table.Td>
                       <Table.Td>
                         {e ? <EvaluationChip status={e.status} pendingDay={e.pendingDay} /> : '—'}
                       </Table.Td>
@@ -213,7 +215,7 @@ export function StatusGrid({
           </thead>
           <tbody>
             {grid.rows.map((row) => {
-              const change = variationChange(planId, row.label);
+              const change = book.describe(row.label);
               const selected = row.label === selectedLabel;
               return (
                 <tr key={row.label}>
@@ -244,6 +246,9 @@ export function StatusGrid({
                         </Text>
                       )}
                     </Button>
+                    <VariationLink label={row.label} size="xs">
+                      →
+                    </VariationLink>
                   </Box>
                   {row.cells.map((e, i) => {
                     const column = grid.columns[i]!;

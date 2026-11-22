@@ -13,6 +13,8 @@ import { ItemRedirect, NightRedirect } from './AutomationRedirects';
 import { AutomationSweepRunsPage } from './AutomationSweepRunsPage';
 import { BackfillDetailPage } from './BackfillDetailPage';
 import { BackfillsPage } from './BackfillsPage';
+import { VariationDetailPage } from './VariationDetailPage';
+import { VariationsPage } from './VariationsPage';
 
 /** Inside the fixtures' today: Mon 2 Nov 2026, 22:00 UTC+5. */
 const NOW = new Date('2026-11-02T17:00:00Z');
@@ -663,13 +665,13 @@ describe('BackfillsPage', () => {
     await screen.findByRole('table', { name: 'Backfills' });
     const budget = screen.getByLabelText('Request budget');
     await user.click(screen.getByRole('checkbox', { name: /Dry run/ }));
-    expect(budget).toHaveValue('1222');
+    expect(budget).toHaveValue('2422');
     await user.clear(budget);
     await user.type(budget, '500');
     await user.click(screen.getByRole('button', { name: /Filters/ }));
     await user.type(screen.getByLabelText(/Minimum signal size/), '1.2');
     await user.click(screen.getByRole('button', { name: /Start capture backfill/ }));
-    expect(screen.getByText('A whole number from 1,222 to 20,000')).toBeInTheDocument();
+    expect(screen.getByText('A whole number from 2,422 to 20,000')).toBeInTheDocument();
     expect(screen.getByText('At least 1.5 SOL, the capture filter')).toBeInTheDocument();
     expect(bodies).toEqual([]);
     await user.clear(screen.getByLabelText(/Minimum signal size/));
@@ -698,7 +700,7 @@ describe('BackfillsPage', () => {
 
   it('ignores pre-fill values in the link that are not valid', async () => {
     renderBackfills(`/automation/backfills?from=2026-02-31&to=2026-10-16&dryRun=false&budget=abc`);
-    expect(await screen.findByLabelText('Request budget')).toHaveValue('1222');
+    expect(await screen.findByLabelText('Request budget')).toHaveValue('2422');
     expect(screen.getByLabelText('From day')).toHaveValue('2026-10-10');
     expect(screen.getByLabelText('To day')).toHaveValue('2026-10-16');
     expect(screen.getByText(/first day, budget were not valid/)).toBeInTheDocument();
@@ -838,5 +840,137 @@ describe('old links', () => {
     });
     expect(await screen.findByText('Day page')).toBeInTheDocument();
     expect(router.state.location.pathname).toBe(`/automation/days/${session.tradingDay}`);
+  });
+});
+
+describe('variations', () => {
+  it('lists the active variations, with the archived ones behind a toggle', async () => {
+    const { user, router } = renderPage(<VariationsPage />, {
+      path: '/automation/variations',
+      url: '/automation/variations',
+    });
+    const table = await screen.findByRole('table', { name: 'Variations' });
+    const rows = () => within(table).getAllByRole('row').slice(1);
+    expect(rows()).toHaveLength(10);
+    const heads = () =>
+      within(table)
+        .getAllByRole('rowheader')
+        .map((h) => h.textContent);
+    expect(heads()).not.toContain('V07');
+    expect(within(rows()[0]!).getByText('agreed (default)')).toBeInTheDocument();
+    expect(within(rows()[0]!).getByText('baseline')).toBeInTheDocument();
+    const v10 = rows().find((row) => within(row).queryByRole('link', { name: 'V10' }) != null)!;
+    expect(within(v10).getByText('dip window 90 s')).toBeInTheDocument();
+    expect(within(v10).getByRole('link', { name: 'V07' })).toHaveAttribute(
+      'href',
+      '/automation/variations/V07',
+    );
+
+    await user.click(screen.getByRole('switch', { name: 'Show archived' }));
+    expect(router.state.location.search).toBe('?archived=1');
+    await waitFor(() => expect(heads()).toContain('V07'));
+    const row = within(table)
+      .getAllByRole('rowheader')
+      .find((h) => h.textContent === 'V07')!
+      .closest('tr')!;
+    expect(within(row).getByText('Archived')).toBeInTheDocument();
+    expect(within(row).getByText('29 Oct, 15:00')).toBeInTheDocument();
+    expect(within(row).getByText(/replaced by/)).toHaveTextContent('replaced by V10');
+  });
+
+  it('shows a variation with its settings, lineage and runs', async () => {
+    renderPage(<VariationDetailPage />, {
+      path: '/automation/variations/:label',
+      url: '/automation/variations/V10',
+    });
+    const settings = await screen.findByRole('table', { name: 'Settings of V10' });
+    expect(within(settings).getByText('90 s')).toBeInTheDocument();
+    expect(within(settings).getByText('changed from V07')).toBeInTheDocument();
+    expect(screen.getByText(/V10 replaces V07/)).toBeInTheDocument();
+    expect(screen.getByText(/It runs only on buys captured from/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled();
+    const runs = await screen.findByRole('table', { name: 'Sweep runs' });
+    // No variation column on a variation's own runs; every buy is from 29 Oct on.
+    expect(within(runs).queryByRole('columnheader', { name: 'Variation' })).not.toBeInTheDocument();
+    const days = within(runs)
+      .getAllByRole('row')
+      .slice(1)
+      .map((row) => within(row).getAllByRole('link')[0]!.getAttribute('href')!);
+    expect(days.every((href) => href.slice('/automation/days/'.length, -1) >= '2026-10-29')).toBe(
+      true,
+    );
+  });
+
+  it('says when a label never existed', async () => {
+    renderPage(<VariationDetailPage />, {
+      path: '/automation/variations/:label',
+      url: '/automation/variations/V99',
+    });
+    expect(await screen.findByText('No variation V99')).toBeInTheDocument();
+  });
+
+  it('links each scoreboard row to its variation', async () => {
+    renderOverview();
+    const board = await screen.findByRole('table', { name: 'Scoreboard' });
+    expect(
+      within(board).getByRole('link', { name: 'Open variation V04: settings and runs' }),
+    ).toHaveAttribute('href', '/automation/variations/V04');
+    expect(within(board).getByText('take profit 80%')).toBeInTheDocument();
+    const grid = screen.getByRole('table', { name: 'Status by day' });
+    expect(
+      within(grid).getByRole('link', { name: 'Open variation V07: settings and runs' }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('sweep run filters', () => {
+  it('sends the trading days as instants, keeps them in the URL, and asks for 50 rows', async () => {
+    const seen: URL[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.url.includes('/api/automation/sweep-runs')) seen.push(new URL(request.url));
+    });
+    const { router } = renderPage(<AutomationSweepRunsPage />, {
+      path: '/automation/sweep-runs',
+      url: '/automation/sweep-runs?from=2026-10-29&to=2026-10-30',
+    });
+    const table = await screen.findByRole('table', { name: 'Sweep runs' });
+    const last = seen.at(-1)!.searchParams;
+    expect(last.get('from')).toBe('2026-10-29T07:00:00.000Z');
+    expect(last.get('to')).toBe('2026-10-31T07:00:00.000Z');
+    expect(last.get('page')).toBe('0');
+    expect(last.get('size')).toBe('50');
+    expect(screen.getByLabelText('From day')).toHaveValue('2026-10-29');
+    expect(router.state.location.search).toContain('to=2026-10-30');
+    for (const row of within(table).getAllByRole('row').slice(1)) {
+      const day = within(row).getAllByRole('link')[0]!.getAttribute('href')!;
+      expect(['2026-10-29', '2026-10-30'].some((d) => day.includes(d))).toBe(true);
+    }
+  });
+
+  it('shows the token with a Solscan link from the row itself', async () => {
+    renderPage(<AutomationSweepRunsPage />, {
+      path: '/automation/sweep-runs',
+      url: '/automation/sweep-runs',
+    });
+    const table = await screen.findByRole('table', { name: 'Sweep runs' });
+    const row = within(table).getAllByRole('row')[1]!;
+    const solscan = within(row).getByRole('link', { name: /on Solscan$/ });
+    const mint = solscan.getAttribute('aria-label')!.replace(/^Open token (\S+) on Solscan$/, '$1');
+    expect(solscan).toHaveAttribute('href', `https://solscan.io/token/${mint}`);
+    expect(db.items.some((item) => item.mint === mint)).toBe(true);
+  });
+
+  it('never sends a day range that ends before it starts', async () => {
+    const seen: URL[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.url.includes('/api/automation/sweep-runs')) seen.push(new URL(request.url));
+    });
+    renderPage(<AutomationSweepRunsPage />, {
+      path: '/automation/sweep-runs',
+      url: '/automation/sweep-runs?from=2026-10-30&to=2026-10-29',
+    });
+    expect(await screen.findByText('The end day is before the start day.')).toBeInTheDocument();
+    expect(screen.getByText('Check the days')).toBeInTheDocument();
+    expect(seen).toHaveLength(0);
   });
 });

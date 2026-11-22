@@ -121,14 +121,28 @@ class AutomationQueryService(
         return AutomationItemEventList(id, events)
     }
 
-    /** The sweep runs of every plan, newest buy first, filtered by [sessionId], the buy's [mint], [label] and [outcome]. */
-    fun sweepRuns(sessionId: String?, mint: String?, label: String?, outcome: String?, page: Int, size: Int): PageResult<AutomationSweepRunRow> {
+    /**
+     * The sweep runs of every plan, newest buy first, filtered by [sessionId], the buy's [mint], [label], [outcome] and [planId].
+     * [from] (inclusive) and [to] (exclusive) bound the buy's block time, which leaves out a buy without one.
+     */
+    fun sweepRuns(
+        sessionId: String?,
+        mint: String?,
+        label: String?,
+        outcome: String?,
+        planId: String?,
+        from: Instant?,
+        to: Instant?,
+        page: Int,
+        size: Int,
+    ): PageResult<AutomationSweepRunRow> {
         val pageable = AutomationPaging.pageable(page, size)
+        if (from != null && to != null && !from.isBefore(to)) throw InvalidAutomationRequestException(FROM, "must be before to")
         if (mint != null && ConsoleAddresses.mintOrNull(mint) == null) throw InvalidAutomationRequestException(MINT, "must be a base58 mint address")
         if (outcome != null && outcome !in SweepOutcomes.KNOWN) {
             throw InvalidAutomationRequestException(OUTCOME, "must be a close, skip or refusal reason")
         }
-        val found = sweepRuns.page(sessionId, mint, label, outcome, pageable)
+        val found = sweepRuns.page(sessionId, mint, label, outcome, planId, from, to, pageable)
         val buys = items.findAllById(found.content.map { it.itemId }.distinct()).associateBy { it.id }
         val rows = found.content.map { run ->
             val buy = checkNotNull(buys[run.itemId]) { "Sweep run without its item sweepRunId=${run.id} itemId=${run.itemId}" }
@@ -147,5 +161,6 @@ class AutomationQueryService(
         const val HEALTH = "health"
         const val MINT = "mint"
         const val OUTCOME = "outcome"
+        const val FROM = "from"
     }
 }

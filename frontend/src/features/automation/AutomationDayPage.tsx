@@ -50,7 +50,6 @@ import {
   retryStepOf,
   stepMarks,
   tradingDayOf,
-  variationChange,
   zoneDateTime,
   zoneLabel,
   zoneTime,
@@ -65,6 +64,7 @@ import {
   RunLink,
   SolValue,
   StatusAlerts,
+  VariationLabel,
   ZoneTime,
 } from './AutomationShared';
 import { RetryBuy, RetryFailedBuys } from './RetryControls';
@@ -431,12 +431,7 @@ function SelectedBuy({
                       {runs.map((r) => (
                         <Table.Tr key={r.label}>
                           <Table.Th scope="row" fw={400} className="console-sticky">
-                            <Text span ff="monospace" fw={600} size="sm">
-                              {r.label}
-                            </Text>{' '}
-                            <Text span size="xs" c="dimmed">
-                              {variationChange(r.planId, r.label)}
-                            </Text>
+                            <VariationLabel label={r.label} />
                           </Table.Th>
                           <Table.Td>
                             <OutcomeText outcome={r.outcome} />
@@ -551,7 +546,7 @@ function Day({ detail, status }: { detail: AutomationDayDetail; status: Automati
           {formatCount(summary.belowFilter)}
         </Kpi>
         <Kpi label="Best variation" hint="over the 7 trading days ending here">
-          <BestOfDay day={summary} planId={status.sweepPlanId} />
+          <BestOfDay day={summary} />
         </Kpi>
         <Kpi label="Unscored" hint="failed or abandoned buys, kept out of P&L">
           {formatCount(unscored)}

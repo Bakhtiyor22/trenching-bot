@@ -41,8 +41,9 @@ import org.springframework.transaction.annotation.Transactional
  * rows of the days it needs, and of the earlier days of their verdict windows, and derives each day's completeness and rows from
  * them with [DayScoring], so a day filled in later changes the rows of the days after it. A list covers at most
  * [AutomationLimits.MAX_DAYS_PER_LIST] days; the rows of the span's sessions, items and sweep runs are read with one query each
- * (never one per item), bounded by the days read and cut off nowhere, since a verdict must never rest on a truncated day. Scoring uses the active sweep plan and `evaluation-window-sessions`
- * trading days.
+ * (never one per item), bounded by the days read and cut off nowhere, since a verdict must never rest on a truncated day. Scoring
+ * is built on each call from the plan's stored variations and their lives, so a day has rows only for the variations alive on it
+ * (editable-variations plan Rule 9), over `evaluation-window-sessions` trading days.
  */
 @Service
 @ConditionalOnAutomationConsole
@@ -51,6 +52,7 @@ class AutomationDayService(
     private val sessions: AutomationSessionRepository,
     private val items: AutomationItemRepository,
     private val sweepRuns: AutomationSweepRunRepository,
+    private val variations: AutomationVariationService,
     private val coverage: AutomationCoverage,
     private val sessionRows: AutomationSessionRows,
     private val itemViews: AutomationItemViews,
@@ -59,7 +61,6 @@ class AutomationDayService(
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
 ) {
     private val calendar = properties.tradingCalendar()
-    private val scoring = DayScoring(properties.activePlan(), properties.evaluationWindowSessions, properties.evaluationRule())
 
     /** The days from [from] to [to] (trading dates, inclusive), newest first; by default the 14 days ending with today's. */
     fun days(from: LocalDate?, to: LocalDate?): DayList {
@@ -77,11 +78,11 @@ class AutomationDayService(
             items.findAllBySessionIdIn(ids, PageRequest.of(0, ids.size * AutomationLimits.MAX_ITEMS_PER_SESSION)).let(itemViews::of)
         }
         return DayDetail(summary(day, data), DayCoverage(data.facts.getValue(day).covered, data.coverage.ranges), sessionRows.of(entities), dayItems,
-            scoring.verdicts(day, data.facts))
+            data.scoring.verdicts(day, data.facts))
     }
 
     /**
-     * The rows of the days from [from] to [to] (default as in [days]), one per entry of the active plan, filtered by [label] and
+     * The rows of the days from [from] to [to] (default as in [days]), one per variation alive on each day, filtered by [label] and
      * [status] (a verdict or `PENDING`) and ordered by [sort].
      */
     fun evaluations(from: LocalDate?, to: LocalDate?, label: String?, status: String?, sort: String, page: Int, size: Int): PageResult<DayVerdict> {
@@ -90,7 +91,7 @@ class AutomationDayService(
         if (status != null && status !in DayStanding.LABELS) throw InvalidAutomationRequestException(STATUS, "must be one of ${DayStanding.LABELS}")
         val (first, last) = span(from, to)
         val data = load(first, last)
-        val rows = first.through(last).flatMap { scoring.verdicts(it, data.facts) }
+        val rows = first.through(last).flatMap { data.scoring.verdicts(it, data.facts) }
             .filter { (label == null || it.label == label) && (status == null || it.status == status) }
             .sortedWith(comparator(order))
         val start = pageable.offset.coerceAtMost(rows.size.toLong()).toInt()
@@ -120,7 +121,7 @@ class AutomationDayService(
 
     private fun summary(day: TradingDay, data: DayData): DaySummary {
         val facts = data.facts.getValue(day)
-        val verdicts = scoring.verdicts(day, data.facts)
+        val verdicts = data.scoring.verdicts(day, data.facts)
         val best = DayStandings.best(verdicts)
         val ofDay = data.sessionsByDay[day].orEmpty()
         val states = ofDay.flatMap { data.itemsBySession[it.id].orEmpty() }.groupingBy { it.state }.eachCount()
@@ -138,6 +139,7 @@ class AutomationDayService(
     /** Everything stored for the days from [first] through [last] and the earlier days their windows reach. */
     private fun load(first: TradingDay, last: TradingDay): DayData {
         val wallet = properties.wallet
+        val scoring = DayScoring(properties.sweepPlan, variations.list(), calendar, properties.evaluationWindowSessions, properties.evaluationRule())
         val loadFrom = scoring.windowStart(first)
         val days = loadFrom.through(last)
         val range = TimeRange(calendar.range(loadFrom).from, calendar.range(last).to)
@@ -160,7 +162,7 @@ class AutomationDayService(
             }
             DayFacts(day, covered.covers(calendar.range(day)), ofDay.map { it.state }, windowItems)
         }
-        return DayData(sessionsByDay, itemsBySession, requests, covered, facts)
+        return DayData(sessionsByDay, itemsBySession, requests, covered, facts, scoring)
     }
 
     private class DayData(
@@ -169,6 +171,7 @@ class AutomationDayService(
         val requestsBySession: Map<String, Long>,
         val coverage: CoverageRanges,
         val facts: Map<TradingDay, DayFacts>,
+        val scoring: DayScoring,
     )
 
     private companion object {

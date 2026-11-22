@@ -18,18 +18,25 @@ import com.trenching.bot.console.automation.FakeWalletActivityLookup
 import com.trenching.bot.console.automation.RecordingTaskScheduler
 import com.trenching.bot.console.automation.application.AutomationManualRun
 import com.trenching.bot.console.automation.config.AutomationProperties
+import com.trenching.bot.console.automation.AutomationVariationRows
 import com.trenching.bot.console.automation.domain.AutomationIds
+import com.trenching.bot.console.automation.domain.AutomationLimits
 import com.trenching.bot.console.automation.domain.AutomationItemEventKind
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.AutomationStep
 import com.trenching.bot.console.automation.domain.BackfillState
+import com.trenching.bot.console.automation.domain.SweepPlans
+import com.trenching.bot.console.automation.domain.VariationEditRules
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEventEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkEntity
 import com.trenching.bot.console.automation.mapper.AutomationBackfillRequestMapperImpl
 import com.trenching.bot.console.automation.mapper.AutomationResponseMapperImpl
+import com.trenching.bot.console.automation.mapper.AutomationVariationRequestMapper
+import com.trenching.bot.console.automation.mapper.AutomationVariationResponseMapperImpl
 import com.trenching.bot.console.capture.MutableClock
+import com.trenching.bot.console.mapper.ConfigResponseMapperImpl
 import com.trenching.bot.console.mapper.ConsoleErrorMapperImpl
 import java.time.Duration
 import java.time.Instant
@@ -38,6 +45,7 @@ import kotlin.test.assertEquals
 import org.junit.jupiter.api.Test
 import org.springframework.http.MediaType
 import org.springframework.mock.web.MockHttpServletResponse
+import org.springframework.test.util.ReflectionTestUtils
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.RequestBuilder
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
@@ -59,9 +67,12 @@ class AutomationControllerTest : AutomationDatabaseTest() {
     private val seed by lazy { AutomationDaySeed(sessions, items, sweepRuns) }
     private val mvc: MockMvc by lazy { mvc(properties, AutomationManualRun(properties, runtime, discovery(lookup, properties, clock), scheduler, clock)) }
 
+    private val variationResponses = AutomationVariationResponseMapperImpl().also { ReflectionTestUtils.setField(it, "configResponseMapper", ConfigResponseMapperImpl()) }
+
     private fun mvc(properties: AutomationProperties, manualRun: AutomationManualRun): MockMvc =
         MockMvcBuilders.standaloneSetup(AutomationController(query(properties, clock, usage), dayService(properties, clock), sessionService(properties, clock),
-            manualRun, backfillService(properties, clock), backfillQuery(properties), retryService(properties, clock), AutomationResponseMapperImpl(), AutomationBackfillRequestMapperImpl()))
+            manualRun, backfillService(properties, clock), backfillQuery(properties), retryService(properties, clock), AutomationResponseMapperImpl(), AutomationBackfillRequestMapperImpl(),
+            variations(properties, clock), variationResponses, AutomationVariationRequestMapper()))
             .setControllerAdvice(AutomationExceptionHandler(ConsoleErrorMapperImpl()))
             .build()
 
@@ -286,6 +297,149 @@ class AutomationControllerTest : AutomationDatabaseTest() {
         assertEquals(listOf("item-1:V01"), runKeys(ok(get("/api/automation/sweep-runs?outcome=MARKET_COVERAGE_ENDED"))))
         assertEquals(0, ok(get("/api/automation/sweep-runs?outcome=STOP_LOSS"))["total"].asInt())
         assertEquals(listOf("V00", "V01"), ok(get("/api/automation/items/item-1"))["sweepRuns"].let { runs -> List(runs.size()) { runs[it]["label"].asString() } })
+    }
+
+    @Test
+    fun `sweep runs filter by plan and by the buy's block time, and a buy without one drops out when a bound is given`() {
+        seedThreeNights()
+        items.saveAll(listOf(
+            item(1, "yesterday", AutomationItemState.SIMULATED, blockTime = EVENING.minus(Duration.ofDays(1))),
+            item(2, "tonight", AutomationItemState.SIMULATED, blockTime = EVENING),
+            item(3, "tonight", AutomationItemState.SIMULATED, blockTime = null),
+        ))
+        sweepRuns.saveAll(listOf(
+            sweepRun("r1", "item-1", "V04", sessionId = "yesterday"),
+            sweepRun("r2", "item-2", "V04", sessionId = "tonight"),
+            sweepRun("r2-other", "item-2", "V04", sessionId = "tonight").apply { planId = "other-plan" },
+            sweepRun("r2-v05", "item-2", "V05", sessionId = "tonight"),
+            sweepRun("r3", "item-3", "V04", sessionId = "tonight"),
+        ))
+        val range = "from=${EVENING.minusSeconds(60)}&to=${EVENING.plusSeconds(60)}"
+
+        val inRange = ok(get("/api/automation/sweep-runs?label=V04&$range&page=0&size=50"))
+
+        assertEquals(2, inRange["total"].asInt())
+        assertEquals(listOf(mint(2).value, mint(2).value), List(2) { inRange["items"][it]["mint"].asString() })
+        assertEquals(listOf("item-2:V04"), runKeys(ok(get("/api/automation/sweep-runs?label=V04&planId=decu-sweep-1&$range"))))
+        assertEquals(listOf("other-plan"), ok(get("/api/automation/sweep-runs?label=V04&planId=other-plan"))["items"].let { runs -> List(runs.size()) { runs[it]["planId"].asString() } })
+        assertEquals(4, ok(get("/api/automation/sweep-runs?label=V04"))["total"].asInt(), "a buy without a block time is listed when no bound is given")
+        assertEquals(2, ok(get("/api/automation/sweep-runs?label=V04&from=${EVENING}"))["total"].asInt(), "from is inclusive and drops the buy without a block time")
+        assertEquals(3, ok(get("/api/automation/sweep-runs?label=V04&to=${EVENING.plusSeconds(1)}"))["total"].asInt())
+        assertEquals(1, ok(get("/api/automation/sweep-runs?label=V04&to=${EVENING}"))["total"].asInt(), "to is exclusive and drops the buy without a block time")
+    }
+
+    @Test
+    fun `sweep runs refuse a from that is not before to`() {
+        val response = mvc.perform(get("/api/automation/sweep-runs?from=${EVENING}&to=${EVENING}")).andReturn().response
+
+        assertEquals(400, response.status, response.contentAsString)
+        assertEquals("INVALID_REQUEST", body(response)["code"].asString())
+        assertEquals(true, body(response)["fields"].has("from"))
+        assertEquals(400, mvc.perform(get("/api/automation/sweep-runs?from=yesterday")).andReturn().response.status)
+    }
+
+    @Test
+    fun `variations list by sequence with their configuration and what differs from the agreed one, filtered by state`() {
+        val body = ok(get("/api/automation/variations"))
+        val items = List(body["items"].size()) { body["items"][it] }
+
+        assertEquals("decu-sweep-1", body["planId"].asString())
+        assertEquals((0..9).map { "V0$it" }, items.map { it["label"].asString() })
+        assertEquals(List(10) { "ACTIVE" }, items.map { it["state"].asString() })
+        assertEquals(0, items[0]["differsFromAgreed"].size())
+        assertEquals(listOf("takeProfitBps"), List(items[4]["differsFromAgreed"].size()) { items[4]["differsFromAgreed"][it].asString() })
+        assertEquals(0, items[4]["changedFromReplaced"].size())
+        assertEquals(listOf(8000, "80", "0.100000000000"), listOf(items[4]["config"]["takeProfitBps"].asInt(), items[4]["config"]["takeProfitPercent"].asString(),
+            items[4]["config"]["notional"].asString()))
+        assertEquals(true, items[4]["activeFrom"].isNull)
+        assertEquals(true, items[4]["archivedAt"].isNull)
+        assertEquals(10, ok(get("/api/automation/variations?state=ACTIVE"))["items"].size())
+        assertEquals(0, ok(get("/api/automation/variations?state=ARCHIVED"))["items"].size())
+    }
+
+    @Test
+    fun `an unknown state is a 400 naming state, and an unknown variation is a 404`() {
+        val bad = mvc.perform(get("/api/automation/variations?state=active")).andReturn().response
+        val unknown = mvc.perform(get("/api/automation/variations/V99")).andReturn().response
+
+        assertEquals(400, bad.status, bad.contentAsString)
+        assertEquals("INVALID_REQUEST", body(bad)["code"].asString())
+        assertEquals(true, body(bad)["fields"].has("state"))
+        assertEquals(404, unknown.status, unknown.contentAsString)
+        assertEquals("AUTOMATION_VARIATION_NOT_FOUND", body(unknown)["code"].asString())
+    }
+
+    @Test
+    fun `editing V04 answers 201 with V10, archives V04, and the same request answers 200 with V10 and stores nothing more`() {
+        val created = edited("V04", "req-1")
+        val repeated = ok(editRequest("V04", "req-1", editConfig("80", "50")))
+        val old = ok(get("/api/automation/variations/V04"))
+
+        assertEquals(listOf("V10", "ACTIVE", 8000, 5000, "V04"), listOf(created["label"].asString(), created["state"].asString(),
+            created["config"]["takeProfitBps"].asInt(), created["config"]["stopLossBps"].asInt(), created["replacesLabel"].asString()))
+        assertEquals(listOf("stopLossBps"), List(created["changedFromReplaced"].size()) { created["changedFromReplaced"][it].asString() })
+        assertEquals(clock.instant().toString(), created["activeFrom"].asString())
+        assertEquals("V10", repeated["label"].asString())
+        assertEquals(created, repeated)
+        assertEquals(listOf("ARCHIVED", clock.instant().toString(), "V10"), listOf(old["state"].asString(), old["archivedAt"].asString(), old["replacedByLabel"].asString()))
+        assertEquals(11, ok(get("/api/automation/variations"))["items"].size())
+        assertEquals(listOf("V04"), ok(get("/api/automation/variations?state=ARCHIVED"))["items"].let { list -> List(list.size()) { list[it]["label"].asString() } })
+    }
+
+    @Test
+    fun `a refused edit answers its status and code, with the field the console places the reason on`() {
+        edited("V04", "req-1")
+        val ownConfig = editConfig("80", "40")
+
+        val baseline = mvc.perform(editRequest("V00", "req-2", editConfig("80", "50"))).andReturn().response
+        val archived = mvc.perform(editRequest("V04", "req-3", editConfig("70", "50"))).andReturn().response
+        val unchanged = mvc.perform(editRequest("V04", "req-4", ownConfig)).andReturn().response
+        val unchangedActive = mvc.perform(editRequest("V03", "req-5", editConfig("35", "40", dip = "20"))).andReturn().response
+        val duplicate = mvc.perform(editRequest("V05", "req-6", editConfig("80", "50"))).andReturn().response
+        val unknown = mvc.perform(editRequest("V99", "req-7", ownConfig)).andReturn().response
+
+        assertEquals(listOf(409, 409, 409, 409, 409, 404), listOf(baseline, archived, unchanged, unchangedActive, duplicate, unknown).map { it.status })
+        assertEquals("VARIATION_BASELINE", body(baseline)["code"].asString())
+        assertEquals("VARIATION_ARCHIVED", body(archived)["code"].asString())
+        assertEquals("VARIATION_ARCHIVED", body(unchanged)["code"].asString(), "an archived variation is refused before its configuration is compared")
+        assertEquals("VARIATION_UNCHANGED", body(unchangedActive)["code"].asString())
+        assertEquals("VARIATION_DUPLICATE", body(duplicate)["code"].asString())
+        assertEquals("V10", body(duplicate)["fields"]["label"].asString())
+        assertEquals("AUTOMATION_VARIATION_NOT_FOUND", body(unknown)["code"].asString())
+        assertEquals(11, ok(get("/api/automation/variations"))["items"].size())
+    }
+
+    @Test
+    fun `an edit that would pass the bound of a plan is a 409 with its own code, and stores nothing`() {
+        val last = AutomationLimits.MAX_VARIATIONS_PER_PLAN - 1
+        variationRows.saveAndFlush(AutomationVariationRows.entityLike(
+            checkNotNull(variationRows.findOneByPlanIdAndLabel(SweepPlans.DECU_SWEEP_1.id, "V05")), label = VariationEditRules.labelOf(last), seq = last,
+        ))
+
+        val refused = mvc.perform(editRequest("V04", "req-1", editConfig("80", "50"))).andReturn().response
+
+        assertEquals(409, refused.status)
+        assertEquals("VARIATION_LIMIT_REACHED", body(refused)["code"].asString())
+        assertEquals(11, variationRows.count())
+    }
+
+    @Test
+    fun `an edit with a missing request id, a missing field or a bad setting is a 400 naming its fields`() {
+        val noRequestId = mvc.perform(post("/api/automation/variations/V04/edit").contentType(MediaType.APPLICATION_JSON).content("""{"config":${editConfig("80", "50")}}""")).andReturn().response
+        val noConfig = mvc.perform(post("/api/automation/variations/V04/edit").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"req-1"}""")).andReturn().response
+        val missingField = mvc.perform(editRequest("V04", "req-2", editConfig("80", "50").replace("\"latencySlots\":1,", ""))).andReturn().response
+        val badPercent = mvc.perform(editRequest("V04", "req-3", editConfig("80.555", "50"))).andReturn().response
+        val lowSignal = mvc.perform(editRequest("V04", "req-4", editConfig("80", "50").replace("\"1.9\"", "\"1.4\""))).andReturn().response
+
+        assertEquals(listOf(400, 400, 400, 400, 400), listOf(noRequestId, noConfig, missingField, badPercent, lowSignal).map { it.status })
+        assertEquals("INVALID_REQUEST", body(noRequestId)["code"].asString())
+        assertEquals(true, body(noRequestId)["fields"].has("requestId"))
+        assertEquals("CONFIG_INVALID", body(noConfig)["code"].asString())
+        assertEquals(16, body(noConfig)["fields"].size())
+        assertEquals(listOf("CONFIG_INVALID", "latencySlots"), listOf(body(missingField)["code"].asString(), body(missingField)["fields"].propertyNames().single()))
+        assertEquals(listOf("INVALID_PERCENT", "takeProfitPercent"), listOf(body(badPercent)["code"].asString(), body(badPercent)["fields"].propertyNames().single()))
+        assertEquals(true, body(lowSignal)["fields"].has("minSignalSol"))
+        assertEquals(10, ok(get("/api/automation/variations"))["items"].size())
     }
 
     @Test
@@ -699,6 +853,17 @@ class AutomationControllerTest : AutomationDatabaseTest() {
         extra: String = "",
     ) = post("/api/automation/backfills").contentType(MediaType.APPLICATION_JSON)
         .content("""{"requestId":"$requestId","fromDay":"$fromDay","toDay":"$toDay","dryRun":$dryRun,"requestBudget":$budget$extra}""")
+
+    /** The agreed configuration as the console's edit form sends it: every field, the levels as percents. */
+    private fun editConfig(takeProfit: String, stopLoss: String, dip: String = "20") =
+        """{"notional":"0.1","maxAgeSlots":2,"dipPercent":"$dip","takeProfitPercent":"$takeProfit","stopLossPercent":"$stopLoss","minMarketCapUsd":"10000",""" +
+            """"horizonSlots":4500,"latencySlots":1,"transactionCostSol":"0.001","quoteMint":"So11111111111111111111111111111111111111112",""" +
+            """"dipWindowMs":30000,"maxHoldMs":180000,"hardExitStartMs":240000,"priceMeasure":"POST_TRADE","followWalletSells":true,"minSignalSol":"1.9"}"""
+
+    private fun editRequest(label: String, requestId: String, config: String) =
+        post("/api/automation/variations/$label/edit").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"$requestId","config":$config}""")
+
+    private fun edited(label: String, requestId: String): JsonNode = created(mvc, editRequest(label, requestId, editConfig("80", "50")))
 
     private fun cancelRequest(id: String, requestId: String) =
         post("/api/automation/backfills/$id/cancel").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"$requestId"}""")

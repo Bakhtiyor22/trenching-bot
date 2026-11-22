@@ -21,14 +21,25 @@ import tools.jackson.databind.JsonNode
  * exact basis points here, before the run starts, so the stored and hashed configuration never sees the percent. The price
  * measure is one of its names and the wallet-sell rule a JSON boolean, never a string or a number coerced into one. The minimum
  * signal size is optional: absent, it applies no minimum, which is the `mvp()` value.
+ *
+ * [validateVariation] is the same check for a stored variation, which has no defaults (editable-variations plan Key Decision 6):
+ * every field must be sent, so none silently takes its `mvp()` value. A level may be sent as either of its two forms, an unset
+ * timed clock must be sent as an explicit null, and the minimum signal size must be set and at or above the capture filter's.
  */
 @Component
 class ConsoleConfigValidator {
     private val limits = SimulationConfigLimits.CURRENT
 
-    fun validate(request: ConsoleConfigRequest?): ConfigValidation {
+    fun validate(request: ConsoleConfigRequest?): ConfigValidation =
+        if (request == null) ConfigValidation.Valid(SimulationConfig.mvp()) else check(request, null)
+
+    /** [minSignalSolFloor] is the smallest minimum signal size a variation may have: the capture filter's, below which a buy is never captured. */
+    fun validateVariation(request: ConsoleConfigRequest?, minSignalSolFloor: BigDecimal): ConfigValidation =
+        check(request ?: ConsoleConfigRequest(), minSignalSolFloor)
+
+    /** [minSignalSolFloor] null is the run-start mode, where an absent field takes its default; set, it is the variation mode. */
+    private fun check(request: ConsoleConfigRequest, minSignalSolFloor: BigDecimal?): ConfigValidation {
         val defaults = SimulationConfig.mvp()
-        if (request == null) return ConfigValidation.Valid(defaults)
         val errors = linkedMapOf<String, String>()
         val conflicts = mutableSetOf<String>()
         val notional = notional(request.notional, defaults.notional, errors)
@@ -51,12 +62,38 @@ class ConsoleConfigValidator {
         val priceMeasure = priceMeasure(request.priceMeasure, defaults.priceMeasure, errors)
         val followWalletSells = boolean(FOLLOW_WALLET_SELLS, request.followWalletSells, defaults.followWalletSells, errors)
         val minSignalSol = minSignal(request.minSignalSol, errors)
+        if (minSignalSolFloor != null) {
+            requireEveryField(request, errors)
+            requireVariationRules(minSignalSol, quoteMint, minSignalSolFloor, errors)
+        }
         request.unknownFields.keys.forEach { errors[it] = UNKNOWN_FIELD_MESSAGE }
         if (errors.isNotEmpty()) return ConfigValidation.Invalid(errors, errorCode(errors.keys, conflicts))
         return ConfigValidation.Valid(SimulationConfig.of(notional, maxAgeSlots, dipBps, takeProfitBps, stopLossBps, minMarketCapUsd,
             horizonSlots, latencySlots, transactionCostSol, quoteMint = quoteMint, dipWindowMs = dipWindowMs, maxHoldMs = maxHoldMs,
             hardExitStartMs = hardExitStartMs, priceMeasure = priceMeasure, followWalletSells = followWalletSells,
             minSignalSol = minSignalSol))
+    }
+
+    /** A field that is absent, or null where null is no value, is reported unless it already has a reason; a level is missing when neither of its forms is sent. */
+    private fun requireEveryField(request: ConsoleConfigRequest, errors: MutableMap<String, String>) {
+        val needed = mapOf(NOTIONAL to request.notional, MAX_AGE_SLOTS to request.maxAgeSlots, MIN_MARKET_CAP_USD to request.minMarketCapUsd,
+            HORIZON_SLOTS to request.horizonSlots, LATENCY_SLOTS to request.latencySlots, TRANSACTION_COST_SOL to request.transactionCostSol,
+            QUOTE_MINT to request.quoteMint, PRICE_MEASURE to request.priceMeasure, FOLLOW_WALLET_SELLS to request.followWalletSells,
+            MIN_SIGNAL_SOL to request.minSignalSol,
+            DIP_BPS to sent(request.dipBps, request.dipPercent),
+            TAKE_PROFIT_BPS to sent(request.takeProfitBps, request.takeProfitPercent),
+            STOP_LOSS_BPS to sent(request.stopLossBps, request.stopLossPercent))
+        needed.filterValues(::isAbsent).keys.forEach { errors.putIfAbsent(it, REQUIRED_MESSAGE) }
+        val clocks = mapOf(DIP_WINDOW_MS to request.dipWindowMs, MAX_HOLD_MS to request.maxHoldMs, HARD_EXIT_START_MS to request.hardExitStartMs)
+        clocks.filterValues { it == null }.keys.forEach { errors.putIfAbsent(it, REQUIRED_CLOCK_MESSAGE) }
+    }
+
+    /** A variation's own rules, beyond a run's: it is replayed on captured buys, which the capture filter bounds, and on SOL swaps only. */
+    private fun requireVariationRules(minSignalSol: BigDecimal?, quoteMint: MintAddress, floor: BigDecimal, errors: MutableMap<String, String>) {
+        if (MIN_SIGNAL_SOL !in errors && minSignalSol != null && minSignalSol < floor) {
+            errors[MIN_SIGNAL_SOL] = "must be at least ${floor.toPlainString()} SOL, the smallest buy that is captured"
+        }
+        if (QUOTE_MINT !in errors && quoteMint != MintAddress.WRAPPED_SOL) errors[QUOTE_MINT] = "must be wrapped SOL, the only quote a variation replays"
     }
 
     /** A valid [field] whose pair was not sent reports the pair as missing; an invalid one is already reported on its own. */
@@ -201,6 +238,9 @@ class ConsoleConfigValidator {
 
     private fun isAbsent(node: JsonNode?): Boolean = node == null || node.isNull || node.isMissingNode
 
+    /** Whichever form of a level was sent, the first if both were. */
+    private fun sent(basisPoints: JsonNode?, percent: JsonNode?): JsonNode? = if (isAbsent(basisPoints)) percent else basisPoints
+
     private companion object {
         const val NOTIONAL = "notional"
         const val MAX_AGE_SLOTS = "maxAgeSlots"
@@ -223,6 +263,8 @@ class ConsoleConfigValidator {
         const val MIN_SIGNAL_SOL = "minSignalSol"
         const val DECIMAL_FORMAT_MESSAGE = "must be a plain decimal string such as \"100\" or \"0.5\""
         const val UNKNOWN_FIELD_MESSAGE = "is not a configuration field"
+        const val REQUIRED_MESSAGE = "is required"
+        const val REQUIRED_CLOCK_MESSAGE = "is required: send null for an untimed run"
         const val PERCENT_FORMAT_MESSAGE = "must be a percent string with at most 2 decimals, such as \"20\" or \"15.5\""
         val PERCENT_FIELDS = setOf(DIP_PERCENT, TAKE_PROFIT_PERCENT, STOP_LOSS_PERCENT)
         val PLAIN_DECIMAL = Regex("[0-9]{1,64}(\\.[0-9]{1,64})?")

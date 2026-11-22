@@ -8,22 +8,33 @@ import type {
   AutomationSession,
   AutomationStatus,
   AutomationSweepRun,
+  AutomationVariation,
   EvaluationStatus,
 } from '../api/automation';
 import { ITEM_STATES } from '../api/automation';
+import type { Config } from '../api/types';
+import { trimFractionZeros } from '../lib/decimal';
+import { bpsToPercent } from '../lib/percent';
+import { runPreset } from './setupHandlers';
 
 /**
  * Offline automation data on trading days (12:00 → 12:00 UTC+5): live discovery covering 17 Oct to today (Mon 2 Nov,
- * open), a capturing backfill of 6–9 Oct, a finished dry run and two ended backfills. Decu's buys, the 10 variations of
- * `decu-sweep-1` replayed on every replayed buy, and day rows computed on read with the backend's rules (a 7-day
- * window, PENDING while a day of it is incomplete). Deterministic, so tests and screenshots are stable.
+ * open), a capturing backfill of 6–9 Oct, a finished dry run and two ended backfills. Decu's buys, the variations of
+ * `decu-sweep-1` (V00–V09 seeded; V07 archived on 29 Oct and replaced by V10) replayed on every replayed buy while
+ * active, and day rows computed on read with the backend's rules (a 7-day window, PENDING while a day of it is
+ * incomplete, a variation's rows only for the days of its life). Deterministic, so tests and screenshots are stable.
  */
 
 export const MOCK_ZONE = '+05:00';
 export const MOCK_DAY_START = '12:00';
 export const MOCK_PLAN = 'decu-sweep-1';
 export const MOCK_WALLET = '4Kq2DecuWa11etAddre55xxxxxxxxxxxxxxxxx9xPd';
+/** The seeded variations. */
 export const MOCK_LABELS = ['V00', 'V01', 'V02', 'V03', 'V04', 'V05', 'V06', 'V07', 'V08', 'V09'];
+/** The archived variation of the fixtures, its replacement, and when the edit happened (29 Oct, 15:00 UTC+5). */
+export const MOCK_ARCHIVED_LABEL = 'V07';
+export const MOCK_REPLACEMENT_LABEL = 'V10';
+export const MOCK_EDIT_AT = '2026-10-29T10:00:00.000Z';
 /** Today's trading day; the tests pin the clock inside it. */
 export const MOCK_TODAY = '2026-11-02';
 const LIVE_NIGHTS = 17;
@@ -149,6 +160,7 @@ const OUTCOMES_BY_LABEL: Record<string, string[]> = {
   V06: ['TIME_EXIT', 'STOP_LOSS', 'NO_DIP', 'TIME_EXIT', 'TIME_EXIT'],
   V07: ['TAKE_PROFIT', 'NO_DIP', 'NO_DIP', 'STOP_LOSS', 'TIME_EXIT'],
   V08: ['STOP_LOSS', 'TAKE_PROFIT', 'STOP_LOSS', 'STOP_LOSS', 'TIME_EXIT'],
+  V10: ['TAKE_PROFIT', 'TAKE_PROFIT', 'NO_DIP', 'STOP_LOSS', 'TIME_EXIT'],
   V09: [
     'REFERENCE_BELOW_MIN_MARKET_CAP',
     'REFERENCE_BELOW_MIN_MARKET_CAP',
@@ -170,8 +182,131 @@ const TAKE_PROFIT_PNL: Record<string, string> = {
   V04: '0.061900000000',
 };
 
+/** A label's number, for stable fixture ids: "V07" → 7. */
+const labelSeed = (label: string) => Number(label.slice(1));
+
+/** The configuration properties of `ConfigResponse`, in its order; the percent twins are left out. */
+export const CONFIG_PROPERTIES = [
+  'strategyName',
+  'strategyVersion',
+  'notional',
+  'maxAgeSlots',
+  'dipBps',
+  'takeProfitBps',
+  'stopLossBps',
+  'minMarketCapUsd',
+  'horizonSlots',
+  'latencySlots',
+  'transactionCostSol',
+  'quoteMint',
+  'dipWindowMs',
+  'maxHoldMs',
+  'hardExitStartMs',
+  'priceMeasure',
+  'followWalletSells',
+  'minSignalSol',
+] as const satisfies ReadonlyArray<keyof Config>;
+
+/** The agreed strategy, V00's configuration. */
+export const MOCK_AGREED_CONFIG: Config = runPreset.config;
+
+const dip = (bps: number) => ({ dipBps: bps, dipPercent: bpsToPercent(bps) });
+const takeProfit = (bps: number) => ({ takeProfitBps: bps, takeProfitPercent: bpsToPercent(bps) });
+const stopLoss = (bps: number) => ({ stopLossBps: bps, stopLossPercent: bpsToPercent(bps) });
+
+/** What each seeded variation changes from the agreed strategy (backend `SweepPlans.DECU_SWEEP_1`), and V10. */
+const VARIATION_CHANGES: Record<string, Partial<Config>> = {
+  V00: {},
+  V01: dip(1500),
+  V02: dip(2500),
+  V03: takeProfit(3500),
+  V04: takeProfit(8000),
+  V05: stopLoss(2500),
+  V06: { maxHoldMs: 300_000, hardExitStartMs: 360_000 },
+  V07: { dipWindowMs: 60_000 },
+  V08: { minSignalSol: '1.500000000' },
+  V09: { minMarketCapUsd: '20000.000000000000' },
+  V10: { dipWindowMs: 90_000 },
+};
+
+const NUMERIC = /^-?[0-9]/;
+
+function sameValue(a: unknown, b: unknown): boolean {
+  if (typeof a === 'string' && typeof b === 'string' && NUMERIC.test(a) && NUMERIC.test(b))
+    return trimFractionZeros(a) === trimFractionZeros(b);
+  return (a ?? null) === (b ?? null);
+}
+
+/** The configuration properties on which `a` and `b` differ, in `ConfigResponse` order. */
+export function differingProperties(a: Config, b: Config): string[] {
+  return CONFIG_PROPERTIES.filter((p) => !sameValue(a[p], b[p]));
+}
+
+export function mockVariation(
+  label: string,
+  config: Config,
+  partial: Partial<AutomationVariation> = {},
+): AutomationVariation {
+  return {
+    planId: MOCK_PLAN,
+    label,
+    state: 'ACTIVE',
+    config,
+    differsFromAgreed: differingProperties(config, MOCK_AGREED_CONFIG),
+    changedFromReplaced: [],
+    replacesLabel: null,
+    replacedByLabel: null,
+    activeFrom: null,
+    archivedAt: null,
+    createdAt: '2026-10-17T07:00:00.000Z',
+    ...partial,
+  };
+}
+
+function seedVariations(): AutomationVariation[] {
+  const configOf = (label: string): Config => ({
+    ...MOCK_AGREED_CONFIG,
+    ...VARIATION_CHANGES[label],
+  });
+  const seeded = MOCK_LABELS.map((label) =>
+    label === MOCK_ARCHIVED_LABEL
+      ? mockVariation(label, configOf(label), {
+          state: 'ARCHIVED',
+          archivedAt: MOCK_EDIT_AT,
+          replacedByLabel: MOCK_REPLACEMENT_LABEL,
+        })
+      : mockVariation(label, configOf(label)),
+  );
+  const replacement = mockVariation(MOCK_REPLACEMENT_LABEL, configOf(MOCK_REPLACEMENT_LABEL), {
+    replacesLabel: MOCK_ARCHIVED_LABEL,
+    changedFromReplaced: differingProperties(
+      configOf(MOCK_REPLACEMENT_LABEL),
+      configOf(MOCK_ARCHIVED_LABEL),
+    ),
+    activeFrom: MOCK_EDIT_AT,
+    createdAt: MOCK_EDIT_AT,
+  });
+  return [...seeded, replacement];
+}
+
+/** True when `variation` was active at `at`, so a buy captured then is swept under it. */
+export function activeAt(variation: AutomationVariation, at: number): boolean {
+  return (
+    (variation.activeFrom == null || Date.parse(variation.activeFrom) <= at) &&
+    (variation.archivedAt == null || at < Date.parse(variation.archivedAt))
+  );
+}
+
+/** Plan Rule 9: a variation has a row for `day` iff its life covers the day, the archive day included. */
+export function livesOn(variation: AutomationVariation, day: string): boolean {
+  return (
+    (variation.activeFrom == null || mockDayOf(variation.activeFrom) <= day) &&
+    (variation.archivedAt == null || day <= mockDayOf(variation.archivedAt))
+  );
+}
+
 function sweepRunFor(item: AutomationItem, label: string, k: number): AutomationSweepRun {
-  const outcomes = OUTCOMES_BY_LABEL[label]!;
+  const outcomes = OUTCOMES_BY_LABEL[label] ?? OUTCOMES_BY_LABEL.V00!;
   const outcome = outcomes[k % outcomes.length]!;
   const open = outcome === 'HORIZON_REACHED';
   const realized =
@@ -183,8 +318,8 @@ function sweepRunFor(item: AutomationItem, label: string, k: number): Automation
     sessionId: item.sessionId,
     planId: MOCK_PLAN,
     label,
-    runId: `run-${hex(k * 31 + MOCK_LABELS.indexOf(label), 24)}`,
-    configurationHash: hex(MOCK_LABELS.indexOf(label) + 400, 64),
+    runId: `run-${hex(k * 31 + labelSeed(label), 24)}`,
+    configurationHash: hex(labelSeed(label) + 400, 64),
     engineVersion: 'dip-paper-v6',
     outcome,
     positionState: open
@@ -201,6 +336,8 @@ function sweepRunFor(item: AutomationItem, label: string, k: number): Automation
 
 export interface AutomationDb {
   status: AutomationStatus;
+  /** By sequence. */
+  variations: AutomationVariation[];
   sessions: AutomationSession[];
   items: AutomationItem[];
   sweepRuns: AutomationSweepRun[];
@@ -252,7 +389,7 @@ function buildSession(
   plan: BuyPlan,
   open: boolean,
   backfillId: string | null,
-  db: Pick<AutomationDb, 'sessions' | 'items' | 'sweepRuns'>,
+  db: Pick<AutomationDb, 'sessions' | 'items' | 'sweepRuns' | 'variations'>,
 ): void {
   const sessionId = hex(1000 + seed);
   const sessionItems = plan.map(([offset, state, failure = 'TIMEOUT']): AutomationItem => {
@@ -320,7 +457,9 @@ function buildSession(
   sessionItems
     .filter((item) => item.state === 'SIMULATED')
     .forEach((item, k) =>
-      MOCK_LABELS.forEach((label) => db.sweepRuns.push(sweepRunFor(item, label, k + seed))),
+      db.variations
+        .filter((v) => activeAt(v, Date.parse(item.blockTime!)))
+        .forEach((v) => db.sweepRuns.push(sweepRunFor(item, v.label, k + seed))),
     );
   const counts = emptyCounts();
   sessionItems.forEach((item) => (counts[item.state] += 1));
@@ -383,10 +522,11 @@ function backfill(
 /** `activeBackfill` false leaves out the capturing backfill, so a new one can be created. */
 export function createAutomationDb({ activeBackfill = true } = {}): AutomationDb {
   itemSeed = 0;
-  const db: Pick<AutomationDb, 'sessions' | 'items' | 'sweepRuns'> = {
+  const db: Pick<AutomationDb, 'sessions' | 'items' | 'sweepRuns' | 'variations'> = {
     sessions: [],
     items: [],
     sweepRuns: [],
+    variations: seedVariations(),
   };
   LIVE_PLANS.forEach((plan, n) => {
     const start = TONIGHT_UTC - (LIVE_NIGHTS - 1 - n) * DAY_MS + ((n * 37) % 90) * MINUTE_MS;
@@ -429,12 +569,12 @@ export function createAutomationDb({ activeBackfill = true } = {}): AutomationDb
       toDay: '2026-10-05',
       dryRun: false,
       state: 'STOPPED_BUDGET',
-      requestBudget: 1222,
+      requestBudget: 2422,
       minSignalLamports: '2500000000',
       filtered: true,
       discoveryRequests: 96,
-      itemRequests: 1134,
-      requestsSpent: 1230,
+      itemRequests: 2334,
+      requestsSpent: 2430,
       actionsScanned: 240,
       buysFound: 14,
       buysPassing: 3,
@@ -557,6 +697,7 @@ export function discoveryOnly(db: AutomationDb): AutomationDb {
   });
   return {
     status: { ...db.status, captureEnabled: false, requestsLast24h: 42, activeBackfillId: null },
+    variations: db.variations,
     sessions,
     items,
     sweepRuns: [],
@@ -609,32 +750,35 @@ export function dayRows(db: AutomationDb, day: string, now: number): AutomationE
   const unscored = db.items.filter(
     (i) => sessionIds.has(i.sessionId) && (i.state === 'FAILED' || i.state === 'ABANDONED'),
   ).length;
-  return MOCK_LABELS.map((label) => {
-    const runs = db.sweepRuns.filter((r) => r.label === label && sessionIds.has(r.sessionId));
-    const signals = runs.filter((r) => r.signal).length;
-    const worst = runs.reduce((sum, r) => addDecimal(sum, r.worstCasePnl), '0.000000000000');
-    const realized = runs.reduce((sum, r) => addDecimal(sum, r.realizedPnl), '0.000000000000');
-    const status: EvaluationStatus = pendingDay
-      ? 'PENDING'
-      : signals < MIN_SIGNALS
-        ? 'NO_RESULT'
-        : Number(worst) > 0
-          ? 'SUCCESS'
-          : 'NO_SUCCESS';
-    return {
-      day,
-      planId: MOCK_PLAN,
-      label,
-      windowDays,
-      signals,
-      scored: runs.length,
-      unscored,
-      realizedPnl: realized,
-      worstCasePnl: worst,
-      status,
-      pendingDay,
-    };
-  }).sort(compareEvaluations);
+  return db.variations
+    .filter((v) => livesOn(v, day))
+    .map(({ label }) => {
+      const runs = db.sweepRuns.filter((r) => r.label === label && sessionIds.has(r.sessionId));
+      const signals = runs.filter((r) => r.signal).length;
+      const worst = runs.reduce((sum, r) => addDecimal(sum, r.worstCasePnl), '0.000000000000');
+      const realized = runs.reduce((sum, r) => addDecimal(sum, r.realizedPnl), '0.000000000000');
+      const status: EvaluationStatus = pendingDay
+        ? 'PENDING'
+        : signals < MIN_SIGNALS
+          ? 'NO_RESULT'
+          : Number(worst) > 0
+            ? 'SUCCESS'
+            : 'NO_SUCCESS';
+      return {
+        day,
+        planId: MOCK_PLAN,
+        label,
+        windowDays,
+        signals,
+        scored: runs.length,
+        unscored,
+        realizedPnl: realized,
+        worstCasePnl: worst,
+        status,
+        pendingDay,
+      };
+    })
+    .sort(compareEvaluations);
 }
 
 export function daySummary(db: AutomationDb, day: string, now: number): AutomationDaySummary {

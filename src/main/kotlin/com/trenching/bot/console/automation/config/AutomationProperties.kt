@@ -66,14 +66,14 @@ class AutomationProperties(
     val maxRequestsPer24h: Long = 5000,
     val operationBudget: OperationBudget = OperationBudget(),
     val recovery: Recovery = Recovery(),
-    val marketMaxTransactions: Int = 2000,
+    val marketMaxTransactions: Int = 4000,
     val sweepPlan: String = SweepPlans.DECU_SWEEP_1.id,
     val evaluationWindowSessions: Int = 7,
     val minSignals: Int = 10,
     val minNetPnlSol: BigDecimal = BigDecimal.ZERO,
     val backfillMaxDays: Int = 31,
     val backfillMaxRequests: Long = 20_000,
-    val backfillReserveRequests: Long = 1400,
+    val backfillReserveRequests: Long = 2600,
 ) {
     init {
         require(!enabled || wallet != null) { "$PREFIX.wallet is required when $PREFIX.enabled is true" }
@@ -180,14 +180,14 @@ class AutomationProperties(
 
     /** One capture operation's allowance: at most [requests] provider requests, [bytes] of responses and [timeout] (whole minutes). */
     data class OperationBudget(
-        val requests: Int = 400,
+        val requests: Int = 800,
         val bytes: DataSize = DataSize.ofMegabytes(100),
         val timeout: Duration = Duration.ofMinutes(10),
     )
 
     /** A wallet or market operation's automatic recovery: cumulative [requests] and [bytes] over at most [attempts] attempts. */
     data class Recovery(
-        val requests: Int = 1200,
+        val requests: Int = 2400,
         val bytes: DataSize = DataSize.ofMegabytes(300),
         val attempts: Int = CaptureRecoveryConfig.DEFAULT_MAX_ATTEMPTS,
     )

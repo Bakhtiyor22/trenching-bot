@@ -9,7 +9,9 @@ import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.BackfillState
 import com.trenching.bot.console.automation.domain.DiscoveryCursor
+import com.trenching.bot.console.automation.domain.VariationState
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillEntity
+import com.trenching.bot.console.automation.infrastructure.persistence.AutomationVariationEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.DiscoveryCursorColumns
 import java.math.BigInteger
@@ -23,6 +25,7 @@ import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.data.domain.Limit
 import org.springframework.data.domain.PageRequest
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.PlatformTransactionManager
@@ -31,6 +34,43 @@ import org.springframework.transaction.support.TransactionTemplate
 class AutomationRepositoryIntegrationTest : AutomationDatabaseTest() {
     @Autowired private lateinit var transactionManager: PlatformTransactionManager
     @Autowired private lateinit var jdbc: JdbcTemplate
+
+    @Test
+    fun `the variation table keeps its label, sequence and request keys, each refusing a duplicate on its own`() {
+        val edited = AutomationVariationRows(variationRows, variationMapper).edit("V04", EVENING, "req-1")
+        val base = checkNotNull(variationRows.findOneByPlanIdAndLabel(edited.planId, edited.label))
+
+        fun refusedBy(row: AutomationVariationEntity): String =
+            assertFailsWith<DataIntegrityViolationException> { variationRows.saveAndFlush(row) }.let { failure ->
+                generateSequence<Throwable>(failure) { it.cause }.mapNotNull { it.message }.joinToString(" ")
+            }
+
+        assertTrue(refusedBy(AutomationVariationRows.entityLike(base, seq = 99, requestId = "req-2")).contains("uq_automation_variations_label"))
+        assertTrue(refusedBy(AutomationVariationRows.entityLike(base, label = "V98", requestId = "req-3")).contains("uq_automation_variations_seq"))
+        assertTrue(refusedBy(AutomationVariationRows.entityLike(base, label = "V97", seq = 97)).contains("uq_automation_variations_request"))
+        assertEquals(11, variationRows.count())
+    }
+
+    @Test
+    fun `seeded variations share a null request id and every one is stored once`() {
+        assertEquals(10, variationRows.count())
+        assertEquals(10, variationRows.findAllByPlanIdAndStateOrderBySeqAsc("decu-sweep-1", VariationState.ACTIVE, Limit.of(500)).count { it.requestId == null })
+    }
+
+    @Test
+    fun `the sweep run and variation indexes exist`() {
+        val indexes = jdbc.queryForList("select indexname from pg_indexes where tablename in ('automation_variations', 'automation_sweep_runs')", String::class.java)
+
+        assertTrue(indexes.containsAll(listOf("idx_automation_variations_state", "idx_automation_sweep_runs_label_plan", "uq_automation_variations_label",
+            "uq_automation_variations_seq", "uq_automation_variations_request")), indexes.toString())
+    }
+
+    @Test
+    fun `the sweep run label index leads with the label, so a filter on the label alone is served`() {
+        val definition = jdbc.queryForObject("select indexdef from pg_indexes where indexname = 'idx_automation_sweep_runs_label_plan'", String::class.java)
+
+        assertTrue(definition.orEmpty().contains("(label, plan_id)"), definition)
+    }
 
     @Test
     fun `a second session starting with the same item is refused`() {
@@ -86,6 +126,34 @@ class AutomationRepositoryIntegrationTest : AutomationDatabaseTest() {
         sweepRuns.saveAndFlush(sweepRun("run-a", "item-1", "V00"))
 
         assertFailsWith<DataIntegrityViolationException> { sweepRuns.saveAndFlush(sweepRun("run-b", "item-1", "V00")) }
+    }
+
+    @Test
+    fun `the sweep run page filters by plan and by the buy's block time, from inclusive to exclusive, leaving out a buy without one when a bound is given`() {
+        items.saveAll(listOf(
+            item(1, "s1", blockTime = EVENING),
+            item(2, "s1", blockTime = EVENING.plusSeconds(60)),
+            item(3, "s1", blockTime = EVENING.plusSeconds(120)),
+            item(4, "s1", blockTime = null),
+        ))
+        sweepRuns.saveAll(listOf(
+            sweepRun("r1", "item-1", "V04"),
+            sweepRun("r2", "item-2", "V04"),
+            sweepRun("r3", "item-3", "V04"),
+            sweepRun("r4", "item-4", "V04"),
+            sweepRun("r2-other", "item-2", "V04").apply { planId = "other-plan" },
+        ))
+
+        fun page(planId: String? = null, from: Instant? = null, to: Instant? = null) =
+            sweepRuns.page(null, null, "V04", null, planId, from, to, PageRequest.of(0, 50))
+
+        assertEquals(listOf("r3", "r2-other", "r2", "r1", "r4").sorted(), page().content.map { it.id }.sorted())
+        assertEquals(listOf("r2", "r2-other"), page(from = EVENING.plusSeconds(60), to = EVENING.plusSeconds(120)).content.map { it.id }.sorted())
+        assertEquals(listOf("r3"), page(from = EVENING.plusSeconds(61)).content.map { it.id })
+        assertEquals(listOf("r1"), page(to = EVENING.plusSeconds(60)).content.map { it.id })
+        assertEquals(1L, page(planId = "other-plan").totalElements)
+        assertEquals(2L, page(planId = "decu-sweep-1", from = EVENING, to = EVENING.plusSeconds(120)).totalElements)
+        assertEquals(2L, page(from = EVENING.plusSeconds(60), to = EVENING.plusSeconds(120)).totalElements)
     }
 
     @Test

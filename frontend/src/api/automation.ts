@@ -1,6 +1,14 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { API_BASE, ApiError, getJson, NETWORK_ERROR, postJson, withQuery } from './client';
-import type { DecimalString, IsoInstant } from './types';
+import {
+  API_BASE,
+  ApiError,
+  getJson,
+  NETWORK_ERROR,
+  postJson,
+  postJsonCreated,
+  withQuery,
+} from './client';
+import type { Config, DecimalString, IsoInstant, RunStartRequest } from './types';
 
 /**
  * The automation API (`/api/automation`, backend `console.automation`). It exists only while automation and the console
@@ -391,13 +399,63 @@ export interface DayQuery {
   to?: IsoDate | null;
 }
 
+/**
+ * `from` (inclusive) and `to` (exclusive) are UTC instants on the buy's block time; a buy without a block time is left
+ * out whenever either is given.
+ */
 export interface SweepRunQuery {
   sessionId?: string | null;
   mint?: string | null;
+  planId?: string | null;
   label?: string | null;
   outcome?: string | null;
+  from?: IsoInstant | null;
+  to?: IsoInstant | null;
   page: number;
   size: number;
+}
+
+export type VariationState = 'ACTIVE' | 'ARCHIVED';
+
+/**
+ * One stored sweep entry. Its configuration never changes: an edit archives it and creates a new variation under the
+ * next label, which `replacedByLabel` names. `differsFromAgreed` and `changedFromReplaced` are configuration property
+ * names (`takeProfitBps`, `dipWindowMs`, …) in `config` order. `activeFrom` is null for a variation seeded when the
+ * plan began.
+ */
+export interface AutomationVariation {
+  planId: string;
+  label: string;
+  state: VariationState;
+  config: Config;
+  differsFromAgreed: string[];
+  changedFromReplaced: string[];
+  replacesLabel: string | null;
+  replacedByLabel: string | null;
+  activeFrom: IsoInstant | null;
+  archivedAt: IsoInstant | null;
+  createdAt: IsoInstant;
+}
+
+/** The plan's variations, oldest first (by sequence). */
+export interface AutomationVariationList {
+  planId: string;
+  items: AutomationVariation[];
+}
+
+/** The complete configuration an edit posts, in the run-start shape (percent levels, clocks in milliseconds). */
+export type VariationConfigRequest = NonNullable<RunStartRequest['config']>;
+
+/** Body of `POST /variations/{label}/edit`. The same `requestId` again answers 200 with the variation it created. */
+export interface VariationEditRequest {
+  requestId: string;
+  config: VariationConfigRequest;
+}
+
+export interface VariationEditResult {
+  variation: AutomationVariation;
+  /** False when the backend recognised the request id and returned the variation an earlier attempt created. */
+  created: boolean;
 }
 
 const BASE = `${API_BASE}/automation`;
@@ -445,6 +503,14 @@ export const automationApi = {
     postJson<AutomationItemDetail>(`${BASE}/items/${enc(id)}/retry`, { requestId }),
   retryDay: (date: IsoDate, requestId: string) =>
     postJson<AutomationDayRetryResult>(`${BASE}/days/${enc(date)}/retry`, { requestId }),
+  variations: (state: VariationState | null, signal?: AbortSignal) =>
+    getJson<AutomationVariationList>(withQuery(`${BASE}/variations`, { state }), signal),
+  variation: (label: string, signal?: AbortSignal) =>
+    getJson<AutomationVariation>(`${BASE}/variations/${enc(label)}`, signal),
+  editVariation: (label: string, body: VariationEditRequest): Promise<VariationEditResult> =>
+    postJsonCreated<AutomationVariation>(`${BASE}/variations/${enc(label)}/edit`, body).then(
+      ({ body: variation, created }) => ({ variation, created }),
+    ),
 };
 
 /** True when the automation endpoints are absent: automation or the console is switched off on the backend. */
@@ -474,6 +540,11 @@ export const automationKeys = {
   sweepRuns: (query: SweepRunQuery) => ['automation', 'sweep-runs', query] as const,
   backfills: (page: number, size: number) => ['automation', 'backfills', page, size] as const,
   backfill: (id: string) => ['automation', 'backfill', id] as const,
+  /** Every list and single variation sits under this key, so an edit refreshes them together. */
+  variationsAll: ['automation', 'variations'] as const,
+  variations: (state: VariationState | null) =>
+    ['automation', 'variations', 'list', state] as const,
+  variation: (label: string) => ['automation', 'variations', 'one', label] as const,
 };
 
 function hidden(): boolean {
@@ -576,6 +647,55 @@ export function useAutomationSweepRuns(query: SweepRunQuery, enabled = true) {
     queryFn: ({ signal }) => automationApi.sweepRuns(query, signal),
     placeholderData: keepPreviousData,
     enabled,
+  });
+}
+
+/** Variations change only on an edit, which refreshes them itself; a slow poll catches an edit made elsewhere. */
+const VARIATION_POLL_MS = 5 * 60_000;
+
+/** The plan's variations; `state` null lists active and archived ones. */
+export function useAutomationVariations(state: VariationState | null = null, enabled = true) {
+  return useQuery({
+    queryKey: automationKeys.variations(state),
+    queryFn: ({ signal }) => automationApi.variations(state, signal),
+    refetchInterval: visiblePoll(VARIATION_POLL_MS),
+    enabled,
+  });
+}
+
+export function useAutomationVariation(label: string) {
+  return useQuery({
+    queryKey: automationKeys.variation(label),
+    queryFn: ({ signal }) => automationApi.variation(label, signal),
+    refetchInterval: visiblePoll(VARIATION_POLL_MS),
+  });
+}
+
+/** The session-storage key of one edit submission: the label and the exact configuration it posts. */
+export function variationEditKey(label: string, config: VariationConfigRequest): string {
+  return `automation-variation-edit:${label}:${JSON.stringify(config)}`;
+}
+
+/**
+ * Edits a variation: archives it and creates its replacement. One request id per submitted configuration, kept until
+ * the backend answers it, so retrying the same submit after a lost answer returns the variation it created instead of
+ * a second one; changing any setting starts a new request. Every automation view is read again afterwards (also after
+ * a refusal, which may mean the variation was archived meanwhile).
+ */
+export function useEditVariation(label: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (config: VariationConfigRequest) =>
+      withStoredRequestId(variationEditKey(label, config), 'ui-edit', (requestId) =>
+        automationApi.editVariation(label, { requestId, config }),
+      ),
+    onSuccess: ({ variation }) =>
+      client.setQueryData(automationKeys.variation(variation.label), variation),
+    onSettled: (_data, error) => {
+      // A network failure may hide a saved edit; a client error never stored anything, so only those keep the cache.
+      if (error instanceof ApiError && error.status === 400) return;
+      void client.invalidateQueries({ queryKey: automationKeys.all });
+    },
   });
 }
 

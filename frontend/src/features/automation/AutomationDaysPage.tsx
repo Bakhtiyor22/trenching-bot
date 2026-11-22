@@ -296,7 +296,7 @@ function Days({ status }: { status: AutomationStatus }) {
                               {formatCount(d.belowFilter)}
                             </Table.Td>
                             <Table.Td>
-                              <BestOfDay day={d} planId={status.sweepPlanId} />
+                              <BestOfDay day={d} />
                             </Table.Td>
                             <Table.Td ta="right" ff="monospace">
                               {formatCount(d.requestsUsed)}

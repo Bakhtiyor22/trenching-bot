@@ -17,6 +17,9 @@ object AutomationIds {
     /** Plan Rule 43: a backfill's id is derived from the wallet and the caller's request id, so a repeated create finds the first one. */
     fun backfill(wallet: String, requestId: String): String = sha256(wallet, requestId)
 
+    /** A variation's id, so the row for a label of a plan is the same one on every start. */
+    fun variation(planId: String, label: String): String = sha256(planId, label)
+
     fun sweepRun(itemId: String, planId: String, label: String): String = sha256(itemId, planId, label)
 
     /** A history event's id, a name-based UUID of the item and the event's order, so it fits the column and a repeat of the write gets the same one. */

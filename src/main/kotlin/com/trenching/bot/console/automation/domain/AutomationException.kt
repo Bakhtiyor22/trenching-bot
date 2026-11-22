@@ -1,5 +1,6 @@
 package com.trenching.bot.console.automation.domain
 
+import com.trenching.bot.console.domain.ConfigErrorCode
 import com.trenching.bot.console.domain.ConsoleException
 import java.time.Instant
 
@@ -12,6 +13,26 @@ class UnknownSweepPlanException(planId: String) : AutomationException("Unknown s
 
 class InvalidAutomationRequestException(val field: String, val reason: String) :
     AutomationException("Invalid automation request field=$field reason=$reason")
+
+class VariationNotFoundException(label: String) : AutomationException("Unknown automation variation label=$label")
+
+class VariationArchivedException(label: String) : AutomationException("An archived variation cannot be edited label=$label")
+
+class VariationUnchangedException(label: String) : AutomationException("The edit's configuration equals the variation's own label=$label")
+
+/** [label] is the other active variation that already has the edit's configuration. */
+class VariationDuplicateException(val label: String) :
+    AutomationException("Another active variation already has the edit's configuration duplicateOfLabel=$label")
+
+/** A plan holds at most [AutomationLimits.MAX_VARIATIONS_PER_PLAN] variations; the edit that would number one past it is refused. */
+class VariationLimitReachedException(val planId: String) :
+    AutomationException("A plan holds at most ${AutomationLimits.MAX_VARIATIONS_PER_PLAN} variations planId=$planId")
+
+class VariationBaselineException(label: String) : AutomationException("The agreed baseline cannot be edited label=$label")
+
+/** [code] is the most specific reason the edit's configuration was refused and [fields] the reason of each offending field. */
+class InvalidVariationConfigException(val fields: Map<String, String>, val code: ConfigErrorCode) :
+    AutomationException("Invalid variation configuration code=$code fields=${fields.keys}")
 
 class AutomationItemNotFoundException(itemId: String) : AutomationException("Unknown automation item itemId=$itemId")
 

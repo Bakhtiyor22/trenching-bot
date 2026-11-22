@@ -47,9 +47,9 @@ class AutomationPropertiesTest {
         assertEquals(300, properties.captureFeeMarginBps)
         assertEquals(2, properties.maxStepAttempts)
         assertEquals(5000L, properties.maxRequestsPer24h)
-        assertEquals(CaptureBudget(400, 104_857_600, 10), properties.captureBudget())
-        assertEquals(CaptureRecoveryConfig(1200, 314_572_800, 3), properties.captureRecovery())
-        assertEquals(2000, properties.marketMaxTransactions)
+        assertEquals(CaptureBudget(800, 104_857_600, 10), properties.captureBudget())
+        assertEquals(CaptureRecoveryConfig(2400, 314_572_800, 3), properties.captureRecovery())
+        assertEquals(4000, properties.marketMaxTransactions)
         assertEquals(SweepPlans.DECU_SWEEP_1, properties.activePlan())
         assertEquals(listOf(7, 10), listOf(properties.evaluationWindowSessions, properties.minSignals))
         assertEquals(0, properties.minNetPnlSol.signum())
@@ -57,7 +57,7 @@ class AutomationPropertiesTest {
         assertEquals(LocalTime.NOON, properties.tradingDayStart)
         assertEquals(31, properties.backfillMaxDays)
         assertEquals(20_000L, properties.backfillMaxRequests)
-        assertEquals(1400L, properties.backfillReserveRequests)
+        assertEquals(2600L, properties.backfillReserveRequests)
     }
 
     @Test
@@ -72,26 +72,33 @@ class AutomationPropertiesTest {
 
     @Test
     fun `the reserve must cover one recovery allowance and one discovery tick, and stay below the cap`() {
-        assertEquals(1310L, bind(mapOf("backfill-reserve-requests" to "1310")).backfillReserveRequests, "1,200 + 5 pages of 22")
-        assertTrue(failure(mapOf("backfill-reserve-requests" to "1309")).contains("backfill-reserve-requests"))
-        assertEquals(1332L, bind(mapOf("max-discovery-pages" to "6", "backfill-reserve-requests" to "1332")).backfillReserveRequests)
-        assertTrue(failure(mapOf("max-discovery-pages" to "6", "backfill-reserve-requests" to "1331")).contains("backfill-reserve-requests"))
+        assertEquals(2510L, bind(mapOf("backfill-reserve-requests" to "2510")).backfillReserveRequests, "2,400 + 5 pages of 22")
+        assertTrue(failure(mapOf("backfill-reserve-requests" to "2509")).contains("backfill-reserve-requests"))
+        assertEquals(2532L, bind(mapOf("max-discovery-pages" to "6", "backfill-reserve-requests" to "2532")).backfillReserveRequests)
+        assertTrue(failure(mapOf("max-discovery-pages" to "6", "backfill-reserve-requests" to "2531")).contains("backfill-reserve-requests"))
         assertTrue(failure(mapOf("backfill-reserve-requests" to "5000")).contains("backfill-reserve-requests"))
     }
 
     @Test
     fun `the largest backfill budget must pay for a capturing backfill's first operation and discovery page`() {
-        assertEquals(1222L, bind(mapOf("backfill-max-requests" to "1222")).backfillRules().captureMinBudget, "1,200 recovery + one page of 22")
-        assertTrue(failure(mapOf("backfill-max-requests" to "1221")).contains("backfill-max-requests"))
+        assertEquals(2422L, bind(mapOf("backfill-max-requests" to "2422")).backfillRules().captureMinBudget, "2,400 recovery + one page of 22")
+        assertTrue(failure(mapOf("backfill-max-requests" to "2421")).contains("backfill-max-requests"))
     }
 
     @Test
     fun `the market transaction bound must fit the market step's whole request allowance, every attempt's recovery`() {
-        val error = failure(mapOf("market-max-transactions" to "2401"))
+        val error = failure(mapOf("market-max-transactions" to "4801"))
+
+        assertTrue(error.contains("market-max-transactions") && error.contains("4800"), error)
+        assertEquals(4800, bind(mapOf("market-max-transactions" to "4800")).marketMaxTransactions)
+        assertEquals(7200, bind(mapOf("market-max-transactions" to "7200", "max-step-attempts" to "3")).marketMaxTransactions)
+    }
+
+    @Test
+    fun `the default market bound needs the doubled recovery allowance`() {
+        val error = failure(mapOf("market-max-transactions" to "4000", "recovery.requests" to "1200"))
 
         assertTrue(error.contains("market-max-transactions") && error.contains("2400"), error)
-        assertEquals(2400, bind(mapOf("market-max-transactions" to "2400")).marketMaxTransactions)
-        assertEquals(3600, bind(mapOf("market-max-transactions" to "3600", "max-step-attempts" to "3")).marketMaxTransactions)
     }
 
     @Test
@@ -136,7 +143,7 @@ class AutomationPropertiesTest {
         assertEquals(LocalTime.of(5, 0), properties.pollTo)
         assertEquals(Duration.ofHours(12), properties.initialLookback)
         assertEquals(CaptureBudget(300, 104_857_600, 5), properties.captureBudget())
-        assertEquals(CaptureRecoveryConfig(1200, 209_715_200, 4), properties.captureRecovery())
+        assertEquals(CaptureRecoveryConfig(2400, 209_715_200, 4), properties.captureRecovery())
     }
 
     @Test

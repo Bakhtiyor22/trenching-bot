@@ -56,11 +56,18 @@ data class DayVerdict(
 }
 
 /**
- * Plan Rule 34: day D's row for each entry of [plan] tallies the items of the [windowDays] trading days ending with D under
- * Rules 22–24 and judges the tally with [rule], unless a day of the window is not complete, when the row is pending on the
- * oldest such day. A pure function of the stored rows: the same [DayFacts] always give the same rows.
+ * Plan Rule 34: day D's row for each of the [variations] of plan [planId] whose life covers D (editable-variations plan Rule 9)
+ * tallies the items of the [windowDays] trading days ending with D under Rules 22–24 and judges the tally with [rule], unless a
+ * day of the window is not complete, when the row is pending on the oldest such day. The rows come in the order of
+ * [variations]. A pure function of the stored rows: the same [DayFacts] always give the same rows.
  */
-class DayScoring(private val plan: SweepPlan, private val windowDays: Int, private val rule: EvaluationRule) {
+class DayScoring(
+    private val planId: String,
+    private val variations: List<Variation>,
+    private val calendar: TradingCalendar,
+    private val windowDays: Int,
+    private val rule: EvaluationRule,
+) {
     init {
         require(windowDays >= 1) { "A verdict window has at least one day windowDays=$windowDays" }
     }
@@ -72,10 +79,10 @@ class DayScoring(private val plan: SweepPlan, private val windowDays: Int, priva
         val window = windowStart(day).through(day).map { checkNotNull(facts[it]) { "No facts for a day of the verdict window day=${it.date}" } }
         val items = window.flatMap { it.items }
         val pending = window.firstOrNull { !it.complete }?.day
-        return plan.entries.map { entry ->
-            val tally = EvaluationScoring.tally(entry.label, items)
+        return variations.filter { it.life.covers(day, calendar) }.map { variation ->
+            val tally = EvaluationScoring.tally(variation.label, items)
             val standing = pending?.let(DayStanding::Pending) ?: DayStanding.Decided(rule.status(tally))
-            DayVerdict(day.date, plan.id, entry.label, window.map { it.day.date }, tally, standing)
+            DayVerdict(day.date, planId, variation.label, window.map { it.day.date }, tally, standing)
         }
     }
 }

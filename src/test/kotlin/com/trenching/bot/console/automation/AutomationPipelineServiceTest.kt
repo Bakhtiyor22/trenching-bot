@@ -722,7 +722,7 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
 
     @Test
     fun `an operation is started while the backfill's spend plus one recovery allowance stays within its budget`() {
-        backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 2000, discoveryRequests = 800)
+        backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 3200, discoveryRequests = 800)
 
         ticks(2)
 
@@ -732,8 +732,8 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
 
     @Test
     fun `an item whose backfill cannot pay another operation fails unscored with the backfill budget code, and the backfill stops once nothing is left`() {
-        val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 2000, discoveryRequests = 801)
-        backfillItem(51, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(2)), backfillId = backfill, requestBudget = 2000, discoveryRequests = 801)
+        val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 3200, discoveryRequests = 801)
+        backfillItem(51, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(2)), backfillId = backfill, requestBudget = 3200, discoveryRequests = 801)
 
         ticks(4)
         backfillService(properties, clock, capture.operations).settle()
@@ -750,21 +750,21 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
 
     @Test
     fun `a backfill whose budget stops its items warns once that the budget is spent, never again for later items, and the items' own lines are debug`() {
-        val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 2000, discoveryRequests = 801)
-        backfillItem(51, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(2)), backfillId = backfill, requestBudget = 2000, discoveryRequests = 801)
+        val backfill = backfillItem(50, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(3)), requestBudget = 3200, discoveryRequests = 801)
+        backfillItem(51, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(2)), backfillId = backfill, requestBudget = 3200, discoveryRequests = 801)
 
         LogCapture().use { logs ->
             ticks(4)
 
             assertEquals(
-                listOf("Backfill stopped capturing: its request budget is spent. backfillId=$backfill requestBudget=2000 requestsSpent=801 itemsStopped=2"),
+                listOf("Backfill stopped capturing: its request budget is spent. backfillId=$backfill requestBudget=3200 requestsSpent=801 itemsStopped=2"),
                 logs.messages(Level.WARN),
             )
             val itemLines = logs.messages(Level.DEBUG).filter { it.startsWith("Buy failed at the wallet step and will not be retried: the backfill's request budget") }
             assertEquals(2, itemLines.size, logs.messages(Level.DEBUG).toString())
             assertTrue(logs.at(Level.INFO).none { it.formattedMessage.startsWith("Buy failed") })
 
-            backfillItem(52, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(1)), backfillId = backfill, requestBudget = 2000, discoveryRequests = 801)
+            backfillItem(52, BackfillState.CAPTURING, EVENING.minus(Duration.ofDays(1)), backfillId = backfill, requestBudget = 3200, discoveryRequests = 801)
             logs.clear()
             ticks(4)
 

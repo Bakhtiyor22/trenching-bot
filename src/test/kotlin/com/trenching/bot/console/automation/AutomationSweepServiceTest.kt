@@ -59,6 +59,7 @@ class AutomationSweepServiceTest : AutomationDatabaseTest() {
 
     private val clock = MutableClock(EVENING.plus(Duration.ofHours(1)))
     private val plan = SweepPlans.DECU_SWEEP_1
+    private val edits by lazy { AutomationVariationRows(variationRows, variationMapper) }
 
     @Test
     fun `every entry runs in label order as a dataset-referenced run, each with one row, and the item is simulated`() {
@@ -367,8 +368,61 @@ class AutomationSweepServiceTest : AutomationDatabaseTest() {
         assertEquals(AutomationItemState.CAPTURED, items.findOneById("item-1")?.state, "the backfill's item waits for a tick with a free slot")
     }
 
+    @Test
+    fun `after an edit a captured buy gets rows for the active labels only and becomes simulated, an item swept before keeps its rows and gains none`() {
+        val datasetId = register("take-profit", takeProfit())
+        captured(1, datasetId)
+        service().sweep()
+        val before = rows(1).map { it.label to it.runId }
+        val replacement = edits.edit("V04", clock.now, "req-1")
+        captured(2, datasetId, blockOffsetSeconds = 1)
+        val runs = RecordingRuns(simulationRuns)
+
+        service(runs).sweep()
+
+        val expected = plan.entries.map { it.label } - "V04" + replacement.label
+        assertEquals(expected, rows(2).map { it.label })
+        assertEquals(plan.entries.filter { it.label != "V04" }.map { it.config } + replacement.config, runs.started.map { it.first })
+        assertEquals(AutomationItemState.SIMULATED, items.findOneById("item-2")?.state)
+        assertEquals(before, rows(1).map { it.label to it.runId }, "the item swept before the edit is as it was")
+        assertTrue(rows(1).none { it.label == replacement.label })
+        assertTrue(rows(2).none { it.label == "V04" })
+    }
+
+    @Test
+    fun `an item part-way through its sweep when an edit lands runs the then-active entries it has no row for`() {
+        val datasetId = register("take-profit", takeProfit())
+        captured(1, datasetId)
+        service().sweep()
+        sweepRuns.deleteAll(rows(1).filter { it.label in setOf("V03", "V04") })
+        items.findOneById("item-1")?.let { it.state = AutomationItemState.CAPTURED; it.step = AutomationStep.REGISTER; items.save(it) }
+        val replacement = edits.edit("V04", clock.now, "req-1")
+
+        service().sweep()
+
+        assertEquals(plan.entries.map { it.label } - "V04" + replacement.label, rows(1).map { it.label })
+        assertTrue(rows(1).none { it.label == "V04" }, "no row is written for an archived label")
+        assertEquals(AutomationItemState.SIMULATED, items.findOneById("item-1")?.state)
+    }
+
+    @Test
+    fun `a tick with no active variation sweeps nothing and changes no item`() {
+        captured(1, register("take-profit", takeProfit()))
+        edits.archiveAll(clock.now)
+        val runs = RecordingRuns(simulationRuns)
+
+        service(runs).sweep()
+
+        assertEquals(0, runs.started.size)
+        assertEquals(0, sweepRuns.count())
+        val item = items.findOneById("item-1")
+        assertEquals(AutomationItemState.CAPTURED, item?.state)
+        assertEquals(AutomationStep.REGISTER, item?.step)
+        assertEquals(1, item?.stepAttempt)
+    }
+
     private fun service(runs: SimulationRuns = simulationRuns, properties: AutomationProperties = properties(captureEnabled = true)) =
-        AutomationSweepService(sweepTransaction, pipelineTransaction, runs, runCycles, properties, clock)
+        AutomationSweepService(sweepTransaction, pipelineTransaction, runs, runCycles, variations(properties, clock), properties, clock)
 
     private fun takeProfit(): ReplayDataset = AgreedDipSample.dataset().only(DipSample.TAKE_PROFIT)
 

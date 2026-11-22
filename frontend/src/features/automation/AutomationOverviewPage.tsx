@@ -29,7 +29,6 @@ import {
   allPendingText,
   addDays,
   backfillDays,
-  BASELINE_LABEL,
   capPercent,
   dayInfo,
   dayItemCounts,
@@ -59,6 +58,7 @@ import {
 import { BackfillStateChip } from './BackfillShared';
 import { Scoreboard } from './Scoreboard';
 import { StatusGrid, StatusGridLegend } from './StatusGrid';
+import { useVariationBook } from './useVariationBook';
 import { VariationTrend } from './VariationTrend';
 
 const ALL = 'ALL';
@@ -226,7 +226,7 @@ function RecentDays({ days, status }: { days: AutomationDaySummary[]; status: Au
                 <BuyStateBar counts={dayItemCounts(d)} captureEnabled={status.captureEnabled} />
               </Table.Td>
               <Table.Td>
-                <BestOfDay day={d} planId={status.sweepPlanId} />
+                <BestOfDay day={d} />
               </Table.Td>
               <Table.Td ta="right" ff="monospace">
                 {formatCount(d.requestsUsed)}
@@ -259,6 +259,7 @@ function Overview({ status }: { status: AutomationStatus }) {
   const from = addDays(today, -(Number(span) - 1));
   const days = useAutomationDays({ from, to: today });
   const evaluations = useAllAutomationEvaluations({ from, to: today, sort: 'day,desc' });
+  const book = useVariationBook();
 
   // The default scored day is picked from live data; pin it in the URL once chosen, so it does not jump on the
   // next refresh and a shared link shows the same day.
@@ -286,9 +287,12 @@ function Overview({ status }: { status: AutomationStatus }) {
           const items = days.data!.items;
           const all = evaluations.data!;
           const todaySummary = items.find((d) => d.day === today && d.buys > 0) ?? null;
-          const labels = [...new Set(all.map((e) => e.label))].sort();
-          const variation = params.get('variation') ?? BASELINE_LABEL;
-          const selected = labels.includes(variation) ? variation : (labels[0] ?? BASELINE_LABEL);
+          // The labels with rows in the range, in plan order: an archived variation keeps its past days.
+          const labels = book.order(all.map((e) => e.label));
+          const baseline = book.baseline ?? labels[0] ?? null;
+          const variation = params.get('variation') ?? baseline;
+          const selected =
+            variation && labels.includes(variation) ? variation : (labels[0] ?? baseline ?? '');
           const dayRows = scored ? all.filter((e) => e.day === scored.day) : [];
           const board = dayRows.filter((e) => !statusFilter || e.status === statusFilter);
           const allPending = items.length > 0 && items.every((d) => d.bestStatus === 'PENDING');
@@ -373,7 +377,7 @@ function Overview({ status }: { status: AutomationStatus }) {
                         <Scoreboard
                           evaluations={board}
                           selectedLabel={selected}
-                          onSelect={(l) => set('variation', l, BASELINE_LABEL)}
+                          onSelect={(l) => set('variation', l, baseline ?? undefined)}
                         />
                       )}
                     </Stack>
@@ -387,10 +391,9 @@ function Overview({ status }: { status: AutomationStatus }) {
                       <StatusGrid
                         days={daysShown}
                         evaluations={all}
-                        planId={status.sweepPlanId}
                         labels={labels}
                         selectedLabel={selected}
-                        onSelectLabel={(l) => set('variation', l, BASELINE_LABEL)}
+                        onSelectLabel={(l) => set('variation', l, baseline ?? undefined)}
                         span={span}
                         onSpanChange={(n) => set('days', n, DEFAULT_SPAN)}
                       />
@@ -399,19 +402,18 @@ function Overview({ status }: { status: AutomationStatus }) {
                   {labels.length > 0 && (
                     <Section
                       title={
-                        selected === BASELINE_LABEL
-                          ? `Trend · the default (${BASELINE_LABEL}) with the other variations as context`
-                          : `Trend · ${selected} against the default (${BASELINE_LABEL})`
+                        !baseline || selected === baseline
+                          ? `Trend · the default${baseline ? ` (${baseline})` : ''} with the other variations as context`
+                          : `Trend · ${selected} against the default (${baseline})`
                       }
                       hint="Worst-case net P&L of the 7 trading days ending each day. Success needs it above the 0 SOL line with at least 10 signals."
                     >
                       <VariationTrend
                         days={daysShown}
                         evaluations={all}
-                        planId={status.sweepPlanId}
                         labels={labels}
                         selected={selected}
-                        onSelect={(l) => set('variation', l, BASELINE_LABEL)}
+                        onSelect={(l) => set('variation', l, baseline ?? undefined)}
                       />
                     </Section>
                   )}
