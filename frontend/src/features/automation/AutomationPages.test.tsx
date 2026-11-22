@@ -646,7 +646,12 @@ describe('BackfillsPage', () => {
       requestBudget: 500,
     });
     expect(bodies[0]!.requestId).toMatch(/^ui-backfill-/);
-    expect(await screen.findByText('Scanning')).toBeInTheDocument();
+    // The list refetches after the create and can show the new row as Scanning before the route commits, so wait for
+    // the detail page's own title before reading its header.
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Dry run · 10 Oct → 16 Oct' }),
+    ).toBeInTheDocument();
+    expect(within(header()).getByText('Scanning')).toBeInTheDocument();
   });
 
   it('checks the budget and filters before sending, and says when a backfill is filtered', async () => {
