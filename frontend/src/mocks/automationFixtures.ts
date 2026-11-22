@@ -645,6 +645,7 @@ export function createAutomationDb({ activeBackfill = true } = {}): AutomationDb
   const status: AutomationStatus = {
     enabled: true,
     captureEnabled: true,
+    captureMinSignalSol: '1.5',
     wallet: MOCK_WALLET,
     sweepPlanId: MOCK_PLAN,
     zone: MOCK_ZONE,
@@ -664,7 +665,7 @@ export function createAutomationDb({ activeBackfill = true } = {}): AutomationDb
       resumeBefore: null,
     },
     requestsLast24h: 1_840,
-    maxRequestsPer24h: 5_000,
+    maxRequestsPer24h: 7_500,
     rpcConfigured: true,
     lastTickAt: iso(Date.parse(tonight.lastBuyAt) + 9 * MINUTE_MS),
     nextTickAt: iso(Date.parse(tonight.lastBuyAt) + 19 * MINUTE_MS),

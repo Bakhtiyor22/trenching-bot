@@ -33,7 +33,6 @@ import com.trenching.bot.console.automation.infrastructure.persistence.Automatio
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkEntity
 import com.trenching.bot.console.automation.mapper.AutomationBackfillRequestMapperImpl
 import com.trenching.bot.console.automation.mapper.AutomationResponseMapperImpl
-import com.trenching.bot.console.automation.mapper.AutomationVariationRequestMapper
 import com.trenching.bot.console.automation.mapper.AutomationVariationResponseMapperImpl
 import com.trenching.bot.console.capture.MutableClock
 import com.trenching.bot.console.mapper.ConfigResponseMapperImpl
@@ -72,7 +71,7 @@ class AutomationControllerTest : AutomationDatabaseTest() {
     private fun mvc(properties: AutomationProperties, manualRun: AutomationManualRun): MockMvc =
         MockMvcBuilders.standaloneSetup(AutomationController(query(properties, clock, usage), dayService(properties, clock), sessionService(properties, clock),
             manualRun, backfillService(properties, clock), backfillQuery(properties), retryService(properties, clock), AutomationResponseMapperImpl(), AutomationBackfillRequestMapperImpl(),
-            variations(properties, clock), variationResponses, AutomationVariationRequestMapper()))
+            variations(properties, clock), variationResponses))
             .setControllerAdvice(AutomationExceptionHandler(ConsoleErrorMapperImpl()))
             .build()
 
@@ -676,9 +675,10 @@ class AutomationControllerTest : AutomationDatabaseTest() {
         assertEquals(EVENING.minus(Duration.ofHours(12)).toString(), body["coveredFrom"].asString())
         assertEquals(123, body["watermark"]["slot"].asLong())
         assertEquals(42, body["requestsLast24h"].asLong())
-        assertEquals(5000, body["maxRequestsPer24h"].asLong())
+        assertEquals(7500, body["maxRequestsPer24h"].asLong())
         assertEquals("tonight", body["openSessionId"].asString())
         assertEquals("decu-sweep-1", body["sweepPlanId"].asString())
+        assertEquals("1.5", body["captureMinSignalSol"].asString(), "the capture filter, the least minimum signal size a variation may have")
     }
 
     @Test

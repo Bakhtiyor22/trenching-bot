@@ -1,5 +1,6 @@
 import { Alert, Button, Grid, Group, Stack, Table, Text, Tooltip } from '@mantine/core';
-import { Link, useLocation, useParams, useSearchParams } from 'react-router';
+import { useEffect, useState } from 'react';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
   useAutomationVariation,
   type AutomationStatus,
@@ -171,12 +172,13 @@ function Lineage({
 function Notices({
   variation,
   status,
+  state,
 }: {
   variation: AutomationVariation;
   status: AutomationStatus;
+  /** What the edit form passed when it opened this page; null on any later visit or reload. */
+  state: VariationCreatedState | null;
 }) {
-  const location = useLocation();
-  const state = location.state as VariationCreatedState | null;
   if (variation.state === 'ARCHIVED')
     return (
       <Alert color="gray" variant="light" title={`${variation.label} is archived`}>
@@ -222,7 +224,26 @@ function Notices({
   );
 }
 
+/**
+ * The edit form's navigation state, read once when the page opens and then cleared from the history entry: the browser
+ * keeps it across a reload and back navigation, and "created, from now on" must not come back a day later.
+ */
+function useCreatedState(): VariationCreatedState | null {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [state] = useState(() => location.state as VariationCreatedState | null);
+  useEffect(() => {
+    if (location.state != null)
+      void navigate(
+        { pathname: location.pathname, search: location.search, hash: location.hash },
+        { replace: true, state: null },
+      );
+  }, [location, navigate]);
+  return state;
+}
+
 function Detail({ label, status }: { label: string; status: AutomationStatus }) {
+  const created = useCreatedState();
   const [params, setParams] = useSearchParams();
   const query = useAutomationVariation(label);
   const book = useVariationBook();
@@ -267,13 +288,14 @@ function Detail({ label, status }: { label: string; status: AutomationStatus }) 
         const canEdit = blocked == null;
         return (
           <Stack gap="lg">
-            <Notices variation={variation} status={status} />
+            <Notices variation={variation} status={status} state={created} />
             {editing && canEdit ? (
               defaults.data ? (
                 <VariationEditForm
                   key={variation.label}
                   variation={variation}
                   limits={defaults.data.limits}
+                  captureMinSol={status.captureMinSignalSol}
                   nextLabel={nextVariationLabel(book)}
                   onCancel={() => setEditing(false)}
                 />

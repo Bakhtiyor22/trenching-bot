@@ -44,7 +44,6 @@ import {
   type SecondsField,
 } from '../runs/runForm';
 import {
-  BACKFILL_LIMITS,
   editFieldReasons,
   settingChanges,
   unplacedReasonsText,
@@ -95,11 +94,13 @@ function SettingInput({
   field,
   form,
   limits,
+  captureMinSol,
   edited,
 }: {
   field: SettingField;
   form: UseFormReturnType<RunFormValues>;
   limits: ConfigLimits;
+  captureMinSol: string;
   edited: boolean;
 }) {
   const isClock = (SECONDS_FIELDS as readonly string[]).includes(field);
@@ -125,7 +126,7 @@ function SettingInput({
       : '',
     field === 'quoteMint' ? `${mintLabel(form.values.quoteMint.trim())}.` : '',
     field === 'minSignalSol'
-      ? `A variation needs one, at least the capture filter (${BACKFILL_LIMITS.captureMinSol} SOL).`
+      ? `A variation needs one, at least the capture filter (${captureMinSol} SOL).`
       : '',
   ]
     .filter(Boolean)
@@ -189,11 +190,14 @@ function SettingInput({
 export function VariationEditForm({
   variation,
   limits,
+  captureMinSol,
   nextLabel,
   onCancel,
 }: {
   variation: AutomationVariation;
   limits: ConfigLimits;
+  /** The capture filter from `/status`: a variation's minimum signal size must be at least this. */
+  captureMinSol: string;
   /** The label the new variation will probably get, for the text only. */
   nextLabel: string | null;
   onCancel: () => void;
@@ -204,7 +208,7 @@ export function VariationEditForm({
   const form = useForm<RunFormValues>({
     mode: 'controlled',
     initialValues: formValuesFrom(variation.config, null),
-    validate: (values) => validateVariationForm(values, limits),
+    validate: (values) => validateVariationForm(values, limits, captureMinSol),
     validateInputOnBlur: true,
   });
   const changes = settingChanges(form.values, variation.config);
@@ -269,6 +273,7 @@ export function VariationEditForm({
                   field={field}
                   form={form}
                   limits={limits}
+                  captureMinSol={captureMinSol}
                   edited={changed.has(field)}
                 />
               ))}

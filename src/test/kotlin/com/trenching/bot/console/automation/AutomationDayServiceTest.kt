@@ -256,6 +256,7 @@ class AutomationDayServiceTest : AutomationDatabaseTest() {
         seed.week()
         seedCoverage(coveredFrom = local("2026-11-01", "12:00"))
         val created = edits.edit("V04", local("2026-11-09", "15:00"), "req-1")
+        seed.withoutRuns("V04", "2026-11-10", "2026-11-11")
 
         val rows = dayService().evaluations(LocalDate.parse("2026-11-05"), DAY, null, null, "day,desc", 0, 500).items
         fun days(label: String) = rows.filter { it.label == label }.map { it.day.toString() }.sorted()
@@ -284,10 +285,28 @@ class AutomationDayServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `a day backfilled after an edit has rows for the variations its buys were swept by`() {
+        seed.week()
+        seedCoverage(coveredFrom = local("2026-11-01", "12:00"))
+        val created = edits.edit("V04", local("2026-11-11", "15:00"), "req-1")
+        seed.withoutRuns("V04", "2026-11-06")
+        sweepRuns.saveAll(items.findAll().filter { it.sessionId == "session-2026-11-06" }.map { item ->
+            AutomationRows.sweepRun("r-${item.id}-${created.label}", item.id, created.label, sessionId = "session-2026-11-06", outcome = "TAKE_PROFIT",
+                runId = "run-${item.id}-${created.label}", signal = true, worstCasePnl = "0.010000000000")
+        })
+
+        val labels = dayService().day(LocalDate.parse("2026-11-06")).evaluations.map { it.label }
+
+        assertEquals(SweepPlans.DECU_SWEEP_1.entries.map { it.label } + created.label, labels, "V04 is alive on the day, V10 ran on its buys")
+        assertTrue(dayService().day(LocalDate.parse("2026-11-05")).evaluations.none { it.label == created.label }, "a day without its runs has no row for it")
+    }
+
+    @Test
     fun `a day's best row is chosen among that day's rows`() {
         seed.week()
         seedCoverage(coveredFrom = local("2026-11-01", "12:00"))
         edits.edit("V07", local("2026-11-10", "15:00"), "req-1")
+        seed.withoutRuns("V07", "2026-11-11")
 
         val days = dayService().days(LocalDate.parse("2026-11-10"), DAY).days.associateBy { it.day.toString() }
 

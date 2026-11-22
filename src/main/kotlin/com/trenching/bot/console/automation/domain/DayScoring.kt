@@ -40,7 +40,8 @@ sealed interface DayStanding {
 
 /**
  * One configuration's row for [day]: its tally over [windowDays] (oldest first, ending with the day) and its [standing]. P&L is
- * SOL at scale 12, summed over the signals, as in [EvaluationTally].
+ * SOL at scale 12, summed over the signals, as in [EvaluationTally]. [seq] is the variation's sequence number, which orders rows
+ * that tie, so `V11` comes before `V100`.
  */
 data class DayVerdict(
     val day: LocalDate,
@@ -49,6 +50,7 @@ data class DayVerdict(
     val windowDays: List<LocalDate>,
     val tally: EvaluationTally,
     val standing: DayStanding,
+    val seq: Int,
 ) {
     val status: String get() = standing.label
 
@@ -56,10 +58,12 @@ data class DayVerdict(
 }
 
 /**
- * Plan Rule 34: day D's row for each of the [variations] of plan [planId] whose life covers D (editable-variations plan Rule 9)
- * tallies the items of the [windowDays] trading days ending with D under Rules 22–24 and judges the tally with [rule], unless a
- * day of the window is not complete, when the row is pending on the oldest such day. The rows come in the order of
- * [variations]. A pure function of the stored rows: the same [DayFacts] always give the same rows.
+ * Plan Rule 34: day D's row for each of the [variations] of plan [planId] that is on D tallies the items of the [windowDays]
+ * trading days ending with D under Rules 22–24 and judges the tally with [rule], unless a day of the window is not complete, when
+ * the row is pending on the oldest such day. A variation is on D when its life covers D (editable-variations plan Rule 9) or a
+ * buy of D itself has a run under it: a day backfilled after an edit was swept by the variations active then, which its life
+ * does not cover. The rows come in the order of [variations]. A pure function of the stored rows: the same [DayFacts] always give
+ * the same rows.
  */
 class DayScoring(
     private val planId: String,
@@ -79,10 +83,11 @@ class DayScoring(
         val window = windowStart(day).through(day).map { checkNotNull(facts[it]) { "No facts for a day of the verdict window day=${it.date}" } }
         val items = window.flatMap { it.items }
         val pending = window.firstOrNull { !it.complete }?.day
-        return variations.filter { it.life.covers(day, calendar) }.map { variation ->
+        val ranOnDay = window.last().items.flatMap { it.runs.keys }.toSet()
+        return variations.filter { it.life.covers(day, calendar) || it.label in ranOnDay }.map { variation ->
             val tally = EvaluationScoring.tally(variation.label, items)
             val standing = pending?.let(DayStanding::Pending) ?: DayStanding.Decided(rule.status(tally))
-            DayVerdict(day.date, planId, variation.label, window.map { it.day.date }, tally, standing)
+            DayVerdict(day.date, planId, variation.label, window.map { it.day.date }, tally, standing, variation.seq)
         }
     }
 }
@@ -90,8 +95,8 @@ class DayScoring(
 /** The ranking of a day's rows. */
 object DayStandings {
     private val BEST_FIRST: Comparator<DayVerdict> =
-        compareBy<DayVerdict> { it.standing.rank }.thenByDescending { it.tally.worstCasePnl }.thenBy { it.label }
+        compareBy<DayVerdict> { it.standing.rank }.thenByDescending { it.tally.worstCasePnl }.thenBy { it.seq }
 
-    /** The row that stands for the day: the best verdict (status, then highest worst-case P&L, then label), or any row while pending. */
+    /** The row that stands for the day: the best verdict (status, then highest worst-case P&L, then sequence), or any row while pending. */
     fun best(verdicts: List<DayVerdict>): DayVerdict? = verdicts.minWithOrNull(BEST_FIRST)
 }

@@ -101,8 +101,8 @@ class AutomationDayService(
     private fun comparator(order: EvaluationSort): Comparator<DayVerdict> {
         val byStatus = compareBy<DayVerdict> { it.standing.rank }.thenByDescending { it.tally.worstCasePnl }
         return when (order) {
-            EvaluationSort.STATUS -> byStatus.thenByDescending { it.day }.thenBy { it.label }
-            EvaluationSort.DAY_DESC -> compareByDescending<DayVerdict> { it.day }.then(byStatus).thenBy { it.label }
+            EvaluationSort.STATUS -> byStatus.thenByDescending { it.day }.thenBy { it.seq }
+            EvaluationSort.DAY_DESC -> compareByDescending<DayVerdict> { it.day }.then(byStatus).thenBy { it.seq }
         }
     }
 

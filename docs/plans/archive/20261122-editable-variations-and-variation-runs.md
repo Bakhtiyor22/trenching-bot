@@ -376,8 +376,8 @@ What shipped, by part:
 
 Deviations from the plan:
 
-- The edit request travels as `VariationEdit` (domain) with the raw `ConsoleConfigRequest`; the service validates it
-  (`ConsoleConfigValidator.validateVariation`), the mapper only copies.
+- There is no `VariationEdit` type: the service takes the API's `AutomationVariationEditRequest`, as `RunLaunchService`
+  takes a run start, and validates it (`ConsoleConfigValidator.validateVariation`); no request mapper.
 - The sweep-run index is `idx_automation_sweep_runs_label_plan (label, plan_id)`, not `idx_automation_sweep_runs_label
   (plan_id, label)`, as the review asked. A local database that got the
   old index keeps it (`update` never drops); it is harmless.
@@ -387,8 +387,16 @@ Deviations from the plan:
   take `seq` 0–9, so V10 is `seq` 10. A seed entry's label must be `V` plus its two-digit index.
 - Edit and seed timestamps are truncated to microseconds, so the 201 answer equals what a later read returns.
 
-Not changed: the day comparator still breaks ties on the label string, so `V100` would sort before `V99`; it matters
-only past 100 variations.
+Amended the same day after a code review:
+
+- Default `max-requests-per-24h` 7,500 (was 5,000). At 5,000 the 2,600 reserve and the 2,400 recovery allowance left a
+  backfill no room to start a step; startup now refuses a reserve above the cap less one recovery allowance and one
+  discovery page (`backfillMaxReserve`, 5,078 by default).
+- A day also has a row for a variation that ran on one of its buys (a day backfilled after an edit), ADR Decision 5.
+- Each buy's sweep reads the active variations again after its entries run (up to three reads), ADR Decision 4.
+- Day rows carry `seq`, and ties sort by it, so `V11` comes before `V100`.
+- `GET /api/automation/status` returns `captureMinSignalSol`; the console's edit form takes the floor from it, drops its
+  copy of the 500-variation bound, and no longer repeats the "just created" notice after a reload.
 
 Docs updated: `README.md` (variations, endpoints, `sweep-runs` parameters, cap properties, recovery 2,400), ADR
 [20261122-stored-editable-variations](../../adr/20261122-stored-editable-variations.md), and a pointer in Decision 6 of

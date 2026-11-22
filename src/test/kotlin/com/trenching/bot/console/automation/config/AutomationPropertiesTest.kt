@@ -46,7 +46,7 @@ class AutomationPropertiesTest {
         assertEquals(BigDecimal("1.5"), properties.captureMinSignalSol)
         assertEquals(300, properties.captureFeeMarginBps)
         assertEquals(2, properties.maxStepAttempts)
-        assertEquals(5000L, properties.maxRequestsPer24h)
+        assertEquals(7500L, properties.maxRequestsPer24h)
         assertEquals(CaptureBudget(800, 104_857_600, 10), properties.captureBudget())
         assertEquals(CaptureRecoveryConfig(2400, 314_572_800, 3), properties.captureRecovery())
         assertEquals(4000, properties.marketMaxTransactions)
@@ -76,7 +76,16 @@ class AutomationPropertiesTest {
         assertTrue(failure(mapOf("backfill-reserve-requests" to "2509")).contains("backfill-reserve-requests"))
         assertEquals(2532L, bind(mapOf("max-discovery-pages" to "6", "backfill-reserve-requests" to "2532")).backfillReserveRequests)
         assertTrue(failure(mapOf("max-discovery-pages" to "6", "backfill-reserve-requests" to "2531")).contains("backfill-reserve-requests"))
-        assertTrue(failure(mapOf("backfill-reserve-requests" to "5000")).contains("backfill-reserve-requests"))
+        assertTrue(failure(mapOf("backfill-reserve-requests" to "7500")).contains("backfill-reserve-requests"))
+    }
+
+    @Test
+    fun `the reserve must leave a backfill room under the cap for its first discovery page and one recovery allowance`() {
+        assertEquals(5078L, bind(mapOf("backfill-reserve-requests" to "5078")).backfillReserveRequests, "7,500 - 2,400 - 22")
+        val error = failure(mapOf("backfill-reserve-requests" to "5079"))
+        assertTrue(error.contains("backfill-reserve-requests") && error.contains("5078"), error)
+        val oldCap = failure(mapOf("max-requests-per-24h" to "5000"))
+        assertTrue(oldCap.contains("backfill-reserve-requests") && oldCap.contains("2578"), oldCap)
     }
 
     @Test
@@ -201,7 +210,7 @@ class AutomationPropertiesTest {
             "max-step-attempts" to "6", "max-requests-per-24h" to "99", "operation-budget.requests" to "1001",
             "operation-budget.timeout" to "90s", "recovery.attempts" to "9", "evaluation-window-sessions" to "61", "min-signals" to "0", "min-net-pnl-sol" to "-0.1",
             "capture-min-signal-sol" to "0", "backfill-max-days" to "0", "backfill-max-days" to "63", "backfill-max-requests" to "99",
-            "backfill-max-requests" to "500001", "backfill-reserve-requests" to "-1", "backfill-reserve-requests" to "5000",
+            "backfill-max-requests" to "500001", "backfill-reserve-requests" to "-1", "backfill-reserve-requests" to "5079",
             "market-max-transactions" to "0",
         ).forEach { (key, value) ->
             assertFailsWith<BindException>("$key=$value") { bind(mapOf(key to value)) }

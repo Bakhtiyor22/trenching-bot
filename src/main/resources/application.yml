@@ -43,7 +43,7 @@ trenching:
     capture-min-signal-sol: 1.5
     capture-fee-margin-bps: 300
     max-step-attempts: 2
-    max-requests-per-24h: 5000
+    max-requests-per-24h: 7500
     operation-budget:
       requests: 800
       bytes: 100MB

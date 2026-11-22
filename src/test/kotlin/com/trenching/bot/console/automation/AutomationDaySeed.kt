@@ -50,6 +50,12 @@ class AutomationDaySeed(
         }
     }
 
+    /** Removes [label]'s rows on the buys of [dates], as the sweep writes none for a label archived before those days. */
+    fun withoutRuns(label: String, vararg dates: String) {
+        val ofDays = dates.map { "session-$it" }.toSet()
+        sweepRuns.deleteAll(sweepRuns.findAll().filter { it.label == label && it.sessionId in ofDays })
+    }
+
     companion object {
         private const val BELOW_MINIMUM_FROM = 8
 

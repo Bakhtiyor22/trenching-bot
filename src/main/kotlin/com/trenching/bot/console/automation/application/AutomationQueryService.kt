@@ -89,6 +89,7 @@ class AutomationQueryService(
             discoveryProblem = heartbeat.discoveryProblem,
             openSessionId = wallet?.let { sessions.findFirstByWalletAndBackfillIdIsNullAndStateOrderByLastBuyAtDesc(it, AutomationSessionState.OPEN) }?.id,
             activeBackfillId = wallet?.let(backfills::findOneByActiveWallet)?.id,
+            captureMinSignalSol = properties.captureMinSignalSol,
         )
     }
 

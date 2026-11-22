@@ -27,9 +27,10 @@ import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 
 /**
- * Replays the active variations on captured items (plan Rules 21–23), on every tick while `capture-enabled` is on. A tick reads
- * the active variations once, when it starts (editable-variations plan Rules 4–6): an edit that lands during it applies to the
- * next tick, and a tick that finds none sweeps nothing and changes no item. At most
+ * Replays the active variations on captured items (plan Rules 21–23), on every tick while `capture-enabled` is on. Each item
+ * reads the active variations when its sweep starts and again once its entries have run (editable-variations plan Rules 4–6):
+ * a variation an edit created meanwhile runs on it before it is `SIMULATED`, so a buy swept during an edit is not left without
+ * the replacement's run. A tick that finds no active variation sweeps nothing and changes no item. At most
  * [AutomationLimits.SWEEP_ITEMS_PER_TICK] items whose sweep is due are swept per tick, oldest buy first. Each entry the item has
  * no row for yet runs as a dataset-referenced run, in entry order, and gets one row; runs are idempotent, so a repeat returns the
  * same run ids. An entry the replay refuses, including for a dataset that is gone or unreadable, is stored with its refusal code
@@ -53,11 +54,10 @@ class AutomationSweepService(
 
     fun sweep() {
         if (!properties.captureEnabled) return
-        val plan = variations.activePlan()
-        if (plan.entries.isEmpty()) return
+        if (variations.activePlan().entries.isEmpty()) return
         transaction.due(clock.instant(), AutomationLimits.SWEEP_ITEMS_PER_TICK).forEach { item ->
             try {
-                sweepItem(item, plan)
+                sweepItem(item)
             } catch (e: Exception) {
                 LogLine("Unexpected error while sweeping a buy; the tick goes on with the other buys.").field("itemId", item.id).field("mint", item.mint)
                     .field("wallet", item.wallet).error(log, e)
@@ -65,9 +65,23 @@ class AutomationSweepService(
         }
     }
 
-    private fun sweepItem(item: AutomationDueItem, plan: SweepPlan) {
-        val swept = transaction.sweptLabels(item.id, plan.id)
-        val failure = plan.entries.filterNot { it.label in swept }.mapNotNull { entry -> unexpectedFailure(item, plan, entry) }.firstOrNull()
+    /**
+     * Runs each active variation the item has no row for, then reads the active variations again, at most [PLAN_READS] times, so
+     * one an edit created while the item ran is not missed; the item is `SIMULATED` once a read finds nothing missing (or the
+     * reads are spent). An unexpected failure ends the item's attempt at once. With no active variation the item is left as it is.
+     */
+    private fun sweepItem(item: AutomationDueItem) {
+        var failure: Exception? = null
+        var reads = 0
+        while (reads++ < PLAN_READS) {
+            val plan = variations.activePlan()
+            if (plan.entries.isEmpty()) return
+            val swept = transaction.sweptLabels(item.id, plan.id)
+            val missing = plan.entries.filterNot { it.label in swept }
+            if (missing.isEmpty()) break
+            failure = missing.mapNotNull { entry -> unexpectedFailure(item, plan, entry) }.firstOrNull()
+            if (failure != null) break
+        }
         val now = clock.instant()
         val next = failure?.let { item.progress.sweepFailed(AutomationFailures.SWEEP_FAILED, it.message, properties.maxStepAttempts, now) }
             ?: item.progress.simulated()
@@ -110,5 +124,10 @@ class AutomationSweepService(
         LogLine("Sweep entry refused by the replay; its row records the refusal and no run.").field("code", code).field("label", entry.label)
             .field("itemId", item.id).field("mint", item.mint).field("wallet", item.wallet).debug(log)
         return SweepEntryResult.refused(code)
+    }
+
+    private companion object {
+        /** Reads of the active variations per item: one before its entries run and up to two after, for edits that land meanwhile. */
+        const val PLAN_READS = 3
     }
 }

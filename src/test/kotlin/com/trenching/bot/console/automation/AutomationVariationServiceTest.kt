@@ -13,14 +13,12 @@ import com.trenching.bot.console.automation.domain.Variation
 import com.trenching.bot.console.automation.domain.VariationArchivedException
 import com.trenching.bot.console.automation.domain.VariationBaselineException
 import com.trenching.bot.console.automation.domain.VariationDuplicateException
-import com.trenching.bot.console.automation.domain.VariationEdit
 import com.trenching.bot.console.automation.domain.VariationEditResult
 import com.trenching.bot.console.automation.domain.VariationEditRules
 import com.trenching.bot.console.automation.domain.VariationLimitReachedException
 import com.trenching.bot.console.automation.domain.VariationNotFoundException
 import com.trenching.bot.console.automation.domain.VariationUnchangedException
 import com.trenching.bot.console.automation.domain.VariationState
-import com.trenching.bot.console.automation.mapper.AutomationVariationRequestMapper
 import com.trenching.bot.console.capture.MutableClock
 import com.trenching.bot.console.domain.ConfigErrorCode
 import com.trenching.bot.strategy.domain.SimulationConfig
@@ -55,7 +53,6 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
     private val plan = SweepPlans.DECU_SWEEP_1
     private val edits by lazy { AutomationVariationRows(variationRows, variationMapper) }
     private val json = JsonMapper.builder().addModule(kotlinModule()).build()
-    private val requests by lazy { AutomationVariationRequestMapper() }
 
     @Test
     fun `seeding an empty plan stores V00 to V09 as active rows equal to the code plan, with no activation day`() {
@@ -418,8 +415,8 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
 
     private fun rows() = variationRows.findAll().sortedBy { it.seq }.map { Triple(it.label, it.state, it.version) }
 
-    private fun edit(requestId: String, config: String): VariationEdit =
-        requests.toEdit(json.readValue<AutomationVariationEditRequest>("""{"requestId":"$requestId","config":$config}"""))
+    private fun edit(requestId: String, config: String): AutomationVariationEditRequest =
+        json.readValue<AutomationVariationEditRequest>("""{"requestId":"$requestId","config":$config}""")
 
     /** V04's configuration with the take profit and stop loss sent as percents, which is how the console sends a level. */
     private fun editBody(takeProfitPercent: String = "80", stopLossPercent: String = "50", without: String? = null, extra: Map<String, String> = emptyMap()) =

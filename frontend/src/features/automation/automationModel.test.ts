@@ -321,13 +321,22 @@ describe('variations from the API', () => {
   it('requires a minimum signal size at or above the capture filter, and never a dataset', () => {
     const values = formValuesFrom(v('V04').config, null);
     const { limits } = configDefaults;
-    expect(validateVariationForm(values, limits)).toEqual({});
-    expect(validateVariationForm({ ...values, minSignalSol: '' }, limits).minSignalSol).toMatch(
-      /Required/,
-    );
-    expect(validateVariationForm({ ...values, minSignalSol: '1.2' }, limits).minSignalSol).toMatch(
-      /at least the capture filter, 1.5 SOL/,
-    );
+    expect(validateVariationForm(values, limits, '1.5')).toEqual({});
+    expect(
+      validateVariationForm({ ...values, minSignalSol: '' }, limits, '1.5').minSignalSol,
+    ).toMatch(/Required/);
+    expect(
+      validateVariationForm({ ...values, minSignalSol: '1.2' }, limits, '1.5').minSignalSol,
+    ).toMatch(/at least the capture filter, 1.5 SOL/);
+  });
+
+  it("takes the capture filter from the backend's status", () => {
+    const values = formValuesFrom(v('V04').config, null);
+    const { limits } = configDefaults;
+    expect(validateVariationForm({ ...values, minSignalSol: '1.2' }, limits, '1.0')).toEqual({});
+    expect(
+      validateVariationForm({ ...values, minSignalSol: '0.9' }, limits, '1.0').minSignalSol,
+    ).toBe('Must be at least the capture filter, 1.0 SOL');
   });
 
   it('posts every field of the configuration', () => {
@@ -370,7 +379,7 @@ describe('variations from the API', () => {
     expect(refusal('VARIATION_BASELINE')).toMatch(/agreed baseline/);
     expect(refusal('AUTOMATION_CONFLICT')).toMatch(/at the same moment/);
     expect(refusal('VARIATION_LIMIT_REACHED')).toBe(
-      'The plan has reached its limit of 500 variations, so no new one can be saved. Nothing was saved.',
+      'The plan has reached its limit of variations, so no new one can be saved. Nothing was saved.',
     );
     expect(refusal('CONFIG_INVALID')).toMatch(/refused some settings/);
     expect(variationEditErrorText(new ApiError(0, 'NETWORK_ERROR', 'down'), 'V04')).toMatch(

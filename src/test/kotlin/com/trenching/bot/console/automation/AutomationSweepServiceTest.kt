@@ -406,6 +406,25 @@ class AutomationSweepServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `an edit that lands while a buy's entries run adds the replacement's run before the buy is simulated`() {
+        captured(1, register("take-profit", takeProfit()))
+        var replacement: String? = null
+        val runs = object : SimulationRuns by simulationRuns {
+            override fun start(datasetId: String, config: SimulationConfig, storage: RunStorage): RunStart {
+                if (replacement == null) replacement = edits.edit("V04", clock.now, "req-mid-sweep").label
+                return simulationRuns.start(datasetId, config, storage)
+            }
+        }
+
+        service(runs).sweep()
+
+        val labels = rows(1).map { it.label }
+        assertEquals(plan.entries.map { it.label } + "V10", labels, "V04 ran before the edit was read, V10 after it")
+        assertEquals("V10", replacement)
+        assertEquals(AutomationItemState.SIMULATED, items.findOneById("item-1")?.state)
+    }
+
+    @Test
     fun `a tick with no active variation sweeps nothing and changes no item`() {
         captured(1, register("take-profit", takeProfit()))
         edits.archiveAll(clock.now)

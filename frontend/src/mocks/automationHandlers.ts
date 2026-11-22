@@ -58,7 +58,6 @@ const editRequestIds = new Map<string, string>();
 const MAX_EDIT_REQUEST_ID = 64;
 /** `AutomationLimits.MAX_VARIATIONS_PER_PLAN`: sequences 0 to 499. */
 const MAX_VARIATIONS_PER_PLAN = 500;
-const CAPTURE_MIN_SIGNAL_SOL = '1.5';
 /** The backend's smallest backfill budgets: a dry run, and a capture (`recovery.requests` 2400 + 22 per discovery). */
 const MIN_DRY_RUN_BUDGET = 100;
 const MIN_CAPTURE_BUDGET = 2422;
@@ -137,6 +136,7 @@ function configOf(request: VariationConfigRequest, base: Config): Config {
  * bps), a minimum signal size at or above the capture filter, and wrapped SOL as the quote.
  */
 function completeConfigRefusal(config: VariationConfigRequest | undefined): Response | null {
+  const captureMin = db.status.captureMinSignalSol;
   if (config == null || typeof config !== 'object')
     return error(400, 'CONFIG_INVALID', 'Simulation configuration is invalid', {
       config: 'must be set',
@@ -151,8 +151,8 @@ function completeConfigRefusal(config: VariationConfigRequest | undefined): Resp
   if (!fields.minSignalSol) {
     const min = config.minSignalSol;
     if (min == null) fields.minSignalSol = 'must be set';
-    else if (isDecimalString(min) && compareDecimals(min, CAPTURE_MIN_SIGNAL_SOL) < 0)
-      fields.minSignalSol = `must be at least the capture filter, ${CAPTURE_MIN_SIGNAL_SOL} SOL`;
+    else if (isDecimalString(min) && compareDecimals(min, captureMin) < 0)
+      fields.minSignalSol = `must be at least the capture filter, ${captureMin} SOL`;
   }
   if (!fields.quoteMint && config.quoteMint !== SOL_MINT) fields.quoteMint = 'must be wrapped SOL';
   return Object.keys(fields).length > 0

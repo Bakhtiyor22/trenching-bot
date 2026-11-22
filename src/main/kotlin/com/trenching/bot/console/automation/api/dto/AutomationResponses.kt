@@ -19,6 +19,7 @@ data class AutomationWatermarkResponse(
  * discovery scans now by [mode]. [manualRunQueued] is true while a "run now" pass is queued or running. [coveredFrom] is where live
  * coverage starts, and [tradingDayStart] the local `HH:mm` time at which a trading day starts. [requestsLast24h] counts every
  * provider request of the rolling day. [activeBackfillId] is the queued, scanning or capturing backfill, if any.
+ * [captureMinSignalSol] is the capture filter's minimum buy in SOL, the smallest minimum signal size a variation may have.
  */
 data class AutomationStatusResponse(
     val enabled: Boolean,
@@ -43,6 +44,7 @@ data class AutomationStatusResponse(
     val discoveryProblem: String?,
     val openSessionId: String?,
     val activeBackfillId: String?,
+    val captureMinSignalSol: String,
 )
 
 /**

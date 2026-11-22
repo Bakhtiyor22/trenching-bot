@@ -33,7 +33,6 @@ import com.trenching.bot.console.automation.domain.AutomationSessionSort
 import com.trenching.bot.console.automation.domain.EvaluationSort
 import com.trenching.bot.console.automation.mapper.AutomationBackfillRequestMapper
 import com.trenching.bot.console.automation.mapper.AutomationResponseMapper
-import com.trenching.bot.console.automation.mapper.AutomationVariationRequestMapper
 import com.trenching.bot.console.automation.mapper.AutomationVariationResponseMapper
 import java.time.Instant
 import java.time.LocalDate
@@ -64,7 +63,6 @@ class AutomationController(
     private val backfillRequests: AutomationBackfillRequestMapper,
     private val variations: AutomationVariationService,
     private val variationResponses: AutomationVariationResponseMapper,
-    private val variationRequests: AutomationVariationRequestMapper,
 ) {
     @GetMapping("/status")
     fun status(): AutomationStatusResponse = mapper.toStatus(query.status())
@@ -135,7 +133,7 @@ class AutomationController(
 
     @PostMapping("/variations/{label}/edit")
     fun editVariation(@PathVariable label: String, @RequestBody request: AutomationVariationEditRequest): ResponseEntity<AutomationVariationResponse> {
-        val result = variations.edit(label, variationRequests.toEdit(request))
+        val result = variations.edit(label, request)
         return ConsoleResponses.createdOrExisting(result.created, variationResponses.toResponse(result.variation))
     }
 

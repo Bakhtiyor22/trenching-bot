@@ -96,6 +96,11 @@ export interface AutomationWatermark {
 export interface AutomationStatus {
   enabled: boolean;
   captureEnabled: boolean;
+  /**
+   * The capture filter (`trenching.automation.capture-min-signal-sol`), a plain SOL decimal: automation captures only
+   * buys above it, so every variation's minimum signal size must be at least this.
+   */
+  captureMinSignalSol: DecimalString;
   wallet: string | null;
   sweepPlanId: string;
   zone: string;

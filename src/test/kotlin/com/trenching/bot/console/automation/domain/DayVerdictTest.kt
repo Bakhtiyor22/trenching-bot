@@ -93,6 +93,27 @@ class DayVerdictTest {
     }
 
     @Test
+    fun `a day backfilled after an edit has a row for the variation that ran on its buys, though its life does not cover it`() {
+        val archived = seeded.single { it.label == "V04" }.copy(state = VariationState.ARCHIVED, archivedAt = local(today.date, "15:00"), replacedByLabel = "V10")
+        val replacement = Variation(plan.id, "V10", 10, VariationState.ACTIVE, archived.config, local(today.date, "15:00"), null, "V04", null, local(today.date, "15:00"))
+        val edited = scoring(7, rule, seeded.map { if (it.label == "V04") archived else it } + replacement)
+        val backfilled = today.minusDays(3)
+        val sweptAfterEdit = (plan.entries.map { it.label } - "V04" + "V10").toSet()
+        val items = (1..2).map { n ->
+            val id = "${backfilled.date}-late-$n"
+            WindowItem(id, AutomationItemState.SIMULATED, sweptAfterEdit.associateWith { run(id, it, "0.01") })
+        }
+        val earlier = (7..10).map { today.minusDays(it.toLong()) }.associateWith { dayWith(it, 0, "0") }
+        val facts = earlier + week(signalsPerDay = 2) + (backfilled to DayFacts(backfilled, true, listOf(AutomationSessionState.CLOSED), items))
+
+        val rows = edited.verdicts(backfilled, facts)
+
+        assertEquals(plan.entries.map { it.label } + "V10", rows.map { it.label }, "V10 ran on the day's buys, V04 is alive on it")
+        assertEquals(2, rows.single { it.label == "V10" }.tally.signals)
+        assertEquals(plan.entries.map { it.label }, edited.verdicts(backfilled.minusDays(1), facts).map { it.label }, "a day without V10 runs has no V10 row")
+    }
+
+    @Test
     fun `a verdict decided before an edit reads the same after it`() {
         val facts = week(signalsPerDay = 2)
         val before = scoring.verdicts(today, facts)
@@ -191,6 +212,22 @@ class DayVerdictTest {
         assertEquals("V00", DayStandings.best(scoring.verdicts(today, allSucceed))?.label, "all succeed, the highest P&L ties and the first label wins")
         val mixed = week(signalsPerDay = 2) { label -> if (label == "V09") "0.001" else "-9" }
         assertEquals("V09", DayStandings.best(scoring.verdicts(today, mixed))?.label)
+    }
+
+    @Test
+    fun `equal rows rank by sequence number, so V11 comes before V100`() {
+        val config = seeded.first().config
+        val v100 = Variation(plan.id, "V100", 100, VariationState.ACTIVE, config, null, null, null, null, Instant.EPOCH)
+        val v11 = Variation(plan.id, "V11", 11, VariationState.ACTIVE, config, null, null, null, null, Instant.EPOCH)
+        val facts = (6 downTo 0).map { today.minusDays(it.toLong()) }.associateWith { day ->
+            val items = (1..2).map { n -> "${day.date}-$n".let { id -> WindowItem(id, AutomationItemState.SIMULATED, listOf("V11", "V100").associateWith { run(id, it, "0.01") }) } }
+            DayFacts(day, true, listOf(AutomationSessionState.CLOSED), items)
+        }
+
+        val rows = scoring(7, rule, listOf(v11, v100)).verdicts(today, facts)
+
+        assertEquals("V11", DayStandings.best(rows)?.label)
+        assertEquals(listOf(11, 100), rows.map { it.seq })
     }
 
     private fun local(date: LocalDate, time: String): Instant = LocalDateTime.parse("${date}T$time:00").toInstant(ZoneOffset.ofHours(5))

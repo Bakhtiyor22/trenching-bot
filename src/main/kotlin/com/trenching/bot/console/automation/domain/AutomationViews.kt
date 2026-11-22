@@ -149,6 +149,7 @@ data class AutomationHeartbeat(
  * coverage starts (plan Rule 32), and [tradingDayStart] the local time in [zone] at which a trading day starts.
  * [requestsLast24h] counts every provider request of the rolling day, manual captures included, against [maxRequestsPer24h].
  * [nextTickAt] is null until the scheduler has ticked. [activeBackfillId] is the wallet's queued, scanning or capturing backfill, if any.
+ * [captureMinSignalSol] is the capture filter's minimum buy, the smallest minimum signal size a variation may have.
  */
 data class AutomationStatus(
     val enabled: Boolean,
@@ -173,6 +174,7 @@ data class AutomationStatus(
     val discoveryProblem: WalletActivityUnavailable?,
     val openSessionId: String?,
     val activeBackfillId: String?,
+    val captureMinSignalSol: BigDecimal,
 )
 
 /**

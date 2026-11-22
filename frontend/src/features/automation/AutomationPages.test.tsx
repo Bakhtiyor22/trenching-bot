@@ -901,6 +901,33 @@ describe('variations', () => {
     );
   });
 
+  it('says "created" once after an edit, and only "replaces" after a reload', async () => {
+    const opened = {
+      pathname: '/automation/variations/V10',
+      search: '?from=2026-10-30',
+      state: { createdFrom: 'V07', created: true },
+    };
+    const first = renderPage(<VariationDetailPage />, {
+      path: '/automation/variations/:label',
+      url: opened,
+    });
+    expect(await screen.findByText('V10 created')).toBeInTheDocument();
+    // The state is cleared from the history entry; the search params stay.
+    await waitFor(() => expect(first.router.state.location.state).toBeNull());
+    expect(first.router.state.location.search).toBe('?from=2026-10-30');
+    expect(screen.getByText('V10 created')).toBeInTheDocument();
+    const reloaded = first.router.state.location;
+    first.unmount();
+
+    renderPage(<VariationDetailPage />, {
+      path: '/automation/variations/:label',
+      url: reloaded,
+    });
+    expect(await screen.findByText('V10 replaces V07')).toBeInTheDocument();
+    expect(screen.queryByText('V10 created')).not.toBeInTheDocument();
+    expect(screen.queryByText(/that is from now on/)).not.toBeInTheDocument();
+  });
+
   it('says when a label never existed', async () => {
     renderPage(<VariationDetailPage />, {
       path: '/automation/variations/:label',

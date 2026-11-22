@@ -42,7 +42,8 @@ import org.springframework.util.unit.DataSize
  * a day's verdict covers, the day itself included. A backfill spans at most [backfillMaxDays] trading days and asks for a request
  * budget of at most [backfillMaxRequests]; its discovery pauses while the rolling request total is within
  * [backfillReserveRequests] of [maxRequestsPer24h], and so does the start of a backfill's capture step (its allowance included),
- * which keeps that headroom for live capture; it covers at least one recovery allowance and one discovery tick.
+ * which keeps that headroom for live capture; it covers at least one recovery allowance and one discovery tick, and leaves room
+ * under the cap for a backfill's first discovery page and one recovery allowance ([backfillMaxReserve]).
  */
 @ConfigurationProperties(AutomationProperties.PREFIX)
 class AutomationProperties(
@@ -63,7 +64,7 @@ class AutomationProperties(
     val captureMinSignalSol: BigDecimal = BigDecimal("1.5"),
     val captureFeeMarginBps: Int = 300,
     val maxStepAttempts: Int = 2,
-    val maxRequestsPer24h: Long = 5000,
+    val maxRequestsPer24h: Long = 7500,
     val operationBudget: OperationBudget = OperationBudget(),
     val recovery: Recovery = Recovery(),
     val marketMaxTransactions: Int = 4000,
@@ -111,9 +112,10 @@ class AutomationProperties(
             "$PREFIX.backfill-max-requests must be between ${backfillCaptureMinBudget()} (one recovery allowance and a discovery page, " +
                 "what a capturing backfill needs to start an operation) and $MAX_BACKFILL_REQUESTS"
         }
-        require(backfillReserveRequests in backfillMinReserve() until maxRequestsPer24h) {
+        require(backfillReserveRequests in backfillMinReserve()..backfillMaxReserve()) {
             "$PREFIX.backfill-reserve-requests must be between ${backfillMinReserve()} (one recovery allowance and a discovery tick of " +
-                "$maxDiscoveryPages pages) and ${maxRequestsPer24h - 1}, below $PREFIX.max-requests-per-24h"
+                "$maxDiscoveryPages pages) and ${backfillMaxReserve()} ($PREFIX.max-requests-per-24h less one recovery allowance and a " +
+                "discovery page, so a backfill can still start a step)"
         }
         require(minSignals in 1..MAX_MIN_SIGNALS) { "$PREFIX.min-signals must be between 1 and $MAX_MIN_SIGNALS" }
         require(minNetPnlSol.signum() >= 0 && minNetPnlSol.stripTrailingZeros().scale() <= DecimalPolicy.SCALE) {
@@ -146,6 +148,12 @@ class AutomationProperties(
 
     /** The least reserve that keeps live capture its headroom: one operation's [recovery] allowance and one discovery tick of [maxDiscoveryPages] pages. */
     fun backfillMinReserve(): Long = recovery.requests + maxDiscoveryPages * AutomationLimits.DISCOVERY_PAGE_REQUESTS
+
+    /**
+     * The largest reserve that still lets a backfill capture: under [maxRequestsPer24h] less the reserve there must be room for one
+     * operation's [recovery] allowance after the backfill's own first discovery page, or no backfill step is ever admitted.
+     */
+    fun backfillMaxReserve(): Long = maxRequestsPer24h - backfillCaptureMinBudget()
 
     fun captureFilter(): CaptureFilter = CaptureFilter.of(captureMinSignalSol, captureFeeMarginBps)
 

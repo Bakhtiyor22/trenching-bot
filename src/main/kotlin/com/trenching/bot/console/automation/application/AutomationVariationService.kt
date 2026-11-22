@@ -1,6 +1,7 @@
 package com.trenching.bot.console.automation.application
 
 import com.trenching.bot.config.SimulationClock
+import com.trenching.bot.console.automation.api.dto.AutomationVariationEditRequest
 import com.trenching.bot.console.automation.config.AutomationProperties
 import com.trenching.bot.console.automation.config.ConditionalOnAutomationConsole
 import com.trenching.bot.console.automation.domain.AutomationLimits
@@ -8,7 +9,6 @@ import com.trenching.bot.console.automation.domain.InvalidAutomationRequestExcep
 import com.trenching.bot.console.automation.domain.InvalidVariationConfigException
 import com.trenching.bot.console.automation.domain.SweepPlan
 import com.trenching.bot.console.automation.domain.Variation
-import com.trenching.bot.console.automation.domain.VariationEdit
 import com.trenching.bot.console.automation.domain.VariationEditResult
 import com.trenching.bot.console.automation.domain.VariationEditRules
 import com.trenching.bot.console.automation.domain.VariationList
@@ -89,16 +89,17 @@ class AutomationVariationService(
         variations.findOneByPlanIdAndLabel(planId, label)?.let(views::of) ?: throw VariationNotFoundException(label)
 
     /**
-     * Replaces [label] with a new variation holding [edit]'s configuration (plan Rules 2, 11 and 12). The checks run in the order the
+     * Replaces [label] with a new variation holding [request]'s configuration (plan Rules 2, 11 and 12), the request as the API took
+     * it, as a run start's is (`RunLaunchService`): what it means is decided here. The checks run in the order the
      * API documents, the ones that need no lock first: the request id, a repeat of it (answered with the variation it created, even
      * when [label] has been archived since), the label, the configuration, and then under the plan's lock the baseline, an archived
      * label, an unchanged configuration and a duplicate of another active one.
      */
-    fun edit(label: String, edit: VariationEdit): VariationEditResult {
-        val requestId = VariationEditRules.requireRequestId(edit.requestId)
+    fun edit(label: String, request: AutomationVariationEditRequest): VariationEditResult {
+        val requestId = VariationEditRules.requireRequestId(request.requestId.orEmpty())
         edits.existing(planId, requestId)?.let { return VariationEditResult(it, false) }
         if (variations.findOneByPlanIdAndLabel(planId, label) == null) throw VariationNotFoundException(label)
-        val config = when (val parsed = validator.validateVariation(edit.config, properties.captureMinSignalSol)) {
+        val config = when (val parsed = validator.validateVariation(request.config, properties.captureMinSignalSol)) {
             is ConfigValidation.Valid -> parsed.config
             is ConfigValidation.Invalid -> throw InvalidVariationConfigException(parsed.fields, parsed.code)
         }

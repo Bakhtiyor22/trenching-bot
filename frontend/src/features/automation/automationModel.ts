@@ -463,9 +463,6 @@ export function variationText(
     : propertiesText(variation.differsFromAgreed, variation.config);
 }
 
-/** The backend's bound on a plan's variations (`AutomationLimits.MAX_VARIATIONS_PER_PLAN`): sequence 0 to 499. */
-export const MAX_VARIATIONS_PER_PLAN = 500;
-
 /** The plan's variations as the pages need them: names, order, the baseline and lookups. */
 export interface VariationBook {
   planId: string | null;
@@ -552,7 +549,8 @@ export function settingChanges(values: RunFormValues, config: Config): SettingCh
 export function validateVariationForm(
   values: RunFormValues,
   limits: ConfigLimits,
-  captureMinSol: string = BACKFILL_LIMITS.captureMinSol,
+  /** The capture filter from `/status` (`captureMinSignalSol`). */
+  captureMinSol: string,
 ): Record<string, string> {
   const errors = validateRunForm(values, limits);
   delete errors.datasetId;
@@ -608,7 +606,7 @@ export function variationEditErrorText(error: unknown, label: string): string {
     case 'AUTOMATION_VARIATION_NOT_FOUND':
       return `The backend has no variation ${label}.`;
     case 'VARIATION_LIMIT_REACHED':
-      return `The plan has reached its limit of ${MAX_VARIATIONS_PER_PLAN} variations, so no new one can be saved. Nothing was saved.`;
+      return 'The plan has reached its limit of variations, so no new one can be saved. Nothing was saved.';
     case 'CONFIG_INVALID':
     case 'INVALID_PERCENT':
     case 'CONFLICTING_FIELDS':
