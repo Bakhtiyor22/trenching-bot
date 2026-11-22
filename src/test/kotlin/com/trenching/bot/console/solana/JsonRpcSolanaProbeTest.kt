@@ -5,6 +5,7 @@ import com.trenching.bot.apiusage.ApiCallOutcome
 import com.trenching.bot.apiusage.ApiProvider
 import com.trenching.bot.apiusage.ApiTask
 import com.trenching.bot.apiusage.ApiUsageContext
+import com.trenching.bot.chaincapture.RpcEndpointSource
 import com.trenching.bot.apiusage.ApiUsageRecorder
 import com.trenching.bot.console.solana.SolanaRpcTestData.DEVNET_GENESIS
 import com.trenching.bot.console.solana.SolanaRpcTestData.RPC_HOST
@@ -140,7 +141,7 @@ class JsonRpcSolanaProbeTest {
         FakeSolanaRpcServer.start().use { rpc ->
             rpc.hangUntilClosed()
             val realProbe = SolanaProbeConfiguration().solanaProbe(
-                properties(rpc.url(), readTimeout = Duration.ofMillis(300)), mapper, ApiUsageRecorder.NONE)
+                properties(rpc.url(), readTimeout = Duration.ofMillis(300)), mapper, ApiUsageRecorder.NONE, RpcEndpointSource.fixed(rpc.url()))
 
             assertEquals(ProbeOutcome.Timeout, realProbe.check())
             assertEquals(1, rpc.requestCount)
@@ -158,8 +159,9 @@ class JsonRpcSolanaProbeTest {
         server.respond("getHealth", error(-32600, "bad request for $RPC_URL with key $SECRET"))
         val echoed = probe.check()
         val refusedPort = ServerSocket(0).use { it.localPort }
+        val refusedUrl = "http://127.0.0.1:$refusedPort/?api-key=$SECRET"
         val refused = SolanaProbeConfiguration()
-            .solanaProbe(properties("http://127.0.0.1:$refusedPort/?api-key=$SECRET"), mapper, ApiUsageRecorder.NONE)
+            .solanaProbe(properties(refusedUrl), mapper, ApiUsageRecorder.NONE, RpcEndpointSource.fixed(refusedUrl))
             .check()
 
         val rpcError = assertIs<ProbeOutcome.RpcError>(echoed)

@@ -19,6 +19,28 @@ trenching:
   solana:
     # Secret (may embed an API key): environment only; blank means not configured.
     rpc-url: ${SOLANA_RPC_URL:}
+    # Optional second account, used while the primary is out of credits. Secret too; needs rpc-url and must differ from it.
+    backup-rpc-url: ${SOLANA_RPC_BACKUP_URL:}
+    # Each account's credits, read from the provider's admin API with the api-key of its RPC URL. A project id is private: environment only.
+    usage:
+      primary-project-id: ${HELIUS_PROJECT_ID:}
+      backup-project-id: ${HELIUS_BACKUP_PROJECT_ID:}
+      # The key travels to base-url in a header: https, or http to localhost only.
+      base-url: https://admin-api.helius.xyz
+      refresh-interval: 15m
+      low-balance-percent: 10
+      resume-credits: 1000
+  # Results and alerts sent to one Telegram chat through a database outbox (README, Notifications). Off while the token and chat id
+  # are both blank; one of the two alone fails startup. The token is a secret: environment only.
+  notification:
+    telegram:
+      bot-token: ${TELEGRAM_BOT_TOKEN:}
+      chat-id: ${TELEGRAM_CHAT_ID:}
+      link-style: ANCHOR
+    console-base-url: http://localhost:8081
+    dispatch-interval: 30s
+    max-attempts: 54
+    retention: 30d
   console:
     # Public on-chain wallets the new-capture form offers first; a label also names that wallet's generated captures.
     suggested-wallets:

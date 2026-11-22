@@ -1,12 +1,15 @@
 package com.trenching.bot.console.api
 
+import com.trenching.bot.console.api.dto.RpcAccountsResponse
 import com.trenching.bot.console.api.dto.SolanaAddressCheckRequest
 import com.trenching.bot.console.api.dto.SolanaAddressCheckResponse
 import com.trenching.bot.console.api.dto.SolanaCheckResponse
 import com.trenching.bot.console.api.dto.SolanaStatusResponse
 import com.trenching.bot.console.application.SolanaProbeService
+import com.trenching.bot.console.mapper.RpcAccountsMapper
 import com.trenching.bot.console.mapper.SolanaProbeMapper
 import com.trenching.bot.console.config.ConditionalOnConsoleEnabled
+import com.trenching.bot.console.solana.accounts.application.RpcAccountDirectory
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -19,9 +22,14 @@ import org.springframework.web.bind.annotation.RestController
 class SolanaController(
     private val solanaProbeService: SolanaProbeService,
     private val solanaProbeMapper: SolanaProbeMapper,
+    private val rpcAccounts: RpcAccountDirectory,
+    private val rpcAccountsMapper: RpcAccountsMapper,
 ) {
     @GetMapping("/status")
     fun status(): SolanaStatusResponse = solanaProbeMapper.toResponse(solanaProbeService.status())
+
+    @GetMapping("/accounts")
+    fun accounts(): RpcAccountsResponse = rpcAccountsMapper.toResponse(rpcAccounts.snapshot())
 
     @PostMapping("/check")
     fun check(): SolanaCheckResponse = solanaProbeMapper.toResponse(solanaProbeService.check())

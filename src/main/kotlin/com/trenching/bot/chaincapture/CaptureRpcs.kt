@@ -6,7 +6,7 @@ import tools.jackson.databind.ObjectMapper
 
 /**
  * Builds the read-only RPC every capture uses, paced by the limiter of its endpoint, optionally backed by a transaction
- * cache, and recording its requests and cache hits as API usage. [maxAttempts] bounds the requests sent for one call.
+ * cache, and recording its requests and cache hits as API usage. [maxAttempts] bounds the requests sent for one call. Every request goes to the account [endpoints] names at that moment.
  */
 object CaptureRpcs {
     fun create(
@@ -17,8 +17,9 @@ object CaptureRpcs {
         limiters: RpcLimiterRegistry = RpcLimiterRegistry.shared,
         recorder: ApiUsageRecorder = ApiUsageRecorder.NONE,
         maxAttempts: Int = HttpSolanaReadRpc.DEFAULT_MAX_ATTEMPTS,
+        endpoints: RpcEndpointSource = RpcEndpointSource.fixed(settings.endpoint),
     ): SolanaReadRpc {
-        val http = HttpSolanaReadRpc(settings, mapper, clock, limiters.timing, limiters.limiterFor(settings), recorder, maxAttempts)
+        val http = HttpSolanaReadRpc(settings, mapper, clock, limiters.timing, limiters.limiterFor(settings), recorder, maxAttempts, endpoints, limiters)
         return if (transactionCache == null) http else CachingSolanaReadRpc(http, transactionCache, recorder)
     }
 }

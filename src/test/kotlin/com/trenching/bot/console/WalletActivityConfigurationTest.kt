@@ -1,6 +1,7 @@
 package com.trenching.bot.console
 
 import com.trenching.bot.apiusage.ApiUsageRecorder
+import com.trenching.bot.chaincapture.RpcEndpointSource
 import com.trenching.bot.common.WalletAddress
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.console.application.WalletActivityConsoleService
@@ -29,6 +30,7 @@ class WalletActivityConfigurationTest {
         .withBean(ApiUsageRecorder::class.java, Supplier { ApiUsageRecorder.NONE })
         .withBean(SimulationClock.NAME, Clock::class.java, Supplier { Clock.fixed(Instant.parse("2026-10-17T00:00:00Z"), ZoneOffset.UTC) })
         .withBean(SolanaRpcProperties::class.java, Supplier { SolanaRpcProperties() })
+        .withBean(RpcEndpointSource::class.java, Supplier { RpcEndpointSource.fixed(null) })
         .withBean(WalletHistoryCaptureProperties::class.java, Supplier { WalletHistoryCaptureProperties() })
 
     @Test

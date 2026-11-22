@@ -1,6 +1,7 @@
 package com.trenching.bot.replay
 
 import com.trenching.bot.apiusage.ApiUsageRecorder
+import com.trenching.bot.chaincapture.RpcEndpointSource
 import com.trenching.bot.chaincapture.SharedTransactionCache
 import com.trenching.bot.marketdata.MarketHistoryCaptureConfiguration
 import com.trenching.bot.marketdata.MarketHistoryCaptureProperties
@@ -15,7 +16,7 @@ import tools.jackson.databind.ObjectMapper
 object CaptureWorkflows {
     /**
      * [ratesEnabled] is whether [rateSource] is configured; only then may a market capture run in decided mode. [recorder]
-     * counts the RPC requests; [rateSource] counts its own.
+     * counts the RPC requests, which go to the account [endpoints] names at that moment; [rateSource] counts its own.
      */
     fun create(
         walletProperties: WalletHistoryCaptureProperties,
@@ -26,6 +27,7 @@ object CaptureWorkflows {
         clock: Clock,
         transactionCache: SharedTransactionCache? = null,
         recorder: ApiUsageRecorder = ApiUsageRecorder.NONE,
+        endpoints: RpcEndpointSource = RpcEndpointSource.fixed(walletProperties.endpoint),
     ): CaptureWorkflow {
         val wallets = WalletHistoryCaptureConfiguration()
         val markets = MarketHistoryCaptureConfiguration()
@@ -33,8 +35,8 @@ object CaptureWorkflows {
         val recordedMarkets = markets.recordedMarketHistory(mapper)
         val recordedRates = ReferenceRateCaptures.recorded(recordedMarkets, mapper, clock)
         return CaptureWorkflowService(recordedWallets, recordedMarkets, recordedRates,
-            { observer -> wallets.observedCapture(walletProperties, mapper, clock, observer, transactionCache, recorder) },
-            { observer -> markets.observedCapture(marketProperties, mapper, clock, observer, transactionCache, recorder) },
+            { observer -> wallets.observedCapture(walletProperties, mapper, clock, observer, transactionCache, recorder, endpoints) },
+            { observer -> markets.observedCapture(marketProperties, mapper, clock, observer, transactionCache, recorder, endpoints) },
             { observer -> ReferenceRateCaptures.observedCapture(rateSource, recordedMarkets, mapper, clock, observer) }, mapper,
             rateSource.takeIf { ratesEnabled })
     }

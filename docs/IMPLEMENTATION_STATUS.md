@@ -131,7 +131,7 @@ No registration, billing or provider credentials are needed for the fixture MVP,
 
 Live capture needs the **public Decu address, network, tracking scope, supported swap programs and quote assets**. The proposed provider is Helius, pending adoption: register, create an API key, select the network, supply HTTP/WebSocket URLs through environment variables and set a credit budget. Provider bindings and capture/parser adapters are not implemented; see PROVIDER_SPIKE for the precise evidence gaps. No provider account was created or billed, and no secrets were read or committed.
 
-Next research increment: capture and independently verify a supported real wallet swap plus slot-tagged pool/trade prices, then compare the existing simulator against that dataset before changing strategy rules. Live adapters, broad historical backfill, notifications and real execution remain deferred.
+Next research increment: capture and independently verify a supported real wallet swap plus slot-tagged pool/trade prices, then compare the existing simulator against that dataset before changing strategy rules. Live adapters, broad historical backfill and real execution remain deferred. Notifications: the `notification` module (outbox, dispatcher, send-only Telegram channel) is built and publishes nothing yet; the messages for buys, days and RPC accounts follow in the [Telegram alerts plan](plans/20261122-telegram-alerts-and-backup-rpc-account.md).
 
 ## Review and files changed
 

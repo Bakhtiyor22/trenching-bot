@@ -4,6 +4,7 @@ import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.console.automation.application.AutomationActivitySummary
 import com.trenching.bot.console.automation.application.AutomationBackfillDiscoveryService
 import com.trenching.bot.console.automation.application.AutomationBackfillService
+import com.trenching.bot.console.automation.application.AutomationDayVerdictCheck
 import com.trenching.bot.console.automation.application.AutomationDiscoveryService
 import com.trenching.bot.console.automation.application.AutomationPipelineService
 import com.trenching.bot.console.automation.application.AutomationSessionService
@@ -29,6 +30,7 @@ class AutomationScheduler(
     private val backfillDiscovery: AutomationBackfillDiscoveryService,
     private val backfills: AutomationBackfillService,
     private val summary: AutomationActivitySummary,
+    private val dayVerdicts: AutomationDayVerdictCheck,
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
 ) {
     @Scheduled(fixedDelayString = TICK_INTERVAL)
@@ -64,6 +66,11 @@ class AutomationScheduler(
     @Scheduled(fixedDelayString = AutomationLimits.SUMMARY_INTERVAL, initialDelayString = AutomationLimits.SUMMARY_INTERVAL)
     fun logSummary() {
         summary.log(clock.instant())
+    }
+
+    @Scheduled(fixedDelayString = AutomationLimits.SUMMARY_INTERVAL, initialDelayString = AutomationLimits.SUMMARY_INTERVAL)
+    fun publishDayVerdicts() {
+        dayVerdicts.publishDecidedDays()
     }
 
     private companion object {

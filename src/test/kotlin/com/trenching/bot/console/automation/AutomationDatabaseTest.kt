@@ -5,6 +5,7 @@ import com.trenching.bot.console.application.ConsoleConfigValidator
 import com.trenching.bot.console.automation.application.AutomationDiscoveryService
 import com.trenching.bot.console.automation.application.AutomationHolds
 import com.trenching.bot.console.automation.application.AutomationDiscoveryTransaction
+import com.trenching.bot.console.automation.application.AutomationBuyNotifier
 import com.trenching.bot.console.automation.application.AutomationCoverage
 import com.trenching.bot.console.automation.application.AutomationDayService
 import com.trenching.bot.console.automation.application.AutomationHistoryStartTransaction
@@ -101,6 +102,8 @@ abstract class AutomationDatabaseTest {
     @Autowired protected lateinit var itemLog: AutomationItemLog
     @Autowired protected lateinit var historyStartTransaction: AutomationHistoryStartTransaction
     @Autowired protected lateinit var summaryTransaction: AutomationSummaryTransaction
+    @Autowired protected lateinit var notifications: SwitchableNotifications
+    @Autowired protected lateinit var buyNotifier: AutomationBuyNotifier
 
     @Autowired private lateinit var lockProbe: JdbcTemplate
 
@@ -114,6 +117,7 @@ abstract class AutomationDatabaseTest {
     fun emptyAutomationTables() {
         listOf(itemEvents, sweepRuns, items, sessions, backfills, watermarks, variationRows).forEach { it.deleteAllInBatch() }
         variations(AutomationFixtures.properties(), Clock.systemUTC()).seed()
+        notifications.reset()
     }
 
     @AfterEach
@@ -248,8 +252,15 @@ abstract class AutomationDatabaseTest {
             AutomationSessionTransaction(sessions, items, mapper, events)
 
         @Bean
-        fun automationPipelineTransaction(items: AutomationItemRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter) =
-            AutomationPipelineTransaction(items, backfills, mapper, events)
+        fun automationPipelineTransaction(items: AutomationItemRepository, backfills: AutomationBackfillRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter, buyNotifier: AutomationBuyNotifier) =
+            AutomationPipelineTransaction(items, backfills, mapper, events, buyNotifier)
+
+        @Bean
+        fun switchableNotifications() = SwitchableNotifications()
+
+        @Bean
+        fun automationBuyNotifier(sweepRuns: AutomationSweepRunRepository, variations: AutomationVariationRepository, notifications: SwitchableNotifications) =
+            AutomationBuyNotifier(sweepRuns, variations, notifications.publisher, AutomationFixtures.properties())
 
         @Bean
         fun automationSweepTransaction(items: AutomationItemRepository, sweepRuns: AutomationSweepRunRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter) =

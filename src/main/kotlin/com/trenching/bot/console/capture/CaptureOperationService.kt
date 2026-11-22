@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
 import tools.jackson.databind.ObjectMapper
 import org.slf4j.LoggerFactory
 
-class CaptureOperationService(private val store: CaptureFileStore, private val workflow: CaptureWorkflow, private val mapper: CaptureResponseMapper, private val json: ObjectMapper, private val clock: Clock, private val executor: ExecutorService, private val rpcConfigured: Boolean, private val ratesConfigured: Boolean, private val retryScheduler: CaptureRetryScheduler = CaptureRetryScheduler.NONE) : AutoCloseable {
+class CaptureOperationService(private val store: CaptureFileStore, private val workflow: CaptureWorkflow, private val mapper: CaptureResponseMapper, private val json: ObjectMapper, private val clock: Clock, private val executor: ExecutorService, private val rpcConfigured: Boolean, private val ratesConfigured: Boolean, private val retryScheduler: CaptureRetryScheduler = CaptureRetryScheduler.NONE, private val endpoints: RpcEndpointSource = RpcEndpointSource.fixed(null)) : AutoCloseable {
     private val log = LoggerFactory.getLogger(javaClass)
     private val inspectionMapper = CaptureInspectionMapper(mapper)
     private val qualificationMapper = CaptureQualificationMapper(mapper)
@@ -250,6 +250,7 @@ class CaptureOperationService(private val store: CaptureFileStore, private val w
         val selected = when(request.step) { CaptureNames.WALLET -> session.walletAttemptId; CaptureNames.RATES -> session.ratesAttemptId; else -> session.marketAttemptId }
         if (request.attemptId != selected) CaptureValidation.conflict("STALE_ATTEMPT","Select the current capture attempt")
         if (request.step in setOf(CaptureNames.WALLET,CaptureNames.MARKET) && !rpcConfigured) CaptureValidation.conflict("NOT_CONFIGURED","Configure SOLANA_RPC_URL in the backend process")
+        if (request.step in setOf(CaptureNames.WALLET,CaptureNames.MARKET) && endpoints.choose() == RpcEndpointChoice.OutOfCredits) CaptureValidation.conflict(CaptureValidation.RPC_CREDITS_EXHAUSTED,"Every RPC account has used up its credits; start the operation once one has credits again")
         if (request.step == CaptureNames.RATES && !ratesConfigured) CaptureValidation.conflict("NOT_CONFIGURED","Reference rate capture is disabled")
         CaptureValidation.budget(request.step,request.budget)
         if (request.step == CaptureNames.WALLET && session.wallet == null) CaptureValidation.conflict("PREREQUISITE","Inspect attached wallet identity before resuming")

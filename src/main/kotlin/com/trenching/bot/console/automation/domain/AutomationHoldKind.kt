@@ -36,6 +36,13 @@ enum class AutomationHoldKind(val paused: String, val resumed: String, val inSum
         "capture paused because reference rates are off",
     ),
 
+    /** The capture console refuses wallet and market steps: every RPC account has used up its credits. */
+    RPC_CREDITS(
+        "Capture paused: no RPC account has credits left; waiting buys go on once one has credits again.",
+        "Capture resumed: an RPC account has credits again after {}.",
+        "capture paused because no RPC account has credits",
+    ),
+
     /** A backfill's history scan waits: only the live reserve is left under the cap. */
     BACKFILL_SCAN_RESERVE(
         "Backfill scan paused: only the live reserve is left under the request cap.",
@@ -52,6 +59,12 @@ enum class AutomationHoldKind(val paused: String, val resumed: String, val inSum
             AutomationStep.WALLET, AutomationStep.MARKET -> RPC_NOT_CONFIGURED
             AutomationStep.RATES -> RATES_NOT_CONFIGURED
             AutomationStep.CREATE_SESSION, AutomationStep.EXPORT, AutomationStep.QUALIFY, AutomationStep.REGISTER, AutomationStep.SWEEP -> null
+        }
+
+        /** The hold a console refusal `RPC_CREDITS_EXHAUSTED` of [step] belongs to, null for a step that spends no RPC credits. */
+        fun creditsFor(step: AutomationStep): AutomationHoldKind? = when (step) {
+            AutomationStep.WALLET, AutomationStep.MARKET -> RPC_CREDITS
+            AutomationStep.RATES, AutomationStep.CREATE_SESSION, AutomationStep.EXPORT, AutomationStep.QUALIFY, AutomationStep.REGISTER, AutomationStep.SWEEP -> null
         }
     }
 }

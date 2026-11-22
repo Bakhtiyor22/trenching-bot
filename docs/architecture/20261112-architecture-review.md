@@ -74,7 +74,8 @@ transaction.
 | `apiusage` | 751 | Provider request accounting in 5-minute buckets |
 | `console` | 14,447 | REST API (67 endpoints, 13 controllers), automation (6,550), capture console (2,234), Solana probe, mappers |
 | `common`, `config` | 496 | Shared value types, application configuration, the new local schema repair |
-| `notification`, `telegram` | 0 | Empty or planned |
+| `notification` | 0 at review; built 2026-11-22 | Outbox, dispatcher and a send-only Telegram channel (README, Notifications); the review found it empty |
+| `telegram` | 0 | Not built; there is no inbound bot |
 
 Tests: 257 files, 38,856 lines, about 2,060 tests (24 Testcontainers integration classes). Frontend: about 32,300 production
 lines, of which 18,130 are feature pages, 4,756 shared components and 4,744 an MSW mock backend; about 9,900 lines of tests
@@ -119,7 +120,7 @@ test, and the mock has already drifted (F11).
 | Delivered | Read-only capture with budgets and pacing; wallet + token first-buy proof; market windows with resume; datasets v3–v6; deterministic replay with curve execution; persisted idempotent runs; dataset upload, sample import, charts, run detail and compare; agreed-strategy preset; API usage accounting; automation discovery, sessions, capture, sweep, day scoring, backfills, item and day retry |
 | Partial | Local-only access guard; error envelope (unexpected errors fall through); DECIDED cutoff; retries and restart recovery of capture operations; command palette; dashboard aggregates; CI (never confirmed on the hosted runner); the bundled sample (refused by the default preset) |
 | Planned, not built | decu-dip v2 engine rules P2 (first-ever buy), P8 (15% entry slippage), Section 8 (exit retry economics) and P13 (one position including in flight); a capacity policy for buys above the request cap; backlog visibility; a second sweep plan; asynchronous runs; authentication; backups; log file and alerting; error boundary; production deployment |
-| Deferred | Live WebSocket ingestion; Telegram notifications; post-migration (PumpSwap) pricing; in-slot trade order; JSON-RPC batching; credit-weighted quota; run deletion and retention; schema migrations |
+| Deferred | Live WebSocket ingestion; an inbound Telegram bot (outbound notifications were built 2026-11-22); post-migration (PumpSwap) pricing; in-slot trade order; JSON-RPC batching; credit-weighted quota; run deletion and retention; schema migrations |
 
 ---
 

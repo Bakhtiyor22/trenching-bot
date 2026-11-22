@@ -82,8 +82,8 @@ com.trenching.bot
 ├── console/         gated dataset/run REST API, React console, read-only Solana probe
 ├── chaincapture/    flat, vendor-neutral read-only Solana RPC capture plumbing (no Spring context)
 ├── protocol/pumpfun Pump.fun instruction/event layout and reader (flat, no Spring context)
-├── notification/    outbound result/alert delivery (deferred)
-└── telegram/        Telegram bot: chat registry, alert sender (planned)
+├── notification/    outbox, dispatcher and send-only Telegram channel for results and alerts
+└── telegram/        inbound Telegram bot (not built; the chat is configured, there is no registry)
 ```
 
 `chaincapture` and `protocol.pumpfun` are shared building blocks for `walletactivity` and

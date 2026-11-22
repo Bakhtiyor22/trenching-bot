@@ -33,6 +33,7 @@ import com.trenching.bot.console.capture.CaptureOperationService
 import com.trenching.bot.console.capture.CaptureRequestException
 import com.trenching.bot.console.capture.CaptureSessionService
 import com.trenching.bot.console.capture.CaptureSessionView
+import com.trenching.bot.console.capture.CaptureValidation
 import com.trenching.bot.marketdata.MarketCutoffMode
 import java.time.Clock
 import java.time.Instant
@@ -59,12 +60,12 @@ import org.springframework.stereotype.Service
  * A market operation lists under `market-max-transactions`: a window holding more trades ends it `OVER_CAP` before any is fetched,
  * and the item fails at once, since another attempt lists the same trades.
  *
- * The capture console's refusals: `CAPTURE_BUSY` and `NOT_CONFIGURED` leave the item waiting with no attempt charged;
+ * The capture console's refusals: `CAPTURE_BUSY`, `NOT_CONFIGURED` and `RPC_CREDITS_EXHAUSTED` (no RPC account has credits) leave the item waiting with no attempt charged;
  * `CAPTURE_NOT_FOUND`, a capture session or operation deleted from the console, fails the item
  * at once; any other refusal is a failed attempt. An operation started for an item that changed meanwhile, for example one a
  * manual close abandoned, is cancelled, so it never spends requests the cap did not admit.
  *
- * Items held by the request cap, a backfill's reserve or a console that is not configured are not logged one by one: a tick counts
+ * Items held by the request cap, a backfill's reserve, a console that is not configured or RPC accounts without credits are not logged one by one: a tick counts
  * them, and [AutomationHolds] says once when a hold starts and when it ends.
  */
 @Service
@@ -203,7 +204,8 @@ class AutomationPipelineService(
     /** Starts the step; one the console accepted, or refused for another reason than its configuration, shows that the step's configuration is in place. */
     private fun startedAdmitted(item: AutomationDueItem, step: AutomationStep, recovery: CaptureRecoveryConfig?, now: Instant, tally: AutomationHoldTally): AutomationStepOutcome {
         val started = start(item, step, recovery, now)
-        if (started !is AutomationStepOutcome.Held) AutomationHoldKind.notConfiguredFor(step)?.let(tally::admitted)
+        if (started !is AutomationStepOutcome.Held || started.kind == AutomationHoldKind.RPC_CREDITS) AutomationHoldKind.notConfiguredFor(step)?.let(tally::admitted)
+        if (started !is AutomationStepOutcome.Held) AutomationHoldKind.creditsFor(step)?.let(tally::admitted)
         return started
     }
 
@@ -278,7 +280,7 @@ class AutomationPipelineService(
     }
 
     /**
-     * A busy capture worker or a capture console that is not configured only delays the step; a capture deleted from the
+     * A busy capture worker, a capture console that is not configured or RPC accounts without credits only delay the step; a capture deleted from the
      * console fails the item at once; any other refusal counts as a failed attempt.
      */
     private fun refused(item: AutomationDueItem, refusal: CaptureRequestException, now: Instant): AutomationStepOutcome {
@@ -286,6 +288,11 @@ class AutomationPipelineService(
             CAPTURE_BUSY -> Unit
             NOT_CONFIGURED -> {
                 val hold = AutomationHoldKind.notConfiguredFor(item.progress.currentStep)
+                if (hold != null) return AutomationStepOutcome.Held(hold, AutomationHoldContext(reason = refusal.message))
+                failed(item, refusal.code, refusal.message, capturedRequests(item), now)
+            }
+            CaptureValidation.RPC_CREDITS_EXHAUSTED -> {
+                val hold = AutomationHoldKind.creditsFor(item.progress.currentStep)
                 if (hold != null) return AutomationStepOutcome.Held(hold, AutomationHoldContext(reason = refusal.message))
                 failed(item, refusal.code, refusal.message, capturedRequests(item), now)
             }
@@ -366,6 +373,7 @@ class AutomationPipelineService(
         const val NOT_CONFIGURED = "NOT_CONFIGURED"
         val PIPELINE_HOLDS = listOf(
             AutomationHoldKind.REQUEST_CAP, AutomationHoldKind.BACKFILL_RESERVE, AutomationHoldKind.RPC_NOT_CONFIGURED, AutomationHoldKind.RATES_NOT_CONFIGURED,
+            AutomationHoldKind.RPC_CREDITS,
         )
     }
 }
