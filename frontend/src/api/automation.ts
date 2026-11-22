@@ -757,16 +757,19 @@ export function useBackfill(id: string | null) {
   });
 }
 
-function readStored(key: string): string | null {
+/** The value under `key` in session storage, or null when there is none or storage is unavailable. */
+export function readStored(key: string): string | null {
   try {
     return sessionStorage.getItem(key);
   } catch {
-    // Storage can be unavailable; a fresh id is still correct for a single attempt.
+    // Storage can be unavailable; callers treat that as nothing stored (a fresh request id is still correct for a
+    // single attempt).
     return null;
   }
 }
 
-function writeStored(key: string, value: string | null): void {
+/** Stores `value` under `key` in session storage, or removes the key for null; does nothing without storage. */
+export function writeStored(key: string, value: string | null): void {
   try {
     if (value == null) sessionStorage.removeItem(key);
     else sessionStorage.setItem(key, value);

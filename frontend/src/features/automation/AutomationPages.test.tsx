@@ -28,6 +28,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   server.events.removeAllListeners();
+  // The variation page remembers shown history entries here, and every test's first entry has the same key.
+  sessionStorage.clear();
 });
 
 const db = createAutomationDb();
@@ -912,10 +914,13 @@ describe('variations', () => {
       url: opened,
     });
     expect(await screen.findByText('V10 created')).toBeInTheDocument();
-    // The state is cleared from the history entry; the search params stay.
-    await waitFor(() => expect(first.router.state.location.state).toBeNull());
-    expect(first.router.state.location.search).toBe('?from=2026-10-30');
-    expect(screen.getByText('V10 created')).toBeInTheDocument();
+    // The page never navigates by itself, since a late navigation of its own would undo a newer one: the entry keeps its
+    // state and search, and is remembered as shown instead.
+    expect(first.router.state.historyAction).toBe('POP');
+    expect(first.router.state.location).toMatchObject({
+      search: '?from=2026-10-30',
+      state: opened.state,
+    });
     const reloaded = first.router.state.location;
     first.unmount();
 

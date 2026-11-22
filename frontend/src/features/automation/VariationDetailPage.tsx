@@ -1,8 +1,10 @@
 import { Alert, Button, Grid, Group, Stack, Table, Text, Tooltip } from '@mantine/core';
 import { useEffect, useState } from 'react';
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
+import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import {
+  readStored,
   useAutomationVariation,
+  writeStored,
   type AutomationStatus,
   type AutomationVariation,
 } from '../../api/automation';
@@ -224,22 +226,42 @@ function Notices({
   );
 }
 
+/** Session storage key of the history entries whose "created" notice was already shown, newest last. */
+const CREATED_SHOWN_KEY = 'automation.variation-created-shown';
+/** How many shown entries are remembered; far more than the edits of one browser tab need. */
+const CREATED_SHOWN_LIMIT = 20;
+
+function createdShown(): string[] {
+  try {
+    const keys: unknown = JSON.parse(readStored(CREATED_SHOWN_KEY) ?? '[]');
+    return Array.isArray(keys) ? keys.filter((key): key is string => typeof key === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberCreatedShown(entry: string): void {
+  const keys = [...createdShown().filter((key) => key !== entry), entry];
+  writeStored(CREATED_SHOWN_KEY, JSON.stringify(keys.slice(-CREATED_SHOWN_LIMIT)));
+}
+
 /**
- * The edit form's navigation state, read once when the page opens and then cleared from the history entry: the browser
- * keeps it across a reload and back navigation, and "created, from now on" must not come back a day later.
+ * The edit form's navigation state, shown once per history entry: the browser keeps it across a reload and back
+ * navigation, and "created, from now on" must not come back a day later. The entry is remembered as shown by its key
+ * instead of being cleared with a navigation of the page's own, which could land after a newer navigation and undo it.
  */
 function useCreatedState(): VariationCreatedState | null {
   const location = useLocation();
-  const navigate = useNavigate();
-  const [state] = useState(() => location.state as VariationCreatedState | null);
+  const [opened] = useState(() => ({
+    entry: location.key,
+    state: createdShown().includes(location.key)
+      ? null
+      : (location.state as VariationCreatedState | null),
+  }));
   useEffect(() => {
-    if (location.state != null)
-      void navigate(
-        { pathname: location.pathname, search: location.search, hash: location.hash },
-        { replace: true, state: null },
-      );
-  }, [location, navigate]);
-  return state;
+    if (opened.state != null) rememberCreatedShown(opened.entry);
+  }, [opened]);
+  return opened.state;
 }
 
 function Detail({ label, status }: { label: string; status: AutomationStatus }) {
