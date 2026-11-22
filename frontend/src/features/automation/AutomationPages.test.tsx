@@ -17,6 +17,8 @@ import { BackfillsPage } from './BackfillsPage';
 /** Inside the fixtures' today: Mon 2 Nov 2026, 22:00 UTC+5. */
 const NOW = new Date('2026-11-02T17:00:00Z');
 
+// Only `Date` is faked, and it never advances. That also stops the mocks' progress clock: a backfill created here stays
+// Scanning and a queued run stays queued, however slow the runner. Tests that rely on those stages need this freeze.
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
