@@ -31,6 +31,10 @@ interface AutomationSweepRunRepository : JpaRepository<AutomationSweepRunEntity,
     @Query("select r.label from AutomationSweepRunEntity r where r.itemId = :itemId and r.planId = :planId")
     fun findLabels(@Param("itemId") itemId: String, @Param("planId") planId: String): List<String>
 
+    /** The label of each entry that got one of [runIds] under [planId]; a refused entry has no run and never matches. At most one row per run, session and entry. */
+    @Query("select r.runId as runId, r.label as label from AutomationSweepRunEntity r where r.runId in :runIds and r.planId = :planId")
+    fun findRunLabels(@Param("runIds") runIds: Collection<String>, @Param("planId") planId: String): List<AutomationRunLabelRow>
+
     /** The sweep runs of the sessions of a span of trading days under a plan; bounded by the span's items and the plan's entries. */
     fun findAllBySessionIdInAndPlanId(sessionIds: Collection<String>, planId: String): List<AutomationSweepRunEntity>
 

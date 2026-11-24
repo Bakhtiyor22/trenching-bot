@@ -5,6 +5,7 @@ import com.trenching.bot.common.PageResult
 import com.trenching.bot.console.application.ConsoleService
 import com.trenching.bot.console.application.RunLaunchService
 import com.trenching.bot.console.application.RunSearchConsoleService
+import com.trenching.bot.console.application.RunVariationLabels
 import com.trenching.bot.console.application.RunUsdtViewService
 import com.trenching.bot.console.mapper.ConfigResponseMapperImpl
 import com.trenching.bot.console.mapper.ConsoleErrorMapperImpl
@@ -40,7 +41,7 @@ class RunSearchControllerTest {
     private val runs = FakeRuns()
     private val mvc: MockMvc = MockMvcBuilders.standaloneSetup(RunController(
         mock(RunLaunchService::class.java), mock(ConsoleService::class.java),
-        RunSearchConsoleService(runs, Clock.fixed(NOW, ZoneOffset.UTC)), responseMapper(),
+        RunSearchConsoleService(runs, RunVariationLabels { mapOf("run-1" to listOf("V03", "V12")) }, Clock.fixed(NOW, ZoneOffset.UTC)), responseMapper(),
         ObservationResponseMapperImpl(), mock(RunUsdtViewService::class.java), mock(RunUsdtViewMapper::class.java),
     )).setControllerAdvice(ConsoleExceptionHandler(ConsoleErrorMapperImpl())).build()
 
@@ -59,6 +60,7 @@ class RunSearchControllerTest {
         assertEquals("Alpha", item["datasetName"].asString())
         assertEquals(listOf(MINT), item["mints"].iterator().asSequence().map { it.asString() }.toList())
         assertEquals(ANCHOR.toString(), item["anchorBlockTime"].asString())
+        assertEquals(listOf("V03", "V12"), item["variations"].iterator().asSequence().map { it.asString() }.toList())
         assertEquals(1, checkNotNull(runs.query).page)
     }
 

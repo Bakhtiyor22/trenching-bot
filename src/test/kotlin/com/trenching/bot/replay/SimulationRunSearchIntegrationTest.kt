@@ -2,6 +2,8 @@ package com.trenching.bot.replay
 
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.console.application.RunSearchConsoleService
+import com.trenching.bot.console.application.RunVariationLabels
+import com.trenching.bot.console.domain.RunVariationLookup
 import com.trenching.bot.console.domain.RunSearchParams
 import com.trenching.bot.replay.domain.RunSearchQuery
 import com.trenching.bot.replay.domain.RunStatus
@@ -75,7 +77,7 @@ class SimulationRunSearchIntegrationTest {
         val now = Instant.parse("2026-11-16T07:00:00Z")
         fixtures.run("settled", now.minusSeconds(10))
         fixtures.run("committing", now.minusSeconds(2))
-        val console = RunSearchConsoleService(runs, Clock.fixed(now, ZoneOffset.UTC))
+        val console = RunSearchConsoleService(runs, RunVariationLabels(RunVariationLookup.ABSENT), Clock.fixed(now, ZoneOffset.UTC))
 
         val page = console.search(RunSearchParams(0, 20, null, emptyList(), null, null, null, null, null, null, null))
 

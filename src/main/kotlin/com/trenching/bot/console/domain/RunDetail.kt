@@ -22,6 +22,8 @@ data class SourcedRunDetail(
     val source: DatasetSource,
     /** The recorded market's pace, see [com.trenching.bot.console.application.SlotPace]; null when it measures too little. */
     val millisPerSlot: Double? = null,
+    /** The labels of the sweep variations that produced the run, by number; empty when none did. */
+    val variations: List<String>,
 )
 
 data class TimedRunScenario(val scenario: RunScenario, val timeline: ScenarioTimeline)

@@ -6,7 +6,8 @@ import java.time.Instant
  * [realizedPnl] is an exact decimal string in units of [quoteMint]. [storage] is `COPY` (the run keeps its own dataset copy)
  * or `DATASET_REFERENCE` (it reads the catalog dataset). [status] is `PROFIT`, `LOSS`, `FLAT`, `NO_ENTRY` or `OPEN`;
  * [datasetName] is null when the dataset left the catalog; [mints] is sorted and empty when unknown; [anchorBlockTime] is the
- * dataset's anchor buy time, if it has one.
+ * dataset's anchor buy time, if it has one. [variations] are the labels of the configured sweep plan whose sweep produced the run,
+ * by number; empty when none did, and never null.
  */
 data class RunSummaryResponse(
     val id: String,
@@ -27,6 +28,7 @@ data class RunSummaryResponse(
     val datasetName: String?,
     val mints: List<String>,
     val anchorBlockTime: Instant?,
+    val variations: List<String>,
 )
 
 data class RunStartResponse(

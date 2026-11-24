@@ -4,6 +4,7 @@ import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.PageResult
 import com.trenching.bot.console.application.ConsoleService
 import com.trenching.bot.console.application.DatasetSourceService
+import com.trenching.bot.console.application.RunVariationLabels
 import com.trenching.bot.console.application.RunUsdtViewService
 import com.trenching.bot.console.capture.CaptureCaseRecord
 import com.trenching.bot.console.capture.CaptureFileSourceLookup
@@ -71,7 +72,8 @@ class ConsoleServiceRunDetailTest {
     fun stub() {
         store = CaptureFileStore(CapturePathPolicy(root), JsonMapper.builder().addModule(kotlinModule()).build()).also { it.initialize() }
         service = ConsoleService(runs, reports, events, inputs, intents, orders, positions,
-            DatasetSourceService(DatasetCatalog(), CaptureFileSourceLookup(store)))
+            DatasetSourceService(DatasetCatalog(), CaptureFileSourceLookup(store)),
+            RunVariationLabels { ids -> ids.filter { it == run.id }.associateWith { listOf("V03", "V12") } })
         val trades = report.ingestion.filterIsInstance<NormalizationOutcome.Accepted>().map { it.trade }
             .map { it.copy(blockTime = if (it.pair == DipSample.pair(DipSample.STOP_LOSS)) null else MIDNIGHT.plusSeconds(it.slot.value)) }
         Mockito.`when`(runs.find(run.id)).thenReturn(run)
@@ -97,6 +99,11 @@ class ConsoleServiceRunDetailTest {
         val source = service.detailWithSource(run.id).source
 
         assertEquals(DatasetSource(DATASET_ID, DATASET_NAME, CaptureSource("s1", CAPTURE_NAME, "case-1")), source)
+    }
+
+    @Test
+    fun `the run page carries the variations that produced the run`() {
+        assertEquals(listOf("V03", "V12"), service.detailWithSource(run.id).variations)
     }
 
     @Test

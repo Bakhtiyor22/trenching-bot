@@ -56,7 +56,7 @@ class RunResponseMapperTest {
         val detail = detail(DatasetSource("dataset-1", null, null))
 
         assertEquals("DATASET_REFERENCE", body(DatasetSource("dataset-1", null, null))["run"]["storage"].asString())
-        assertEquals("DATASET_REFERENCE", mapper.toResponse(detail.run).storage)
+        assertEquals("DATASET_REFERENCE", mapper.toResponse(detail.run, emptyList()).storage)
     }
 
     @Test
@@ -149,7 +149,7 @@ class RunResponseMapperTest {
         val run = RunSummary(report.runId, "dataset-1", report.engineVersion, report.configurationHash, report.resultChecksum,
             MintAddress.WRAPPED_SOL, 10, 5, 5, 3, 2, BigDecimal(DipSample.TOTAL_PNL), Instant.parse("2026-10-08T00:00:00Z"),
             RunStorage.DATASET_REFERENCE)
-        return SourcedRunDetail(run, SimulationConfig.mvp(), scenarios, source)
+        return SourcedRunDetail(run, SimulationConfig.mvp(), scenarios, source, variations = emptyList())
     }
 
     private companion object {

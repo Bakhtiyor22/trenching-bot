@@ -19,6 +19,7 @@ import org.springframework.stereotype.Service
 @Service
 class RunSearchConsoleService(
     private val runs: SimulationRuns,
+    private val variations: RunVariationLabels,
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
 ) {
     fun search(params: RunSearchParams): RunSearchPage {
@@ -39,7 +40,8 @@ class RunSearchConsoleService(
             page = params.page,
             size = params.size,
         )
-        return RunSearchPage(runs.search(query), asOf)
+        val result = runs.search(query)
+        return RunSearchPage(result, asOf, variations.of(result.page.items.map { it.id }))
     }
 
     /**

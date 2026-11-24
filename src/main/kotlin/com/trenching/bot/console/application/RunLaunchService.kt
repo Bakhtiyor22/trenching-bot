@@ -6,6 +6,7 @@ import com.trenching.bot.console.domain.ConfigDefaults
 import com.trenching.bot.console.domain.ConfigInvalidException
 import com.trenching.bot.console.domain.ConfigValidation
 import com.trenching.bot.console.domain.InvalidConsoleRequestException
+import com.trenching.bot.console.domain.LabeledRunStart
 import com.trenching.bot.console.domain.SimulationConfigLimits
 import com.trenching.bot.replay.ReplayDatasetCatalog
 import com.trenching.bot.replay.SimulationRuns
@@ -29,13 +30,14 @@ class RunLaunchService(
     private val runs: SimulationRuns,
     private val catalog: ReplayDatasetCatalog,
     private val validator: ConsoleConfigValidator,
+    private val variations: RunVariationLabels,
     private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(RunLaunchService::class.java)
 
     fun defaults(): ConfigDefaults = ConfigDefaults(SimulationConfig.mvp(), SimulationConfigLimits.CURRENT)
 
-    fun start(request: RunStartRequest): RunStart {
+    fun start(request: RunStartRequest): LabeledRunStart {
         val datasetId = request.datasetId?.trim()?.takeIf { it.isNotEmpty() }
             ?: throw InvalidConsoleRequestException(DATASET_ID, "is required")
         val presetId = request.presetId?.also(::requireKnownPreset)
@@ -53,7 +55,7 @@ class RunLaunchService(
             if (started.created) ConsoleMetrics.CREATED else ConsoleMetrics.EXISTING).increment()
         LogLine("Run started from the console.").field("runId", started.run.id).field("datasetId", datasetId).field("created", started.created)
             .field("presetId", presetId).info(log)
-        return started
+        return LabeledRunStart(started.run, started.created, variations.of(started.run.id))
     }
 
     private fun requireKnownPreset(presetId: String) {

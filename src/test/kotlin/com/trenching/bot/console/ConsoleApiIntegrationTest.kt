@@ -80,6 +80,7 @@ class ConsoleApiIntegrationTest {
         assertDecimal(DipSample.TOTAL_PNL, run.path("realizedPnl"))
         assertEquals(5, run.path("filledCount").asInt())
         assertEquals(2, run.path("closedCount").asInt())
+        assertTrue(run.path("variations").isArray && run.path("variations").isEmpty, "without the automation console a run has no variation: $run")
         assertTrue(Regex("""\d{4}-\d{2}-\d{2}T[\d:.]+Z""").matches(run.path("createdAt").asString()), run.toString())
         assertFalse(run.path("createdAt").asString().startsWith("1900-"))
 

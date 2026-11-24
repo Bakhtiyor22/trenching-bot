@@ -52,3 +52,5 @@ USDT values are a reading aid, not simulation results. Two runs with identical S
 - Binance becomes unreachable for the user.
 
 Update 2026-10-08: the trigger "USDT values are needed in ... datasets or simulation" fired. The [reference-rates decision](20261008-reference-rates-in-dataset.md) stores the same 1-minute opens in replay datasets for the dip-entry market-cap rule. The display view described here is unchanged.
+
+Update 2026-11-24: the runs list shows, under each wrapped-SOL run's realized P&L, that SOL amount at the current SOL/USDT rate (the ticker the console header shows), labelled as today's value with the rate and its time stated ([runs list plan](../plans/archive/20261124-runs-list-clarity.md)). It is not a realized USDT P&L and does not reuse "today's rate for everything": the run page keeps the trade-time view described above, and says so in the list's tooltip. The product is exact in the browser; only its display is cut to two places.

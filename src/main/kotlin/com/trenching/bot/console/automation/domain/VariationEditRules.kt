@@ -23,6 +23,9 @@ object VariationEditRules {
     /** The label of the variation with sequence number [seq]: `V` and the number, two digits at least. Labels are never reused because sequence numbers never are. */
     fun labelOf(seq: Int): String = LABEL_PREFIX + seq.toString().padStart(LABEL_DIGITS, '0')
 
+    /** The sequence number [label] names, or null when it is not `V` and digits; the inverse of [labelOf]. */
+    fun seqOf(label: String): Int? = label.takeIf { it.startsWith(LABEL_PREFIX) }?.drop(LABEL_PREFIX.length)?.takeIf { it.all(Char::isDigit) }?.toIntOrNull()
+
     /**
      * Refuses an edit of [target] to [config] unless it is allowed, naming the first reason: [target] is the baseline, is archived,
      * already has [config], or another of the [active] variations does.

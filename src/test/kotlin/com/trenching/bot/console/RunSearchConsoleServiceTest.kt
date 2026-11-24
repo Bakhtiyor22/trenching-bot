@@ -3,6 +3,7 @@ package com.trenching.bot.console
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.PageResult
 import com.trenching.bot.console.application.RunSearchConsoleService
+import com.trenching.bot.console.application.RunVariationLabels
 import com.trenching.bot.console.domain.InvalidConsoleRequestException
 import com.trenching.bot.console.domain.RunSearchParams
 import com.trenching.bot.replay.SimulationRuns
@@ -14,6 +15,7 @@ import com.trenching.bot.replay.domain.RunStatus
 import com.trenching.bot.replay.domain.RunStorage
 import com.trenching.bot.replay.domain.RunSummary
 import com.trenching.bot.strategy.domain.SimulationConfig
+import java.math.BigDecimal
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -24,7 +26,11 @@ import org.junit.jupiter.api.Test
 
 class RunSearchConsoleServiceTest {
     private val runs = RecordingRuns()
-    private val service = RunSearchConsoleService(runs, Clock.fixed(NOW, ZoneOffset.UTC))
+    private val lookups = mutableListOf<Collection<String>>()
+    private val service = RunSearchConsoleService(runs, RunVariationLabels { ids ->
+        lookups += ids
+        mapOf("run-1" to listOf("V03", "V12"))
+    }, Clock.fixed(NOW, ZoneOffset.UTC))
 
     @Test
     fun `without filters every status matches and the snapshot is five seconds ago, which a run still being written cannot cross`() {
@@ -36,6 +42,24 @@ class RunSearchConsoleServiceTest {
         assertEquals(SETTLED, page.asOf)
         assertNull(query.mint)
         assertNull(query.text)
+    }
+
+    @Test
+    fun `the page carries the variations of its runs from one lookup of exactly their ids`() {
+        runs.found = listOf(summary("run-1"), summary("run-2"))
+
+        val page = service.search(params())
+
+        assertEquals(mapOf("run-1" to listOf("V03", "V12"), "run-2" to emptyList<String>()), page.variations)
+        assertEquals<List<Collection<String>>>(listOf(listOf("run-1", "run-2")), lookups)
+    }
+
+    @Test
+    fun `an empty page looks up nothing`() {
+        val page = service.search(params())
+
+        assertEquals(emptyMap<String, List<String>>(), page.variations)
+        assertEquals(emptyList<Collection<String>>(), lookups)
     }
 
     @Test
@@ -109,12 +133,16 @@ class RunSearchConsoleServiceTest {
         createdFrom: Instant? = from, createdTo: Instant? = to, text: String? = null, asOf: Instant? = null,
     ) = RunSearchParams(page, size, datasetId, statuses, mint, anchorFrom, anchorTo, createdFrom, createdTo, text, asOf)
 
+    private fun summary(id: String) = RunSummary(id, "ds-1", "engine", "config", "result", MintAddress.WRAPPED_SOL, 1, 1, 0, 0, 1,
+        BigDecimal.ZERO, NOW, RunStorage.COPY)
+
     private class RecordingRuns : SimulationRuns {
         var query: RunSearchQuery? = null
+        var found: List<RunSummary> = emptyList()
 
         override fun search(query: RunSearchQuery): RunSearchResult {
             this.query = query
-            return RunSearchResult(PageResult(emptyList(), query.page, query.size, 0), RunStatus.entries.associateWith { 0L })
+            return RunSearchResult(PageResult(found, query.page, query.size, found.size.toLong()), RunStatus.entries.associateWith { 0L })
         }
 
         override fun start(datasetId: String, config: SimulationConfig, storage: RunStorage): RunStart = error("not used")
