@@ -15,6 +15,10 @@ describe('formatRelative', () => {
     );
   });
   it('switches to the date after seven days', () => {
-    expect(formatRelative('2026-10-12T12:00:00Z', now)).toMatch(/Oct|10/);
+    // The date is written in the viewer's locale ("12 Oct 2026", "12 окт. 2026 г."), so only its numbers are checked.
+    const text = formatRelative('2026-10-12T12:00:00Z', now);
+    expect(text).not.toMatch(/ago|just now/);
+    expect(text).toMatch(/\b12\b/);
+    expect(text).toMatch(/2026/);
   });
 });
