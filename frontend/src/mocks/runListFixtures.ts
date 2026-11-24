@@ -1,12 +1,22 @@
 import type { RunDetail, RunStatus, RunSummary } from '../api/types';
-import { createAutomationDb, MOCK_LABELS } from './automationFixtures';
+import { createAutomationDb, MOCK_LABELS, mockMintOf } from './automationFixtures';
 import { ENGINE_VERSION, SOL_MINT, sampleRunDetail } from './fixtures';
 
 /**
  * Sweep runs the run list serves ahead of the sample runs: 22 runs on the newest three replayed buys of the automation
  * mock (their mint, buy time and dataset), created on 2 Nov. None of them is a loss, so the sample run, the only LOSS,
- * sits on page 2 of 20: the Loss filter must find it on the server, not among the 20 rows of page 1.
+ * sits on page 2 of 20: the Loss filter must find it on the server, not among the 20 rows of page 1. Each names the
+ * variation that swept it (the second run two, as when a later variation repeats an archived one's settings), and the
+ * newest made exactly +0.024477624 SOL. One older run started by hand is quoted in USDC, so it has no variation and no
+ * USDT line.
  */
+
+/** USDC, the quote mint of the one run not quoted in wrapped SOL. */
+export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+/** The newest listed run's realized P&L: 69.08 USDT per SOL makes it ≈ +1.69 USDT. */
+export const NEWEST_RUN_PNL = '0.024477624000';
+/** The label the second listed run shares with its own, as a repeated archived variation would. */
+export const SHARED_LABEL = 'V12';
 
 const LISTED_RUN_COUNT = 22;
 const CREATED_BASE_MS = Date.UTC(2026, 10, 2, 16, 0);
@@ -49,7 +59,7 @@ function buildListedRuns(): RunSummary[] {
     .items.filter((item) => item.state === 'SIMULATED' && item.datasetId && item.blockTime)
     .sort((a, b) => b.blockTime!.localeCompare(a.blockTime!))
     .slice(0, 3);
-  return Array.from({ length: LISTED_RUN_COUNT }, (_, n) => {
+  const swept = Array.from({ length: LISTED_RUN_COUNT }, (_, n) => {
     const buy = buys[Math.floor(n / MOCK_LABELS.length)]!;
     const label = MOCK_LABELS[n % MOCK_LABELS.length]!;
     const status = CYCLE[n % CYCLE.length]!;
@@ -69,8 +79,32 @@ function buildListedRuns(): RunSummary[] {
       datasetName: `Decu · ${buy.mint.slice(0, 4)}…${buy.mint.slice(-4)} · ${label}`,
       mints: [buy.mint],
       anchorBlockTime: buy.blockTime,
+      variations: n === 1 ? [label, SHARED_LABEL] : [label],
+      ...(n === 0 ? { realizedPnl: NEWEST_RUN_PNL } : {}),
     } as RunSummary;
   });
+  const usdcRun: RunSummary = {
+    ...swept[0]!,
+    id: `${hex(990, 8)}${hex(991, 56)}`,
+    configurationHash: hex(992, 64),
+    resultChecksum: hex(993, 64),
+    quoteMint: USDC_MINT,
+    status: 'PROFIT',
+    filledCount: 1,
+    rejectedCount: 0,
+    openCount: 0,
+    closedCount: 1,
+    realizedPnl: '1.250000',
+    createdAt: '2026-09-30T08:00:00Z',
+    storage: 'COPY',
+    datasetName: 'Decu · USDC quote, by hand',
+    // Its own token and dataset, apart from every automation buy.
+    datasetId: `ds-${hex(994, 16)}`,
+    mints: [mockMintOf(990)],
+    anchorBlockTime: null,
+    variations: [],
+  };
+  return [...swept, usdcRun];
 }
 
 export const listedRuns: RunSummary[] = buildListedRuns();

@@ -361,6 +361,11 @@ export interface RunSummary {
   mints: string[];
   /** Block time of the buy the dataset was captured around; null for a dataset without one. */
   anchorBlockTime: IsoInstant | null;
+  /**
+   * The labels of the configured sweep plan whose sweep produced this run, ordered by number (V02, V10, V100); empty
+   * when none did (a run started by hand). Absent from an older backend, which reads as unknown.
+   */
+  variations?: string[];
 }
 
 export type RunStorage = 'COPY' | 'DATASET_REFERENCE';

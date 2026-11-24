@@ -413,10 +413,17 @@ export const sampleRun: RunSummary = {
   datasetName: 'dip-sample-v3',
   mints: [BASE_MINT, STOP_LOSS_MINT, NO_DIP_MINT],
   anchorBlockTime: null,
+  variations: [],
 };
 
-/** Fields a backend from before server-side run search leaves out of a run summary. */
-const PHASE1_RUN_FIELDS = ['status', 'datasetName', 'mints', 'anchorBlockTime'] as const;
+/** Fields a backend from before server-side run search leaves out of a run summary (and `variations`, newer still). */
+const PHASE1_RUN_FIELDS = [
+  'status',
+  'datasetName',
+  'mints',
+  'anchorBlockTime',
+  'variations',
+] as const;
 
 /** A run as an old backend sends it, without the Phase 1 fields: for tests of the console against it. */
 export function oldShapeRun(run: RunSummary): Omit<RunSummary, (typeof PHASE1_RUN_FIELDS)[number]> {
@@ -504,6 +511,7 @@ export const edgeRun: RunSummary = {
   datasetName: 'edge-cases',
   mints: [BASE_MINT],
   anchorBlockTime: null,
+  variations: [],
 };
 
 export const edgeRunDetail: RunDetail = {

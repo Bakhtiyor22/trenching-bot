@@ -127,10 +127,43 @@ export function addDecimals(...values: string[]): string {
   const parts = values.map(toScaled);
   const scale = Math.max(0, ...parts.map((p) => p.scale));
   const total = parts.reduce((sum, p) => sum + p.units * 10n ** BigInt(scale - p.scale), 0n);
-  const digits = (total < 0n ? -total : total).toString().padStart(scale + 1, '0');
-  const sign = total < 0n ? '-' : '';
+  return fromScaled(total, scale);
+}
+
+/** A scaled integer back as a plain decimal string with exactly `scale` fraction digits. */
+function fromScaled(units: bigint, scale: number): string {
+  const digits = (units < 0n ? -units : units).toString().padStart(scale + 1, '0');
+  const sign = units < 0n ? '-' : '';
   if (scale === 0) return `${sign}${digits}`;
   return `${sign}${digits.slice(0, -scale)}.${digits.slice(-scale)}`;
+}
+
+/**
+ * Exact product of two plain decimal strings, at the sum of both scales, never rounded:
+ * "0.024477624000" × "69.08" = "1.69091426592000". Throws on a value that is not a plain decimal.
+ */
+export function multiplyDecimals(a: string, b: string): string {
+  for (const v of [a, b]) {
+    if (!isDecimalString(v.trim())) throw new Error(`Not a plain decimal: ${v}`);
+  }
+  const x = toScaled(a);
+  const y = toScaled(b);
+  return fromScaled(x.units * y.units, x.scale + y.scale);
+}
+
+/**
+ * A plain decimal cut to `places` fraction digits toward zero, padded with zeros, with no sign when the result is zero:
+ * ("1.6909", 2) → "1.69", ("-1.699", 2) → "-1.69", ("-0.004", 2) → "0.00". A value that is not a plain decimal is
+ * returned unchanged.
+ */
+export function truncateDecimal(value: string, places: number): string {
+  const trimmed = value.trim();
+  if (!isDecimalString(trimmed)) return value;
+  const negative = trimmed.startsWith('-');
+  const [integer = '0', fraction = ''] = trimmed.replace(/^[+-]/, '').split('.');
+  const cut = fraction.slice(0, places).padEnd(places, '0');
+  const body = `${integer.replace(/^0+(?=\d)/, '') || '0'}${places > 0 ? `.${cut}` : ''}`;
+  return negative && /[1-9]/.test(body) ? `-${body}` : body;
 }
 
 /** The same plain decimal with its sign flipped ("-3.5" → "3.5", "2" → "-2"). */

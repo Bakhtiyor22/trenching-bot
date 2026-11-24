@@ -19,7 +19,9 @@ import {
   decimalSign,
   formatDecimal,
   isDecimalString,
+  MINUS,
   toChartNumber,
+  truncateDecimal,
 } from '../../lib/decimal';
 import { humanizeCode, mintLabel } from '../../lib/format';
 import { formatPercent } from '../../lib/percent';
@@ -241,13 +243,10 @@ export function lamportsToSol(lamports: string): string {
 
 /** An exact P&L string trimmed to `places` for compact cells, rounding toward zero; the exact value goes in a tooltip. */
 export function shortSol(value: string, places = 4): string {
-  const sign = decimalSign(value);
-  const unsigned = value.replace(/^[+-]/, '');
-  const [integer = '0', fraction = ''] = unsigned.split('.');
-  const cut = fraction.slice(0, places).padEnd(places, '0');
-  const zero = /^0*$/.test(integer) && /^0*$/.test(cut);
-  const prefix = sign > 0 && !zero ? '+' : sign < 0 && !zero ? '−' : '';
-  return `${prefix}${integer}.${cut}`;
+  const cut = truncateDecimal(value, places);
+  const sign = decimalSign(cut);
+  const unsigned = cut.replace(/^-/, '');
+  return `${sign > 0 ? '+' : sign < 0 ? MINUS : ''}${unsigned}`;
 }
 
 export type BuyBucket = 'replayed' | 'inProgress' | 'issues' | 'skipped';

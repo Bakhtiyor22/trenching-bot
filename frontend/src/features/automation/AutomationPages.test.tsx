@@ -979,16 +979,17 @@ describe('sweep run filters', () => {
     }
   });
 
-  it('shows the token with a Solscan link from the row itself', async () => {
+  it('shows the token with a pump.fun link from the row itself', async () => {
     renderPage(<AutomationSweepRunsPage />, {
       path: '/automation/sweep-runs',
       url: '/automation/sweep-runs',
     });
     const table = await screen.findByRole('table', { name: 'Sweep runs' });
     const row = within(table).getAllByRole('row')[1]!;
-    const solscan = within(row).getByRole('link', { name: /on Solscan$/ });
-    const mint = solscan.getAttribute('aria-label')!.replace(/^Open token (\S+) on Solscan$/, '$1');
-    expect(solscan).toHaveAttribute('href', `https://solscan.io/token/${mint}`);
+    const link = within(row).getByRole('link', { name: /on pump\.fun$/ });
+    const mint = link.getAttribute('aria-label')!.replace(/^Open token (\S+) on pump\.fun$/, '$1');
+    expect(link).toHaveAttribute('href', `https://pump.fun/coin/${mint}`);
+    expect(link).toHaveAttribute('target', '_blank');
     expect(db.items.some((item) => item.mint === mint)).toBe(true);
   });
 

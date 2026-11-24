@@ -39,6 +39,7 @@ import {
 } from '../../mocks/fixtures';
 import { codeLabel } from '../../lib/codes';
 import { formatDecimal, formatSignedDecimal } from '../../lib/decimal';
+import { listedRuns } from '../../mocks/runListFixtures';
 import { server } from '../../mocks/server';
 import { renderPage } from '../../test/render';
 import { RunDetailPage } from './RunDetailPage';
@@ -254,7 +255,7 @@ describe('RunDetailPage', () => {
     // Tiny prices are displayed exactly, never in exponent form.
     expect(within(open!).getByText('0.0000000000124017')).toBeInTheDocument();
     // Open positions are counted by why they never exited, so migrated tokens stay apart.
-    expect(screen.getByText('Open: 1 horizon reached')).toBeInTheDocument();
+    expect(screen.getByText('Still held: 1 horizon reached')).toBeInTheDocument();
   });
 
   it('opens the cycle first buy at its own cycle details card', async () => {
@@ -336,6 +337,28 @@ describe('RunDetailPage', () => {
     renderRun(SAMPLE_RUN_ID);
     expect(await screen.findByText('LATER_BUY_SAME_MINT')).toBeInTheDocument();
     expect(screen.getByText('FAILED')).toBeInTheDocument();
+  });
+
+  it('names the variations that swept the run, with links, and says Bought / Sold in its counts', async () => {
+    const swept = listedRuns[1]!;
+    renderRun(swept.id);
+    const row = (await screen.findByText('Variation')).closest('tr')!;
+    for (const label of swept.variations!)
+      expect(within(row).getByRole('link', { name: `Open variation ${label}` })).toHaveAttribute(
+        'href',
+        `/automation/variations/${label}`,
+      );
+    expect(screen.getByText('Bought / not bought')).toBeInTheDocument();
+    expect(screen.getByText('Sold / still held')).toBeInTheDocument();
+    expect(screen.queryByText('Tokens · entered / no entry')).not.toBeInTheDocument();
+    expect(screen.queryByText('Open / closed')).not.toBeInTheDocument();
+  });
+
+  it('shows a dash for a run no variation swept', async () => {
+    renderRun(SAMPLE_RUN_ID);
+    const row = (await screen.findByText('Variation')).closest('tr')!;
+    expect(within(row).getByText('—')).toBeInTheDocument();
+    expect(within(row).queryByRole('link')).not.toBeInTheDocument();
   });
 
   it('shows the dip strategy configuration the run used', async () => {

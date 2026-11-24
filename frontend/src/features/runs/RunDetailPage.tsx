@@ -44,6 +44,7 @@ import { MarketLinks } from '../../components/MarketLinks';
 import { ObservationTable } from '../../components/ObservationTable';
 import { CodeText } from '../../components/PlainLanguage';
 import { KeyValueTable, Kpi, KpiStrip, PageHeader, Section } from '../../components/Panels';
+import { RunVariations } from './RunVariations';
 import { QueryView, RefreshNotice } from '../../components/QueryView';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
 import { codeLabel } from '../../lib/codes';
@@ -107,6 +108,7 @@ function RunHeader({ detail }: { detail: RunDetail }) {
                 {run.engineVersion}
               </Badge>,
             ],
+            ['Variation', <RunVariations key="va" variations={run.variations} />],
             ['Configuration hash', <ShortId key="ch" value={run.configurationHash} />],
             ['Result checksum', <ShortId key="rc" value={run.resultChecksum} />],
             ['Quote mint', <Mint key="qm" mint={run.quoteMint} />],
@@ -195,11 +197,10 @@ function RunTotals({ detail, usdt }: { detail: RunDetail; usdt: RunUsdtView | nu
       <Kpi label="Outcomes">
         <OutcomeBar scenarios={detail.scenarios} />
       </Kpi>
-      <Kpi label="Tokens · entered / no entry">
-        {formatCount(run.scenarioCount)}{' '}
-        <Text span c="dimmed" inherit>
-          ·
-        </Text>{' '}
+      <Kpi
+        label="Bought / not bought"
+        hint={`${formatCount(run.scenarioCount)} ${run.scenarioCount === 1 ? 'token' : 'tokens'}`}
+      >
         <Text span c="teal" inherit>
           {formatCount(run.filledCount)}
         </Text>
@@ -208,8 +209,8 @@ function RunTotals({ detail, usdt }: { detail: RunDetail; usdt: RunUsdtView | nu
           {formatCount(run.rejectedCount)}
         </Text>
       </Kpi>
-      <Kpi label="Open / closed" hint={reasons && `Open: ${reasons}`}>
-        {formatCount(run.openCount)} / {formatCount(run.closedCount)}
+      <Kpi label="Sold / still held" hint={reasons && `Still held: ${reasons}`}>
+        {formatCount(run.closedCount)} / {formatCount(run.openCount)}
       </Kpi>
     </KpiStrip>
   );

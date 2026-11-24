@@ -1,7 +1,6 @@
 import {
   Affix,
   Anchor,
-  Box,
   Button,
   Checkbox,
   Group,
@@ -39,14 +38,24 @@ import {
   useDatasetSearch,
   useLiveRunTotal,
   useRuns,
+  useSolUsdtPrice,
 } from '../../api/queries';
-import { RUN_STATUSES, type RunStatus, type RunSummary } from '../../api/types';
-import { Mint, Pnl, ShortId, Timestamp } from '../../components/DisplayValues';
+import { RUN_STATUSES, type RunStatus, type RunSummary, type SolUsdtPrice } from '../../api/types';
+import { Pnl, ShortId, Timestamp, TokenLink } from '../../components/DisplayValues';
 import { IconCompare, IconPlay, IconSearch } from '../../components/Icons';
 import { PageHeader, Section } from '../../components/Panels';
 import { RefreshNotice } from '../../components/QueryView';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
-import { formatCount, shortId } from '../../lib/format';
+import { StatusChip } from '../../components/StatusChip';
+import { RunVariations } from './RunVariations';
+import { codeLabel } from '../../lib/codes';
+import {
+  formatSignedDecimal,
+  multiplyDecimals,
+  trimFractionZeros,
+  truncateDecimal,
+} from '../../lib/decimal';
+import { formatCount, mintLabel, shortId, WRAPPED_SOL_MINT } from '../../lib/format';
 import { MAX_COMPARED_RUNS, paths } from '../../paths';
 import {
   dayInfo,
@@ -65,6 +74,7 @@ import {
   mintProblem,
   parseSort,
   parseStatus,
+  pnlDisplay,
   queryProblem,
   readFilters,
   RUN_PARAMS,
@@ -73,6 +83,8 @@ import {
   STATUS_LABELS,
   toggleSort,
   toRunQuery,
+  tradeDetail,
+  tradeLabel,
   type DayClock,
   type Sort,
   type SortKey,
@@ -123,43 +135,6 @@ function SortHeader({
   );
 }
 
-/** Filled vs rejected scenarios as a small bar, with the counts beside it. */
-function ScenarioBar({ run }: { run: RunSummary }) {
-  const total = run.filledCount + run.rejectedCount;
-  return (
-    <Group gap={8} wrap="nowrap" justify="flex-end">
-      <Box
-        w={64}
-        h={6}
-        style={{
-          display: 'flex',
-          gap: 2,
-          borderRadius: 3,
-          overflow: 'hidden',
-          background: 'var(--console-raised)',
-        }}
-        aria-hidden
-      >
-        {total > 0 && run.filledCount > 0 && (
-          <Box style={{ flex: run.filledCount, background: 'var(--console-info)' }} />
-        )}
-        {run.rejectedCount > 0 && (
-          <Box style={{ flex: run.rejectedCount, background: 'var(--console-rejected)' }} />
-        )}
-      </Box>
-      <Text size="sm" ff="monospace">
-        <Text span c="teal" inherit fw={600}>
-          {formatCount(run.filledCount)}
-        </Text>
-        {' / '}
-        <Text span c={run.rejectedCount > 0 ? 'orange' : 'dimmed'} inherit fw={600}>
-          {formatCount(run.rejectedCount)}
-        </Text>
-      </Text>
-    </Group>
-  );
-}
-
 /** The tokens a run's dataset holds: the first, and how many more. */
 function RunTokens({ mints }: { mints: string[] }) {
   if (mints.length === 0)
@@ -170,7 +145,7 @@ function RunTokens({ mints }: { mints: string[] }) {
     );
   return (
     <Group gap={4} wrap="nowrap">
-      <Mint mint={mints[0]!} />
+      <TokenLink mint={mints[0]!} />
       {mints.length > 1 && (
         <Tooltip label={mints.slice(1).join(', ')} withArrow multiline maw={360}>
           <Text span size="xs" c="dimmed">
@@ -180,6 +155,87 @@ function RunTokens({ mints }: { mints: string[] }) {
       )}
     </Group>
   );
+}
+
+/** USDT values are shown to this many places; the exact product is in the tooltip. */
+const USDT_PLACES = 2;
+
+/** The rate's own time, "20:51:30", in the viewer's clock. */
+function rateTime(asOf: string | null): string | null {
+  return asOf ? new Date(asOf).toLocaleTimeString('en-GB') : null;
+}
+
+/** What happened to the run's position, and for a multi-token run how many were bought and are still held. */
+function RunTrade({ run }: { run: RunSummary }) {
+  const trade = tradeLabel(run);
+  const detail = tradeDetail(run);
+  return (
+    <Stack gap={2} align="flex-start">
+      <StatusChip tone={trade.tone}>{trade.text}</StatusChip>
+      {detail && (
+        <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+          {detail}
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * Realized P&L with its unit, and for a wrapped-SOL run its value now at the live SOL/USDT rate: the exact product,
+ * shown to 2 places toward zero, exact in the tooltip. Not a realized USDT P&L; the run's page has that, per trade.
+ */
+function RunPnl({ run, price }: { run: RunSummary; price: SolUsdtPrice | undefined }) {
+  const display = pnlDisplay(run);
+  if (display.kind === 'none')
+    return (
+      <Tooltip label={display.reason} withArrow events={{ hover: true, focus: true, touch: true }}>
+        <Text span size="sm" c="dimmed" aria-label={`Realized P&L: none. ${display.reason}`}>
+          —
+        </Text>
+      </Tooltip>
+    );
+  const rate = display.usdt && run.quoteMint === WRAPPED_SOL_MINT ? price?.rate : null;
+  const product = rate ? multiplyDecimals(run.realizedPnl, rate) : null;
+  return (
+    <Stack gap={0} align="flex-end">
+      <Pnl value={run.realizedPnl} trim unit={mintLabel(run.quoteMint)} />
+      {product && rate && (
+        <Tooltip
+          withArrow
+          multiline
+          maw={320}
+          events={{ hover: true, focus: true, touch: true }}
+          label={
+            <Stack gap={2}>
+              <Text size="xs" ff="monospace">
+                {formatSignedDecimal(trimFractionZeros(product))} USDT
+              </Text>
+              <Text size="xs">
+                1 SOL = {trimFractionZeros(rate)} USDT, Binance
+                {rateTime(price?.asOf ?? null) ? `, ${rateTime(price?.asOf ?? null)}` : ''}
+              </Text>
+              <Text size="xs">The run&apos;s page shows USDT at each trade&apos;s own rate.</Text>
+            </Stack>
+          }
+        >
+          <Text size="xs" ff="monospace" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+            ≈ {formatSignedDecimal(truncateDecimal(product, USDT_PLACES))} USDT
+          </Text>
+        </Tooltip>
+      )}
+    </Stack>
+  );
+}
+
+/** The rate the list's USDT line uses, said visibly, or why there is none; nothing while it loads. */
+function usdtHint(price: SolUsdtPrice | undefined): string | null {
+  if (!price) return null;
+  if (price.rate) {
+    const time = rateTime(price.asOf);
+    return `USDT at 1 SOL = ${trimFractionZeros(price.rate)} USDT (now${time ? `, ${time}` : ''})`;
+  }
+  return price.unavailableReason ? `USDT unavailable: ${codeLabel(price.unavailableReason)}` : null;
 }
 
 /**
@@ -220,6 +276,7 @@ function RunBuy({ run, clock }: { run: RunSummary; clock: DayClock | null }) {
 function RunsTable({
   runs,
   clock,
+  price,
   sort,
   onSort,
   selected,
@@ -228,6 +285,8 @@ function RunsTable({
 }: {
   runs: RunSummary[];
   clock: DayClock | null;
+  /** The live SOL/USDT rate, from the header's own query. */
+  price: SolUsdtPrice | undefined;
   sort: Sort;
   onSort: (key: SortKey) => void;
   selected: string[];
@@ -239,7 +298,7 @@ function RunsTable({
   const full = selected.length >= MAX_COMPARED_RUNS;
   return (
     <ScrollArea type="auto" style={{ opacity: stale ? 0.6 : 1, transition: 'opacity 120ms' }}>
-      <Table verticalSpacing="xs" miw={1240}>
+      <Table verticalSpacing="xs" miw={1040}>
         <Table.Thead>
           <Table.Tr>
             <Table.Th w={SELECT_COLUMN_WIDTH} className="console-sticky" style={STICKY_SELECT}>
@@ -248,19 +307,12 @@ function RunsTable({
             <Table.Th className="console-sticky" style={STICKY_RUN}>
               Run
             </Table.Th>
+            <Table.Th>Variation</Table.Th>
             <SortHeader label="Created" column="created" sort={sort} onSort={onSort} />
             <Table.Th>Dataset</Table.Th>
             <Table.Th>Token</Table.Th>
             <Table.Th>Buy</Table.Th>
-            <SortHeader
-              label="Scenarios"
-              column="scenarios"
-              sort={sort}
-              onSort={onSort}
-              align="right"
-            />
-            <Table.Th ta="right">Filled / rejected</Table.Th>
-            <Table.Th ta="right">Open / closed</Table.Th>
+            <Table.Th>Trade</Table.Th>
             <SortHeader
               label="Realized P&L"
               column="pnl"
@@ -268,7 +320,6 @@ function RunsTable({
               onSort={onSort}
               align="right"
             />
-            <Table.Th>Quote mint</Table.Th>
           </Table.Tr>
         </Table.Thead>
         <Table.Tbody>
@@ -318,7 +369,11 @@ function RunsTable({
                     cfg {shortId(run.configurationHash)}
                   </Text>
                 </Table.Td>
-                <Table.Td style={{ whiteSpace: 'nowrap' }}>
+                <Table.Td>
+                  <RunVariations variations={run.variations} />
+                </Table.Td>
+                {/* Date and time may wrap onto two lines, so Realized P&L fits at 1440 px in a long-date locale. */}
+                <Table.Td miw={110} maw={150}>
                   <Timestamp iso={run.createdAt} ff="monospace" c="dimmed" />
                 </Table.Td>
                 <Table.Td style={{ whiteSpace: 'nowrap' }}>
@@ -333,20 +388,11 @@ function RunsTable({
                 <Table.Td style={{ whiteSpace: 'nowrap' }}>
                   <RunBuy run={run} clock={clock} />
                 </Table.Td>
-                <Table.Td ta="right" ff="monospace">
-                  {formatCount(run.scenarioCount)}
-                </Table.Td>
-                <Table.Td ta="right">
-                  <ScenarioBar run={run} />
-                </Table.Td>
-                <Table.Td ta="right" ff="monospace">
-                  {formatCount(run.openCount)} / {formatCount(run.closedCount)}
-                </Table.Td>
-                <Table.Td ta="right">
-                  <Pnl value={run.realizedPnl} />
-                </Table.Td>
                 <Table.Td>
-                  <Mint mint={run.quoteMint} />
+                  <RunTrade run={run} />
+                </Table.Td>
+                <Table.Td ta="right">
+                  <RunPnl run={run} price={price} />
                 </Table.Td>
               </Table.Tr>
             );
@@ -611,6 +657,8 @@ export function RunsPage() {
   const asOf = rawAsOf && !Number.isNaN(Date.parse(rawAsOf)) ? rawAsOf : null;
 
   const status = useAutomationStatus();
+  // The header's own query (same key): no extra request, and the list agrees with the header's ticker.
+  const price = useSolUsdtPrice(true).data;
   const clock: DayClock | null = status.data
     ? { zone: status.data.zone, dayStart: status.data.tradingDayStart }
     : null;
@@ -741,6 +789,7 @@ export function RunsPage() {
       <RunsTable
         runs={shown}
         clock={clock}
+        price={price}
         sort={sort}
         onSort={(key) => update({ sort: toggleSort(sort, key) })}
         selected={selected}
@@ -750,11 +799,13 @@ export function RunsPage() {
     );
   }
 
+  const rateHint = usdtHint(price);
   const countHint = data ? (
     <>
       {formatCount(data.total)} {data.total === 1 ? 'run' : 'runs'}
       {filtered ? ' match' : ''} · as of <Timestamp iso={data.asOf} size="xs" c="dimmed" /> · newest
       first; a column sort reorders this page only
+      {rateHint && ` · ${rateHint}`}
     </>
   ) : undefined;
 

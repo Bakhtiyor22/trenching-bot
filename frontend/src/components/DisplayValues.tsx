@@ -1,8 +1,19 @@
-import { ActionIcon, Badge, CopyButton, Group, Text, Tooltip, type TextProps } from '@mantine/core';
+import {
+  ActionIcon,
+  Anchor,
+  Badge,
+  CopyButton,
+  Group,
+  Text,
+  Tooltip,
+  type TextProps,
+} from '@mantine/core';
 import type { Pair } from '../api/types';
 import { useEffect, useState } from 'react';
 import { formatDecimal, formatSignedDecimal, pnlColor } from '../lib/decimal';
+import { isSolanaAddress } from '../lib/base58';
 import { formatLocalTime, formatRelative, mintLabel, shortId } from '../lib/format';
+import { pumpFunTokenHref } from '../lib/marketLinks';
 import { IconCheck, IconCopy } from './Icons';
 
 /** Copy-to-clipboard button for a full id/address. */
@@ -51,6 +62,34 @@ export function ShortId({
 /** A mint address: "SOL" for wrapped SOL, otherwise shortened; copyable. */
 export function Mint({ mint, copy = true }: { mint: string; copy?: boolean }) {
   return <ShortId value={mint} label={mintLabel(mint)} copy={copy} />;
+}
+
+/**
+ * A token that opens its pump.fun page in a new tab: the short address and ↗ as the link, the full mint in its tooltip,
+ * and a button that copies the full mint. Clicking either does not reach a clickable row behind it. A value that is not
+ * a Solana address (a synthetic fixture) shows as plain text, with no link.
+ */
+export function TokenLink({ mint }: { mint: string }) {
+  if (!isSolanaAddress(mint)) return <Mint mint={mint} />;
+  return (
+    <Group gap={4} wrap="nowrap" component="span" style={{ display: 'inline-flex' }}>
+      <Tooltip label={mint} withArrow>
+        <Anchor
+          href={pumpFunTokenHref(mint)}
+          target="_blank"
+          rel="noopener noreferrer"
+          ff="monospace"
+          size="sm"
+          aria-label={`Open token ${mint} on pump.fun`}
+          onClick={(event) => event.stopPropagation()}
+          style={{ whiteSpace: 'nowrap' }}
+        >
+          {mintLabel(mint)} ↗
+        </Anchor>
+      </Tooltip>
+      <CopyValue value={mint} label="Copy full value" />
+    </Group>
+  );
 }
 
 /** An exact decimal string, digits untouched (thousands separators only). */

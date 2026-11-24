@@ -6,11 +6,14 @@ import {
   DEFAULT_SORT,
   parseSort,
   parseStatus,
+  pnlDisplay,
   readFilters,
   serializeSort,
   sortRuns,
   toggleSort,
   toRunQuery,
+  tradeDetail,
+  tradeLabel,
 } from './runList';
 
 const run = (
@@ -102,7 +105,7 @@ describe('toRunQuery', () => {
       new URLSearchParams({ status: 'NO_ENTRY', day: '2026-11-10', datasetId: 'ds-1' }),
     );
     expect(activeFilterLabels(filters, 'Decu · 5bYU')).toEqual([
-      'No entry',
+      'not bought',
       'trading day Tue 10 Nov',
       'dataset Decu · 5bYU',
     ]);
@@ -110,7 +113,7 @@ describe('toRunQuery', () => {
 });
 
 describe('sortRuns', () => {
-  it('sorts newest first by default and by exact P&L or scenario count on request', () => {
+  it('sorts newest first by default and by exact P&L on request', () => {
     const runs = [winner, loser, flat];
     expect(sortRuns(runs, DEFAULT_SORT).map((r) => r.id)).toEqual([
       'bbbb2222',
@@ -127,11 +130,6 @@ describe('sortRuns', () => {
       'cccc3333',
       'aaaa1111',
     ]);
-    expect(sortRuns(runs, { key: 'scenarios', descending: true }).map((r) => r.id)).toEqual([
-      'cccc3333',
-      'aaaa1111',
-      'bbbb2222',
-    ]);
   });
 
   it('flips the active column and starts a new one descending', () => {
@@ -145,7 +143,9 @@ describe('run list URL state', () => {
     expect(parseSort(null)).toEqual(DEFAULT_SORT);
     expect(parseSort('nonsense')).toEqual(DEFAULT_SORT);
     expect(parseSort('pnl')).toEqual({ key: 'pnl', descending: true });
-    expect(parseSort('scenarios-asc')).toEqual({ key: 'scenarios', descending: false });
+    // The Scenarios column is gone; its old links open the default order without an error.
+    expect(parseSort('scenarios')).toEqual(DEFAULT_SORT);
+    expect(parseSort('scenarios-asc')).toEqual(DEFAULT_SORT);
     expect(serializeSort(DEFAULT_SORT)).toBeNull();
     expect(serializeSort({ key: 'created', descending: false })).toBe('created-asc');
     expect(serializeSort({ key: 'pnl', descending: true })).toBe('pnl');
@@ -157,5 +157,58 @@ describe('run list URL state', () => {
     expect(parseStatus('nonsense')).toBe('all');
     expect(parseStatus(null)).toBe('all');
     expect(readFilters(new URLSearchParams({ outcome: 'loss' })).status).toBe('LOSS');
+  });
+});
+
+describe('trade column', () => {
+  it('says what happened to the position for each status', () => {
+    expect(tradeLabel({ status: 'NO_ENTRY' })).toEqual({ text: 'Not bought', tone: 'neutral' });
+    expect(tradeLabel({ status: 'OPEN' })).toEqual({ text: 'Still held', tone: 'attention' });
+    expect(tradeLabel({ status: 'PROFIT' })).toEqual({ text: 'Sold', tone: 'neutral' });
+    expect(tradeLabel({ status: 'LOSS' })).toEqual({ text: 'Sold', tone: 'neutral' });
+    expect(tradeLabel({ status: 'FLAT' })).toEqual({ text: 'Sold', tone: 'neutral' });
+  });
+
+  it('counts a multi-token run on a second line, with any position still held', () => {
+    expect(tradeDetail({ scenarioCount: 1, filledCount: 1, openCount: 1 })).toBeNull();
+    expect(tradeDetail({ scenarioCount: 3, filledCount: 2, openCount: 0 })).toBe(
+      '2 of 3 tokens bought',
+    );
+    expect(tradeDetail({ scenarioCount: 3, filledCount: 2, openCount: 1 })).toBe(
+      '2 of 3 tokens bought · 1 still held',
+    );
+  });
+});
+
+describe('pnlDisplay', () => {
+  it('shows nothing realized when no position closed, saying why', () => {
+    expect(
+      pnlDisplay({ closedCount: 0, status: 'NO_ENTRY', realizedPnl: '0.000000000000' }),
+    ).toEqual({
+      kind: 'none',
+      reason: 'Not bought, so nothing was realized',
+    });
+    expect(pnlDisplay({ closedCount: 0, status: 'OPEN', realizedPnl: '0.000000000000' })).toEqual({
+      kind: 'none',
+      reason: 'Still held, nothing sold yet',
+    });
+  });
+
+  it('keeps a zero result of a sale, without a USDT line, and a real result with one', () => {
+    expect(pnlDisplay({ closedCount: 1, status: 'FLAT', realizedPnl: '0.000000000000' })).toEqual({
+      kind: 'value',
+      usdt: false,
+    });
+    expect(pnlDisplay({ closedCount: 1, status: 'PROFIT', realizedPnl: '0.024477624000' })).toEqual(
+      {
+        kind: 'value',
+        usdt: true,
+      },
+    );
+    // Some sold, some still held: the realized part shows as usual.
+    expect(pnlDisplay({ closedCount: 1, status: 'OPEN', realizedPnl: '-0.0385' })).toEqual({
+      kind: 'value',
+      usdt: true,
+    });
   });
 });

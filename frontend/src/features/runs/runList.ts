@@ -2,15 +2,15 @@ import type { RunQuery, RunStatus, RunSummary } from '../../api/types';
 import { RUN_STATUSES } from '../../api/types';
 import { MAX_SEARCH_CHARS, MIN_SEARCH_CHARS } from '../../api/queries';
 import { isSolanaAddress } from '../../lib/base58';
-import { compareDecimals } from '../../lib/decimal';
-import { mintLabel, shortId } from '../../lib/format';
+import { compareDecimals, decimalSign } from '../../lib/decimal';
+import { formatCount, mintLabel, shortId } from '../../lib/format';
 import { addDays, dayInfo, dayStartInstant, isRealDate } from '../automation/automationModel';
 
 export type StatusFilter = RunStatus | 'all';
-export type SortKey = 'created' | 'pnl' | 'scenarios';
+export type SortKey = 'created' | 'pnl';
 export interface Sort {
   key: SortKey;
-  /** Descending is the default for every column: newest, best, most. */
+  /** Descending is the default for every column: newest, best. */
   descending: boolean;
 }
 
@@ -42,13 +42,62 @@ export const FILTER_PARAMS = [
 /** The old `?outcome=loss` links still open the matching status. */
 export const LEGACY_OUTCOME_PARAM = 'outcome';
 
+/** The filter tabs' words; the API values stay `PROFIT … OPEN`, so saved links keep working. */
 export const STATUS_LABELS: Record<RunStatus, string> = {
   PROFIT: 'Profit',
   LOSS: 'Loss',
   FLAT: 'Flat',
-  NO_ENTRY: 'No entry',
-  OPEN: 'Open',
+  NO_ENTRY: 'Not bought',
+  OPEN: 'Still held',
 };
+
+/** How a status reads inside "No run is …" ("No run is still held."). */
+const STATUS_PHRASES: Record<RunStatus, string> = {
+  PROFIT: 'in profit',
+  LOSS: 'at a loss',
+  FLAT: 'flat',
+  NO_ENTRY: 'not bought',
+  OPEN: 'still held',
+};
+
+/** What happened to a run's position, in one word or two, with the chip tone that says it. */
+export interface TradeLabel {
+  text: 'Not bought' | 'Still held' | 'Sold';
+  tone: 'attention' | 'neutral';
+}
+
+/**
+ * The Trade column's chip, from the server's `status`. Profit, loss and flat all read "Sold": the P&L's sign and colour
+ * already tell them apart, so the chip only says what happened to the position.
+ */
+export function tradeLabel(run: Pick<RunSummary, 'status'>): TradeLabel {
+  switch (run.status) {
+    case 'NO_ENTRY':
+      return { text: 'Not bought', tone: 'neutral' };
+    case 'OPEN':
+      return { text: 'Still held', tone: 'attention' };
+    case 'PROFIT':
+    case 'LOSS':
+    case 'FLAT':
+      return { text: 'Sold', tone: 'neutral' };
+    default: {
+      const unknown: never = run.status;
+      return unknown;
+    }
+  }
+}
+
+/**
+ * The Trade column's dimmed second line, only for a run of more than one token: "2 of 3 tokens bought", with
+ * " · 1 still held" when a position is still held. Null for a one-token run, whose chip says it all.
+ */
+export function tradeDetail(
+  run: Pick<RunSummary, 'scenarioCount' | 'filledCount' | 'openCount'>,
+): string | null {
+  if (run.scenarioCount <= 1) return null;
+  const bought = `${formatCount(run.filledCount)} of ${formatCount(run.scenarioCount)} tokens bought`;
+  return run.openCount > 0 ? `${bought} · ${formatCount(run.openCount)} still held` : bought;
+}
 
 /** The filters as read from the URL, raw: a value that is not usable yet is kept so its field can say why. */
 export interface RunFilters {
@@ -152,13 +201,35 @@ export function toRunQuery(
   };
 }
 
+/**
+ * How the list shows a run's realized P&L. With no position closed nothing was realized, so it is missing ("—", with
+ * why), not zero: every "Not bought" run, and a run whose positions are all still held. A zero P&L of a run that did
+ * close something stays "0", without a USDT line, which would only say "≈ 0.00". Anything else shows its value and,
+ * when there is a rate, its USDT line.
+ */
+export type PnlDisplay = { kind: 'none'; reason: string } | { kind: 'value'; usdt: boolean };
+
+export function pnlDisplay(
+  run: Pick<RunSummary, 'closedCount' | 'status' | 'realizedPnl'>,
+): PnlDisplay {
+  if (run.closedCount === 0)
+    return {
+      kind: 'none',
+      reason:
+        run.status === 'NO_ENTRY'
+          ? 'Not bought, so nothing was realized'
+          : 'Still held, nothing sold yet',
+    };
+  return { kind: 'value', usdt: decimalSign(run.realizedPnl) !== 0 };
+}
+
 /** Plain words for each filter in effect, for the empty state ("Loss", "token 5bYU…okbDs", ...). */
 export function activeFilterLabels(
   filters: RunFilters,
   datasetName: string | null | undefined,
 ): string[] {
   const labels: string[] = [];
-  if (filters.status !== 'all') labels.push(STATUS_LABELS[filters.status]);
+  if (filters.status !== 'all') labels.push(STATUS_PHRASES[filters.status]);
   if (filters.mint && !mintProblem(filters.mint)) labels.push(`token ${mintLabel(filters.mint)}`);
   if (filters.day && !dayProblem(filters.day))
     labels.push(`trading day ${dayInfo(filters.day).label}`);
@@ -192,7 +263,6 @@ export function sortRuns(runs: RunSummary[], sort: Sort): RunSummary[] {
   const compare: Record<SortKey, (a: RunSummary, b: RunSummary) => number> = {
     created: byCreated,
     pnl: (a, b) => compareDecimals(a.realizedPnl, b.realizedPnl),
-    scenarios: (a, b) => a.scenarioCount - b.scenarioCount,
   };
   const direction = sort.descending ? -1 : 1;
   return [...runs].sort((a, b) => direction * compare[sort.key](a, b) || -byCreated(a, b));
@@ -203,7 +273,7 @@ export function toggleSort(current: Sort, key: SortKey): Sort {
   return current.key === key ? { key, descending: !current.descending } : { key, descending: true };
 }
 
-const SORT_KEYS: readonly SortKey[] = ['created', 'pnl', 'scenarios'];
+const SORT_KEYS: readonly SortKey[] = ['created', 'pnl'];
 const ASCENDING_SUFFIX = '-asc';
 
 /** The sort in `?sort` ("pnl", "pnl-asc", ...); anything unknown is the default. */

@@ -1,4 +1,4 @@
-import { Anchor, Group, ScrollArea, Select, Stack, Table, Text, TextInput } from '@mantine/core';
+import { Group, ScrollArea, Select, Stack, Table, Text, TextInput } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -8,12 +8,11 @@ import {
   type AutomationStatus,
   type AutomationSweepRunRow,
 } from '../../api/automation';
-import { Mint } from '../../components/DisplayValues';
+import { TokenLink } from '../../components/DisplayValues';
 import { PagingFooter } from '../../components/Panels';
 import { QueryView, RefreshNotice } from '../../components/QueryView';
 import { EmptyState } from '../../components/StateViews';
 import { isSolanaAddress } from '../../lib/base58';
-import { solscanTokenHref } from '../../lib/marketLinks';
 import {
   dayFilter,
   dayInfo,
@@ -46,24 +45,6 @@ const RUN_FILTER_KEYS = {
   variation: 'variation',
   session: 'session',
 } as const;
-
-/** A token's mint shortened with a copy button, and its Solscan page. */
-export function TokenCell({ mint }: { mint: string }) {
-  return (
-    <Group gap={6} wrap="nowrap">
-      <Mint mint={mint} />
-      <Anchor
-        href={solscanTokenHref(mint)}
-        target="_blank"
-        rel="noopener noreferrer"
-        size="xs"
-        aria-label={`Open token ${mint} on Solscan`}
-      >
-        Solscan ↗
-      </Anchor>
-    </Group>
-  );
-}
 
 function RunsTable({
   rows,
@@ -105,7 +86,7 @@ function RunsTable({
                 </Table.Th>
                 <Table.Td ff="monospace">{zoneTime(r.blockTime, status.zone, true)}</Table.Td>
                 <Table.Td>
-                  <TokenCell mint={r.mint} />
+                  <TokenLink mint={r.mint} />
                 </Table.Td>
                 {showVariation && (
                   <Table.Td>

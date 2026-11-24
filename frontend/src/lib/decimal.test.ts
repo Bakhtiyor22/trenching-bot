@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  multiplyDecimals,
+  truncateDecimal,
   addDecimals,
   compactDecimal,
   compareDecimals,
@@ -180,5 +182,42 @@ describe('formatSignedDecimal', () => {
     expect(formatSignedDecimal(null)).toBe('—');
     expect(formatSignedDecimal(undefined)).toBe('—');
     expect(formatSignedDecimal('n/a')).toBe('n/a');
+  });
+});
+
+describe('multiplyDecimals', () => {
+  it('multiplies exactly at the sum of both scales', () => {
+    expect(multiplyDecimals('0.024477624000', '69.08')).toBe('1.69091426592000');
+    expect(multiplyDecimals('2', '3')).toBe('6');
+  });
+
+  it('keeps the sign of a negative product and gives an unsigned zero', () => {
+    expect(multiplyDecimals('-0.038500000000', '69.08')).toBe('-2.65958000000000');
+    expect(multiplyDecimals('-1.5', '-2')).toBe('3.0');
+    expect(multiplyDecimals('-0.000', '69.08')).toBe('0.00000');
+    expect(multiplyDecimals('0.000000000000', '212.34')).toBe('0.00000000000000');
+  });
+
+  it('refuses a value that is not a plain decimal', () => {
+    expect(() => multiplyDecimals('1e3', '2')).toThrow(/Not a plain decimal/);
+  });
+});
+
+describe('truncateDecimal', () => {
+  it('cuts toward zero and pads to the places asked', () => {
+    expect(truncateDecimal('1.69091426592000', 2)).toBe('1.69');
+    expect(truncateDecimal('-2.65958', 2)).toBe('-2.65');
+    expect(truncateDecimal('3', 2)).toBe('3.00');
+    expect(truncateDecimal('12.9', 0)).toBe('12');
+  });
+
+  it('shows no sign when the cut value is zero', () => {
+    expect(truncateDecimal('-0.004', 2)).toBe('0.00');
+    expect(truncateDecimal('0.009', 2)).toBe('0.00');
+    expect(truncateDecimal('-0.000', 2)).toBe('0.00');
+  });
+
+  it('leaves a value that is not a plain decimal unchanged', () => {
+    expect(truncateDecimal('n/a', 2)).toBe('n/a');
   });
 });
