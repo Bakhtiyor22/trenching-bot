@@ -34,9 +34,10 @@ class RunSearchFixtures(
         anchor: Instant? = null,
         mints: List<MintAddress> = emptyList(),
         configurationHash: String = id,
+        quote: String = MintAddress.WRAPPED_SOL.value,
     ) {
         val entity = SimulationRunEntity(id, "engine", datasetId, configurationHash, WALLET, "{}", null, RunStorage.DATASET_REFERENCE, "{}",
-            "result-$id", MintAddress.WRAPPED_SOL.value, filled, filled, 0, open, filled - open, BigDecimal(pnl).setScale(12), createdAt)
+            "result-$id", quote, filled, filled, 0, open, filled - open, BigDecimal(pnl).setScale(12), createdAt)
         entity.anchorBlockTime = anchor
         entity.searchIndexedAt = createdAt
         runs.saveAndFlush(entity)

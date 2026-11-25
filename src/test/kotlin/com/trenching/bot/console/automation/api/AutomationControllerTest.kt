@@ -37,6 +37,7 @@ import com.trenching.bot.console.automation.mapper.AutomationVariationResponseMa
 import com.trenching.bot.console.capture.MutableClock
 import com.trenching.bot.console.mapper.ConfigResponseMapperImpl
 import com.trenching.bot.console.mapper.ConsoleErrorMapperImpl
+import com.trenching.bot.portfolio.domain.PositionState
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -220,6 +221,7 @@ class AutomationControllerTest : AutomationDatabaseTest() {
             "/api/automation/days?to=11-11-2026" to "to",
             "/api/automation/sweep-runs?outcome=WINNING" to "outcome",
             "/api/automation/sweep-runs?mint=not-a-mint" to "mint",
+            "/api/automation/sweep-runs?status=WON" to "status",
             "/api/automation/sweep-runs?page=-1" to "page",
         ).forEach { (path, field) ->
             val response = mvc.perform(get(path)).andReturn().response
@@ -296,6 +298,34 @@ class AutomationControllerTest : AutomationDatabaseTest() {
         assertEquals(listOf("item-1:V01"), runKeys(ok(get("/api/automation/sweep-runs?outcome=MARKET_COVERAGE_ENDED"))))
         assertEquals(0, ok(get("/api/automation/sweep-runs?outcome=STOP_LOSS"))["total"].asInt())
         assertEquals(listOf("V00", "V01"), ok(get("/api/automation/items/item-1"))["sweepRuns"].let { runs -> List(runs.size()) { runs[it]["label"].asString() } })
+    }
+
+    @Test
+    fun `sweep runs filter by a repeatable status and carry the status counts and the totals`() {
+        items.saveAll(listOf(
+            item(1, "tonight", AutomationItemState.SIMULATED, blockTime = EVENING),
+            item(2, "tonight", AutomationItemState.SIMULATED, blockTime = EVENING.minusSeconds(1)),
+            item(3, "tonight", AutomationItemState.SIMULATED, blockTime = EVENING.minusSeconds(2)),
+        ))
+        sweepRuns.saveAll(listOf(
+            sweepRun("p", "item-1", "V00", outcome = "TAKE_PROFIT", runId = "run-p", positionState = PositionState.CLOSED, realizedPnl = "0.5", worstCasePnl = "0.5"),
+            sweepRun("l", "item-2", "V00", outcome = "STOP_LOSS", runId = "run-l", positionState = PositionState.CLOSED, realizedPnl = "-0.2", worstCasePnl = "-0.2"),
+            sweepRun("n", "item-3", "V00", outcome = "NO_DIP"),
+        ))
+
+        val losses = ok(get("/api/automation/sweep-runs?label=V00&status=LOSS"))
+        val two = ok(get("/api/automation/sweep-runs?status=LOSS&status=NO_ENTRY"))
+        val none = ok(get("/api/automation/sweep-runs?label=V00&status=OPEN"))
+
+        assertEquals(listOf("item-2:V00"), runKeys(losses))
+        assertEquals(1, losses["total"].asInt())
+        assertEquals(listOf("PROFIT", "LOSS", "FLAT", "NO_ENTRY", "OPEN"), losses["statusCounts"].propertyNames().toList())
+        assertEquals(listOf(1, 1, 0, 1, 0), losses["statusCounts"].propertyNames().map { losses["statusCounts"][it].asInt() })
+        assertEquals(listOf(1, "-0.200000000000", "-0.200000000000"), losses["totals"].let { listOf(it["rows"].asInt(), it["realizedPnl"].asString(), it["worstCasePnl"].asString()) })
+        assertEquals(2, two["total"].asInt())
+        assertEquals(2, two["totals"]["rows"].asInt())
+        assertEquals(listOf(0, "0.000000000000", "0.000000000000"), none["totals"].let { listOf(it["rows"].asInt(), it["realizedPnl"].asString(), it["worstCasePnl"].asString()) })
+        assertEquals(400, mvc.perform(get("/api/automation/sweep-runs?status=WON")).andReturn().response.status)
     }
 
     @Test

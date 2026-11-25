@@ -43,6 +43,12 @@ import java.nio.file.Path
 import java.time.Instant
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import com.trenching.bot.console.application.RunOutcomes
+import com.trenching.bot.console.domain.RunOutcome
+import com.trenching.bot.console.domain.RunOutcomeStage
+import com.trenching.bot.papertrading.domain.RejectionReason
+import com.trenching.bot.portfolio.domain.CloseReason
+import com.trenching.bot.portfolio.domain.PositionOutcomeCounts
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -73,7 +79,8 @@ class ConsoleServiceRunDetailTest {
         store = CaptureFileStore(CapturePathPolicy(root), JsonMapper.builder().addModule(kotlinModule()).build()).also { it.initialize() }
         service = ConsoleService(runs, reports, events, inputs, intents, orders, positions,
             DatasetSourceService(DatasetCatalog(), CaptureFileSourceLookup(store)),
-            RunVariationLabels { ids -> ids.filter { it == run.id }.associateWith { listOf("V03", "V12") } })
+            RunVariationLabels { ids -> ids.filter { it == run.id }.associateWith { listOf("V03", "V12") } },
+            RunOutcomes(orders, positions))
         val trades = report.ingestion.filterIsInstance<NormalizationOutcome.Accepted>().map { it.trade }
             .map { it.copy(blockTime = if (it.pair == DipSample.pair(DipSample.STOP_LOSS)) null else MIDNIGHT.plusSeconds(it.slot.value)) }
         Mockito.`when`(runs.find(run.id)).thenReturn(run)
@@ -85,6 +92,9 @@ class ConsoleServiceRunDetailTest {
         Mockito.`when`(positions.storedPositions(run.id))
             .thenReturn(report.scenarios.mapNotNull { result -> result.position?.let { StoredPosition(it, result.exitUnavailable) } })
         Mockito.`when`(events.acceptedTrades(run.id)).thenReturn(trades)
+        Mockito.`when`(orders.rejectionsByRun(listOf(run.id))).thenReturn(mapOf(run.id to mapOf(RejectionReason.NO_DIP to 2)))
+        Mockito.`when`(positions.outcomesByRun(listOf(run.id)))
+            .thenReturn(mapOf(run.id to PositionOutcomeCounts(mapOf(CloseReason.TAKE_PROFIT to 1), mapOf(RejectionReason.NO_DIP to 1))))
     }
 
     @AfterEach
@@ -104,6 +114,17 @@ class ConsoleServiceRunDetailTest {
     @Test
     fun `the run page carries the variations that produced the run`() {
         assertEquals(listOf("V03", "V12"), service.detailWithSource(run.id).variations)
+    }
+
+    @Test
+    fun `the run page carries why its tokens were sold, held or not bought, from one read of each store`() {
+        assertEquals(
+            listOf(RunOutcome("TAKE_PROFIT", RunOutcomeStage.SOLD, 1), RunOutcome("NO_DIP", RunOutcomeStage.HELD, 1),
+                RunOutcome("NO_DIP", RunOutcomeStage.NOT_BOUGHT, 2)),
+            service.detailWithSource(run.id).outcomes,
+        )
+        Mockito.verify(orders, Mockito.times(1)).rejectionsByRun(listOf(run.id))
+        Mockito.verify(positions, Mockito.times(1)).outcomesByRun(listOf(run.id))
     }
 
     @Test

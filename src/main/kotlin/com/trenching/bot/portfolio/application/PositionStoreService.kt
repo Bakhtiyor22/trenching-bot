@@ -8,7 +8,10 @@ import com.trenching.bot.papertrading.PaperOrderStore
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.portfolio.PositionStore
 import com.trenching.bot.portfolio.domain.Position
+import com.trenching.bot.portfolio.domain.PositionOutcomeCounts
+import com.trenching.bot.portfolio.domain.PositionState
 import com.trenching.bot.portfolio.domain.StoredPosition
+import com.trenching.bot.portfolio.infrastructure.persistence.PositionOutcomeRow
 import com.trenching.bot.portfolio.infrastructure.persistence.PositionRepository
 import com.trenching.bot.portfolio.mapper.PositionMapper
 import org.springframework.data.domain.PageRequest
@@ -46,6 +49,20 @@ class PositionStoreService(
                 "Missing fill for position=${it.id}"
             }), it.exitUnavailable) }
     }
+
+    @Transactional(readOnly = true)
+    override fun outcomesByRun(runIds: Collection<String>): Map<String, PositionOutcomeCounts> {
+        if (runIds.isEmpty()) return emptyMap()
+        return repository.countOutcomesByRun(runIds.toSet()).groupBy { it.runId }.mapValues { (_, rows) ->
+            PositionOutcomeCounts(
+                closed = rows.filter { it.state == PositionState.CLOSED }.counted { it.closeReason },
+                held = rows.filter { it.state == PositionState.OPEN }.counted { it.exitUnavailable },
+            )
+        }
+    }
+
+    private fun <R : Any> List<PositionOutcomeRow>.counted(reason: (PositionOutcomeRow) -> R?): Map<R, Int> =
+        mapNotNull { row -> reason(row)?.let { it to row.count.toInt() } }.groupBy({ it.first }, { it.second }).mapValues { it.value.sum() }
 
     companion object {
         private const val RECORDS = "positions"

@@ -31,6 +31,7 @@ class RunLaunchService(
     private val catalog: ReplayDatasetCatalog,
     private val validator: ConsoleConfigValidator,
     private val variations: RunVariationLabels,
+    private val outcomes: RunOutcomes,
     private val meterRegistry: MeterRegistry,
 ) {
     private val log = LoggerFactory.getLogger(RunLaunchService::class.java)
@@ -55,7 +56,7 @@ class RunLaunchService(
             if (started.created) ConsoleMetrics.CREATED else ConsoleMetrics.EXISTING).increment()
         LogLine("Run started from the console.").field("runId", started.run.id).field("datasetId", datasetId).field("created", started.created)
             .field("presetId", presetId).info(log)
-        return LabeledRunStart(started.run, started.created, variations.of(started.run.id))
+        return LabeledRunStart(started.run, started.created, variations.of(started.run.id), outcomes.of(started.run.id))
     }
 
     private fun requireKnownPreset(presetId: String) {

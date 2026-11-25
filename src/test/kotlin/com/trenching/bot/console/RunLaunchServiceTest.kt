@@ -17,18 +17,25 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import java.math.BigDecimal
 import java.time.Instant
 import kotlin.test.assertEquals
+import com.trenching.bot.console.domain.RunOutcome
+import com.trenching.bot.console.domain.RunOutcomeStage
+import com.trenching.bot.papertrading.domain.RejectionReason
+import com.trenching.bot.portfolio.domain.CloseReason
+import com.trenching.bot.portfolio.domain.PositionOutcomeCounts
+import com.trenching.bot.support.StubOutcomeStores
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
 
 class RunLaunchServiceTest {
     private val lookups = mutableListOf<List<String>>()
+    private val stores = StubOutcomeStores()
     private val runs = mock(SimulationRuns::class.java)
     private val catalog = mock(ReplayDatasetCatalog::class.java)
     private val service = RunLaunchService(runs, catalog, ConsoleConfigValidator(), RunVariationLabels(RunVariationLookup { ids ->
         lookups += ids.toList()
         mapOf("run-1" to listOf("V03", "V12"))
-    }), SimpleMeterRegistry())
+    }), stores.outcomes(), SimpleMeterRegistry())
 
     @Test
     fun `a started run comes back with its variations from one lookup of its own id`() {
@@ -40,6 +47,19 @@ class RunLaunchServiceTest {
         assertEquals("run-1", started.run.id)
         assertEquals(true, started.created)
         assertEquals(listOf(listOf("run-1")), lookups)
+    }
+
+    @Test
+    fun `a started run comes back with why its tokens were sold, held or not bought, from one read of each store`() {
+        stores.rejections["run-1"] = mapOf(RejectionReason.NO_DIP to 1)
+        stores.positionCounts["run-1"] = PositionOutcomeCounts(mapOf(CloseReason.STOP_LOSS to 2), emptyMap())
+        stubStart(summary("run-1"), created = true)
+
+        val started = service.start(RunStartRequest(datasetId = "ds-1"))
+
+        assertEquals(listOf(RunOutcome("STOP_LOSS", RunOutcomeStage.SOLD, 2), RunOutcome("NO_DIP", RunOutcomeStage.NOT_BOUGHT, 1)), started.outcomes)
+        assertEquals(listOf(listOf("run-1")), stores.orderCalls)
+        assertEquals(listOf(listOf("run-1")), stores.positionCalls)
     }
 
     @Test

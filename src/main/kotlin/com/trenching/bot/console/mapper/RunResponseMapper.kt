@@ -14,6 +14,7 @@ import com.trenching.bot.console.api.dto.ScenarioResponse
 import com.trenching.bot.console.domain.IngestionStatus
 import com.trenching.bot.console.domain.LabeledRunStart
 import com.trenching.bot.console.domain.RunEvent
+import com.trenching.bot.console.domain.RunOutcome
 import com.trenching.bot.console.domain.RunOrder
 import com.trenching.bot.console.domain.RunPosition
 import com.trenching.bot.console.domain.RunScenario
@@ -41,13 +42,13 @@ import org.mapstruct.ReportingPolicy
         PercentMapper::class, DatasetSourceResponseMapper::class],
     unmappedTargetPolicy = ReportingPolicy.ERROR)
 abstract class RunResponseMapper {
-    abstract fun toResponse(run: RunSummary, variations: List<String>): RunSummaryResponse
+    abstract fun toResponse(run: RunSummary, variations: List<String>, outcomes: List<RunOutcome>): RunSummaryResponse
 
-    @Mapping(target = "run", expression = "java(toResponse(start.getRun(), start.getVariations()))")
+    @Mapping(target = "run", expression = "java(toResponse(start.getRun(), start.getVariations(), start.getOutcomes()))")
     abstract fun toResponse(start: LabeledRunStart): RunStartResponse
 
     fun toPage(page: RunSearchPage): RunPageResponse =
-        pageOf(page, page.result.page.items.map { toResponse(it, page.variations[it.id].orEmpty()) })
+        pageOf(page, page.result.page.items.map { toResponse(it, page.variations[it.id].orEmpty(), page.outcomes[it.id].orEmpty()) })
 
     @Mappings(value = [
         Mapping(target = "items", source = "items"),
@@ -55,11 +56,12 @@ abstract class RunResponseMapper {
         Mapping(target = "size", source = "page.result.page.size"),
         Mapping(target = "total", source = "page.result.page.total"),
         Mapping(target = "statusCounts", source = "page.result.statusCounts"),
+        Mapping(target = "totals", source = "page.result.totals"),
         Mapping(target = "asOf", source = "page.asOf"),
     ])
     protected abstract fun pageOf(page: RunSearchPage, items: List<RunSummaryResponse>): RunPageResponse
 
-    @Mapping(target = "run", expression = "java(toResponse(sourced.getRun(), sourced.getVariations()))")
+    @Mapping(target = "run", expression = "java(toResponse(sourced.getRun(), sourced.getVariations(), sourced.getOutcomes()))")
     abstract fun toResponse(sourced: SourcedRunDetail): RunDetailResponse
 
     fun toScenario(timed: TimedRunScenario): ScenarioResponse {

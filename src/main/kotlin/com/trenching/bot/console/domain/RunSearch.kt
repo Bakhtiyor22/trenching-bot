@@ -19,7 +19,12 @@ data class RunSearchParams(
 )
 
 /**
- * [asOf] is the snapshot the result was cut from: the one asked for, or else the time of the request. [variations] has an entry,
- * possibly empty, for each run on the page.
+ * [asOf] is the snapshot the result was cut from: the one asked for, or else the time of the request. [variations] and [outcomes]
+ * have an entry, possibly empty, for each run on the page.
  */
-data class RunSearchPage(val result: RunSearchResult, val asOf: Instant, val variations: Map<String, List<String>>)
+data class RunSearchPage(
+    val result: RunSearchResult,
+    val asOf: Instant,
+    val variations: Map<String, List<String>>,
+    val outcomes: Map<String, List<RunOutcome>>,
+)

@@ -22,6 +22,7 @@ import com.trenching.bot.walletactivity.WalletEventStore
 import java.math.BigDecimal
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import com.trenching.bot.support.StubOutcomeStores
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
 
@@ -31,7 +32,7 @@ class ConsoleServiceRunObservationsTest {
     private val inputs: RunInputs = Mockito.mock(RunInputs::class.java)
     private val service = ConsoleService(runs, reports, Mockito.mock(WalletEventStore::class.java), inputs,
         Mockito.mock(TradeIntentStore::class.java), Mockito.mock(PaperOrderStore::class.java), Mockito.mock(PositionStore::class.java),
-        Mockito.mock(DatasetSourceService::class.java), RunVariationLabels(RunVariationLookup.ABSENT))
+        Mockito.mock(DatasetSourceService::class.java), RunVariationLabels(RunVariationLookup.ABSENT), StubOutcomeStores().outcomes())
     private val run = RunSummary("run-1", "dataset-1", "engine", "config", "result", MintAddress.WRAPPED_SOL, 0, 0, 0, 0, 0, BigDecimal.ZERO,
         at("2026-10-08T00:00:00Z"), RunStorage.DATASET_REFERENCE)
     private val stored = listOf(observation("a", at("2026-10-01T00:00:10Z"), "1"))

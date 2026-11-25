@@ -1,6 +1,8 @@
 package com.trenching.bot.console.automation.domain
 
+import com.trenching.bot.common.PageResult
 import com.trenching.bot.portfolio.domain.PositionState
+import com.trenching.bot.replay.domain.RunStatus
 import com.trenching.bot.walletactivity.WalletActivityUnavailable
 import java.math.BigDecimal
 import java.math.BigInteger
@@ -119,6 +121,19 @@ data class AutomationItemEventList(val itemId: String, val events: List<Automati
 
 /** A sweep run in the sweep run list, with the buy it replayed. */
 data class AutomationSweepRunRow(val run: AutomationSweepRunView, val mint: String, val signature: String, val blockTime: Instant?)
+
+/**
+ * A page of sweep runs. [statusCounts] has every [RunStatus] and applies every filter but the status; [totals] applies every
+ * filter, the status included, so its [AutomationSweepRunTotals.rows] is the page's total.
+ */
+data class AutomationSweepRunPage(
+    val page: PageResult<AutomationSweepRunRow>,
+    val statusCounts: Map<RunStatus, Long>,
+    val totals: AutomationSweepRunTotals,
+)
+
+/** The summed P&L of [rows] sweep rows, in SOL at scale 12; the worst case counts a still-held position at minus its entry cost. */
+data class AutomationSweepRunTotals(val rows: Long, val realizedPnl: BigDecimal, val worstCasePnl: BigDecimal)
 
 data class AutomationSessionDetail(val session: AutomationSessionRow, val items: List<AutomationItemView>)
 

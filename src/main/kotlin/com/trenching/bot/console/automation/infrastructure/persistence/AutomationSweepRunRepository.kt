@@ -1,7 +1,6 @@
 package com.trenching.bot.console.automation.infrastructure.persistence
 
 import java.time.Instant
-import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
@@ -18,6 +17,17 @@ private const val SWEEP_RUN_FILTER = """
       and (:label is null or r.label = :label) and (:outcome is null or r.outcome = :outcome)
       and (:planId is null or r.planId = :planId)
       and (cast(:from as Instant) is null or i.blockTime >= :from) and (cast(:to as Instant) is null or i.blockTime < :to)
+"""
+
+/**
+ * The status of a sweep row, as [com.trenching.bot.replay.domain.RunStatus.of] gives it for the one-token run the row points at:
+ * no position is `NO_ENTRY`, an open one `OPEN`, a closed one `PROFIT`, `LOSS` or `FLAT` by the sign of its realized P&L. A test
+ * holds the two together.
+ */
+private const val SWEEP_RUN_STATUS = """
+    case when r.positionState is null then 'NO_ENTRY'
+         when r.positionState = com.trenching.bot.portfolio.domain.PositionState.OPEN then 'OPEN'
+         when r.realizedPnl > 0 then 'PROFIT' when r.realizedPnl < 0 then 'LOSS' else 'FLAT' end
 """
 
 interface AutomationSweepRunRepository : JpaRepository<AutomationSweepRunEntity, String> {
@@ -48,9 +58,23 @@ interface AutomationSweepRunRepository : JpaRepository<AutomationSweepRunEntity,
     @Query("update AutomationSweepRunEntity r set r.sessionId = :into where r.itemId in :itemIds")
     fun moveItems(@Param("itemIds") itemIds: Collection<String>, @Param("into") into: String): Int
 
-    /** Newest buy first, then by plan and label. */
-    @Query("select r $SWEEP_RUN_FILTER order by i.blockTime desc nulls last, i.id, r.planId, r.label", countQuery = "select count(r) $SWEEP_RUN_FILTER")
+    /** Newest buy first, then by plan and label, with no count: [statusAggregates] has the total. [statuses] are [com.trenching.bot.replay.domain.RunStatus] names, all of them for no status filter. */
+    @Query("select r $SWEEP_RUN_FILTER and $SWEEP_RUN_STATUS in :statuses order by i.blockTime desc nulls last, i.id, r.planId, r.label")
     fun page(
+        @Param("sessionId") sessionId: String?,
+        @Param("mint") mint: String?,
+        @Param("label") label: String?,
+        @Param("outcome") outcome: String?,
+        @Param("planId") planId: String?,
+        @Param("statuses") statuses: Collection<String>,
+        @Param("from") from: Instant?,
+        @Param("to") to: Instant?,
+        pageable: Pageable,
+    ): List<AutomationSweepRunEntity>
+
+    /** The rows and summed P&L of each status that has any row, under every filter of [page] but the status; at most five rows. */
+    @Query("select $SWEEP_RUN_STATUS as status, count(r) as runs, sum(r.realizedPnl) as realizedPnl, sum(r.worstCasePnl) as worstCasePnl $SWEEP_RUN_FILTER group by $SWEEP_RUN_STATUS")
+    fun statusAggregates(
         @Param("sessionId") sessionId: String?,
         @Param("mint") mint: String?,
         @Param("label") label: String?,
@@ -58,6 +82,5 @@ interface AutomationSweepRunRepository : JpaRepository<AutomationSweepRunEntity,
         @Param("planId") planId: String?,
         @Param("from") from: Instant?,
         @Param("to") to: Instant?,
-        pageable: Pageable,
-    ): Page<AutomationSweepRunEntity>
+    ): List<AutomationSweepStatusRow>
 }

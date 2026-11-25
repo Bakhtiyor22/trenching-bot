@@ -176,7 +176,21 @@ data class AutomationSweepRunRowResponse(
     val createdAt: Instant,
 )
 
-data class AutomationSweepRunPageResponse(val items: List<AutomationSweepRunRowResponse>, val page: Int, val size: Int, val total: Long)
+/**
+ * [status] filters by `PROFIT`, `LOSS`, `FLAT`, `NO_ENTRY` or `OPEN`, as on the run list. [statusCounts] has every status, zero
+ * included, under every filter but the status; [totals] covers every filter, the status included.
+ */
+data class AutomationSweepRunPageResponse(
+    val items: List<AutomationSweepRunRowResponse>,
+    val page: Int,
+    val size: Int,
+    val total: Long,
+    val statusCounts: Map<String, Long>,
+    val totals: AutomationSweepRunTotalsResponse,
+)
+
+/** [realizedPnl] and [worstCasePnl] are exact SOL decimal strings at scale 12, summed over [rows] rows; `0.000000000000` when none match. */
+data class AutomationSweepRunTotalsResponse(val rows: Long, val realizedPnl: String, val worstCasePnl: String)
 
 /** What a "run now" request did: [queued] a pass, or found one [alreadyQueued] and added nothing. */
 data class AutomationManualRunResponse(val queued: Boolean, val alreadyQueued: Boolean)

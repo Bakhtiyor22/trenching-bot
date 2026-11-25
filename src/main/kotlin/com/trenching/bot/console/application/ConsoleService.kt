@@ -41,6 +41,7 @@ class ConsoleService(
     private val positions: PositionStore,
     private val datasetSources: DatasetSourceService,
     private val variations: RunVariationLabels,
+    private val outcomes: RunOutcomes,
 ) {
     fun detail(runId: String): RunDetail = detailWithObservations(runId).detail
 
@@ -55,7 +56,7 @@ class ConsoleService(
             TimedRunScenario(scenario, timeline)
         }
         return SourcedRunDetail(detail.run, detail.config, scenarios, datasetSources.of(detail.run.datasetId), SlotPace.millisPerSlot(stored),
-            variations.of(detail.run.id))
+            variations.of(detail.run.id), outcomes.of(detail.run.id))
     }
 
     fun detailWithObservations(runId: String): RunObservations {

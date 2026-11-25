@@ -21,10 +21,13 @@ internal class RunSearchSql(private val query: RunSearchQuery) {
         )
     }
 
-    /** Runs per status under every filter but the status itself. */
-    fun statusCounts(): SqlStatement {
+    /** Runs and their realized P&L per status and quote mint under every filter but the status itself. */
+    fun statusAggregates(): SqlStatement {
         val filter = filter(withStatuses = false)
-        return SqlStatement("select $STATUS as status, count(*) $FROM where ${filter.sql} group by $STATUS", filter.parameters)
+        return SqlStatement(
+            "select $STATUS as status, r.quote_mint, count(*), sum(r.realized_pnl) $FROM where ${filter.sql} group by $STATUS, r.quote_mint",
+            filter.parameters,
+        )
     }
 
     private fun filter(withStatuses: Boolean): SqlStatement {

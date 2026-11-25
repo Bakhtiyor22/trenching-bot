@@ -22,6 +22,8 @@ import com.trenching.bot.strategy.domain.SimulationConfig
 import java.math.BigDecimal
 import java.time.Instant
 import kotlin.test.assertEquals
+import com.trenching.bot.console.domain.RunOutcome
+import com.trenching.bot.console.domain.RunOutcomeStage
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
@@ -62,14 +64,27 @@ class RunVariationsControllerTest {
 
     @Test
     fun `a started run carries its variations, empty for a hand-started one`() {
-        `when`(launch.start(RunStartRequest(datasetId = "ds-1"))).thenReturn(LabeledRunStart(summary(), true, listOf("V03")))
-            .thenReturn(LabeledRunStart(summary(), false, emptyList()))
+        `when`(launch.start(RunStartRequest(datasetId = "ds-1"))).thenReturn(LabeledRunStart(summary(), true, listOf("V03"), listOf(RunOutcome("TAKE_PROFIT", RunOutcomeStage.SOLD, 1))))
+            .thenReturn(LabeledRunStart(summary(), false, emptyList(), emptyList()))
 
         val first = body(post("/api/runs").contentType(MediaType.APPLICATION_JSON).content("""{"datasetId":"ds-1"}"""))
         val second = body(post("/api/runs").contentType(MediaType.APPLICATION_JSON).content("""{"datasetId":"ds-1"}"""))
 
         assertEquals(listOf("V03"), labels(first["run"]))
         assertEquals(emptyList(), labels(second["run"]))
+        assertEquals("TAKE_PROFIT", first["run"]["outcomes"][0]["code"].asString())
+        assertEquals("SOLD", first["run"]["outcomes"][0]["stage"].asString())
+        assertEquals(true, second["run"]["outcomes"].isArray)
+        assertEquals(0, second["run"]["outcomes"].size())
+    }
+
+    @Test
+    fun `the run page carries its outcomes`() {
+        `when`(console.detailWithSource("run-1")).thenReturn(detail(emptyList(), listOf(RunOutcome("NO_DIP", RunOutcomeStage.NOT_BOUGHT, 2))))
+
+        val outcome = body(get("/api/runs/run-1"))["run"]["outcomes"][0]
+
+        assertEquals(listOf("NO_DIP", "NOT_BOUGHT", 2), listOf(outcome["code"].asString(), outcome["stage"].asString(), outcome["count"].asInt()))
     }
 
     private fun body(request: org.springframework.test.web.servlet.RequestBuilder): JsonNode {
@@ -83,8 +98,8 @@ class RunVariationsControllerTest {
     private fun summary() = RunSummary("run-1", "ds-1", "engine", "config", "result", MintAddress.WRAPPED_SOL, 1, 1, 0, 0, 1,
         BigDecimal.ZERO, Instant.parse("2026-11-16T07:00:00Z"), RunStorage.COPY)
 
-    private fun detail(variations: List<String>) =
-        SourcedRunDetail(summary(), SimulationConfig.mvp(), emptyList(), DatasetSource("ds-1", null, null), variations = variations)
+    private fun detail(variations: List<String>, outcomes: List<RunOutcome> = emptyList()) =
+        SourcedRunDetail(summary(), SimulationConfig.mvp(), emptyList(), DatasetSource("ds-1", null, null), variations = variations, outcomes = outcomes)
 
     private fun responseMapper() = RunResponseMapperImpl().also {
         val pairs = PairResponseMapperImpl()

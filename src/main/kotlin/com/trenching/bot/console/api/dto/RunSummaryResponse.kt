@@ -7,7 +7,9 @@ import java.time.Instant
  * or `DATASET_REFERENCE` (it reads the catalog dataset). [status] is `PROFIT`, `LOSS`, `FLAT`, `NO_ENTRY` or `OPEN`;
  * [datasetName] is null when the dataset left the catalog; [mints] is sorted and empty when unknown; [anchorBlockTime] is the
  * dataset's anchor buy time, if it has one. [variations] are the labels of the configured sweep plan whose sweep produced the run,
- * by number; empty when none did, and never null.
+ * by number; empty when none did, and never null. [outcomes] says why the run's tokens were sold, still held or not bought, counted
+ * per reason, sold first, then held, then not bought, then by count; it is empty when no reason was stored, never null, and its
+ * counts never exceed [closedCount], [openCount] and [rejectedCount].
  */
 data class RunSummaryResponse(
     val id: String,
@@ -29,6 +31,14 @@ data class RunSummaryResponse(
     val mints: List<String>,
     val anchorBlockTime: Instant?,
     val variations: List<String>,
+    val outcomes: List<RunOutcomeResponse>,
+)
+
+/** [code] is a close reason or a rejection reason; [stage] is `SOLD`, `HELD` or `NOT_BOUGHT`. */
+data class RunOutcomeResponse(
+    val code: String,
+    val stage: String,
+    val count: Int,
 )
 
 data class RunStartResponse(
@@ -36,7 +46,10 @@ data class RunStartResponse(
     val created: Boolean,
 )
 
-/** [asOf] is the snapshot of the page. [statusCounts] has every status and counts with every filter except the status. */
+/**
+ * [asOf] is the snapshot of the page. [statusCounts] has every status and counts with every filter except the status. [totals] sums
+ * the realized P&L of every run the filters match, the status included, per quote mint; it is empty when none match.
+ */
 data class RunPageResponse(
     val items: List<RunSummaryResponse>,
     val page: Int,
@@ -44,4 +57,12 @@ data class RunPageResponse(
     val total: Long,
     val asOf: Instant,
     val statusCounts: Map<String, Long>,
+    val totals: List<RunTotalResponse>,
+)
+
+/** [realizedPnl] is an exact decimal string in units of [quoteMint], summed over [runs] runs; held positions add nothing to it. */
+data class RunTotalResponse(
+    val quoteMint: String,
+    val runs: Long,
+    val realizedPnl: String,
 )

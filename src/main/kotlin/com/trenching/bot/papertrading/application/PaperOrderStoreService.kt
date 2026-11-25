@@ -55,6 +55,13 @@ class PaperOrderStoreService(
     override fun rejectionCounts(): Map<RejectionReason, Long> =
         orders.countRejectionsByReason().associate { it.reason to it.count }
 
+    @Transactional(readOnly = true)
+    override fun rejectionsByRun(runIds: Collection<String>): Map<String, Map<RejectionReason, Int>> {
+        if (runIds.isEmpty()) return emptyMap()
+        return orders.countRejectionsByRunAndReason(runIds.toSet()).groupBy { it.runId }
+            .mapValues { (_, rows) -> rows.associate { it.reason to it.count.toInt() } }
+    }
+
     companion object {
         private const val RECORDS = "paper orders"
     }

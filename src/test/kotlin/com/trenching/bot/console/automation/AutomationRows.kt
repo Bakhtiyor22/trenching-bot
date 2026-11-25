@@ -8,6 +8,7 @@ import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSessionEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunEntity
+import com.trenching.bot.portfolio.domain.PositionState
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.time.Instant
@@ -41,8 +42,10 @@ object AutomationRows {
         runId: String? = null,
         signal: Boolean = false,
         worstCasePnl: String = "0",
+        positionState: PositionState? = null,
+        realizedPnl: String = worstCasePnl,
     ) = AutomationSweepRunEntity(
-        id, itemId, sessionId, "decu-sweep-1", label, runId, runId?.let { "hash" }, runId?.let { "dip-paper-v6" }, outcome, null, signal,
-        BigDecimal(worstCasePnl), BigDecimal(worstCasePnl), Instant.EPOCH,
+        id, itemId, sessionId, "decu-sweep-1", label, runId, runId?.let { "hash" }, runId?.let { "dip-paper-v6" }, outcome, positionState, signal,
+        BigDecimal(realizedPnl), BigDecimal(worstCasePnl), Instant.EPOCH,
     )
 }

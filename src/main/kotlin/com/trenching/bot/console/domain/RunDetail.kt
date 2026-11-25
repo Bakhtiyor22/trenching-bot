@@ -24,6 +24,8 @@ data class SourcedRunDetail(
     val millisPerSlot: Double? = null,
     /** The labels of the sweep variations that produced the run, by number; empty when none did. */
     val variations: List<String>,
+    /** Why the run's tokens were sold, still held or not bought, in the order [RunOutcome] lists them. */
+    val outcomes: List<RunOutcome>,
 )
 
 data class TimedRunScenario(val scenario: RunScenario, val timeline: ScenarioTimeline)

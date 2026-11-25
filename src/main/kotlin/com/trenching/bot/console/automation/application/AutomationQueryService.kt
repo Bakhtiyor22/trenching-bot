@@ -2,6 +2,7 @@ package com.trenching.bot.console.automation.application
 
 import com.trenching.bot.apiusage.ApiUsagePeriod
 import com.trenching.bot.apiusage.ApiUsageReports
+import com.trenching.bot.common.DecimalPolicy
 import com.trenching.bot.common.PageResult
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.console.application.ConsoleAddresses
@@ -17,7 +18,9 @@ import com.trenching.bot.console.automation.domain.AutomationSessionRow
 import com.trenching.bot.console.automation.domain.AutomationSessionSort
 import com.trenching.bot.console.automation.domain.AutomationSessionState
 import com.trenching.bot.console.automation.domain.AutomationStatus
+import com.trenching.bot.console.automation.domain.AutomationSweepRunPage
 import com.trenching.bot.console.automation.domain.AutomationSweepRunRow
+import com.trenching.bot.console.automation.domain.AutomationSweepRunTotals
 import com.trenching.bot.console.automation.domain.DiscoveryCursor
 import com.trenching.bot.console.automation.domain.InvalidAutomationRequestException
 import com.trenching.bot.console.automation.domain.SessionHealth
@@ -30,11 +33,15 @@ import com.trenching.bot.console.automation.infrastructure.persistence.Automatio
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationWatermarkRepository
 import com.trenching.bot.console.automation.mapper.AutomationRecordMapper
 import com.trenching.bot.console.config.SolanaRpcProperties
+import com.trenching.bot.replay.domain.RunStatus
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Clock
 import java.time.Instant
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 
 /**
@@ -123,34 +130,53 @@ class AutomationQueryService(
     }
 
     /**
-     * The sweep runs of every plan, newest buy first, filtered by [sessionId], the buy's [mint], [label], [outcome] and [planId].
-     * [from] (inclusive) and [to] (exclusive) bound the buy's block time, which leaves out a buy without one.
+     * The sweep runs of every plan, newest buy first, filtered by [sessionId], the buy's [mint], [label], [outcome], [planId] and
+     * [statuses] (`RunStatus` names; none means any). [from] (inclusive) and [to] (exclusive) bound the buy's block time, which
+     * leaves out a buy without one. The status counts, the totals and the page's total all come from one grouped query over the same
+     * filters but the status, and run in one repeatable-read snapshot with the page, so they cannot disagree.
      */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     fun sweepRuns(
         sessionId: String?,
         mint: String?,
         label: String?,
         outcome: String?,
         planId: String?,
+        statuses: Collection<String>,
         from: Instant?,
         to: Instant?,
         page: Int,
         size: Int,
-    ): PageResult<AutomationSweepRunRow> {
+    ): AutomationSweepRunPage {
         val pageable = AutomationPaging.pageable(page, size)
         if (from != null && to != null && !from.isBefore(to)) throw InvalidAutomationRequestException(FROM, "must be before to")
         if (mint != null && ConsoleAddresses.mintOrNull(mint) == null) throw InvalidAutomationRequestException(MINT, "must be a base58 mint address")
         if (outcome != null && outcome !in SweepOutcomes.KNOWN) {
             throw InvalidAutomationRequestException(OUTCOME, "must be a close, skip or refusal reason")
         }
-        val found = sweepRuns.page(sessionId, mint, label, outcome, planId, from, to, pageable)
-        val buys = items.findAllById(found.content.map { it.itemId }.distinct()).associateBy { it.id }
-        val rows = found.content.map { run ->
+        val selected = statuses.map(::status).toSet().ifEmpty { RunStatus.entries.toSet() }
+        val found = sweepRuns.page(sessionId, mint, label, outcome, planId, selected.map { it.name }, from, to, pageable)
+        val aggregates = sweepRuns.statusAggregates(sessionId, mint, label, outcome, planId, from, to).associateBy { RunStatus.valueOf(it.status) }
+        val buys = items.findAllById(found.map { it.itemId }.distinct()).associateBy { it.id }
+        val rows = found.map { run ->
             val buy = checkNotNull(buys[run.itemId]) { "Sweep run without its item sweepRunId=${run.id} itemId=${run.itemId}" }
             AutomationSweepRunRow(mapper.toSweepRun(run), buy.mint, buy.signature, buy.blockTime)
         }
-        return PageResult(rows, page, pageable.pageSize, found.totalElements)
+        val counted = selected.mapNotNull { aggregates[it] }
+        val totals = AutomationSweepRunTotals(
+            counted.sumOf { it.runs },
+            counted.fold(ZERO) { sum, row -> sum + row.realizedPnl.setScale(DecimalPolicy.SCALE, RoundingMode.UNNECESSARY) },
+            counted.fold(ZERO) { sum, row -> sum + row.worstCasePnl.setScale(DecimalPolicy.SCALE, RoundingMode.UNNECESSARY) },
+        )
+        return AutomationSweepRunPage(
+            PageResult(rows, page, pageable.pageSize, totals.rows),
+            RunStatus.entries.associateWith { aggregates[it]?.runs ?: 0L },
+            totals,
+        )
     }
+
+    private fun status(value: String): RunStatus =
+        RunStatus.entries.firstOrNull { it.name == value } ?: throw InvalidAutomationRequestException(STATUS, "must be one of ${RunStatus.entries.joinToString()}")
 
     private fun sessionHealth(value: String): SessionHealth =
         SessionHealth.entries.firstOrNull { it.name == value }
@@ -162,6 +188,8 @@ class AutomationQueryService(
         const val HEALTH = "health"
         const val MINT = "mint"
         const val OUTCOME = "outcome"
+        const val STATUS = "status"
+        val ZERO: BigDecimal = BigDecimal.ZERO.setScale(DecimalPolicy.SCALE)
         const val FROM = "from"
     }
 }

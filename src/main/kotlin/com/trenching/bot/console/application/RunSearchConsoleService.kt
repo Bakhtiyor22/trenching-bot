@@ -20,10 +20,11 @@ import org.springframework.stereotype.Service
 class RunSearchConsoleService(
     private val runs: SimulationRuns,
     private val variations: RunVariationLabels,
+    private val outcomes: RunOutcomes,
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
 ) {
     fun search(params: RunSearchParams): RunSearchPage {
-        ConsolePaging.require(params.page, params.size)
+        requirePaging(params.page, params.size)
         requireOrdered("anchorFrom", params.anchorFrom, "anchorTo", params.anchorTo)
         requireOrdered("createdFrom", params.createdFrom, "createdTo", params.createdTo)
         val asOf = snapshot(params.asOf)
@@ -41,7 +42,8 @@ class RunSearchConsoleService(
             size = params.size,
         )
         val result = runs.search(query)
-        return RunSearchPage(result, asOf, variations.of(result.page.items.map { it.id }))
+        val runIds = result.page.items.map { it.id }
+        return RunSearchPage(result, asOf, variations.of(runIds), outcomes.of(runIds))
     }
 
     /**
@@ -52,6 +54,12 @@ class RunSearchConsoleService(
     private fun snapshot(requested: Instant?): Instant {
         val latest = clock.instant().truncatedTo(ChronoUnit.MICROS).minus(SNAPSHOT_SETTLE_TIME)
         return if (requested == null || requested.isAfter(latest)) latest else requested
+    }
+
+    /** This endpoint alone accepts a size of 0, which asks for the counts and totals without a page. */
+    private fun requirePaging(page: Int, size: Int) {
+        if (size == 0 && page >= 0) return
+        ConsolePaging.require(page, size)
     }
 
     private fun status(value: String): RunStatus =

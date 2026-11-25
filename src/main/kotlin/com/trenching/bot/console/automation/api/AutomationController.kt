@@ -118,11 +118,13 @@ class AutomationController(
         @RequestParam(required = false) label: String?,
         @RequestParam(required = false) outcome: String?,
         @RequestParam(required = false) planId: String?,
+        @RequestParam(name = "status", required = false) statuses: List<String>?,
         @RequestParam(required = false) from: Instant?,
         @RequestParam(required = false) to: Instant?,
         @RequestParam(defaultValue = ConsoleResponses.DEFAULT_PAGE) page: Int,
         @RequestParam(defaultValue = ConsoleResponses.DEFAULT_PAGE_SIZE) size: Int,
-    ): AutomationSweepRunPageResponse = mapper.toSweepRunPage(query.sweepRuns(sessionId, mint, label, outcome, planId, from, to, page, size))
+    ): AutomationSweepRunPageResponse =
+        mapper.toSweepRunPage(query.sweepRuns(sessionId, mint, label, outcome, planId, statuses.orEmpty(), from, to, page, size))
 
     @GetMapping("/variations")
     fun listVariations(@RequestParam(required = false) state: String?): AutomationVariationListResponse =

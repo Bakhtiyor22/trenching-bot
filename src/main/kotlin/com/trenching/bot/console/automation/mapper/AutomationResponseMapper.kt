@@ -29,11 +29,13 @@ import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionDetail
 import com.trenching.bot.console.automation.domain.AutomationSessionRow
 import com.trenching.bot.console.automation.domain.AutomationStatus
+import com.trenching.bot.console.automation.domain.AutomationSweepRunPage
 import com.trenching.bot.console.automation.domain.AutomationSweepRunRow
 import com.trenching.bot.console.mapper.ConsoleValueMapper
 import org.mapstruct.Mapper
 import org.mapstruct.Mapping
 import org.mapstruct.MappingConstants
+import org.mapstruct.Mappings
 import org.mapstruct.ReportingPolicy
 
 @Mapper(componentModel = MappingConstants.ComponentModel.SPRING, uses = [ConsoleValueMapper::class, AutomationValueMapper::class],
@@ -77,7 +79,13 @@ interface AutomationResponseMapper {
     @Mapping(target = ".", source = "backfill")
     fun toBackfill(row: AutomationBackfillRow): AutomationBackfillResponse
 
-    fun toSweepRunPage(page: PageResult<AutomationSweepRunRow>): AutomationSweepRunPageResponse
+    @Mappings(value = [
+        Mapping(target = "items", source = "page.items"),
+        Mapping(target = "page", source = "page.page"),
+        Mapping(target = "size", source = "page.size"),
+        Mapping(target = "total", source = "page.total"),
+    ])
+    fun toSweepRunPage(page: AutomationSweepRunPage): AutomationSweepRunPageResponse
 
     @Mapping(target = ".", source = "run")
     fun toSweepRunRow(row: AutomationSweepRunRow): AutomationSweepRunRowResponse

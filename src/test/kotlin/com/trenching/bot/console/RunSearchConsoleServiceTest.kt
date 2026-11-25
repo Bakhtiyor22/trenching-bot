@@ -22,15 +22,20 @@ import java.time.ZoneOffset
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import com.trenching.bot.console.domain.RunOutcome
+import com.trenching.bot.console.domain.RunOutcomeStage
+import com.trenching.bot.papertrading.domain.RejectionReason
+import com.trenching.bot.support.StubOutcomeStores
 import org.junit.jupiter.api.Test
 
 class RunSearchConsoleServiceTest {
     private val runs = RecordingRuns()
     private val lookups = mutableListOf<Collection<String>>()
+    private val stores = StubOutcomeStores()
     private val service = RunSearchConsoleService(runs, RunVariationLabels { ids ->
         lookups += ids
         mapOf("run-1" to listOf("V03", "V12"))
-    }, Clock.fixed(NOW, ZoneOffset.UTC))
+    }, stores.outcomes(), Clock.fixed(NOW, ZoneOffset.UTC))
 
     @Test
     fun `without filters every status matches and the snapshot is five seconds ago, which a run still being written cannot cross`() {
@@ -55,11 +60,36 @@ class RunSearchConsoleServiceTest {
     }
 
     @Test
+    fun `the page carries the outcomes of its runs, an entry for each, from one read of each store`() {
+        runs.found = listOf(summary("run-1"), summary("run-2"))
+        stores.rejections["run-2"] = mapOf(RejectionReason.NO_DIP to 1)
+
+        val page = service.search(params())
+
+        assertEquals(mapOf("run-1" to emptyList(), "run-2" to listOf(RunOutcome("NO_DIP", RunOutcomeStage.NOT_BOUGHT, 1))), page.outcomes)
+        assertEquals(listOf(listOf("run-1", "run-2")), stores.orderCalls)
+        assertEquals(listOf(listOf("run-1", "run-2")), stores.positionCalls)
+    }
+
+    @Test
+    fun `a size of zero is accepted and looks up no variations or outcomes`() {
+        val page = service.search(params(size = 0))
+
+        assertEquals(0, checkNotNull(runs.query).size)
+        assertEquals(emptyMap<String, List<String>>(), page.variations)
+        assertEquals(emptyMap<String, List<RunOutcome>>(), page.outcomes)
+        assertEquals(emptyList<Collection<String>>(), lookups)
+        assertEquals(emptyList<List<String>>(), stores.orderCalls + stores.positionCalls)
+    }
+
+    @Test
     fun `an empty page looks up nothing`() {
         val page = service.search(params())
 
         assertEquals(emptyMap<String, List<String>>(), page.variations)
+        assertEquals(emptyMap<String, List<RunOutcome>>(), page.outcomes)
         assertEquals(emptyList<Collection<String>>(), lookups)
+        assertEquals(emptyList<List<String>>(), stores.orderCalls + stores.positionCalls)
     }
 
     @Test
@@ -121,9 +151,10 @@ class RunSearchConsoleServiceTest {
     }
 
     @Test
-    fun `a negative page or a non positive size is refused`() {
+    fun `a negative page or a negative size is refused`() {
         assertEquals("page", assertFailsWith<InvalidConsoleRequestException> { service.search(params(page = -1)) }.field)
-        assertEquals("size", assertFailsWith<InvalidConsoleRequestException> { service.search(params(size = 0)) }.field)
+        assertEquals("page", assertFailsWith<InvalidConsoleRequestException> { service.search(params(page = -1, size = 0)) }.field)
+        assertEquals("size", assertFailsWith<InvalidConsoleRequestException> { service.search(params(size = -1)) }.field)
     }
 
     @Suppress("LongParameterList")
@@ -142,7 +173,7 @@ class RunSearchConsoleServiceTest {
 
         override fun search(query: RunSearchQuery): RunSearchResult {
             this.query = query
-            return RunSearchResult(PageResult(found, query.page, query.size, found.size.toLong()), RunStatus.entries.associateWith { 0L })
+            return RunSearchResult(PageResult(found, query.page, query.size, found.size.toLong()), RunStatus.entries.associateWith { 0L }, emptyList())
         }
 
         override fun start(datasetId: String, config: SimulationConfig, storage: RunStorage): RunStart = error("not used")

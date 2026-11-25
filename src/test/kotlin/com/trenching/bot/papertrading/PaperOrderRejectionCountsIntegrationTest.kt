@@ -13,11 +13,13 @@ import com.trenching.bot.strategy.domain.TradeIntent
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import java.math.BigDecimal
 import kotlin.test.assertEquals
+import javax.sql.DataSource
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.ActiveProfiles
 
 @SpringBootTest
@@ -26,6 +28,7 @@ import org.springframework.test.context.ActiveProfiles
 @Import(PostgresTestDatabaseConfiguration::class)
 class PaperOrderRejectionCountsIntegrationTest {
     @Autowired private lateinit var orders: PaperOrderStore
+    @Autowired private lateinit var dataSource: DataSource
 
     private val pair = MarketPair.of(MintAddress.of("11111111111111111111111111111112"), MintAddress.WRAPPED_SOL)
     private val wallet = WalletAddress.of("11111111111111111111111111111111")
@@ -62,5 +65,42 @@ class PaperOrderRejectionCountsIntegrationTest {
         assertEquals(1, added[RejectionReason.DIP_BELOW_MIN_MARKET_CAP])
         assertEquals(0, added.filterKeys { it != RejectionReason.NO_DIP && it != RejectionReason.DIP_BELOW_MIN_MARKET_CAP }
             .values.sum())
+    }
+
+    @Test
+    fun `rejections by run count rejected orders per run and reason, for the given runs only and without fills`() {
+        record("rejections-by-run-a", rejected(RejectionReason.NO_DIP), rejected(RejectionReason.NO_DIP),
+            rejected(RejectionReason.DIP_BELOW_MIN_MARKET_CAP), { FillOutcome.Filled(fill(it)) })
+        record("rejections-by-run-b", rejected(RejectionReason.NO_DIP))
+        record("rejections-by-run-c", { FillOutcome.Filled(fill(it)) })
+        record("rejections-by-run-other", rejected(RejectionReason.NO_DIP))
+
+        val counts = orders.rejectionsByRun(listOf("rejections-by-run-a", "rejections-by-run-b", "rejections-by-run-c", "no-such-run"))
+
+        assertEquals(
+            mapOf(
+                "rejections-by-run-a" to mapOf(RejectionReason.NO_DIP to 2, RejectionReason.DIP_BELOW_MIN_MARKET_CAP to 1),
+                "rejections-by-run-b" to mapOf(RejectionReason.NO_DIP to 1),
+            ),
+            counts,
+        )
+    }
+
+    @Test
+    fun `a rejected order stored without a reason is left out of the rejections by run`() {
+        record("rejections-by-run-null", rejected(RejectionReason.NO_DIP), rejected(RejectionReason.NO_DIP))
+        record("rejections-by-run-null-only", rejected(RejectionReason.NO_DIP))
+        val jdbc = JdbcTemplate(dataSource)
+        jdbc.update("update paper_orders set rejection_reason = null where id = ?", "rejections-by-run-null:event:1")
+        jdbc.update("update paper_orders set rejection_reason = null where run_id = ?", "rejections-by-run-null-only")
+
+        val counts = orders.rejectionsByRun(listOf("rejections-by-run-null", "rejections-by-run-null-only"))
+
+        assertEquals(mapOf("rejections-by-run-null" to mapOf(RejectionReason.NO_DIP to 1)), counts)
+    }
+
+    @Test
+    fun `rejections by run for an empty list is empty`() {
+        assertEquals(emptyMap(), orders.rejectionsByRun(emptyList()))
     }
 }

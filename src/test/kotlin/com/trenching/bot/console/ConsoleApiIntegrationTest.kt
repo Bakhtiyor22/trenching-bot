@@ -499,7 +499,8 @@ class ConsoleApiIntegrationTest {
         val id = upload(variant(json, "params"), "params.json").path("dataset").path("id").asString()
 
         assertError(400, "INVALID_REQUEST", http.get("/api/datasets?page=-1"))
-        assertError(400, "INVALID_REQUEST", http.get("/api/runs?size=0"))
+        assertError(400, "INVALID_REQUEST", http.get("/api/runs?size=-1"))
+        assertError(400, "INVALID_REQUEST", http.get("/api/datasets?size=0"))
         assertError(400, "INVALID_REQUEST", http.get("/api/runs?page=abc"))
         val badPair = http.get("/api/datasets/$id/observations?pair=not-a-pair")
         assertError(400, "INVALID_REQUEST", badPair)

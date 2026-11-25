@@ -27,6 +27,9 @@ import java.math.BigDecimal
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import com.trenching.bot.papertrading.domain.RejectionReason
+import com.trenching.bot.replay.domain.RunQuoteTotal
+import com.trenching.bot.support.StubOutcomeStores
 import kotlin.test.assertEquals
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
@@ -39,9 +42,10 @@ import tools.jackson.databind.json.JsonMapper
 class RunSearchControllerTest {
     private val json = JsonMapper.builder().build()
     private val runs = FakeRuns()
+    private val stores = StubOutcomeStores(mutableMapOf("run-1" to mapOf(RejectionReason.NO_DIP to 1)))
     private val mvc: MockMvc = MockMvcBuilders.standaloneSetup(RunController(
         mock(RunLaunchService::class.java), mock(ConsoleService::class.java),
-        RunSearchConsoleService(runs, RunVariationLabels { mapOf("run-1" to listOf("V03", "V12")) }, Clock.fixed(NOW, ZoneOffset.UTC)), responseMapper(),
+        RunSearchConsoleService(runs, RunVariationLabels { mapOf("run-1" to listOf("V03", "V12")) }, stores.outcomes(), Clock.fixed(NOW, ZoneOffset.UTC)), responseMapper(),
         ObservationResponseMapperImpl(), mock(RunUsdtViewService::class.java), mock(RunUsdtViewMapper::class.java),
     )).setControllerAdvice(ConsoleExceptionHandler(ConsoleErrorMapperImpl())).build()
 
@@ -62,6 +66,33 @@ class RunSearchControllerTest {
         assertEquals(ANCHOR.toString(), item["anchorBlockTime"].asString())
         assertEquals(listOf("V03", "V12"), item["variations"].iterator().asSequence().map { it.asString() }.toList())
         assertEquals(1, checkNotNull(runs.query).page)
+    }
+
+    @Test
+    fun `every run summary carries its outcomes and the page its totals per quote mint`() {
+        val body = json.readTree(mvc.perform(get("/api/runs")).andReturn().response.contentAsString)
+
+        val outcome = body["items"][0]["outcomes"][0]
+        assertEquals(listOf("NO_DIP", "NOT_BOUGHT", 1), listOf(outcome["code"].asString(), outcome["stage"].asString(), outcome["count"].asInt()))
+        assertEquals(3, body["totals"].size())
+        assertEquals(
+            listOf(MintAddress.WRAPPED_SOL.value, 1L, "-1.000000000000"),
+            body["totals"][0].let { listOf(it["quoteMint"].asString(), it["runs"].asLong(), it["realizedPnl"].asString()) },
+        )
+        assertEquals(listOf("0.000000000001", "0.000000000000"), listOf(body["totals"][1]["realizedPnl"].asString(), body["totals"][2]["realizedPnl"].asString()))
+    }
+
+    @Test
+    fun `a size of zero returns no items but the total, counts and totals, and a negative size is a 400`() {
+        val body = json.readTree(mvc.perform(get("/api/runs").param("size", "0")).andReturn().response.contentAsString)
+
+        assertEquals(0, body["items"].size())
+        assertEquals(true, body["items"].isArray)
+        assertEquals(0, body["size"].asInt())
+        assertEquals(1, body["total"].asInt())
+        assertEquals(3, body["totals"].size())
+        assertEquals(1, body["statusCounts"]["LOSS"].asInt())
+        assertEquals(400, mvc.perform(get("/api/runs").param("size", "-1")).andReturn().response.status)
     }
 
     @Test
@@ -127,7 +158,12 @@ class RunSearchControllerTest {
             val run = RunSummary("run-1", "ds-1", "engine", "config", "result", MintAddress.WRAPPED_SOL, 2, 2, 0, 0, 2,
                 BigDecimal("-1.000000000000"), NOW, RunStorage.COPY, "Alpha", listOf(MintAddress.of(MINT)), ANCHOR)
             val counts = RunStatus.entries.associateWith { if (it == RunStatus.LOSS) 1L else 0L }
-            return RunSearchResult(PageResult(listOf(run), query.page, query.size, 1), counts)
+            val totals = listOf(
+                RunQuoteTotal(MintAddress.WRAPPED_SOL.value, 1, BigDecimal("-1.000000000000")),
+                RunQuoteTotal("other-quote-a", 1, BigDecimal("0.000000000001")),
+                RunQuoteTotal("other-quote-b", 1, BigDecimal.ZERO.setScale(12)),
+            )
+            return RunSearchResult(PageResult(if (query.size == 0) emptyList() else listOf(run), query.page, query.size, 1), counts, totals)
         }
 
         override fun start(datasetId: String, config: SimulationConfig, storage: RunStorage): RunStart = error("not used")

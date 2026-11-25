@@ -144,5 +144,7 @@ class DashboardServiceTest {
         override fun fills(runId: String): List<PaperFill> = error("not used")
 
         override fun rejectionCounts(): Map<RejectionReason, Long> = counts
+
+        override fun rejectionsByRun(runIds: Collection<String>): Map<String, Map<RejectionReason, Int>> = error("not used")
     }
 }

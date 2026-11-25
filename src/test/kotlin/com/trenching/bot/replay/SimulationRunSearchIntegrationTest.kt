@@ -5,6 +5,7 @@ import com.trenching.bot.console.application.RunSearchConsoleService
 import com.trenching.bot.console.application.RunVariationLabels
 import com.trenching.bot.console.domain.RunVariationLookup
 import com.trenching.bot.console.domain.RunSearchParams
+import com.trenching.bot.replay.domain.RunQuoteTotal
 import com.trenching.bot.replay.domain.RunSearchQuery
 import com.trenching.bot.replay.domain.RunStatus
 import com.trenching.bot.replay.infrastructure.persistence.ReplayDatasetRepository
@@ -12,6 +13,7 @@ import com.trenching.bot.replay.infrastructure.persistence.SimulationRunReposito
 import com.trenching.bot.replay.infrastructure.persistence.SimulationRunTokenRepository
 import com.trenching.bot.support.PostgresTestDatabaseConfiguration
 import com.trenching.bot.support.RunSearchFixtures
+import com.trenching.bot.support.StubOutcomeStores
 import com.trenching.bot.support.RunSearchFixtures.Companion.MINT_A
 import com.trenching.bot.support.RunSearchFixtures.Companion.MINT_B
 import java.math.BigDecimal
@@ -77,7 +79,7 @@ class SimulationRunSearchIntegrationTest {
         val now = Instant.parse("2026-11-16T07:00:00Z")
         fixtures.run("settled", now.minusSeconds(10))
         fixtures.run("committing", now.minusSeconds(2))
-        val console = RunSearchConsoleService(runs, RunVariationLabels(RunVariationLookup.ABSENT), Clock.fixed(now, ZoneOffset.UTC))
+        val console = RunSearchConsoleService(runs, RunVariationLabels(RunVariationLookup.ABSENT), StubOutcomeStores().outcomes(), Clock.fixed(now, ZoneOffset.UTC))
 
         val page = console.search(RunSearchParams(0, 20, null, emptyList(), null, null, null, null, null, null, null))
 
@@ -100,6 +102,7 @@ class SimulationRunSearchIntegrationTest {
                 .filter { RunStatus.of(combinations[it].first, combinations[it].second, BigDecimal(combinations[it].third)) == status }
                 .map { "combo-$it" }.toSet()
             assertEquals(expected, runs.search(query(statuses = setOf(status))).page.items.map { it.id }.toSet(), status.name)
+            assertEquals(expected.size.toLong(), runs.search(query()).statusCounts.getValue(status), "$status count")
         }
     }
 
@@ -121,6 +124,59 @@ class SimulationRunSearchIntegrationTest {
             inDatasetA.statusCounts,
         )
         assertEquals(4L, inDatasetA.page.total)
+    }
+
+    @Test
+    fun `totals sum the realized pnl of the query's statuses per quote mint, ordered by quote and exact at scale 12`() {
+        fixtures.run("sol-profit-1", at(1), pnl = "1.000000000001")
+        fixtures.run("sol-profit-2", at(2), pnl = "2")
+        fixtures.run("sol-loss", at(3), pnl = "-0.5")
+        fixtures.run("usdc-profit", at(4), pnl = "7", quote = USDC)
+        fixtures.run("sol-no-entry", at(5), filled = 0)
+
+        val profit = runs.search(query(statuses = setOf(RunStatus.PROFIT)))
+        val everything = runs.search(query())
+
+        assertEquals(
+            listOf(RunQuoteTotal(USDC, 1, BigDecimal("7.000000000000")), RunQuoteTotal(MintAddress.WRAPPED_SOL.value, 2, BigDecimal("3.000000000001"))),
+            profit.totals,
+        )
+        assertEquals(profit.page.total, profit.totals.sumOf { it.runs })
+        assertEquals(12, profit.totals.first().realizedPnl.scale())
+        assertEquals(everything.page.total, everything.totals.sumOf { it.runs })
+        assertEquals(BigDecimal("2.500000000001"), everything.totals.single { it.quoteMint == MintAddress.WRAPPED_SOL.value }.realizedPnl)
+    }
+
+    @Test
+    fun `totals follow every other filter, the snapshot included, and are empty when nothing matches`() {
+        fixtures.dataset("dataset-b", "Beta")
+        fixtures.run("a-early", at(1), pnl = "1")
+        fixtures.run("b-early", at(2), datasetId = "dataset-b", pnl = "10")
+        fixtures.run("a-late", at(50), pnl = "100")
+
+        val inDatasetA = runs.search(query(datasetId = "dataset-a", asOf = at(10)))
+        val none = runs.search(query(statuses = setOf(RunStatus.LOSS)))
+
+        assertEquals(listOf(RunQuoteTotal(MintAddress.WRAPPED_SOL.value, 1, BigDecimal("1.000000000000"))), inDatasetA.totals)
+        assertEquals(emptyList(), none.totals)
+    }
+
+    @Test
+    fun `a size of zero returns no items and the same total, status counts and totals as any other size`() {
+        (0 until 4).forEach { fixtures.run("profit-$it", at(it), pnl = "1.5") }
+        (0 until 2).forEach { fixtures.run("loss-$it", at(10 + it), pnl = "-1", quote = USDC) }
+        fixtures.run("none", at(20), filled = 0)
+
+        listOf(emptySet(), setOf(RunStatus.PROFIT), setOf(RunStatus.LOSS, RunStatus.NO_ENTRY)).forEach { statuses ->
+            val counted = runs.search(query(statuses = statuses, size = 0))
+            val paged = runs.search(query(statuses = statuses, size = 20))
+
+            assertEquals(emptyList(), counted.page.items)
+            assertEquals(0, counted.page.size)
+            assertEquals(paged.page.total, counted.page.total)
+            assertEquals(paged.statusCounts, counted.statusCounts)
+            assertEquals(paged.totals, counted.totals)
+        }
     }
 
     @Test
@@ -270,6 +326,7 @@ class SimulationRunSearchIntegrationTest {
 
     private companion object {
         const val TOTAL_RUNS = 45
+        const val USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
         val BASE: Instant = Instant.parse("2026-11-10T00:00:00Z")
         val FAR_FUTURE: Instant = Instant.parse("2030-01-01T00:00:00Z")
     }

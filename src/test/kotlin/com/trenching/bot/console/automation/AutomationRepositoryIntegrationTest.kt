@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.data.domain.Limit
+import com.trenching.bot.replay.domain.RunStatus
 import org.springframework.data.domain.PageRequest
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.PlatformTransactionManager
@@ -145,15 +146,15 @@ class AutomationRepositoryIntegrationTest : AutomationDatabaseTest() {
         ))
 
         fun page(planId: String? = null, from: Instant? = null, to: Instant? = null) =
-            sweepRuns.page(null, null, "V04", null, planId, from, to, PageRequest.of(0, 50))
+            sweepRuns.page(null, null, "V04", null, planId, RunStatus.entries.map { it.name }, from, to, PageRequest.of(0, 50))
 
-        assertEquals(listOf("r3", "r2-other", "r2", "r1", "r4").sorted(), page().content.map { it.id }.sorted())
-        assertEquals(listOf("r2", "r2-other"), page(from = EVENING.plusSeconds(60), to = EVENING.plusSeconds(120)).content.map { it.id }.sorted())
-        assertEquals(listOf("r3"), page(from = EVENING.plusSeconds(61)).content.map { it.id })
-        assertEquals(listOf("r1"), page(to = EVENING.plusSeconds(60)).content.map { it.id })
-        assertEquals(1L, page(planId = "other-plan").totalElements)
-        assertEquals(2L, page(planId = "decu-sweep-1", from = EVENING, to = EVENING.plusSeconds(120)).totalElements)
-        assertEquals(2L, page(from = EVENING.plusSeconds(60), to = EVENING.plusSeconds(120)).totalElements)
+        assertEquals(listOf("r3", "r2-other", "r2", "r1", "r4").sorted(), page().map { it.id }.sorted())
+        assertEquals(listOf("r2", "r2-other"), page(from = EVENING.plusSeconds(60), to = EVENING.plusSeconds(120)).map { it.id }.sorted())
+        assertEquals(listOf("r3"), page(from = EVENING.plusSeconds(61)).map { it.id })
+        assertEquals(listOf("r1"), page(to = EVENING.plusSeconds(60)).map { it.id })
+        assertEquals(1, page(planId = "other-plan").size)
+        assertEquals(2, page(planId = "decu-sweep-1", from = EVENING, to = EVENING.plusSeconds(120)).size)
+        assertEquals(2, page(from = EVENING.plusSeconds(60), to = EVENING.plusSeconds(120)).size)
     }
 
     @Test

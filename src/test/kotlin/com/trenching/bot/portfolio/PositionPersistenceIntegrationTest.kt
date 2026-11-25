@@ -1,7 +1,9 @@
 package com.trenching.bot.portfolio
 
+import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.portfolio.domain.CloseReason
 import com.trenching.bot.portfolio.domain.ExitPriceAssumption
+import com.trenching.bot.portfolio.domain.PositionOutcomeCounts
 import com.trenching.bot.portfolio.infrastructure.persistence.PositionEntity
 import com.trenching.bot.replay.application.PersistedReplayService
 import com.trenching.bot.replay.application.ReplayRunner
@@ -108,6 +110,43 @@ class PositionPersistenceIntegrationTest {
         assertTrue(stored.mapNotNull { it.exitTrigger }.all { it.time == null })
         assertTrue(stored.all { it.exitStart == null })
         assertTrue(intents.intents(run.id).all { it.t0 == null })
+    }
+
+    @Test
+    fun `outcomes by run count closed positions by close reason and open ones by why they stayed open, for the given runs only`() {
+        val run = application.execute(dipSample(), SimulationConfig.of(BigDecimal("0.104"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1,
+            BigDecimal("0.001")))
+        val other = application.execute(dipSample(), SimulationConfig.of(BigDecimal("0.107"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1,
+            BigDecimal("0.001")))
+        val jdbc = JdbcTemplate(dataSource)
+        jdbc.update("update positions set exit_unavailable = 'NO_FILL_AFTER_TRIGGER' where run_id = ? and state = 'OPEN'", run.id)
+        val openCount = jdbc.queryForObject("select count(*) from positions where run_id = ? and state = 'OPEN'", Int::class.java, run.id)
+        val closed = jdbc.queryForList("select close_reason, count(*) as n from positions where run_id = ? and state = 'CLOSED' group by close_reason", run.id)
+            .associate { CloseReason.valueOf(it["close_reason"] as String) to (it["n"] as Number).toInt() }
+        assertTrue(checkNotNull(openCount) > 0 && closed.isNotEmpty())
+
+        val outcomes = positions.outcomesByRun(listOf(run.id))
+
+        assertEquals(setOf(run.id), outcomes.keys)
+        assertEquals(PositionOutcomeCounts(closed, mapOf(RejectionReason.NO_FILL_AFTER_TRIGGER to openCount)), outcomes.getValue(run.id))
+        assertEquals(setOf(run.id, other.id), positions.outcomesByRun(listOf(run.id, other.id, run.id)).keys)
+    }
+
+    @Test
+    fun `outcomes by run leave out positions stored without a reason, so a run with none is absent, and a run without positions`() {
+        val run = application.execute(dipSample(), SimulationConfig.of(BigDecimal("0.106"), 2, 1500, 3000, 1500, BigDecimal("10000"), 4500, 1,
+            BigDecimal("0.001")))
+        val jdbc = JdbcTemplate(dataSource)
+        assertTrue(checkNotNull(jdbc.queryForObject("select count(*) from positions where run_id = ?", Int::class.java, run.id)) > 0)
+        assertTrue(run.id in positions.outcomesByRun(listOf(run.id)).keys)
+
+        jdbc.update("update positions set close_reason = null, exit_unavailable = null where run_id = ?", run.id)
+
+        assertEquals(emptyMap(), positions.outcomesByRun(listOf(run.id, "no-such-run")))
+    }
+
+    private fun dipSample() = javaClass.getResourceAsStream("/replay/samples/dip-sample-v3.json").use {
+        ReplayDatasetLoader(json).load(requireNotNull(it))
     }
 
     @Test

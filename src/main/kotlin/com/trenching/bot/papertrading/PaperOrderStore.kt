@@ -11,4 +11,6 @@ interface PaperOrderStore {
     fun fills(runId: String): List<PaperFill>
     /** Rejected orders per reason across all runs; a reason that never occurred is absent. */
     fun rejectionCounts(): Map<RejectionReason, Long>
+    /** Rejected orders with a stored reason per run and reason, for the given runs; a run with none is absent. */
+    fun rejectionsByRun(runIds: Collection<String>): Map<String, Map<RejectionReason, Int>>
 }
