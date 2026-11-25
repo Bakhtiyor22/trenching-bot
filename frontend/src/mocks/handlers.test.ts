@@ -814,3 +814,14 @@ describe('mock GET /api/automation/sweep-runs', () => {
     });
   });
 });
+
+describe('mock GET /api/runs count only', () => {
+  it('answers size 0 with no rows and the usual total, counts and totals', async () => {
+    const page = await api.runs({ page: 0, size: 0 });
+    expect(page.items).toEqual([]);
+    expect(page.size).toBe(0);
+    expect(page.total).toBeGreaterThan(0);
+    expect(page.statusCounts).not.toBeNull();
+    expect(page.totals?.length).toBeGreaterThan(0);
+  });
+});

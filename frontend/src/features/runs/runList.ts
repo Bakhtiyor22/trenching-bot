@@ -1,10 +1,17 @@
-import type { RunQuery, RunStatus, RunSummary } from '../../api/types';
+import type { RunOutcome, RunOutcomeStage, RunQuery, RunStatus, RunSummary } from '../../api/types';
 import { RUN_STATUSES } from '../../api/types';
 import { MAX_SEARCH_CHARS, MIN_SEARCH_CHARS } from '../../api/queries';
 import { isSolanaAddress } from '../../lib/base58';
 import { compareDecimals, decimalSign } from '../../lib/decimal';
 import { formatCount, mintLabel, shortId } from '../../lib/format';
-import { addDays, dayInfo, dayStartInstant, isRealDate } from '../automation/automationModel';
+import {
+  addDays,
+  dayInfo,
+  dayStartInstant,
+  isRealDate,
+  outcomeExplanation,
+  outcomeLabel,
+} from '../automation/automationModel';
 
 export type StatusFilter = RunStatus | 'all';
 export type SortKey = 'created' | 'pnl';
@@ -85,6 +92,76 @@ export function tradeLabel(run: Pick<RunSummary, 'status'>): TradeLabel {
       return unknown;
     }
   }
+}
+
+/**
+ * An outcome code in the variation table's words, without the trailing " · no entry" those words add, since under a
+ * "Not bought" chip it would say the same thing twice: "NO_DIP" → "No dip", "TAKE_PROFIT" → "Take profit".
+ */
+export function stageReason(code: string): string {
+  return outcomeLabel(code).replace(/ · no entry$/, '');
+}
+
+/**
+ * Why a position was sold (`CloseReason`), for the reason's tooltip. The outcome explanations describe these codes as
+ * sweep outcomes, and `WALLET_SOLD` there means a sell before the dip, so a sale gets its own sentence.
+ */
+const CLOSE_REASON_TEXT: Record<string, string> = {
+  TAKE_PROFIT: 'Sold when the price reached the take-profit level.',
+  STOP_LOSS: 'Sold when the price reached the stop-loss level.',
+  TIME_EXIT: 'Sold when a time limit ran out: the maximum hold or the hard exit.',
+  WALLET_SOLD: 'Sold because Decu sold the token while the position was held.',
+};
+
+/** A reason's explanation for its stage: a sale's own sentence, otherwise the outcome's explanation. */
+export function reasonExplanation(code: string, stage: RunOutcomeStage): string | null {
+  return (stage === 'SOLD' ? CLOSE_REASON_TEXT[code] : undefined) ?? outcomeExplanation(code);
+}
+
+const STAGE_OF_STATUS: Record<RunStatus, RunOutcomeStage> = {
+  PROFIT: 'SOLD',
+  LOSS: 'SOLD',
+  FLAT: 'SOLD',
+  OPEN: 'HELD',
+  NO_ENTRY: 'NOT_BOUGHT',
+};
+
+/** Why a one-token run ended as its chip says: "Take profit", "No dip"; with its explanation for the tooltip. */
+export interface TradeReason {
+  code: string;
+  text: string;
+  explanation: string | null;
+}
+
+/**
+ * The reason beside a one-token run's chip: its outcome of the chip's stage. Null for a run of several tokens (its
+ * counts line says more), or when no reason is known (an older backend, or a token stored without one).
+ */
+export function tradeReason(
+  run: Pick<RunSummary, 'scenarioCount' | 'status' | 'outcomes'>,
+): TradeReason | null {
+  if (run.scenarioCount > 1) return null;
+  const outcome = run.outcomes?.find((o) => o.stage === STAGE_OF_STATUS[run.status]);
+  return outcome
+    ? {
+        code: outcome.code,
+        text: stageReason(outcome.code),
+        explanation: reasonExplanation(outcome.code, outcome.stage),
+      }
+    : null;
+}
+
+const STAGE_WORDS: Record<RunOutcomeStage, string> = {
+  SOLD: 'sold',
+  HELD: 'still held',
+  NOT_BOUGHT: 'not bought',
+};
+
+/** A multi-token run's reasons, one line each with its count: "2 sold · Take profit", "1 not bought · No dip". */
+export function outcomeLines(outcomes: readonly RunOutcome[] | undefined): string[] {
+  return (outcomes ?? []).map(
+    (o) => `${formatCount(o.count)} ${STAGE_WORDS[o.stage]} · ${stageReason(o.code)}`,
+  );
 }
 
 /**

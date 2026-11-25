@@ -1,4 +1,4 @@
-import { Group, ScrollArea, Select, Stack, Table, Text, TextInput } from '@mantine/core';
+import { Group, ScrollArea, Select, Stack, Table, Text, TextInput, Tooltip } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -7,16 +7,25 @@ import {
   useAutomationSweepRuns,
   type AutomationStatus,
   type AutomationSweepRunRow,
+  type AutomationSweepRunTotals,
 } from '../../api/automation';
-import { TokenLink } from '../../components/DisplayValues';
+import { useSolUsdtPrice } from '../../api/queries';
+import type { SolUsdtPrice } from '../../api/types';
+import { Pnl, TokenLink } from '../../components/DisplayValues';
 import { PagingFooter } from '../../components/Panels';
 import { QueryView, RefreshNotice } from '../../components/QueryView';
 import { EmptyState } from '../../components/StateViews';
+import { UsdtNow } from '../../components/UsdtNow';
 import { isSolanaAddress } from '../../lib/base58';
+import { decimalSign } from '../../lib/decimal';
+import { formatCount, mintLabel } from '../../lib/format';
+import { parseStatus, STATUS_LABELS } from '../runs/runList';
+import { StatusTabs } from '../runs/StatusTabs';
 import {
   dayFilter,
   dayInfo,
   OUTCOME_GROUPS,
+  outcomeExplanation,
   outcomeLabel,
   parsePage,
   tradingDayOf,
@@ -44,7 +53,74 @@ const RUN_FILTER_KEYS = {
   page: 'page',
   variation: 'variation',
   session: 'session',
+  status: 'status',
 } as const;
+
+/**
+ * A row with no position realized nothing and risked nothing: "—" in Realized and Worst case, with its outcome as the
+ * reason. Missing is not zero.
+ */
+function NoPosition({ outcome }: { outcome: string }) {
+  const reason = outcomeExplanation(outcome) ?? outcomeLabel(outcome);
+  return (
+    <Tooltip
+      label={reason}
+      withArrow
+      multiline
+      maw={320}
+      events={{ hover: true, focus: true, touch: true }}
+    >
+      <Text
+        span
+        size="sm"
+        c="dimmed"
+        tabIndex={0}
+        aria-label={`No position: ${outcomeLabel(outcome)}`}
+      >
+        —
+      </Text>
+    </Tooltip>
+  );
+}
+
+/** "12 rows · realized +0.0312 SOL ≈ +6.62 USDT now · worst case −0.1013 SOL", over every row the filters match. */
+function SweepTotals({
+  totals,
+  price,
+  zone,
+}: {
+  totals: AutomationSweepRunTotals;
+  price: SolUsdtPrice | undefined;
+  /** The automation clock these pages show times on ("Times in UTC+5"). */
+  zone: string;
+}) {
+  const onAutomationClock = (asOf: string | null | undefined) =>
+    asOf ? `${zoneTime(asOf, zone, true)} ${zoneLabel(zone)}` : null;
+  return (
+    <Text size="sm" role="status" aria-label="Totals of matching rows">
+      {formatCount(totals.rows)} {totals.rows === 1 ? 'row' : 'rows'}{' '}
+      <Text span inherit c="dimmed">
+        · realized
+      </Text>{' '}
+      <Pnl value={totals.realizedPnl} trim unit="SOL" />{' '}
+      {decimalSign(totals.realizedPnl) !== 0 && (
+        <>
+          <UsdtNow
+            sol={totals.realizedPnl}
+            price={price}
+            now
+            scope="total"
+            formatTime={onAutomationClock}
+          />{' '}
+        </>
+      )}
+      <Text span inherit c="dimmed">
+        · worst case
+      </Text>{' '}
+      <Pnl value={totals.worstCasePnl} trim unit="SOL" />
+    </Text>
+  );
+}
 
 function RunsTable({
   rows,
@@ -94,7 +170,7 @@ function RunsTable({
                   </Table.Td>
                 )}
                 <Table.Td>
-                  <OutcomeText outcome={r.outcome} />
+                  <OutcomeText outcome={r.outcome} positionState={r.positionState} />
                 </Table.Td>
                 <Table.Td>
                   <Text size="sm" c={r.signal ? undefined : 'dimmed'}>
@@ -102,10 +178,18 @@ function RunsTable({
                   </Text>
                 </Table.Td>
                 <Table.Td ta="right">
-                  <SolValue value={r.realizedPnl} />
+                  {r.positionState == null ? (
+                    <NoPosition outcome={r.outcome} />
+                  ) : (
+                    <SolValue value={r.realizedPnl} />
+                  )}
                 </Table.Td>
                 <Table.Td ta="right">
-                  <SolValue value={r.worstCasePnl} strong />
+                  {r.positionState == null ? (
+                    <NoPosition outcome={r.outcome} />
+                  ) : (
+                    <SolValue value={r.worstCasePnl} strong />
+                  )}
                 </Table.Td>
                 <Table.Td>
                   <RunLink runId={r.runId} />
@@ -120,8 +204,9 @@ function RunsTable({
 }
 
 /**
- * Sweep runs with their filters, all in the URL: trading days `from`–`to` (both included), outcome, token, and on the
- * all-runs page also variation and session; one-based `page`, 50 rows each. A fixed `label` shows one variation's runs
+ * Sweep runs with their filters, all in the URL: the status tab (the Runs list's tabs and counts; it combines with the
+ * outcome by AND), trading days `from`–`to` (both included), outcome, token, and on the all-runs page also variation and
+ * session; one-based `page`, 50 rows each. Under the tabs, the totals of every matching row. A fixed `label` shows one variation's runs
  * only. Newest buy first.
  */
 export function SweepRunsView({
@@ -143,6 +228,7 @@ export function SweepRunsView({
   const fromDay = params.get(RUN_FILTER_KEYS.from);
   const toDay = params.get(RUN_FILTER_KEYS.to);
   const outcome = params.get(RUN_FILTER_KEYS.outcome);
+  const tab = parseStatus(params.get(RUN_FILTER_KEYS.status));
   const variation = fixedLabel ? label : params.get(RUN_FILTER_KEYS.variation);
   const sessionId = fixedLabel ? null : params.get(RUN_FILTER_KEYS.session);
   const page = parsePage(params.get(RUN_FILTER_KEYS.page));
@@ -184,6 +270,7 @@ export function SweepRunsView({
       planId: planId ?? null,
       label: variation,
       outcome,
+      status: tab === 'all' ? null : tab,
       mint: mint && !mintError ? mint : null,
       from: days.fromInstant,
       to: days.toInstant,
@@ -192,12 +279,33 @@ export function SweepRunsView({
     },
     datesValid,
   );
+  const price = useSolUsdtPrice(true).data;
   const filtered = Boolean(
-    fromDay || toDay || outcome || mint || sessionId || (!fixedLabel && variation),
+    tab !== 'all' || fromDay || toDay || outcome || mint || sessionId || (!fixedLabel && variation),
   );
+  // The filters in effect, named for the empty state: "Loss · outcome Take profit · from 2026-10-29".
+  const inEffect = [
+    tab !== 'all' ? STATUS_LABELS[tab] : null,
+    outcome ? `outcome ${outcomeLabel(outcome)}` : null,
+    !fixedLabel && variation ? `variation ${variation}` : null,
+    sessionId ? 'one session' : null,
+    fromDay ? `from ${fromDay}` : null,
+    toDay ? `to ${toDay}` : null,
+    mint && !mintError ? `token ${mintLabel(mint)}` : null,
+  ].filter((label): label is string => label !== null);
 
   return (
     <Stack gap="md">
+      <StatusTabs
+        value={tab}
+        counts={runs.data?.statusCounts}
+        onChange={(next) => set(RUN_FILTER_KEYS.status, next === 'all' ? null : next)}
+      />
+      {datesValid && runs.data?.totals && runs.data.totals.rows > 0 && (
+        <div style={{ opacity: runs.isPlaceholderData ? 0.6 : 1 }}>
+          <SweepTotals totals={runs.data.totals} price={price} zone={status.zone} />
+        </div>
+      )}
       <Group gap="sm" wrap="wrap" align="flex-start" role="search" aria-label="Sweep run filters">
         <TextInput
           type="date"
@@ -291,7 +399,11 @@ export function SweepRunsView({
             data.items.length === 0 ? (
               <EmptyState
                 title={filtered ? 'No sweep runs match' : 'No sweep runs yet'}
-                description={filtered ? 'Clear a filter, or widen the days.' : emptyText}
+                description={
+                  filtered
+                    ? `Filters in effect: ${inEffect.join(' · ')}. Clear one, or widen the days.`
+                    : emptyText
+                }
               />
             ) : (
               <>

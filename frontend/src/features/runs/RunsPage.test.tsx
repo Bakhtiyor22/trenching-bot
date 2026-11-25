@@ -1,8 +1,14 @@
-import { screen, waitFor, within } from '@testing-library/react';
-import { http, HttpResponse } from 'msw';
+import { act, screen, waitFor, within } from '@testing-library/react';
+import { delay, http, HttpResponse } from 'msw';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { RunPage, RunSummary } from '../../api/types';
-import { formatSignedDecimal } from '../../lib/decimal';
+import {
+  addDecimals,
+  formatSignedDecimal,
+  multiplyDecimals,
+  truncateDecimal,
+} from '../../lib/decimal';
+import { WRAPPED_SOL_MINT } from '../../lib/format';
 import { shortId } from '../../lib/format';
 import {
   EDGE_DATASET_ID,
@@ -49,8 +55,8 @@ function recordRequests(): URL[] {
   const requests: URL[] = [];
   server.events.on('request:start', ({ request }) => {
     const url = new URL(request.url);
-    // The page's own list requests; the size-1 ones only count the runs that arrived since the snapshot.
-    if (url.pathname === '/api/runs' && url.searchParams.get('size') !== '1') requests.push(url);
+    // The page's own list requests; the size-0 ones only count the runs that arrived since the snapshot.
+    if (url.pathname === '/api/runs' && url.searchParams.get('size') !== '0') requests.push(url);
   });
   return requests;
 }
@@ -205,7 +211,7 @@ describe('RunsPage', () => {
     server.use(
       http.get('/api/runs', ({ request }) => {
         const url = new URL(request.url);
-        if (url.searchParams.get('size') !== '1') requests.push(url);
+        if (url.searchParams.get('size') !== '0') requests.push(url);
         const page = Number(url.searchParams.get('page'));
         return HttpResponse.json(runPage([sampleRun], page, 21));
       }),
@@ -551,5 +557,177 @@ describe('RunsPage P&L of runs that realized nothing', () => {
     const cell = pnlCell(rowOf(table, listedRuns[0]!.id));
     expect(await within(cell).findByText('≈ +1.69 USDT')).toBeInTheDocument();
     expect(cell).toHaveTextContent('+0.024477624SOL');
+  });
+});
+
+describe('RunsPage totals and exit reasons', () => {
+  afterEach(() => server.events.removeAllListeners());
+
+  const useRate = () =>
+    server.use(
+      http.get('/api/market/sol-usdt', () =>
+        HttpResponse.json({ ...RATE, unavailableReason: null }),
+      ),
+    );
+  const rowOf = (table: HTMLElement, runId: string) =>
+    within(table)
+      .getByRole('link', { name: shortId(runId) })
+      .closest('tr')!;
+
+  it('totals the realized P&L of every matching run, in SOL and in USDT now', async () => {
+    useRate();
+    renderRuns('/runs?status=PROFIT');
+    const strip = await screen.findByRole('region', { name: 'Totals of matching runs' });
+    const profits = [...listedRuns, sampleRun].filter(
+      (r) => r.status === 'PROFIT' && r.quoteMint === WRAPPED_SOL_MINT,
+    );
+    const sum = addDecimals('0.000000000000', ...profits.map((r) => r.realizedPnl));
+    const usdt = multiplyDecimals(sum, RATE.rate);
+    await waitFor(() =>
+      expect(within(strip).getByText(formatSignedDecimal(sum, { trim: true }))).toBeInTheDocument(),
+    );
+    expect(within(strip).getByText('Runs matching').nextSibling).toHaveTextContent(
+      String(profits.length + 1),
+    );
+    expect(
+      within(strip).getByText(`≈ ${formatSignedDecimal(truncateDecimal(usdt, 2))} USDT`),
+    ).toBeInTheDocument();
+    expect(
+      within(strip).getByText('Realized only: still-held positions are not in it.'),
+    ).toBeInTheDocument();
+  });
+
+  it('shows a total in another quote mint on its own line, never added to SOL', async () => {
+    renderRuns('/runs?status=PROFIT');
+    expect(await screen.findByText(/Also 1 run quoted in/)).toHaveTextContent(
+      `Also 1 run quoted in ${shortId(USDC_MINT)}: +1.25${shortId(USDC_MINT)} realized`,
+    );
+  });
+
+  it('shows no total from a backend that sends none', async () => {
+    server.use(
+      http.get('/api/runs', ({ request }) => {
+        const url = new URL(request.url);
+        if (url.searchParams.get('size') === '0') return HttpResponse.json(runPage([], 0, 1));
+        return HttpResponse.json(runPage([sampleRun], 0, 1));
+      }),
+    );
+    renderRuns();
+    await screen.findByRole('table');
+    expect(
+      screen.queryByRole('region', { name: 'Totals of matching runs' }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText('Total realized P&L')).not.toBeInTheDocument();
+  });
+
+  it('says why a one-token run sold, did not buy or still holds, explained on hover', async () => {
+    const { user } = renderRuns();
+    const table = await screen.findByRole('table');
+    const newest = rowOf(table, listedRuns[0]!.id);
+    expect(within(newest).getByText('Sold')).toBeInTheDocument();
+    const reason = within(newest).getByText('Take profit');
+    const notBought = listedRuns.find((r) => r.status === 'NO_ENTRY')!;
+    expect(within(rowOf(table, notBought.id)).getByText('No dip')).toBeInTheDocument();
+    const held = listedRuns.find((r) => r.status === 'OPEN')!;
+    expect(within(rowOf(table, held.id)).getByText('Still open at the end')).toBeInTheDocument();
+    const decuSold = listedRuns.find((r) => r.outcomes?.[0]?.code === 'WALLET_SOLD')!;
+    expect(within(rowOf(table, decuSold.id)).getByText('Decu sold')).toBeInTheDocument();
+    await user.hover(reason);
+    expect(
+      await screen.findByText('Sold when the price reached the take-profit level.'),
+    ).toBeInTheDocument();
+  });
+
+  it("lists a multi-token run's reasons with their counts on hover", async () => {
+    const { user } = renderRuns('/runs?status=LOSS');
+    const table = await screen.findByRole('table');
+    await waitFor(() =>
+      expect(within(table).getByRole('link', { name: SAMPLE_LINK })).toBeInTheDocument(),
+    );
+    const row = rowOf(table, SAMPLE_RUN_ID);
+    expect(within(row).queryByText('Take profit')).not.toBeInTheDocument();
+    await user.hover(within(row).getByText('2 of 3 tokens bought'));
+    expect(await screen.findByText('1 sold · Stop loss')).toBeInTheDocument();
+    expect(screen.getByText('1 sold · Take profit')).toBeInTheDocument();
+    expect(screen.getByText('1 not bought · No dip')).toBeInTheDocument();
+  });
+});
+
+describe('RunsPage review fixes', () => {
+  afterEach(() => server.events.removeAllListeners());
+
+  const rowOf = (table: HTMLElement, runId: string) =>
+    within(table)
+      .getByRole('link', { name: shortId(runId) })
+      .closest('tr')!;
+
+  it('fades the previous total while the next tab loads', async () => {
+    server.use(
+      http.get('/api/runs', async ({ request }) => {
+        if (new URL(request.url).searchParams.get('status') === 'LOSS') await delay(400);
+        return undefined;
+      }),
+    );
+    const { user } = renderRuns();
+    const strip = await screen.findByRole('region', { name: 'Totals of matching runs' });
+    const wrapper = strip.parentElement!.parentElement!;
+    expect(wrapper).not.toHaveAttribute('data-stale');
+    await user.click(screen.getByRole('radio', { name: /^Loss/ }));
+    await waitFor(() => expect(wrapper).toHaveAttribute('data-stale', 'true'));
+    expect(wrapper).toHaveStyle({ opacity: '0.6' });
+    await waitFor(() =>
+      expect(
+        screen.getByRole('region', { name: 'Totals of matching runs' }).parentElement!
+          .parentElement!,
+      ).not.toHaveAttribute('data-stale'),
+    );
+  });
+
+  it("says each run's own page has trade-time USDT under the total, and the run's page under a row", async () => {
+    server.use(
+      http.get('/api/market/sol-usdt', () =>
+        HttpResponse.json({ ...RATE, unavailableReason: null }),
+      ),
+    );
+    const { user } = renderRuns();
+    const strip = await screen.findByRole('region', { name: 'Totals of matching runs' });
+    await user.hover(await within(strip).findByText(/^≈ .* USDT$/));
+    expect(
+      await screen.findByText("Each run's own page shows USDT at its trades' own rates."),
+    ).toBeInTheDocument();
+    await user.unhover(within(strip).getByText(/^≈ .* USDT$/));
+    const table = screen.getByRole('table');
+    await user.hover(within(rowOf(table, listedRuns[0]!.id)).getByText('≈ +1.69 USDT'));
+    expect(
+      await screen.findByText("The run's page shows USDT at each trade's own rate."),
+    ).toBeInTheDocument();
+  });
+
+  it('opens a tooltip from the keyboard: the Trade reason and the dash of a run that sold nothing', async () => {
+    renderRuns();
+    const table = await screen.findByRole('table');
+    const reason = within(rowOf(table, listedRuns[0]!.id)).getByText('Take profit');
+    expect(reason).toHaveAttribute('tabindex', '0');
+    act(() => reason.focus());
+    expect(
+      await screen.findByText('Sold when the price reached the take-profit level.'),
+    ).toBeInTheDocument();
+    const notBought = listedRuns.find((r) => r.status === 'NO_ENTRY')!;
+    const dash = within(rowOf(table, notBought.id)).getByLabelText(/^Realized P&L: none/);
+    expect(dash).toHaveAttribute('tabindex', '0');
+    act(() => dash.focus());
+    expect(await screen.findByText('Not bought, so nothing was realized')).toBeInTheDocument();
+  });
+
+  it('asks only for the count when it checks for new runs', async () => {
+    const counts: URL[] = [];
+    server.events.on('request:start', ({ request }) => {
+      const url = new URL(request.url);
+      if (url.pathname === '/api/runs' && url.searchParams.get('size') === '0') counts.push(url);
+    });
+    renderRuns();
+    await screen.findByRole('table');
+    await waitFor(() => expect(counts.length).toBeGreaterThan(0));
+    expect(counts.every((u) => !u.searchParams.has('asOf'))).toBe(true);
   });
 });

@@ -414,6 +414,11 @@ export const sampleRun: RunSummary = {
   mints: [BASE_MINT, STOP_LOSS_MINT, NO_DIP_MINT],
   anchorBlockTime: null,
   variations: [],
+  outcomes: [
+    { code: 'STOP_LOSS', stage: 'SOLD', count: 1 },
+    { code: 'TAKE_PROFIT', stage: 'SOLD', count: 1 },
+    { code: 'NO_DIP', stage: 'NOT_BOUGHT', count: 1 },
+  ],
 };
 
 /** Fields a backend from before server-side run search leaves out of a run summary (and `variations`, newer still). */
@@ -423,6 +428,7 @@ const PHASE1_RUN_FIELDS = [
   'mints',
   'anchorBlockTime',
   'variations',
+  'outcomes',
 ] as const;
 
 /** A run as an old backend sends it, without the Phase 1 fields: for tests of the console against it. */
@@ -512,6 +518,11 @@ export const edgeRun: RunSummary = {
   mints: [BASE_MINT],
   anchorBlockTime: null,
   variations: [],
+  outcomes: [
+    { code: 'HORIZON_REACHED', stage: 'HELD', count: 1 },
+    { code: 'DIP_BELOW_MIN_MARKET_CAP', stage: 'NOT_BOUGHT', count: 1 },
+    { code: 'MIGRATED_BEFORE_ENTRY', stage: 'NOT_BOUGHT', count: 1 },
+  ],
 };
 
 export const edgeRunDetail: RunDetail = {

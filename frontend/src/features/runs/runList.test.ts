@@ -12,8 +12,12 @@ import {
   sortRuns,
   toggleSort,
   toRunQuery,
+  outcomeLines,
+  reasonExplanation,
+  stageReason,
   tradeDetail,
   tradeLabel,
+  tradeReason,
 } from './runList';
 
 const run = (
@@ -210,5 +214,77 @@ describe('pnlDisplay', () => {
       kind: 'value',
       usdt: true,
     });
+  });
+});
+
+describe('exit reasons', () => {
+  it('names each reason in the variation table\'s words, without its trailing " · no entry"', () => {
+    expect(stageReason('TAKE_PROFIT')).toBe('Take profit');
+    expect(stageReason('WALLET_SOLD')).toBe('Decu sold');
+    expect(stageReason('HORIZON_REACHED')).toBe('Still open at the end');
+    expect(stageReason('NO_DIP')).toBe('No dip');
+    expect(stageReason('REFERENCE_BELOW_MIN_MARKET_CAP')).toBe('Under min market cap');
+  });
+
+  it("puts the reason of the chip's stage beside a one-token run, with its explanation", () => {
+    const sold = tradeReason({
+      scenarioCount: 1,
+      status: 'LOSS',
+      outcomes: [{ code: 'STOP_LOSS', stage: 'SOLD', count: 1 }],
+    });
+    expect(sold).toEqual({
+      code: 'STOP_LOSS',
+      text: 'Stop loss',
+      explanation: 'Sold when the price reached the stop-loss level.',
+    });
+    expect(
+      tradeReason({
+        scenarioCount: 1,
+        status: 'NO_ENTRY',
+        outcomes: [{ code: 'NO_DIP', stage: 'NOT_BOUGHT', count: 1 }],
+      })?.text,
+    ).toBe('No dip');
+    expect(
+      tradeReason({
+        scenarioCount: 1,
+        status: 'OPEN',
+        outcomes: [{ code: 'HORIZON_REACHED', stage: 'HELD', count: 1 }],
+      })?.text,
+    ).toBe('Still open at the end');
+  });
+
+  it('shows no reason when none is known, or for a run of several tokens', () => {
+    expect(tradeReason({ scenarioCount: 1, status: 'PROFIT', outcomes: [] })).toBeNull();
+    expect(tradeReason({ scenarioCount: 1, status: 'PROFIT' })).toBeNull();
+    expect(
+      tradeReason({
+        scenarioCount: 3,
+        status: 'LOSS',
+        outcomes: [{ code: 'STOP_LOSS', stage: 'SOLD', count: 1 }],
+      }),
+    ).toBeNull();
+  });
+
+  it("explains a sale as a sale, even where the sweep outcome's words mean something else", () => {
+    expect(reasonExplanation('WALLET_SOLD', 'SOLD')).toBe(
+      'Sold because Decu sold the token while the position was held.',
+    );
+    expect(reasonExplanation('WALLET_SOLD', 'NOT_BOUGHT')).toMatch(/before the dip/);
+    expect(reasonExplanation('NO_DIP', 'NOT_BOUGHT')).toMatch(/never fell far enough/);
+  });
+
+  it("lists a multi-token run's reasons with their counts", () => {
+    expect(
+      outcomeLines([
+        { code: 'TAKE_PROFIT', stage: 'SOLD', count: 2 },
+        { code: 'HORIZON_REACHED', stage: 'HELD', count: 1 },
+        { code: 'NO_DIP', stage: 'NOT_BOUGHT', count: 1 },
+      ]),
+    ).toEqual([
+      '2 sold · Take profit',
+      '1 still held · Still open at the end',
+      '1 not bought · No dip',
+    ]);
+    expect(outcomeLines(undefined)).toEqual([]);
   });
 });

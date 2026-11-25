@@ -40,6 +40,7 @@ import {
   type AutomationMode,
   type BuyBucket,
 } from './automationModel';
+import { reasonExplanation } from '../runs/runList';
 import { BackfillRefusal } from './BackfillShared';
 import { useVariationBook } from './useVariationBook';
 
@@ -288,14 +289,26 @@ export function ZoneTime({
 }
 
 /** A sweep run's outcome in words, with its explanation and the stored code in a tooltip. */
-export function OutcomeText({ outcome }: { outcome: string }) {
+export function OutcomeText({
+  outcome,
+  positionState,
+}: {
+  outcome: string;
+  /**
+   * The row's position. A CLOSED one was sold, so its outcome is a close reason and is explained as a sale:
+   * `WALLET_SOLD` is also a rejection reason, whose own text says Decu sold before the dip.
+   */
+  positionState?: string | null;
+}) {
+  const explanation =
+    positionState === 'CLOSED' ? reasonExplanation(outcome, 'SOLD') : outcomeExplanation(outcome);
   return (
     <Tooltip
       multiline
       w={320}
       label={
         <Stack gap={2}>
-          <Text size="xs">{outcomeExplanation(outcome) ?? outcomeLabel(outcome)}</Text>
+          <Text size="xs">{explanation ?? outcomeLabel(outcome)}</Text>
           <CodeText code={outcome} />
         </Stack>
       }

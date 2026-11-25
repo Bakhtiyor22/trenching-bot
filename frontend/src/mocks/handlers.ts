@@ -14,6 +14,7 @@ import type {
   RunSummary,
   SolanaCheck,
   SolanaStatus,
+  RunTotal,
 } from '../api/types';
 import { pairKey, SAMPLE_DATASET } from '../api/endpoints';
 import { RUN_STATUSES } from '../api/types';
@@ -21,7 +22,7 @@ import { arrivingRuns, listedRunDetail, listedRuns } from './runListFixtures';
 import { base58ByteLength } from '../lib/base58';
 import { SELL_CHECK_NEEDS_TRADES, SIGNAL_SIZE_NEEDS_TRADES } from '../lib/codes';
 import { recordsTrades, TRADES_SCHEMA_VERSION } from '../lib/datasetSchema';
-import { compareDecimals, decimalSign } from '../lib/decimal';
+import { addDecimals, compareDecimals, decimalSign } from '../lib/decimal';
 import { bpsToPercent } from '../lib/percent';
 import { createCaptureHandlers, resetCaptureMocks } from './captureHandlers';
 import { createAutomationHandlers, resetAutomationMocks } from './automationHandlers';
@@ -174,10 +175,24 @@ function tradesRefusal(schemaVersion: number, config: RunStartRequest['config'])
   return null;
 }
 
+/** A page of `items`; `size=0` gives no rows, only the total, as `GET /api/runs` answers a count-only request. */
 function pageOf<T>(items: T[], url: URL) {
   const page = Number(url.searchParams.get('page') ?? '0');
   const size = Math.min(Number(url.searchParams.get('size') ?? '20'), 100);
   return { items: items.slice(page * size, page * size + size), page, size, total: items.length };
+}
+
+/** `RunPageResponse.totals`: realized P&L summed per quote mint, ordered by mint; empty for no match. */
+function runTotals(runs: RunSummary[]): RunTotal[] {
+  const byMint = new Map<string, RunSummary[]>();
+  for (const run of runs) byMint.set(run.quoteMint, [...(byMint.get(run.quoteMint) ?? []), run]);
+  return [...byMint.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([quoteMint, group]) => ({
+      quoteMint,
+      runs: group.length,
+      realizedPnl: addDecimals('0.000000000000', ...group.map((r) => r.realizedPnl)),
+    }));
 }
 
 function runDetailOr404(id: string): MockRunRecords | null {
@@ -1115,7 +1130,12 @@ export function createHandlers(options: MockOptions = {}) {
         search.statuses.length > 0
           ? matching.filter((r) => search.statuses.includes(r.status))
           : matching;
-      return HttpResponse.json({ ...pageOf(shown, url), asOf: search.asOf, statusCounts });
+      return HttpResponse.json({
+        ...pageOf(shown, url),
+        asOf: search.asOf,
+        statusCounts,
+        totals: runTotals(shown),
+      });
     }),
 
     http.get('/api/runs/:id', async ({ params }) => {

@@ -434,7 +434,7 @@ function SelectedBuy({
                             <VariationLabel label={r.label} />
                           </Table.Th>
                           <Table.Td>
-                            <OutcomeText outcome={r.outcome} />
+                            <OutcomeText outcome={r.outcome} positionState={r.positionState} />
                           </Table.Td>
                           <Table.Td>
                             <Text size="sm" c={r.signal ? undefined : 'dimmed'}>

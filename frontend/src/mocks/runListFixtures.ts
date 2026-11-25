@@ -1,4 +1,4 @@
-import type { RunDetail, RunStatus, RunSummary } from '../api/types';
+import type { RunDetail, RunOutcome, RunOutcomeStage, RunStatus, RunSummary } from '../api/types';
 import { createAutomationDb, MOCK_LABELS, mockMintOf } from './automationFixtures';
 import { ENGINE_VERSION, SOL_MINT, sampleRunDetail } from './fixtures';
 
@@ -35,12 +35,27 @@ function hex(seed: number, length: number): string {
   return out.slice(0, length);
 }
 
+/** One reason per one-token run, as `GET /api/runs` sends `outcomes`. */
+const one = (code: string, stage: RunOutcomeStage): RunOutcome[] => [{ code, stage, count: 1 }];
+
 function counts(status: RunStatus, n: number): Partial<RunSummary> {
   switch (status) {
     case 'NO_ENTRY':
-      return { filledCount: 0, rejectedCount: 1, openCount: 0, closedCount: 0 };
+      return {
+        filledCount: 0,
+        rejectedCount: 1,
+        openCount: 0,
+        closedCount: 0,
+        outcomes: one(n % 2 === 0 ? 'NO_DIP' : 'REFERENCE_BELOW_MIN_MARKET_CAP', 'NOT_BOUGHT'),
+      };
     case 'OPEN':
-      return { filledCount: 1, rejectedCount: 0, openCount: 1, closedCount: 0 };
+      return {
+        filledCount: 1,
+        rejectedCount: 0,
+        openCount: 1,
+        closedCount: 0,
+        outcomes: one('HORIZON_REACHED', 'HELD'),
+      };
     case 'PROFIT':
       return {
         filledCount: 1,
@@ -48,9 +63,16 @@ function counts(status: RunStatus, n: number): Partial<RunSummary> {
         openCount: 0,
         closedCount: 1,
         realizedPnl: PROFIT_PNL[n % PROFIT_PNL.length]!,
+        outcomes: one(n % 2 === 0 ? 'TAKE_PROFIT' : 'WALLET_SOLD', 'SOLD'),
       };
     default:
-      return { filledCount: 1, rejectedCount: 0, openCount: 0, closedCount: 1 };
+      return {
+        filledCount: 1,
+        rejectedCount: 0,
+        openCount: 0,
+        closedCount: 1,
+        outcomes: one('TIME_EXIT', 'SOLD'),
+      };
   }
 }
 
@@ -95,6 +117,7 @@ function buildListedRuns(): RunSummary[] {
     openCount: 0,
     closedCount: 1,
     realizedPnl: '1.250000',
+    outcomes: one('TAKE_PROFIT', 'SOLD'),
     createdAt: '2026-09-30T08:00:00Z',
     storage: 'COPY',
     datasetName: 'Decu · USDC quote, by hand',

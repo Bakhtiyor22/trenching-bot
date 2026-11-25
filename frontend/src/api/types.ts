@@ -366,6 +366,27 @@ export interface RunSummary {
    * when none did (a run started by hand). Absent from an older backend, which reads as unknown.
    */
   variations?: string[];
+  /**
+   * What happened to the run's tokens, by reason and counted: SOLD with a close reason, HELD with why a position never
+   * exited, NOT_BOUGHT with the rejection reason. Ordered SOLD, HELD, NOT_BOUGHT, then by count, then by code. A token
+   * stored without a reason is left out, so the summary counts stay the authority. Absent from an older backend.
+   */
+  outcomes?: RunOutcome[];
+}
+
+export type RunOutcomeStage = 'SOLD' | 'HELD' | 'NOT_BOUGHT';
+
+export interface RunOutcome {
+  code: string;
+  stage: RunOutcomeStage;
+  count: number;
+}
+
+/** Realized P&L summed over every run the filters match (the status included), for one quote mint. */
+export interface RunTotal {
+  quoteMint: string;
+  runs: number;
+  realizedPnl: DecimalString;
 }
 
 export type RunStorage = 'COPY' | 'DATASET_REFERENCE';
@@ -382,6 +403,8 @@ export const RUN_STATUSES: readonly RunStatus[] = ['PROFIT', 'LOSS', 'FLAT', 'NO
 export interface RunPage extends Page<RunSummary> {
   asOf: IsoInstant;
   statusCounts: Record<RunStatus, number> | null;
+  /** One per quote mint, ordered by mint; empty when nothing matches. Absent from an older backend. */
+  totals?: RunTotal[];
 }
 
 /** Query of `GET /api/runs`. Every filter is optional and they combine with AND; ranges are half-open `[from, to)`. */

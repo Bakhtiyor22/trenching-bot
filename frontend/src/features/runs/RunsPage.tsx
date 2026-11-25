@@ -8,7 +8,6 @@ import {
   Pagination,
   Paper,
   ScrollArea,
-  SegmentedControl,
   Select,
   Stack,
   Table,
@@ -40,22 +39,16 @@ import {
   useRuns,
   useSolUsdtPrice,
 } from '../../api/queries';
-import { RUN_STATUSES, type RunStatus, type RunSummary, type SolUsdtPrice } from '../../api/types';
+import { type RunSummary, type RunTotal, type SolUsdtPrice } from '../../api/types';
 import { Pnl, ShortId, Timestamp, TokenLink } from '../../components/DisplayValues';
 import { IconCompare, IconPlay, IconSearch } from '../../components/Icons';
-import { PageHeader, Section } from '../../components/Panels';
+import { Kpi, KpiStrip, PageHeader, Section } from '../../components/Panels';
 import { RefreshNotice } from '../../components/QueryView';
 import { EmptyState, ErrorState, LoadingState } from '../../components/StateViews';
 import { StatusChip } from '../../components/StatusChip';
-import { RunVariations } from './RunVariations';
-import { codeLabel } from '../../lib/codes';
-import {
-  formatSignedDecimal,
-  multiplyDecimals,
-  trimFractionZeros,
-  truncateDecimal,
-} from '../../lib/decimal';
+import { UsdtNow } from '../../components/UsdtNow';
 import { formatCount, mintLabel, shortId, WRAPPED_SOL_MINT } from '../../lib/format';
+import { usdtHint } from '../../lib/usdt';
 import { MAX_COMPARED_RUNS, paths } from '../../paths';
 import {
   dayInfo,
@@ -72,24 +65,25 @@ import {
   hasFilters,
   LEGACY_OUTCOME_PARAM,
   mintProblem,
+  outcomeLines,
   parseSort,
-  parseStatus,
   pnlDisplay,
   queryProblem,
   readFilters,
   RUN_PARAMS,
   serializeSort,
   sortRuns,
-  STATUS_LABELS,
   toggleSort,
   toRunQuery,
   tradeDetail,
   tradeLabel,
+  tradeReason,
   type DayClock,
   type Sort,
   type SortKey,
-  type StatusFilter,
 } from './runList';
+import { RunVariations } from './RunVariations';
+import { StatusTabs } from './StatusTabs';
 
 const PAGE_SIZE = 20;
 /** Typing in a search box waits this long before asking the server. */
@@ -157,85 +151,135 @@ function RunTokens({ mints }: { mints: string[] }) {
   );
 }
 
-/** USDT values are shown to this many places; the exact product is in the tooltip. */
-const USDT_PLACES = 2;
-
-/** The rate's own time, "20:51:30", in the viewer's clock. */
-function rateTime(asOf: string | null): string | null {
-  return asOf ? new Date(asOf).toLocaleTimeString('en-GB') : null;
-}
-
-/** What happened to the run's position, and for a multi-token run how many were bought and are still held. */
+/** What happened to the run's position, the reason beside it for one token, and for several the counts and reasons. */
 function RunTrade({ run }: { run: RunSummary }) {
   const trade = tradeLabel(run);
   const detail = tradeDetail(run);
+  const reason = tradeReason(run);
+  const lines = detail ? outcomeLines(run.outcomes) : [];
   return (
     <Stack gap={2} align="flex-start">
       <StatusChip tone={trade.tone}>{trade.text}</StatusChip>
-      {detail && (
-        <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
-          {detail}
-        </Text>
+      {/* Under the chip, not beside it, so the column stays narrow enough for Realized P&L to fit at 1440 px. */}
+      {reason && (
+        <Tooltip
+          label={reason.explanation ?? reason.text}
+          withArrow
+          multiline
+          maw={320}
+          events={{ hover: true, focus: true, touch: true }}
+        >
+          <Text size="xs" maw={130} tabIndex={0}>
+            {reason.text}
+          </Text>
+        </Tooltip>
       )}
+      {detail &&
+        (lines.length > 0 ? (
+          <Tooltip
+            withArrow
+            multiline
+            maw={320}
+            events={{ hover: true, focus: true, touch: true }}
+            label={
+              <Stack gap={2}>
+                {lines.map((line) => (
+                  <Text key={line} size="xs">
+                    {line}
+                  </Text>
+                ))}
+              </Stack>
+            }
+          >
+            <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }} tabIndex={0}>
+              {detail}
+            </Text>
+          </Tooltip>
+        ) : (
+          <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
+            {detail}
+          </Text>
+        ))}
     </Stack>
   );
 }
 
 /**
- * Realized P&L with its unit, and for a wrapped-SOL run its value now at the live SOL/USDT rate: the exact product,
- * shown to 2 places toward zero, exact in the tooltip. Not a realized USDT P&L; the run's page has that, per trade.
+ * Realized P&L with its unit, and for a wrapped-SOL run its value now at the live SOL/USDT rate. Not a realized USDT
+ * P&L; the run's page has that, per trade.
  */
 function RunPnl({ run, price }: { run: RunSummary; price: SolUsdtPrice | undefined }) {
   const display = pnlDisplay(run);
   if (display.kind === 'none')
     return (
       <Tooltip label={display.reason} withArrow events={{ hover: true, focus: true, touch: true }}>
-        <Text span size="sm" c="dimmed" aria-label={`Realized P&L: none. ${display.reason}`}>
+        <Text
+          span
+          size="sm"
+          c="dimmed"
+          tabIndex={0}
+          aria-label={`Realized P&L: none. ${display.reason}`}
+        >
           —
         </Text>
       </Tooltip>
     );
-  const rate = display.usdt && run.quoteMint === WRAPPED_SOL_MINT ? price?.rate : null;
-  const product = rate ? multiplyDecimals(run.realizedPnl, rate) : null;
   return (
     <Stack gap={0} align="flex-end">
       <Pnl value={run.realizedPnl} trim unit={mintLabel(run.quoteMint)} />
-      {product && rate && (
-        <Tooltip
-          withArrow
-          multiline
-          maw={320}
-          events={{ hover: true, focus: true, touch: true }}
-          label={
-            <Stack gap={2}>
-              <Text size="xs" ff="monospace">
-                {formatSignedDecimal(trimFractionZeros(product))} USDT
-              </Text>
-              <Text size="xs">
-                1 SOL = {trimFractionZeros(rate)} USDT, Binance
-                {rateTime(price?.asOf ?? null) ? `, ${rateTime(price?.asOf ?? null)}` : ''}
-              </Text>
-              <Text size="xs">The run&apos;s page shows USDT at each trade&apos;s own rate.</Text>
-            </Stack>
-          }
-        >
-          <Text size="xs" ff="monospace" c="dimmed" style={{ whiteSpace: 'nowrap' }}>
-            ≈ {formatSignedDecimal(truncateDecimal(product, USDT_PLACES))} USDT
-          </Text>
-        </Tooltip>
+      {display.usdt && run.quoteMint === WRAPPED_SOL_MINT && (
+        <UsdtNow sol={run.realizedPnl} price={price} />
       )}
     </Stack>
   );
 }
 
-/** The rate the list's USDT line uses, said visibly, or why there is none; nothing while it loads. */
-function usdtHint(price: SolUsdtPrice | undefined): string | null {
-  if (!price) return null;
-  if (price.rate) {
-    const time = rateTime(price.asOf);
-    return `USDT at 1 SOL = ${trimFractionZeros(price.rate)} USDT (now${time ? `, ${time}` : ''})`;
-  }
-  return price.unavailableReason ? `USDT unavailable: ${codeLabel(price.unavailableReason)}` : null;
+/**
+ * The total realized P&L of every run the filters match, the status tab included: the wrapped-SOL total with its
+ * value now, and any other quote on its own line, never added to SOL. Nothing without `totals` (an older backend).
+ */
+function RunTotals({
+  totals,
+  total,
+  price,
+}: {
+  totals: RunTotal[];
+  total: number;
+  price: SolUsdtPrice | undefined;
+}) {
+  const sol = totals.find((t) => t.quoteMint === WRAPPED_SOL_MINT);
+  const others = totals.filter((t) => t.quoteMint !== WRAPPED_SOL_MINT);
+  return (
+    <Stack gap="xs" mb="sm">
+      <KpiStrip label="Totals of matching runs" min={180}>
+        <Kpi label="Runs matching">{formatCount(total)}</Kpi>
+        {/* A long exact total gets the whole row on a phone instead of being cut. */}
+        <Kpi
+          label="Total realized P&L"
+          hint="Realized only: still-held positions are not in it."
+          span="full"
+        >
+          {sol ? <Pnl value={sol.realizedPnl} trim unit="SOL" fz="inherit" /> : '—'}
+        </Kpi>
+        <Kpi label="≈ USDT now" hint="At the live rate stated above, not each trade's own.">
+          {sol && price?.rate ? (
+            <UsdtNow sol={sol.realizedPnl} price={price} scope="total" fz="inherit" c={undefined} />
+          ) : (
+            <Text span c="dimmed" inherit>
+              —
+            </Text>
+          )}
+        </Kpi>
+      </KpiStrip>
+      {others.map((t) => (
+        <Text key={t.quoteMint} size="sm" c="dimmed">
+          Also {formatCount(t.runs)} {t.runs === 1 ? 'run' : 'runs'} quoted in{' '}
+          {mintLabel(t.quoteMint)}: <Pnl value={t.realizedPnl} trim unit={mintLabel(t.quoteMint)} />{' '}
+          realized, not in the SOL total.
+        </Text>
+      ))}
+    </Stack>
+  );
 }
 
 /**
@@ -526,43 +570,6 @@ function datasetOptionLabel(name: string | null | undefined, id: string): string
   return `${name || '—'} · ${shortId(id)}`;
 }
 
-/** "Status" as a segmented control with each status's count from the server. */
-function StatusFilterControl({
-  value,
-  counts,
-  onChange,
-}: {
-  value: StatusFilter;
-  counts: Record<RunStatus, number> | undefined;
-  onChange: (value: StatusFilter) => void;
-}) {
-  const all = counts ? RUN_STATUSES.reduce((sum, s) => sum + counts[s], 0) : undefined;
-  const label = (text: string, count: number | undefined) => (
-    <Group gap={6} wrap="nowrap" justify="center">
-      <span>{text}</span>
-      {count !== undefined && ' '}
-      {count !== undefined && (
-        <Text span size="xs" ff="monospace" c="dimmed">
-          {formatCount(count)}
-        </Text>
-      )}
-    </Group>
-  );
-  return (
-    <ScrollArea type="never" maw="100%">
-      <SegmentedControl
-        aria-label="Status"
-        value={value}
-        onChange={(next) => onChange(parseStatus(next))}
-        data={[
-          { value: 'all', label: label('All', all) },
-          ...RUN_STATUSES.map((s) => ({ value: s, label: label(STATUS_LABELS[s], counts?.[s]) })),
-        ]}
-      />
-    </ScrollArea>
-  );
-}
-
 /** The backend answered without `statusCounts`: it predates server-side run search and ignored the new filters. */
 function FiltersUnsupportedNotice({ byDataset }: { byDataset: boolean }) {
   return (
@@ -842,7 +849,7 @@ export function RunsPage() {
             }}
             w={{ base: '100%', sm: 340 }}
           />
-          <StatusFilterControl
+          <StatusTabs
             value={filters.status}
             counts={data?.statusCounts ?? undefined}
             onChange={(next) => update({ set: { status: next === 'all' ? null : next } })}
@@ -926,6 +933,15 @@ export function RunsPage() {
             updatedAt={runs.dataUpdatedAt}
             onRetry={() => void runs.refetch()}
           />
+        )}
+        {data?.totals && data.items.length > 0 && (
+          // The previous filter's total stays in view while the new one loads, faded like the table.
+          <div
+            data-stale={runs.isPlaceholderData || undefined}
+            style={{ opacity: runs.isPlaceholderData ? 0.6 : 1, transition: 'opacity 120ms' }}
+          >
+            <RunTotals totals={data.totals} total={data.total} price={price} />
+          </div>
         )}
         {body}
       </Section>

@@ -8,7 +8,7 @@ import {
   postJsonCreated,
   withQuery,
 } from './client';
-import type { Config, DecimalString, IsoInstant, RunStartRequest } from './types';
+import type { Config, DecimalString, IsoInstant, RunStartRequest, RunStatus } from './types';
 
 /**
  * The automation API (`/api/automation`, backend `console.automation`). It exists only while automation and the console
@@ -196,6 +196,23 @@ export interface AutomationSweepRunRow extends AutomationSweepRun {
   mint: string;
   signature: string;
   blockTime: IsoInstant | null;
+}
+
+/** Sums over every row the filters match, `status` included; `rows` equals the page's `total`. Exact, scale 12. */
+export interface AutomationSweepRunTotals {
+  rows: number;
+  realizedPnl: DecimalString;
+  worstCasePnl: DecimalString;
+}
+
+/**
+ * A page of sweep runs. A row's status is the Runs list's: no position is NO_ENTRY, an open one OPEN, a closed one
+ * PROFIT, LOSS or FLAT by its realized P&L. `statusCounts` has all five under every filter but `status`. Both are absent
+ * from an older backend.
+ */
+export interface AutomationSweepRunPage extends AutomationPage<AutomationSweepRunRow> {
+  statusCounts?: Record<RunStatus, number>;
+  totals?: AutomationSweepRunTotals;
 }
 
 /**
@@ -414,6 +431,8 @@ export interface SweepRunQuery {
   planId?: string | null;
   label?: string | null;
   outcome?: string | null;
+  /** The status tab; combines with `outcome` by AND. */
+  status?: RunStatus | null;
   from?: IsoInstant | null;
   to?: IsoInstant | null;
   page: number;
@@ -489,10 +508,7 @@ export const automationApi = {
       signal,
     ),
   sweepRuns: (query: SweepRunQuery, signal?: AbortSignal) =>
-    getJson<AutomationPage<AutomationSweepRunRow>>(
-      withQuery(`${BASE}/sweep-runs`, { ...query }),
-      signal,
-    ),
+    getJson<AutomationSweepRunPage>(withQuery(`${BASE}/sweep-runs`, { ...query }), signal),
   backfills: (page: number, size: number, signal?: AbortSignal) =>
     getJson<AutomationPage<AutomationBackfill>>(
       withQuery(`${BASE}/backfills`, { page, size }),

@@ -2,7 +2,13 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { automationKeys, type BackfillCreateRequest } from '../../api/automation';
-import { createAutomationDb, dayRows, discoveryOnly } from '../../mocks/automationFixtures';
+import {
+  addDecimal,
+  createAutomationDb,
+  dayRows,
+  discoveryOnly,
+} from '../../mocks/automationFixtures';
+import { formatSignedDecimal } from '../../lib/decimal';
 import { resetAutomationMocks } from '../../mocks/automationHandlers';
 import { server } from '../../mocks/server';
 import { renderPage } from '../../test/render';
@@ -13,6 +19,7 @@ import { ItemRedirect, NightRedirect } from './AutomationRedirects';
 import { AutomationSweepRunsPage } from './AutomationSweepRunsPage';
 import { BackfillDetailPage } from './BackfillDetailPage';
 import { BackfillsPage } from './BackfillsPage';
+import { OutcomeText } from './AutomationShared';
 import { VariationDetailPage } from './VariationDetailPage';
 import { VariationsPage } from './VariationsPage';
 
@@ -1005,5 +1012,132 @@ describe('sweep run filters', () => {
     expect(await screen.findByText('The end day is before the start day.')).toBeInTheDocument();
     expect(screen.getByText('Check the days')).toBeInTheDocument();
     expect(seen).toHaveLength(0);
+  });
+});
+
+describe('variation runs status tabs and totals', () => {
+  afterEach(() => server.events.removeAllListeners());
+
+  function renderVariation(url = '/automation/variations/V00') {
+    return renderPage(<VariationDetailPage />, { path: '/automation/variations/:label', url });
+  }
+
+  it("shows the Runs list's status tabs with counts on a variation's runs", async () => {
+    renderVariation();
+    await screen.findByRole('table', { name: 'Sweep runs' });
+    const tabs = screen.getByRole('radiogroup', { name: 'Status' });
+    const v00 = db.sweepRuns.filter((r) => r.label === 'V00');
+    const losses = v00.filter((r) => r.positionState === 'CLOSED' && r.realizedPnl.startsWith('-'));
+    await waitFor(() =>
+      expect(within(tabs).getByRole('radio', { name: `All ${v00.length}` })).toBeChecked(),
+    );
+    expect(within(tabs).getByRole('radio', { name: `Loss ${losses.length}` })).toBeInTheDocument();
+    for (const name of [/^Profit \d+/, /^Flat \d+/, /^Not bought \d+/, /^Still held \d+/])
+      expect(within(tabs).getByRole('radio', { name })).toBeInTheDocument();
+  });
+
+  it('keeps the tab in the URL, sends it, and totals the matching rows', async () => {
+    const seen: URL[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.url.includes('/api/automation/sweep-runs')) seen.push(new URL(request.url));
+    });
+    const { user, router } = renderVariation('/automation/variations/V00?page=2');
+    await screen.findByRole('table', { name: 'Sweep runs' });
+    await user.click(await screen.findByRole('radio', { name: /^Loss/ }));
+    await waitFor(() => expect(router.state.location.search).toContain('status=LOSS'));
+    expect(router.state.location.search).not.toContain('page=');
+    await waitFor(() => expect(seen.at(-1)?.searchParams.get('status')).toBe('LOSS'));
+    const losses = db.sweepRuns.filter(
+      (r) => r.label === 'V00' && r.positionState === 'CLOSED' && r.realizedPnl.startsWith('-'),
+    );
+    const realized = losses.reduce((sum, r) => addDecimal(sum, r.realizedPnl), '0.000000000000');
+    const totals = await screen.findByRole('status', { name: 'Totals of matching rows' });
+    await waitFor(() => expect(totals).toHaveTextContent(`${losses.length} rows · realized`));
+    expect(totals).toHaveTextContent(formatSignedDecimal(realized, { trim: true }));
+    expect(totals).toHaveTextContent('· worst case');
+    const table = screen.getByRole('table', { name: 'Sweep runs' });
+    for (const row of within(table).getAllByRole('row').slice(1))
+      expect(within(row).getByText('Stop loss')).toBeInTheDocument();
+  });
+
+  it('combines the tab with the outcome, and names both when nothing matches', async () => {
+    renderVariation('/automation/variations/V00?status=LOSS&outcome=TAKE_PROFIT');
+    expect(await screen.findByText('No sweep runs match')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Filters in effect: Loss · outcome Take profit. Clear one, or widen the days.',
+      ),
+    ).toBeInTheDocument();
+    // The counts ignore the tab, so the other tabs still say what is there.
+    expect(screen.getByRole('radio', { name: /^Profit [1-9]/ })).toBeInTheDocument();
+  });
+
+  it('shows a dash, not zero, where a row has no position, with its reason', async () => {
+    const { user } = renderVariation('/automation/variations/V00?status=NO_ENTRY');
+    const table = await screen.findByRole('table', { name: 'Sweep runs' });
+    await waitFor(() =>
+      expect(
+        within(table).getAllByLabelText('No position: No dip · no entry').length,
+      ).toBeGreaterThan(0),
+    );
+    const row = within(table).getAllByRole('row')[1]!;
+    expect(within(row).queryByText('0.0000')).not.toBeInTheDocument();
+    await user.hover(within(row).getAllByLabelText(/^No position/)[0]!);
+    expect(await screen.findAllByText(/dip/i)).not.toHaveLength(0);
+  });
+
+  it('keeps the worst case of a row still held', async () => {
+    renderVariation('/automation/variations/V04?status=OPEN');
+    const table = await screen.findByRole('table', { name: 'Sweep runs' });
+    await waitFor(() => expect(within(table).getAllByText('−0.1012').length).toBeGreaterThan(0));
+  });
+});
+
+describe('review fixes on the variation runs table', () => {
+  afterEach(() => server.events.removeAllListeners());
+
+  it("explains Decu's sell of a closed row as a sale, and of a row never bought as before the dip", async () => {
+    const sold = renderPage(<OutcomeText outcome="WALLET_SOLD" positionState="CLOSED" />);
+    await sold.user.hover(screen.getByText('Decu sold'));
+    expect(
+      await screen.findByText('Sold because Decu sold the token while the position was held.'),
+    ).toBeInTheDocument();
+    sold.unmount();
+
+    const notBought = renderPage(<OutcomeText outcome="WALLET_SOLD" positionState={null} />);
+    await notBought.user.hover(screen.getByText('Decu sold'));
+    expect(await screen.findByText(/before the dip/)).toBeInTheDocument();
+    expect(
+      screen.queryByText('Sold because Decu sold the token while the position was held.'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('gives the rate time of the totals on the automation clock, and points to each run for trade-time USDT', async () => {
+    const { user } = renderPage(<VariationDetailPage />, {
+      path: '/automation/variations/:label',
+      url: '/automation/variations/V00?status=LOSS',
+    });
+    const totals = await screen.findByRole('status', { name: 'Totals of matching rows' });
+    const usdt = await within(totals).findByText(/USDT now$/);
+    await user.hover(usdt);
+    // The mock rate is from 12:00 UTC: 17:00:00 on the UTC+5 automation clock.
+    expect(
+      await screen.findByText('1 SOL = 212.34 USDT, Binance, 17:00:00 UTC+5'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Each run's own page shows USDT at its trades' own rates."),
+    ).toBeInTheDocument();
+  });
+
+  it('opens the reason of a row with no position from the keyboard', async () => {
+    renderPage(<VariationDetailPage />, {
+      path: '/automation/variations/:label',
+      url: '/automation/variations/V00?status=NO_ENTRY',
+    });
+    const table = await screen.findByRole('table', { name: 'Sweep runs' });
+    const dash = (await within(table).findAllByLabelText(/^No position/))[0]!;
+    expect(dash).toHaveAttribute('tabindex', '0');
+    act(() => dash.focus());
+    expect(await screen.findByText(/never fell far enough/)).toBeInTheDocument();
   });
 });

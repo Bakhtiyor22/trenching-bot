@@ -215,7 +215,8 @@ export function useRuns(query: RunQuery, { enabled = true }: { enabled?: boolean
  * runs created since. Polled only while the tab is visible.
  */
 export function useLiveRunTotal(query: RunQuery, enabled: boolean) {
-  const live: RunQuery = { ...query, page: 0, size: 1, asOf: null };
+  // size 0 is count only on GET /api/runs: no rows, just `total` (and the counts and totals).
+  const live: RunQuery = { ...query, page: 0, size: 0, asOf: null };
   return useQuery({
     queryKey: queryKeys.runs(live),
     queryFn: ({ signal }) => api.runs(live, signal),

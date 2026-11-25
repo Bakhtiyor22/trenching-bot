@@ -4,6 +4,7 @@ import type {
   AutomationDayRetryResult,
   AutomationItem,
   AutomationSessionDetail,
+  AutomationSweepRun,
   AutomationVariation,
   BackfillCreateRequest,
   EvaluationStatus,
@@ -11,11 +12,12 @@ import type {
   VariationConfigRequest,
   VariationEditRequest,
 } from '../api/automation';
-import type { Config } from '../api/types';
+import { RUN_STATUSES, type Config, type RunStatus } from '../api/types';
 import { isSolanaAddress } from '../lib/base58';
-import { compareDecimals, isDecimalString } from '../lib/decimal';
+import { compareDecimals, decimalSign, isDecimalString } from '../lib/decimal';
 import { bpsToPercent } from '../lib/percent';
 import {
+  addDecimal,
   compareEvaluations,
   createAutomationDb,
   dayDetail,
@@ -305,6 +307,14 @@ function page<T>(rows: T[], url: URL) {
     size,
     total: rows.length,
   };
+}
+
+/** A sweep row's status, as the Runs list's: no position, open, or closed by the sign of its realized P&L. */
+function sweepStatus(row: Pick<AutomationSweepRun, 'positionState' | 'realizedPnl'>): RunStatus {
+  if (row.positionState == null) return 'NO_ENTRY';
+  if (row.positionState === 'OPEN') return 'OPEN';
+  const sign = decimalSign(row.realizedPnl);
+  return sign > 0 ? 'PROFIT' : sign < 0 ? 'LOSS' : 'FLAT';
 }
 
 function inRange(iso: string | null, url: URL): boolean {
@@ -599,7 +609,13 @@ export function createAutomationHandlers(
       const planId = url.searchParams.get('planId');
       const label = url.searchParams.get('label');
       const outcome = url.searchParams.get('outcome');
-      const rows = data.sweepRuns
+      const statuses = url.searchParams.getAll('status');
+      const unknown = statuses.find((s) => !(RUN_STATUSES as readonly string[]).includes(s));
+      if (unknown)
+        return error(400, 'INVALID_REQUEST', 'Request parameter has an invalid value', {
+          status: `must be one of ${RUN_STATUSES.join(', ')}`,
+        });
+      const matching = data.sweepRuns
         .map((run) => {
           const item = items.get(run.itemId)!;
           return { ...run, mint: item.mint, signature: item.signature, blockTime: item.blockTime };
@@ -618,7 +634,18 @@ export function createAutomationHandlers(
             Date.parse(b.blockTime ?? '') - Date.parse(a.blockTime ?? '') ||
             a.label.localeCompare(b.label),
         );
-      return HttpResponse.json(page(rows, url));
+      // Every status under every filter but `status`; the page and its totals follow `status` too.
+      const statusCounts = Object.fromEntries(
+        RUN_STATUSES.map((s) => [s, matching.filter((r) => sweepStatus(r) === s).length]),
+      );
+      const rows =
+        statuses.length > 0 ? matching.filter((r) => statuses.includes(sweepStatus(r))) : matching;
+      const totals = {
+        rows: rows.length,
+        realizedPnl: rows.reduce((sum, r) => addDecimal(sum, r.realizedPnl), '0.000000000000'),
+        worstCasePnl: rows.reduce((sum, r) => addDecimal(sum, r.worstCasePnl), '0.000000000000'),
+      };
+      return HttpResponse.json({ ...page(rows, url), statusCounts, totals });
     }),
     http.get('/api/automation/variations', async ({ request }) => {
       await wait();
