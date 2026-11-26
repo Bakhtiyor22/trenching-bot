@@ -312,6 +312,13 @@ export function createSetupHandlers(wait: () => Promise<void>) {
         responseBytes: empty ? 0 : 2_500_000,
         cacheHits: empty ? 0 : 23,
       };
+      const quiet = {
+        requests: 0,
+        failedRequests: 0,
+        rateLimitedResponses: 0,
+        responseBytes: 0,
+        cacheHits: 0,
+      };
       return HttpResponse.json<UsageReport>({
         from: from.toISOString(),
         to: to.toISOString(),
@@ -325,8 +332,8 @@ export function createSetupHandlers(wait: () => Promise<void>) {
                 provider: 'SOLANA_RPC',
                 operation: 'getTransaction',
                 purpose: 'READ_TRANSACTION',
-                totals: { ...totals, requests: 112, responseBytes: 2_488_000 },
-                sharePercent: '87.5',
+                totals: { ...totals, requests: 101, responseBytes: 2_488_000 },
+                sharePercent: '78.9',
                 lastCallAt: to.toISOString(),
               },
               {
@@ -343,27 +350,47 @@ export function createSetupHandlers(wait: () => Promise<void>) {
                 sharePercent: '12.5',
                 lastCallAt: to.toISOString(),
               },
+              {
+                provider: 'TELEGRAM',
+                operation: 'sendMessage',
+                purpose: 'SEND_NOTIFICATION',
+                totals: { ...quiet, requests: 3, responseBytes: 900 },
+                sharePercent: '2.3',
+                lastCallAt: new Date(to.getTime() - 9 * 60_000).toISOString(),
+              },
+              {
+                provider: 'HELIUS_ADMIN',
+                operation: 'projectUsage',
+                purpose: 'CREDIT_BALANCE',
+                totals: { ...quiet, requests: 8, responseBytes: 4_100 },
+                sharePercent: '6.3',
+                lastCallAt: new Date(to.getTime() - 4 * 60_000).toISOString(),
+              },
             ],
         byTask: empty
           ? []
           : [
               { task: 'RATES_STEP', totals: { ...totals, requests: 16 } },
-              { task: 'MARKET_STEP', totals: { ...totals, requests: 112 } },
+              { task: 'MARKET_STEP', totals: { ...totals, requests: 101 } },
+              { task: 'NOTIFICATION', totals: { ...quiet, requests: 3 } },
+              { task: 'ACCOUNT_BALANCE', totals: { ...quiet, requests: 8 } },
             ],
         series: empty
           ? []
-          : Array.from({ length: 12 }, (_, index) => [
-              {
-                bucketStart: new Date(from.getTime() + index * 300_000).toISOString(),
-                provider: 'SOLANA_RPC' as const,
-                requests: index + 1,
-              },
-              {
-                bucketStart: new Date(from.getTime() + index * 300_000).toISOString(),
-                provider: 'BINANCE' as const,
-                requests: (index % 3) + 1,
-              },
-            ]).flat(),
+          : Array.from({ length: 12 }, (_, index) => {
+              const bucketStart = new Date(from.getTime() + index * 300_000).toISOString();
+              return [
+                { bucketStart, provider: 'SOLANA_RPC' as const, requests: index + 1 },
+                { bucketStart, provider: 'BINANCE' as const, requests: (index % 3) + 1 },
+                // A balance read of both accounts every 15 minutes, and a message now and then.
+                ...(index % 3 === 0
+                  ? [{ bucketStart, provider: 'HELIUS_ADMIN' as const, requests: 2 }]
+                  : []),
+                ...(index % 5 === 4
+                  ? [{ bucketStart, provider: 'TELEGRAM' as const, requests: 1 }]
+                  : []),
+              ];
+            }).flat(),
         pacing: [
           { provider: 'SOLANA_RPC', minRequestIntervalMillis: 125, maxConcurrentRequests: 4 },
         ],

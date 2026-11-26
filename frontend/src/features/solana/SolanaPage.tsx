@@ -23,6 +23,7 @@ import { ProviderErrorState } from '../../components/StateViews';
 import { StatusChip } from '../../components/StatusChip';
 import { isSolanaAddress } from '../../lib/base58';
 import { formatCount, formatSlot } from '../../lib/format';
+import { RpcAccountsSection } from './RpcAccountsSection';
 import {
   clusterLabel,
   isKnownOutcome,
@@ -261,74 +262,77 @@ export function SolanaPage() {
     <>
       <PageHeader
         title="Solana"
-        description="Read-only connectivity checks. Nothing here signs or sends a transaction; checks run only when you click."
+        description="The RPC accounts and their credits, and read-only connectivity checks. Nothing here signs or sends a transaction; checks run only when you click."
       />
-      <QueryView
-        query={status}
-        loadingLabel="Loading Solana status…"
-        errorTitle="Could not load the Solana status"
-      >
-        {(data) => {
-          const latest = check.data ?? data.lastCheck ?? null;
-          return (
-            <SimpleGrid cols={{ base: 1, lg: 2 }}>
-              <Section
-                title="RPC status"
-                actions={
-                  <Button
-                    onClick={() => check.mutate()}
-                    loading={check.isPending}
-                    variant={data.configured ? 'filled' : 'default'}
-                  >
-                    Run connectivity check
-                  </Button>
-                }
-              >
-                <Stack gap="md">
-                  <KeyValueTable
-                    rows={[
-                      [
-                        'Configured',
-                        data.configured ? (
-                          <StatusChip key="c" tone="success" glyph="✓">
-                            Yes
-                          </StatusChip>
-                        ) : (
-                          <StatusChip key="c" tone="neutral" glyph="–">
-                            Not configured
-                          </StatusChip>
-                        ),
-                      ],
-                      ['Host', data.host ?? '—'],
-                      ['Cluster', <Cluster key="cl" cluster={data.cluster} />],
-                      [
-                        'Last check',
-                        data.lastCheck ? (
-                          <Timestamp key="lc" iso={data.lastCheck.checkedAt} />
-                        ) : (
-                          'Never'
-                        ),
-                      ],
-                    ]}
-                  />
-                  {!data.configured && <NotConfiguredHelp />}
-                  {check.isError && (
-                    <ProviderErrorState error={check.error} onRetry={() => check.mutate()} />
-                  )}
-                  {latest && <CheckResult check={latest} />}
-                  <Text size="xs" c="dimmed">
-                    Calls getHealth, getVersion, getSlot and getGenesisHash. Results are cached for
-                    30 s and concurrent clicks share one request.
-                  </Text>
-                </Stack>
-              </Section>
-              <Section title="Address check">
-                <AddressCheckForm configured={data.configured} />
-              </Section>
-            </SimpleGrid>
-          );
-        }}
-      </QueryView>
+      <Stack gap="lg">
+        <RpcAccountsSection />
+        <QueryView
+          query={status}
+          loadingLabel="Loading Solana status…"
+          errorTitle="Could not load the Solana status"
+        >
+          {(data) => {
+            const latest = check.data ?? data.lastCheck ?? null;
+            return (
+              <SimpleGrid cols={{ base: 1, lg: 2 }}>
+                <Section
+                  title="RPC status"
+                  actions={
+                    <Button
+                      onClick={() => check.mutate()}
+                      loading={check.isPending}
+                      variant={data.configured ? 'filled' : 'default'}
+                    >
+                      Run connectivity check
+                    </Button>
+                  }
+                >
+                  <Stack gap="md">
+                    <KeyValueTable
+                      rows={[
+                        [
+                          'Configured',
+                          data.configured ? (
+                            <StatusChip key="c" tone="success" glyph="✓">
+                              Yes
+                            </StatusChip>
+                          ) : (
+                            <StatusChip key="c" tone="neutral" glyph="–">
+                              Not configured
+                            </StatusChip>
+                          ),
+                        ],
+                        ['Host', data.host ?? '—'],
+                        ['Cluster', <Cluster key="cl" cluster={data.cluster} />],
+                        [
+                          'Last check',
+                          data.lastCheck ? (
+                            <Timestamp key="lc" iso={data.lastCheck.checkedAt} />
+                          ) : (
+                            'Never'
+                          ),
+                        ],
+                      ]}
+                    />
+                    {!data.configured && <NotConfiguredHelp />}
+                    {check.isError && (
+                      <ProviderErrorState error={check.error} onRetry={() => check.mutate()} />
+                    )}
+                    {latest && <CheckResult check={latest} />}
+                    <Text size="xs" c="dimmed">
+                      Calls getHealth, getVersion, getSlot and getGenesisHash. Results are cached
+                      for 30 s and concurrent clicks share one request.
+                    </Text>
+                  </Stack>
+                </Section>
+                <Section title="Address check">
+                  <AddressCheckForm configured={data.configured} />
+                </Section>
+              </SimpleGrid>
+            );
+          }}
+        </QueryView>
+      </Stack>
     </>
   );
 }

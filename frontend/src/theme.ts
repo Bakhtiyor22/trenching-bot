@@ -127,6 +127,12 @@ export interface TerminalTokens {
   violet: string;
   /** Compare's run identities A, B, C (dataviz reference slots 1–3, validated all-pairs). */
   series: readonly [string, string, string];
+  /**
+   * A neutral fourth series beside {@link series}, for a minor category that needs no hue of its own (API usage:
+   * the provider's admin calls). Validated all-pairs against the three slots on the panel (dataviz palette script):
+   * CVD and normal-vision separation pass in both schemes; it reads grey by design.
+   */
+  seriesNeutral: string;
 }
 
 /** Dark scheme tokens, the console's default. */
@@ -149,6 +155,7 @@ export const terminal = {
   neutral: '#6B7885',
   violet: '#C792EA',
   series: ['#3987E5', '#D95926', '#199E70'],
+  seriesNeutral: '#5A6672',
 } as const satisfies TerminalTokens;
 
 /** Light scheme tokens: the same roles, stepped for a white panel (text colours at least 4.5:1). */
@@ -171,6 +178,7 @@ export const terminalLight = {
   neutral: '#8A96A3',
   violet: '#8E5BC9',
   series: ['#2A78D6', '#EB6834', '#1BAF7A'],
+  seriesNeutral: '#5B6773',
 } as const satisfies TerminalTokens;
 
 export function tokensFor(scheme: 'light' | 'dark'): TerminalTokens {

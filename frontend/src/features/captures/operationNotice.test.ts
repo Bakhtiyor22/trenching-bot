@@ -30,6 +30,17 @@ describe('operationNotice', () => {
     });
   });
 
+  it('explains an operation that failed because the last RPC account ran out of credits', () => {
+    const notice = operationNotice({
+      state: 'FAILED',
+      code: 'CREDITS_EXHAUSTED',
+      message: 'category=CREDITS_EXHAUSTED',
+    });
+    expect(notice?.detail).toMatch(/ran out of credits during this run/);
+    expect(notice?.detail).not.toContain('category=');
+    expect(notice?.color).toBe('red');
+  });
+
   it('shows the backend message for a code this version has no words for', () => {
     expect(
       operationNotice({ state: 'FAILED', code: 'SOMETHING_NEW', message: 'Provider said no.' })

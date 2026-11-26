@@ -30,6 +30,22 @@ export function formatLocalTime(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : localDateTime.format(date);
 }
 
+const utcDay = new Intl.DateTimeFormat('en-GB', {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  timeZone: 'UTC',
+});
+
+/** A calendar date `YYYY-MM-DD` as "30 Nov 2026", read as the date it names in every time zone; other text is returned as is. */
+export function formatDay(day: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!match) return day;
+  const date = new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  // `Date.UTC` rolls 31 Feb over into March: a date that does not exist is shown as it was sent.
+  return date.toISOString().slice(0, 10) === day ? utcDay.format(date) : day;
+}
+
 export function formatRelative(iso: string, now: Date | number): string {
   const time = Date.parse(iso);
   if (Number.isNaN(time)) return iso;

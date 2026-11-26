@@ -1,9 +1,9 @@
 import type { EChartsOption } from 'echarts';
 import type { UsagePeriod, UsageProvider, UsageReport } from '../../api/setup';
-import { providerLabels } from '../../lib/codes';
+import { providerLabel } from '../../lib/codes';
 import { formatCount } from '../../lib/format';
 import type { TerminalTokens } from '../../theme';
-import { aggregateUsage } from './usageData';
+import { aggregateUsage, orderedProviders, PROVIDER_ORDER } from './usageData';
 
 const FIVE_MINUTES = 300;
 const HOUR = 3600;
@@ -11,12 +11,14 @@ const DAY = 86_400;
 /** Above this many hourly bars ("All recorded" over a long stretch) the chart switches to days. */
 const MAX_HOURLY_BUCKETS = 24 * 31;
 
-/** The chart's providers in a fixed order, so a provider keeps its colour across periods. */
-const PROVIDER_ORDER: UsageProvider[] = ['SOLANA_RPC', 'BINANCE', 'TELEGRAM'];
-
-/** Each provider's colour: the validated three-series slots (blue, orange, aqua) of the scheme in use. */
+/**
+ * Each provider's colour, by its fixed place in {@link PROVIDER_ORDER} so it never changes with the period: the
+ * validated three-series slots (blue, orange, aqua) for the first three. No fourth hue stays apart from all three
+ * (the palette's all-pairs limit), so the provider's own admin API, a few balance reads an hour, and any provider
+ * this console does not know yet take the neutral series step instead.
+ */
 export function providerColor(provider: UsageProvider, tokens: TerminalTokens): string {
-  return tokens.series[PROVIDER_ORDER.indexOf(provider)] ?? tokens.neutral;
+  return tokens.series[PROVIDER_ORDER.indexOf(provider)] ?? tokens.seriesNeutral;
 }
 
 /** Where the chart's time axis starts: the period start, or for "All recorded" when recording began. */
@@ -85,6 +87,13 @@ function requestsText(value: unknown): string {
   return typeof value === 'number' ? `${formatCount(value)} requests` : 'not recorded';
 }
 
+/** The plot's top margin: room for one legend row and the axis name above the plot. */
+const GRID_TOP = 45;
+/** The height of one more legend row. */
+const LEGEND_ROW = 22;
+/** At phone width the legend holds this many providers in one row; one more wraps it onto the axis name. */
+const ONE_ROW_LEGEND_PROVIDERS = 3;
+
 /**
  * The stacked "requests per bucket" bar chart. Every bucket of the period is on the axis: a quiet
  * bucket is 0 (no bar, a visible gap) and a bucket wholly before recording started is null.
@@ -100,9 +109,7 @@ export function buildUsageChartOption(
   const counts = new Map(
     points.map((point) => [`${point.bucketStart}/${point.provider}`, point.requests]),
   );
-  const providers = PROVIDER_ORDER.filter((provider) =>
-    points.some((point) => point.provider === provider),
-  );
+  const providers = orderedProviders(points.map((point) => point.provider));
   const recordingStart = report.recordingStartedAt ? Date.parse(report.recordingStartedAt) : null;
   const beforeRecording = (bucket: string) =>
     recordingStart != null && Date.parse(bucket) + seconds * 1000 <= recordingStart;
@@ -111,14 +118,19 @@ export function buildUsageChartOption(
     animation: false,
     tooltip: { trigger: 'axis', valueFormatter: requestsText },
     legend: { top: 0 },
-    grid: { left: 50, right: 20, top: 45, bottom: 40 },
+    grid: {
+      left: 50,
+      right: 20,
+      top: providers.length > ONE_ROW_LEGEND_PROVIDERS ? GRID_TOP + LEGEND_ROW : GRID_TOP,
+      bottom: 40,
+    },
     xAxis: {
       type: 'category',
       data: buckets.map((bucket) => bucketLabel(bucket, period, seconds)),
     },
     yAxis: { type: 'value', minInterval: 1, name: 'Requests' },
     series: providers.map((provider) => ({
-      name: providerLabels[provider],
+      name: providerLabel(provider),
       type: 'bar',
       stack: 'requests',
       itemStyle: { color: providerColor(provider, tokens) },

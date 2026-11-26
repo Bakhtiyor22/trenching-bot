@@ -55,6 +55,7 @@ export const providerLabels: Record<UsageProvider, string> = {
   SOLANA_RPC: 'Solana RPC',
   BINANCE: 'Binance',
   TELEGRAM: 'Telegram',
+  HELIUS_ADMIN: 'Helius admin API',
 };
 export const actionLabels: Record<NextActionKind, string> = {
   START_WALLET: 'Start wallet step',
@@ -74,14 +75,20 @@ export const purposeLabels: Record<UsagePurpose, string> = {
   READ_TRANSACTION:
     'Download one full transaction: wallet buys, market trades and first-buy checks.',
   LIST_SIGNATURES: "List a wallet's or token's transactions, up to 1,000 per page.",
-  MAINNET_CHECK: 'Confirm the provider is on Solana mainnet before a capture step.',
+  MAINNET_CHECK:
+    'Confirm the provider is on Solana mainnet: before a capture step, and once for the backup account before it is used.',
   MINT_PROGRAM_CHECK: 'Check which token program owns a token, for decoding.',
-  CONNECTION_CHECK: 'Connection checks from the Solana page.',
+  CONNECTION_CHECK:
+    'Connection checks from the Solana page, and the hourly check of an account that is out of credits when its balance cannot be read.',
   SLOT_PACE:
     "Measure the chain's recent slot time, to time the retry of a market window that has not ended yet.",
   MINUTE_RATES: 'SOL/USDT price for every minute of a dataset (rates step).',
   LIVE_RATE: 'Live SOL/USDT price in the top bar and the USDT view of runs.',
   BLOCK_TIME: "Read the block time where a market window's recording ends, to prove a time exit.",
+  SEND_NOTIFICATION:
+    'Send one Telegram message: a simulated buy, a scored day, or a change of the RPC account in use.',
+  CREDIT_BALANCE:
+    "Read one RPC account's credits from the provider, for the balances on the Solana page.",
   UNKNOWN: 'Another call to this provider.',
 };
 export const taskLabels: Record<UsageTask, string> = {
@@ -92,8 +99,21 @@ export const taskLabels: Record<UsageTask, string> = {
   WALLET_ACTIVITY: 'Recent wallet activity',
   CONNECTION_CHECK: 'Connection check',
   LIVE_PRICE: 'Current SOL price',
+  NOTIFICATION: 'Telegram messages',
+  ACCOUNT_BALANCE: 'RPC account balances',
   UNATTRIBUTED: 'Other activity',
 };
+
+/**
+ * The words for a usage code from one of the label tables above. A backend newer than this console can report a
+ * code the table lacks; it then reads as its own name in words ("Helius admin") instead of a blank cell.
+ */
+function usageLabel(labels: Record<string, string>, code: string): string {
+  return labels[code] ?? humanizeCode(code);
+}
+export const providerLabel = (provider: string) => usageLabel(providerLabels, provider);
+export const purposeLabel = (purpose: string) => usageLabel(purposeLabels, purpose);
+export const taskLabel = (task: string) => usageLabel(taskLabels, task);
 export const presetStatusLabels: Record<PresetFieldStatus, string> = {
   AGREED: 'Agreed',
   AGREED_MEASURED_DIFFERENTLY: 'Agreed, measured differently',
@@ -137,6 +157,8 @@ export const MARKET_COVERAGE_ENDED = 'MARKET_COVERAGE_ENDED';
 export const SELL_CHECK_NEEDS_TRADES = 'SELL_CHECK_NEEDS_TRADES';
 /** Run start refusal (409): a minimum signal size is set, but the dataset's observations do not record who traded. */
 export const SIGNAL_SIZE_NEEDS_TRADES = 'SIGNAL_SIZE_NEEDS_TRADES';
+/** Capture start refusal (409): a wallet or market step asked to start while no RPC account has credits. */
+export const RPC_CREDITS_EXHAUSTED = 'RPC_CREDITS_EXHAUSTED';
 /** Dataset delete refusal (409): runs read the dataset from the catalog instead of a copy. */
 export const DATASET_IN_USE = 'DATASET_IN_USE';
 

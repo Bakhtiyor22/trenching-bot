@@ -25,7 +25,7 @@ describe('API usage page', () => {
     expect(screen.getByText('transactions, no request sent')).toBeInTheDocument();
     const table = screen.getByRole('table');
     // One row per call, with the provider in the sticky first column (no provider group rows).
-    expect(within(table).getAllByRole('row')).toHaveLength(3);
+    expect(within(table).getAllByRole('row')).toHaveLength(5);
     expect(within(table).getByRole('columnheader', { name: 'API' })).toHaveClass('console-sticky');
     expect(within(table).getByRole('columnheader', { name: 'Requests' })).toHaveStyle({
       textAlign: 'right',
@@ -110,6 +110,82 @@ describe('API usage page', () => {
     expect(screen.getAllByText(/Nothing has been recorded yet/).length).toBeGreaterThan(0);
     await user.click(screen.getByRole('button', { name: 'Show last 24 hours' }));
     expect(router.state.location.search).toContain('period=LAST_24_HOURS');
+  });
+
+  it('labels Telegram messages, balance reads and the admin API in plain words', async () => {
+    renderPage(<ApiUsagePage />, { path: '/usage', url: '/usage' });
+    const table = await screen.findByRole('table');
+    const row = (operation: string) => within(table).getByText(operation).closest('tr')!;
+    expect(within(row('sendMessage')).getByText('Telegram')).toBeInTheDocument();
+    expect(
+      within(row('sendMessage')).getByText(
+        'Send one Telegram message: a simulated buy, a scored day, or a change of the RPC account in use.',
+      ),
+    ).toBeInTheDocument();
+    expect(within(row('projectUsage')).getByText('Helius admin API')).toBeInTheDocument();
+    expect(
+      within(row('projectUsage')).getByText(
+        "Read one RPC account's credits from the provider, for the balances on the Solana page.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Telegram messages')).toBeInTheDocument();
+    expect(screen.getByText('RPC account balances')).toBeInTheDocument();
+    expect(
+      screen.getByRole('meter', { name: 'RPC account balances: requests of all tasks' }),
+    ).toHaveAttribute('aria-valuenow', '8');
+    expect(
+      screen.getByText('messages to your chat; the bot token is never shown'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/read for each account's credits; the key is never shown/),
+    ).toBeInTheDocument();
+    // Telegram has data now, so the "not used yet" line is gone.
+    expect(screen.queryByText('Telegram: not used yet.')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Solana page' })).toHaveAttribute('href', '/solana');
+  });
+
+  it('never leaves a label blank for a code this console does not know yet', async () => {
+    const at = new Date().toISOString();
+    const totals = {
+      requests: 4,
+      failedRequests: 0,
+      rateLimitedResponses: 0,
+      responseBytes: 40,
+      cacheHits: 0,
+    };
+    server.use(
+      http.get('/api/usage', () =>
+        HttpResponse.json({
+          from: at,
+          to: at,
+          bucketSeconds: 300,
+          recordingStartedAt: at,
+          totals,
+          byCall: [
+            {
+              provider: 'NEW_PROVIDER',
+              operation: 'newCall',
+              purpose: 'NEW_PURPOSE',
+              totals,
+              sharePercent: '100',
+              lastCallAt: at,
+            },
+          ],
+          byTask: [{ task: 'NEW_TASK', totals }],
+          series: [],
+          pacing: [
+            { provider: 'NEW_PROVIDER', minRequestIntervalMillis: 500, maxConcurrentRequests: 1 },
+          ],
+        }),
+      ),
+    );
+    renderPage(<ApiUsagePage />, { path: '/usage', url: '/usage' });
+    const table = await screen.findByRole('table');
+    const cells = within(within(table).getByText('newCall').closest('tr')!).getAllByRole('cell');
+    expect(cells[0]).toHaveTextContent('New provider');
+    expect(cells[2]).toHaveTextContent('New purpose');
+    expect(screen.getByText('New task')).toBeInTheDocument();
+    expect(screen.getByText(/New provider pace set in this backend/)).toBeInTheDocument();
   });
 
   it('labels block time reads', async () => {

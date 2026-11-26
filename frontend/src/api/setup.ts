@@ -23,7 +23,8 @@ export interface RunPreset {
   }>;
   unsupportedRules: Array<{ specRef: string; code: string }>;
 }
-export type UsageProvider = 'SOLANA_RPC' | 'BINANCE' | 'TELEGRAM';
+/** `HELIUS_ADMIN` is the RPC provider's admin API, read for each account's credits. */
+export type UsageProvider = 'SOLANA_RPC' | 'BINANCE' | 'TELEGRAM' | 'HELIUS_ADMIN';
 export type UsagePurpose =
   | 'READ_TRANSACTION'
   | 'LIST_SIGNATURES'
@@ -34,6 +35,8 @@ export type UsagePurpose =
   | 'MINUTE_RATES'
   | 'LIVE_RATE'
   | 'BLOCK_TIME'
+  | 'SEND_NOTIFICATION'
+  | 'CREDIT_BALANCE'
   | 'UNKNOWN';
 export type UsageTask =
   | 'WALLET_STEP'
@@ -43,6 +46,8 @@ export type UsageTask =
   | 'WALLET_ACTIVITY'
   | 'CONNECTION_CHECK'
   | 'LIVE_PRICE'
+  | 'NOTIFICATION'
+  | 'ACCOUNT_BALANCE'
   | 'UNATTRIBUTED';
 export type UsagePeriod = 'LAST_HOUR' | 'LAST_24_HOURS' | 'LAST_7_DAYS' | 'ALL';
 export interface UsageTotals {

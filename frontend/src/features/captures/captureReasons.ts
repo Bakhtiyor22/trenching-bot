@@ -116,6 +116,11 @@ const REASONS: Record<string, string> = {
   RATE_LIMITED: 'The provider asked us to slow down. Evidence so far is kept; it is safe to retry.',
   UNAVAILABLE: 'The provider was unavailable. Evidence so far is kept; it is safe to retry.',
   HTTP_ERROR: 'The provider returned an error. Evidence so far is kept; it is safe to retry.',
+  // RPC credits: an operation that was running when the last account ran out, and a start refused while none has credits.
+  CREDITS_EXHAUSTED:
+    'The RPC account ran out of credits during this run and no other account could take over. Evidence so far is kept; retry once an account has credits again. The Solana page shows each account’s credits.',
+  RPC_CREDITS_EXHAUSTED:
+    'Every RPC account has used up its credits, so a wallet or market step cannot start. Nothing was spent or lost; start it once an account has credits again. The Solana page shows each account’s credits.',
   MARKET_DETAILS_PENDING: 'Some transactions in this token’s market window are not downloaded yet.',
   // Saved-file checks (offline validation of capture folders).
   MANIFEST_VERSION:

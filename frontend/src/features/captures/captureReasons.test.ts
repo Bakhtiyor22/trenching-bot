@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { reasonText } from './captureReasons';
+import { codeLabel } from '../../lib/codes';
+import { knownReasonText, reasonText } from './captureReasons';
 
 describe('Wallet + token reason labels', () => {
   it.each([
@@ -27,5 +28,24 @@ describe('Wallet + token reason labels', () => {
     ['UNSUPPORTED_SCOPE', 'Qualification is only available for wallet + token sessions.'],
   ])('explains %s', (code, label) => {
     expect(reasonText(code)).toBe(label);
+  });
+});
+
+describe('RPC credit reason labels', () => {
+  it('explains an operation that failed because the last account ran out of credits', () => {
+    const text = knownReasonText('CREDITS_EXHAUSTED');
+    expect(text).toMatch(/ran out of credits during this run/);
+    expect(text).toMatch(/Evidence so far is kept; retry once an account has credits again/);
+  });
+
+  it('explains a start refused while no account has credits', () => {
+    const text = knownReasonText('RPC_CREDITS_EXHAUSTED');
+    expect(text).toMatch(/Every RPC account has used up its credits/);
+    expect(text).toMatch(/Nothing was spent or lost/);
+  });
+
+  it('gives both codes their words through the shared code label', () => {
+    expect(codeLabel('CREDITS_EXHAUSTED')).toBe(knownReasonText('CREDITS_EXHAUSTED'));
+    expect(codeLabel('RPC_CREDITS_EXHAUSTED')).toBe(knownReasonText('RPC_CREDITS_EXHAUSTED'));
   });
 });

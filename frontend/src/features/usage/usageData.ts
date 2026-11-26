@@ -1,11 +1,29 @@
 import type { UsagePoint, UsageProvider, UsageReport } from '../../api/setup';
 import { capturesApi } from '../../api/captures';
 
+/** The providers in the order every usage view lists them, so a provider keeps its place and its colour. */
+export const PROVIDER_ORDER: UsageProvider[] = [
+  'SOLANA_RPC',
+  'BINANCE',
+  'TELEGRAM',
+  'HELIUS_ADMIN',
+];
+
+/**
+ * `present` in {@link PROVIDER_ORDER}; a provider this console does not know yet goes after them, by name, so its
+ * requests are listed and not dropped.
+ */
+export function orderedProviders(present: Iterable<UsageProvider>): UsageProvider[] {
+  const all = new Set(present);
+  const unknown = [...all].filter((provider) => !PROVIDER_ORDER.includes(provider)).sort();
+  return [...PROVIDER_ORDER.filter((provider) => all.has(provider)), ...unknown];
+}
+
 export function groupUsageCalls(calls: UsageReport['byCall']) {
-  const providers: UsageProvider[] = ['SOLANA_RPC', 'BINANCE', 'TELEGRAM'];
-  return providers
-    .map((provider) => ({ provider, calls: calls.filter((call) => call.provider === provider) }))
-    .filter((group) => group.calls.length > 0);
+  return orderedProviders(calls.map((call) => call.provider)).map((provider) => ({
+    provider,
+    calls: calls.filter((call) => call.provider === provider),
+  }));
 }
 
 export function sortUsageTasks(tasks: UsageReport['byTask']) {
