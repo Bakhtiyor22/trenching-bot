@@ -24,6 +24,7 @@ import {
   mockVariation,
 } from './automationFixtures';
 import { resetAutomationMocks } from './automationHandlers';
+import { RPC_ACCOUNT_SCENARIOS, rpcAccountsFixture } from './rpcAccountFixtures';
 import { variationConfigRequest } from '../features/automation/automationModel';
 import { formValuesFrom } from '../features/runs/runForm';
 
@@ -629,6 +630,50 @@ describe('mock POST /api/solana/address-check', () => {
       fields: {},
     });
   });
+});
+
+describe('mock GET /api/solana/accounts', () => {
+  const FIELDS = [
+    'balanceCheckedAt',
+    'balanceProblem',
+    'configured',
+    'creditsLimit',
+    'creditsRemaining',
+    'creditsUsed',
+    'cycleEndsOn',
+    'host',
+    'name',
+    'outOfCreditsSince',
+    'plan',
+    'state',
+  ];
+
+  it('answers both accounts as not configured without an RPC, with no account active', async () => {
+    const answer = await api.solanaAccounts();
+    expect(answer.active).toBeNull();
+    expect(answer.accounts.map((a) => [a.name, a.configured, a.state])).toEqual([
+      ['primary', false, 'NOT_CONFIGURED'],
+      ['backup', false, 'NOT_CONFIGURED'],
+    ]);
+  });
+
+  it.each(RPC_ACCOUNT_SCENARIOS)(
+    'keeps the contract of RpcAccountsResponse in the %s state',
+    (scenario) => {
+      const answer = rpcAccountsFixture(scenario);
+      // Exactly the DTO's fields: never a URL, a key or a project id.
+      for (const account of answer.accounts) expect(Object.keys(account).sort()).toEqual(FIELDS);
+      expect(JSON.stringify(answer)).not.toMatch(/https?:|api-key/i);
+      // `active` names the one account whose state is ACTIVE, or is null when there is none.
+      const active = answer.accounts.filter((a) => a.state === 'ACTIVE').map((a) => a.name);
+      expect(active).toEqual(answer.active ? [answer.active] : []);
+      for (const account of answer.accounts) {
+        expect(account.configured).toBe(account.state !== 'NOT_CONFIGURED');
+        // An account that is out of credits says since when; no other state does.
+        expect(account.outOfCreditsSince != null).toBe(account.state === 'OUT_OF_CREDITS');
+      }
+    },
+  );
 });
 
 describe('mock variation endpoints', () => {

@@ -25,7 +25,7 @@ import org.springframework.transaction.annotation.Transactional
 /**
  * The pipeline's reads and writes, one short transaction each, so no transaction is ever held across a capture call. A write
  * applies only to the progress the tick read: an item changed meanwhile, for example abandoned by a manual close, is left as
- * it is and the capture result is ignored.
+ * it is and the capture result is ignored. A buy that becomes `SIMULATED` has its result message published in the same transaction.
  */
 @Service
 @ConditionalOnAutomationConsole
@@ -34,6 +34,7 @@ class AutomationPipelineTransaction(
     private val backfills: AutomationBackfillRepository,
     private val mapper: AutomationRecordMapper,
     private val events: AutomationItemEventWriter,
+    private val buyNotifier: AutomationBuyNotifier,
 ) {
     private val log = LoggerFactory.getLogger(AutomationPipelineTransaction::class.java)
 
@@ -80,6 +81,7 @@ class AutomationPipelineTransaction(
         requestsUsed?.let { item.requestsUsed = it }
         item.updatedAt = now
         events.append(itemId, now, AutomationItemChange(before, AutomationItemEvents.changed(current, next, trace, operationRequests)))
+        if (next.state == AutomationItemState.SIMULATED) buyNotifier.publishResult(item)
         return true
     }
 

@@ -104,3 +104,10 @@ The dev-only `?mockState=chart-unrecorded-pair` answers every chart as the
 backend answers a pair the run or dataset has no observations of: no candles
 and a null time range. It shows the chart's empty state, which the pages
 cannot reach otherwise because they only offer recorded pairs.
+
+The dev-only `?mockState=rpc-<state>` previews put the RPC accounts on the
+Solana page (`GET /api/solana/accounts`) in one state: `healthy` (the default),
+`low-balance`, `backup-active`, `all-out`, `backup-unverified`, `no-backup`,
+`balance-problem`, `wrong-network` or `unconfigured`; `rpc-accounts-error`
+fails the read. With `rpc-all-out` the Automation pages show the hold notice.
+The states are in `src/mocks/rpcAccountFixtures.ts`.

@@ -51,6 +51,7 @@ export const queryKeys = {
   dashboard: ['dashboard'] as const,
   actuatorHealth: ['actuator', 'health'] as const,
   solanaStatus: ['solana', 'status'] as const,
+  solanaAccounts: ['solana', 'accounts'] as const,
 };
 
 /** Retries transient failures only; a 4xx means the request itself is wrong. */
@@ -345,6 +346,20 @@ export function useSolanaStatus() {
   return useQuery({
     queryKey: queryKeys.solanaStatus,
     queryFn: ({ signal }) => api.solanaStatus(signal),
+    refetchInterval: SOLANA_STATUS_POLL_MS,
+    refetchIntervalInBackground: false,
+    staleTime: 0,
+  });
+}
+
+/**
+ * The RPC accounts and the one in use, read from the backend's memory: it never calls a provider. Polled at the
+ * Solana page's cadence while the tab is visible, so a switch of the active account shows without a reload.
+ */
+export function useSolanaAccounts() {
+  return useQuery({
+    queryKey: queryKeys.solanaAccounts,
+    queryFn: ({ signal }) => api.solanaAccounts(signal),
     refetchInterval: SOLANA_STATUS_POLL_MS,
     refetchIntervalInBackground: false,
     staleTime: 0,

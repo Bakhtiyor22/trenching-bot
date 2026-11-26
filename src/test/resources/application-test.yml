@@ -19,3 +19,16 @@ management:
 logging:
   level:
     com.trenching.bot: INFO
+
+# The settings read from the environment in every profile are blank here, so a test never reaches Telegram or Helius whatever the
+# machine exports. A test that needs one sets it itself.
+trenching:
+  notification:
+    telegram:
+      bot-token: ""
+      chat-id: ""
+  solana:
+    backup-rpc-url: ""
+    usage:
+      primary-project-id: ""
+      backup-project-id: ""

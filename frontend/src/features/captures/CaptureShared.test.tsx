@@ -42,3 +42,37 @@ describe('Qualification command errors', () => {
     expect(screen.queryByText('unrecognized reason')).not.toBeInTheDocument();
   });
 });
+
+describe('Capture start refused for RPC credits', () => {
+  it('keeps the backend message and points to the accounts on the Solana page', () => {
+    renderPage(
+      <CommandError
+        error={
+          new ApiError(
+            409,
+            'RPC_CREDITS_EXHAUSTED',
+            'Every RPC account has used up its credits; start the operation once one has credits again',
+          )
+        }
+        uncertain={false}
+        retry={() => {}}
+      />,
+    );
+    expect(screen.getByText(/Every RPC account has used up its credits/)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing was spent or lost/)).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: "see each account's credits on the Solana page" }),
+    ).toHaveAttribute('href', '/solana');
+  });
+
+  it('adds no such link to another refusal', () => {
+    renderPage(
+      <CommandError
+        error={new ApiError(409, 'CAPTURE_BUSY', 'Another capture is running')}
+        uncertain={false}
+        retry={() => {}}
+      />,
+    );
+    expect(screen.queryByRole('link')).not.toBeInTheDocument();
+  });
+});

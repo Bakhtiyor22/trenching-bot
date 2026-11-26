@@ -1,8 +1,7 @@
 # Integration Patterns
 
 Outbound dependencies: Solana RPC / streaming providers, market-data vendors, the Telegram Bot API,
-and scheduled work. None of them is implemented yet beyond the README's Telegram description; these
-are the rules the first implementations must follow.
+and scheduled work. These are the rules every adapter follows.
 
 Provider choice (RPC vendor, streaming vs WebSocket, market-data source) is an open decision —
 check `docs/adr/` and `docs/WEEKLY_EXECUTION_PLAN.md` §5 before building a live adapter, and do not
@@ -59,18 +58,21 @@ library without asking.
 
 ## Telegram Bot API
 
-The `telegram` module (described in the README) long-polls `getUpdates`, records chats in
-`telegram_chats` with `allowed = false` by default, and broadcasts alerts only to chats with
-`allowed = true`.
+Send-only, to one configured chat (`docs/adr/20261122-outbox-notifications-over-telegram.md`). The bot never calls
+`getUpdates`; there is no chat registry. The adapter is `notification.infrastructure.telegram.TelegramNotificationChannel`;
+the top-level `telegram` module stays unbuilt until an inbound bot is wanted.
 
-- Token from `TELEGRAM_BOT_TOKEN`; with no token the listener does not start and sending is a
-  `WARN` + skip.
-- The token is part of the Bot API URL — **never log the request URL**.
-- Never promote a chat to `allowed` in code; that stays an explicit operator action until an admin
-  flow is agreed.
-- Update handlers are thin adapters; chat registration and alert fan-out live in services.
-- One failed chat does not stop delivery to the others; each failure is logged with the chat id.
-- Tests use a fake HTTP server or a fake `AlertSender`, never the real API.
+- `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` from the environment. Both unset: notifications are off (the publisher is a
+  no-op, nothing is stored or sent, one startup `INFO` says so). One without the other fails startup naming the property.
+- Callers never call Telegram. They publish through `NotificationPublisher`, which writes a `notification_outbox` row in
+  their own transaction; the dispatcher sends later, outside any transaction, and stores the result in a short one.
+- The token is part of the Bot API URL — **never log or store the URL, the token, or an exception message** (transport
+  errors quote the URL). Log a category and the exception class only; `last_error` holds a category.
+- A channel answers with a sealed `DeliveryResult` (`Delivered`, `RetryLater`, `Rejected`), never an exception: 429 and 5xx
+  and no answer retry (a 429 waits its `retry_after`), 400, 401 and 403 are final.
+- Messages are HTML: escape the text, cut at 4,096 characters on a line boundary. Count every request as a `TELEGRAM` call.
+- Tests use a JDK `HttpServer` fake or an in-memory `NotificationChannel`, never the real API; a real test message needs the
+  user's approval.
 
 ## Scheduled work
 

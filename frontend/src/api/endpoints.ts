@@ -12,6 +12,7 @@ import type {
   Observation,
   Page,
   Pair,
+  RpcAccounts,
   RunDetail,
   RunEvent,
   RunOrder,
@@ -133,6 +134,8 @@ export const api = {
 
   solanaStatus: (signal?: AbortSignal) =>
     getJson<SolanaStatus>(`${API_BASE}/solana/status`, signal),
+  solanaAccounts: (signal?: AbortSignal) =>
+    getJson<RpcAccounts>(`${API_BASE}/solana/accounts`, signal),
   solanaCheck: () => postJson<SolanaCheck>(`${API_BASE}/solana/check`),
   addressCheck: (address: string) =>
     postJson<AddressCheck>(`${API_BASE}/solana/address-check`, { address }),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { aggregateUsage, groupUsageCalls, sortUsageTasks } from './usageData';
+import { aggregateUsage, groupUsageCalls, orderedProviders, sortUsageTasks } from './usageData';
 
 describe('usage units', () => {
   it('groups five minute points by hour and provider without merging providers', () => {
@@ -43,5 +43,33 @@ describe('usage units', () => {
         { task: 'MARKET_STEP', totals: { ...totals, requests: 10 } },
       ]).map((task) => task.task),
     ).toEqual(['MARKET_STEP', 'WALLET_STEP']);
+  });
+  it('lists every provider in a fixed order, a provider it does not know last instead of dropping it', () => {
+    const totals = {
+      requests: 1,
+      failedRequests: 0,
+      rateLimitedResponses: 0,
+      responseBytes: 0,
+      cacheHits: 0,
+    };
+    const call = {
+      operation: 'test',
+      purpose: 'UNKNOWN' as const,
+      totals,
+      sharePercent: '20',
+      lastCallAt: null,
+    };
+    expect(
+      groupUsageCalls([
+        { ...call, provider: 'NEW_PROVIDER' as never },
+        { ...call, provider: 'HELIUS_ADMIN' },
+        { ...call, provider: 'TELEGRAM' },
+        { ...call, provider: 'SOLANA_RPC' },
+      ]).map((group) => group.provider),
+    ).toEqual(['SOLANA_RPC', 'TELEGRAM', 'HELIUS_ADMIN', 'NEW_PROVIDER']);
+    expect(orderedProviders(['HELIUS_ADMIN', 'BINANCE', 'BINANCE'])).toEqual([
+      'BINANCE',
+      'HELIUS_ADMIN',
+    ]);
   });
 });

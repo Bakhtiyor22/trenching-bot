@@ -1,4 +1,5 @@
-import { Alert, Button, Group, NumberInput, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Alert, Anchor, Button, Group, NumberInput, SimpleGrid, Stack, Text } from '@mantine/core';
+import { Link } from 'react-router';
 import { ApiError } from '../../api/client';
 import type {
   CaptureBudget,
@@ -9,7 +10,8 @@ import type {
 import { CodeText } from '../../components/PlainLanguage';
 import { ErrorState } from '../../components/StateViews';
 import { StatusChip } from '../../components/StatusChip';
-import { statusGlyphs, statusLabels, statusTones } from '../../lib/codes';
+import { RPC_CREDITS_EXHAUSTED, statusGlyphs, statusLabels, statusTones } from '../../lib/codes';
+import { paths } from '../../paths';
 import { stageStateChip } from './captureLabels';
 import { reasonText } from './captureReasons';
 import { operationNotice } from './operationNotice';
@@ -55,6 +57,15 @@ export function CommandError({
       {guidance && error instanceof ApiError && guidance !== error.message && (
         <Text size="sm" c="red">
           {guidance}
+        </Text>
+      )}
+      {error instanceof ApiError && error.code === RPC_CREDITS_EXHAUSTED && (
+        <Text size="sm">
+          Nothing was spent or lost. Capture can start again once an account has credits:{' '}
+          <Anchor component={Link} to={paths.solana} inherit>
+            see each account&apos;s credits on the Solana page
+          </Anchor>
+          .
         </Text>
       )}
       {error instanceof ApiError && Object.keys(error.fields).length > 0 && (

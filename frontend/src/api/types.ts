@@ -744,6 +744,54 @@ export interface SolanaStatus {
   lastCheck: SolanaCheck | null;
 }
 
+/** The bot's two RPC accounts, in the order they are preferred. */
+export type RpcAccountName = 'primary' | 'backup';
+
+/**
+ * How an account stands: `ACTIVE` takes the requests, `STANDBY` has credits and waits behind the active one,
+ * `WRONG_NETWORK` answers for a network other than mainnet and is never used.
+ */
+export type RpcAccountState =
+  'ACTIVE' | 'STANDBY' | 'OUT_OF_CREDITS' | 'NOT_CONFIGURED' | 'WRONG_NETWORK';
+
+/** Why an account's balance could not be read. */
+export type RpcBalanceProblem =
+  | 'NO_PROJECT_ID'
+  | 'NO_API_KEY'
+  | 'INVALID_PROJECT'
+  | 'AUTHENTICATION'
+  | 'ADMIN_API_DISABLED'
+  | 'RATE_LIMITED'
+  | 'UNAVAILABLE'
+  | 'MALFORMED';
+
+/**
+ * One RPC account. Credits are whole credits from the last balance read that worked; a failed read keeps them and
+ * sets `balanceProblem`. `balanceCheckedAt` is the time of the last read, failed or not. `cycleEndsOn` is a UTC date.
+ */
+export interface RpcAccount {
+  name: RpcAccountName;
+  configured: boolean;
+  state: RpcAccountState;
+  /** Host only; the RPC URL, its key and the project id are secrets and never returned. */
+  host: string | null;
+  creditsRemaining: number | null;
+  creditsUsed: number | null;
+  creditsLimit: number | null;
+  /** `YYYY-MM-DD`. */
+  cycleEndsOn: string | null;
+  plan: string | null;
+  balanceCheckedAt: IsoInstant | null;
+  balanceProblem: RpcBalanceProblem | null;
+  outOfCreditsSince: IsoInstant | null;
+}
+
+/** `GET /api/solana/accounts`. `active` is null while no account can take requests, which holds capture. */
+export interface RpcAccounts {
+  active: RpcAccountName | null;
+  accounts: RpcAccount[];
+}
+
 export type AddressCheckOutcome =
   | 'CHECKED'
   | 'NO_SUCCESSFUL_TRANSACTION'

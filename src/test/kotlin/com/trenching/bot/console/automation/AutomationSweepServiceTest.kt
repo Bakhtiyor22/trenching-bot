@@ -98,6 +98,21 @@ class AutomationSweepServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `a swept live buy publishes one result built from its stored rows, and sweeping again publishes nothing more`() {
+        captured(1, register("take-profit", takeProfit()))
+
+        service().sweep()
+        service().sweep()
+
+        val published = notifications.recording.notifications.single()
+        assertEquals("BUY_RESULT|item-1", published.key)
+        val agreed = assertNotNull(rows(1).single { it.label == "V00" }.runId)
+        assertEquals("/automation/days/2026-11-02?item=item-1", published.links.first().path)
+        assertTrue(published.links.any { it.label == "V00" && it.path == "/runs/$agreed" })
+        assertTrue(published.lines.first().startsWith("V00 profit +"), published.lines.toString())
+    }
+
+    @Test
     fun `each row carries its cycle's outcome, signal and P&L`() {
         captured(1, register("take-profit", takeProfit()))
 

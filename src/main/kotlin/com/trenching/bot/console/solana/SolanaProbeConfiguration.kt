@@ -1,28 +1,24 @@
 package com.trenching.bot.console.solana
 
 import com.trenching.bot.apiusage.ApiUsageRecorder
+import com.trenching.bot.chaincapture.RpcEndpointSource
 import com.trenching.bot.console.config.SolanaRpcProperties
-import java.net.http.HttpClient
 import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
-import org.springframework.http.client.JdkClientHttpRequestFactory
-import org.springframework.web.client.RestClient
 import tools.jackson.databind.ObjectMapper
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(SolanaRpcProperties::class)
 class SolanaProbeConfiguration {
+    /** Checks whichever RPC account [endpoints] names as active; [SolanaProbe.host] falls back to the primary's host while no account has credits. */
     @Bean
-    fun solanaProbe(properties: SolanaRpcProperties, objectMapper: ObjectMapper, recorder: ApiUsageRecorder): SolanaProbe =
-        JsonRpcSolanaProbe(SolanaRpcEndpoint.from(properties.rpcUrl), restClient(properties), objectMapper, recorder)
-
-    private fun restClient(properties: SolanaRpcProperties): RestClient {
-        val httpClient = HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(properties.connectTimeout)
-            .build()
-        val requestFactory = JdkClientHttpRequestFactory(httpClient).apply { setReadTimeout(properties.readTimeout) }
-        return RestClient.builder().requestFactory(requestFactory).build()
-    }
+    fun solanaProbe(properties: SolanaRpcProperties, objectMapper: ObjectMapper, recorder: ApiUsageRecorder, endpoints: RpcEndpointSource): SolanaProbe =
+        JsonRpcSolanaProbe(
+            SolanaRestClients.create(properties.connectTimeout, properties.readTimeout),
+            objectMapper,
+            endpoints,
+            recorder,
+            SolanaRpcEndpoint.from(properties.rpcUrl)?.host,
+        )
 }

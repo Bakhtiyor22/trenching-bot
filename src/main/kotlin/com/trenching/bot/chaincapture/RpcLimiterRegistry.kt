@@ -13,8 +13,11 @@ class RpcLimiterRegistry(val timing: CaptureTiming = SystemCaptureTiming) {
     private val entries = ConcurrentHashMap<String, Entry>()
 
     /** The limiter for [settings]' endpoint; the settings of the first caller fix its pacing and later differences are logged. */
-    fun limiterFor(settings: SolanaRpcSettings): ProviderRequestLimiter {
-        val entry = entries.computeIfAbsent(Sha256.hex(settings.endpoint.orEmpty().trim().trimEnd('/').toByteArray())) {
+    fun limiterFor(settings: SolanaRpcSettings): ProviderRequestLimiter = limiterFor(settings.endpoint, settings)
+
+    /** The limiter for [endpoint], paced by [settings]: each account of one provider paces on its own. */
+    fun limiterFor(endpoint: String?, settings: SolanaRpcSettings): ProviderRequestLimiter {
+        val entry = entries.computeIfAbsent(Sha256.hex(endpoint.orEmpty().trim().trimEnd('/').toByteArray())) {
             Entry(settings.maxConcurrentRequests, settings.minRequestInterval, ProviderRequestLimiter.of(settings, timing))
         }
         if (entry.maxConcurrentRequests != settings.maxConcurrentRequests || entry.minRequestInterval != settings.minRequestInterval) {

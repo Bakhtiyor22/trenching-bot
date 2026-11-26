@@ -115,4 +115,44 @@ describe('usage chart option', () => {
     ]);
     expect(providerColor('TELEGRAM', terminal)).toBe(terminal.series[2]);
   });
+
+  it('draws the admin API and a provider it does not know in the neutral series step, never dropping them', () => {
+    const usage = report({
+      series: [
+        { bucketStart: '2026-11-03T10:05:00Z', provider: 'HELIUS_ADMIN', requests: 2 },
+        { bucketStart: '2026-11-03T10:05:00Z', provider: 'TELEGRAM', requests: 1 },
+        { bucketStart: '2026-11-03T10:05:00Z', provider: 'NEW_PROVIDER' as never, requests: 4 },
+      ],
+    });
+    const series = seriesOf(buildUsageChartOption(usage, 'LAST_HOUR', terminal));
+    expect(series.map((s) => s.name)).toEqual(['Telegram', 'Helius admin API', 'New provider']);
+    expect(series.map((s) => s.itemStyle.color)).toEqual([
+      terminal.series[2],
+      terminal.seriesNeutral,
+      terminal.seriesNeutral,
+    ]);
+    expect(providerColor('HELIUS_ADMIN', terminalLight)).toBe(terminalLight.seriesNeutral);
+    // Four providers wrap the legend to a second row on a phone: the plot starts lower, clear of the axis name.
+    const top = (option: ReturnType<typeof buildUsageChartOption>) =>
+      (option.grid as { top: number }).top;
+    const four = report({
+      series: (['SOLANA_RPC', 'BINANCE', 'TELEGRAM', 'HELIUS_ADMIN'] as const).map((provider) => ({
+        bucketStart: '2026-11-03T10:05:00Z',
+        provider,
+        requests: 1,
+      })),
+    });
+    expect(top(buildUsageChartOption(four, 'LAST_HOUR', terminal))).toBe(67);
+    expect(top(buildUsageChartOption(usage, 'LAST_HOUR', terminal))).toBe(45);
+    // The neutral step is its own colour: it never borrows a status colour or one of the three series slots.
+    for (const tokens of [terminal, terminalLight]) {
+      expect([
+        ...tokens.series,
+        tokens.gain,
+        tokens.loss,
+        tokens.rejected,
+        tokens.accent,
+      ]).not.toContain(tokens.seriesNeutral);
+    }
+  });
 });

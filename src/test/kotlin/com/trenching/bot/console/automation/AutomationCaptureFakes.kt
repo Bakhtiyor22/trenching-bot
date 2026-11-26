@@ -5,6 +5,7 @@ import com.trenching.bot.apiusage.ApiUsageReport
 import com.trenching.bot.apiusage.ApiUsageReports
 import com.trenching.bot.apiusage.ApiUsageTotals
 import com.trenching.bot.chaincapture.CaptureCheckpointObserver
+import com.trenching.bot.chaincapture.RpcEndpointSource
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.common.MintAddress
 import com.trenching.bot.common.PageResult
@@ -145,13 +146,14 @@ class CaptureHarness(
     val workflow: ScriptedCaptureWorkflow = ScriptedCaptureWorkflow(),
     rpcConfigured: Boolean = true,
     ratesConfigured: Boolean = true,
+    endpoints: RpcEndpointSource = RpcEndpointSource.fixed(null),
 ) {
     private val json: JsonMapper = JsonMapper.builder().addModule(kotlinModule()).build()
     private var nextId = 0
     val executor = ManualExecutor()
     val retries = ManualCaptureRetryScheduler()
     val store = CaptureFileStore(CapturePathPolicy(root), json).also { it.initialize() }
-    val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured, retries)
+    val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured, retries, endpoints)
         .also { it.recover() }
     val sessions = CaptureSessionService(store, operations, clock, CaptureIds { "id-${++nextId}" }, true)
     val catalog = FakeDatasetCatalog()

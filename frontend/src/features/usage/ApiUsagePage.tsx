@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import {
   Alert,
+  Anchor,
   Box,
   Button,
   Group,
@@ -12,7 +13,7 @@ import {
   Text,
 } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { setupApi, type UsagePeriod, type UsageProvider, type UsageReport } from '../../api/setup';
 import { useChartTokens } from '../../charts/chartTokens';
 import { Chart } from '../../components/Chart';
@@ -22,8 +23,9 @@ import { Meter } from '../../components/Meter';
 import { Kpi, KpiStrip, PageHeader, Section } from '../../components/Panels';
 import { QueryView } from '../../components/QueryView';
 import { EmptyState } from '../../components/StateViews';
-import { providerLabels, purposeLabels, taskLabels } from '../../lib/codes';
+import { providerLabel, purposeLabel, taskLabel } from '../../lib/codes';
 import { formatBytes, formatCount } from '../../lib/format';
+import { paths } from '../../paths';
 import { bucketWord, buildUsageChartOption, providerColor, usageBucketSeconds } from './usageChart';
 import { allCaptureChoices, groupUsageCalls, sortUsageTasks } from './usageData';
 
@@ -45,6 +47,9 @@ const HOUR = 3600;
 const PROVIDER_NOTES: Partial<Record<UsageProvider, string>> = {
   SOLANA_RPC: 'your configured provider; address hidden because it can contain a key',
   BINANCE: 'public market data, no key',
+  TELEGRAM: 'messages to your chat; the bot token is never shown',
+  HELIUS_ADMIN:
+    "your RPC provider's account API, read for each account's credits; the key is never shown",
 };
 const CALL_COLUMNS: Array<{ label: string; numeric?: boolean }> = [
   { label: 'API' },
@@ -89,7 +94,7 @@ function CallsTable({ report }: { report: UsageReport }) {
           <Stack gap={0} component="span">
             {notes.map((group) => (
               <span key={group.provider}>
-                {providerLabels[group.provider]}: <span>{PROVIDER_NOTES[group.provider]}</span>
+                {providerLabel(group.provider)}: <span>{PROVIDER_NOTES[group.provider]}</span>
               </span>
             ))}
           </Stack>
@@ -117,14 +122,14 @@ function CallsTable({ report }: { report: UsageReport }) {
               .map((call) => (
                 <Table.Tr key={`${call.provider}/${call.operation}/${call.purpose}`}>
                   <Table.Td className="console-sticky" fw={500}>
-                    {providerLabels[call.provider]}
+                    {providerLabel(call.provider)}
                   </Table.Td>
                   <Table.Td>
                     <Text size="xs" ff="monospace">
                       {call.operation}
                     </Text>
                   </Table.Td>
-                  <Table.Td miw={290}>{purposeLabels[call.purpose]}</Table.Td>
+                  <Table.Td miw={290}>{purposeLabel(call.purpose)}</Table.Td>
                   <Table.Td ta="right" ff="monospace">
                     {formatCount(call.totals.requests)}
                   </Table.Td>
@@ -135,7 +140,7 @@ function CallsTable({ report }: { report: UsageReport }) {
                       </Text>
                       <Box w={80}>
                         <Meter
-                          label={`${providerLabels[call.provider]} ${call.operation}: share of requests`}
+                          label={`${providerLabel(call.provider)} ${call.operation}: share of requests`}
                           value={Number(call.sharePercent)}
                           max={100}
                           color={providerColor(call.provider, tokens)}
@@ -236,13 +241,13 @@ function UsageContent({
           {sortUsageTasks(report.byTask).map((task) => (
             <Stack gap={5} key={task.task}>
               <Group justify="space-between" gap="xs">
-                <Text size="sm">{taskLabels[task.task]}</Text>
+                <Text size="sm">{taskLabel(task.task)}</Text>
                 <Text size="sm" ff="monospace">
                   {formatCount(task.totals.requests)} req
                 </Text>
               </Group>
               <Meter
-                label={`${taskLabels[task.task]}: requests of all tasks`}
+                label={`${taskLabel(task.task)}: requests of all tasks`}
                 value={task.totals.requests}
                 max={taskTotal}
               />
@@ -254,7 +259,7 @@ function UsageContent({
         <Stack gap="xs">
           {report.pacing.map((item) => (
             <Text key={item.provider} size="sm">
-              {providerLabels[item.provider]} pace set in this backend:{' '}
+              {providerLabel(item.provider)} pace set in this backend:{' '}
               {item.minRequestIntervalMillis > 0
                 ? (1000 / item.minRequestIntervalMillis).toLocaleString('en-US', {
                     maximumFractionDigits: 3,
@@ -264,8 +269,11 @@ function UsageContent({
             </Text>
           ))}
           <Text size="sm">
-            Requests are not billing credits. Some providers bill calls differently; check your
-            provider's dashboard for credits used.
+            Requests are not billing credits: a provider can bill one call as several credits. The{' '}
+            <Anchor component={Link} to={paths.solana} inherit>
+              Solana page
+            </Anchor>{' '}
+            shows the credits each RPC account has left.
           </Text>
           <Text size="sm">
             1 request = one HTTP call sent. Retries count separately. Cache hits send no request. 1

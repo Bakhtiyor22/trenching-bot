@@ -41,6 +41,7 @@ import {
   type BuyBucket,
 } from './automationModel';
 import { reasonExplanation } from '../runs/runList';
+import { RpcCreditsHold } from '../solana/RpcCreditsHold';
 import { BackfillRefusal } from './BackfillShared';
 import { useVariationBook } from './useVariationBook';
 
@@ -565,6 +566,8 @@ export function StatusAlerts({ status }: { status: AutomationStatus }) {
           process.
         </Alert>
       )}
+      {/* The automation API reports no hold of its own: the accounts read is what says no account can take requests. */}
+      {status.rpcConfigured && <RpcCreditsHold />}
       {status.discoveryProblem && (
         <Alert color="red" variant="light" title="Discovery problem">
           {status.discoveryProblem}

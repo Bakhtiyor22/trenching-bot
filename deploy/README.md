@@ -215,13 +215,24 @@ sudo nano /etc/trenching-bot/trenching-bot.env
 Write one `NAME=value` per line, no quotes and no spaces around `=`:
 
 - `SOLANA_RPC_URL` is your Helius RPC URL, copied from the PC's own configuration.
+- Optional, for a second Helius account the bot moves to when the first runs out of credits: `SOLANA_RPC_BACKUP_URL` is
+  that account's RPC URL (it needs `SOLANA_RPC_URL` and must differ from it, or the app does not start), and
+  `HELIUS_PROJECT_ID` and `HELIUS_BACKUP_PROJECT_ID` are the Helius project ids of the two accounts, from each
+  account's dashboard, which let the bot read each account's credits. Without a project id an account still fails over
+  but shows no balance. Both RPC URLs must be https (http only to localhost); a bad one stops the app starting and names
+  its variable. The backup is used only after the bot has read its genesis hash as mainnet, about 30 seconds after
+  start, so right after a restart on the backup capture holds until then; a backup on another network shows
+  `WRONG_NETWORK` on the Solana page and is never used. Credits left include prepaid credits.
+- Optional, for the bot's own Telegram messages (buy results, scored days, account switches, low credits):
+  `TELEGRAM_BOT_TOKEN` from BotFather and `TELEGRAM_CHAT_ID`. Set both or neither: one alone stops the app starting,
+  and neither means no messages. This bot is separate from the Grafana contact point in step 14.7.
 - `DATABASE_USERNAME` is a new name, for example `trenching_app`. Do not reuse the committed `trenching`.
 - `DATABASE_PASSWORD` is a new password. Generate one with `openssl rand -base64 32` and paste it unchanged: it must be
   that base64 output and nothing else (no `$`, no quotes), because Compose interpolates `$` in `--env-file` values while
   systemd's `EnvironmentFile` does not, so the database and the app would end up with different passwords. Do not reuse
   `trenching`.
 
-The file holds only these three secrets (and later `TRENCHING_AUTOMATION_ENABLED`). The profile (`prod`) and
+The file holds only these three secrets, the optional variables above (and later `TRENCHING_AUTOMATION_ENABLED`). The profile (`prod`) and
 `DATABASE_URL` are not secret and are set in `trenching-bot.service`.
 
 Never put `SPRING_PROFILES_ACTIVE` or `DATABASE_URL` in this file: systemd's `EnvironmentFile=` overrides `Environment=`, so a stray line here would silently win over the unit.
@@ -854,6 +865,7 @@ period ("For") and what to do when the query returns no data.
 | App errors | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service", level="ERROR"}[15m]))` | above 5 | 0m | **OK** |
 | Automation silent | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service"} \|= "AutomationActivitySummary" [2h]))` | below 1 | 0m | **Alerting** |
 | Discovery failing | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service"} \|= "Discovery skipped" [1h]))` | above 2 | 0m | **OK** |
+| Capture held for hours | Loki: `sum(count_over_time({instance="trenching-oci", unit="trenching-bot.service", level="WARN"} \|= "AutomationActivitySummary" [6h]))` | above 4 | 0m | **OK** |
 
 - A deploy restarts the app for about a minute; the 5-minute pending periods ride over it.
 - "App errors": no matching lines means no errors, so no data must stay OK.
@@ -864,6 +876,11 @@ period ("For") and what to do when the query returns no data.
   Scans run only inside the polling window in window mode (outside it they are zero and normal; the summary's
   `discoveryScans=` says how many ran), so this alert counts failures and never silence; no matching lines means no
   failures, so no data must stay OK.
+- "Capture held for hours": the hourly summary is a `WARN` while a hold keeps capture back (the request cap, a console that
+  is not configured, or every RPC account out of credits), so more than four of them in six hours means capture has been
+  held most of that time. A hold that comes and goes is silent; no matching lines means no hold, so no data must stay OK.
+  The bot's own Telegram messages (when `TELEGRAM_BOT_TOKEN` is set) already say when an RPC account switches or runs low
+  and how each buy and day ended; this rule covers the case where nothing is getting through at all.
 - "Idle-reclamation risk" watches the memory side of Oracle's idle rule (step 12). With the 3 GB pre-touched heap it
   should stay well above 25 %.
 

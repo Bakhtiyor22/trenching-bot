@@ -9,7 +9,6 @@ import com.trenching.bot.common.LogLine
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URI
-import java.net.URISyntaxException
 import java.net.URLDecoder
 import java.net.http.HttpClient
 import java.nio.charset.StandardCharsets
@@ -19,6 +18,7 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import org.slf4j.LoggerFactory
 import org.springframework.http.MediaType
@@ -32,7 +32,9 @@ import tools.jackson.databind.DeserializationFeature
 
 /**
  * Every HTTP request it sends, each retry included, is recorded once in [recorder] under the budget's usage context. A
- * rate limited, unavailable or transport failure is sent again until [maxAttempts] requests were made for one call.
+ * rate limited, unavailable or transport failure is sent again until [maxAttempts] requests were made for one call. [endpoints]
+ * is asked before every attempt. A 429 saying the account's credits are used up reports it exhausted and moves the call to
+ * another account without using an attempt, once per account; it never counts as a rate limit.
  */
 class HttpSolanaReadRpc(
     private val settings: SolanaRpcSettings,
@@ -42,14 +44,16 @@ class HttpSolanaReadRpc(
     private val limiter: ProviderRequestLimiter = ProviderRequestLimiter.of(settings, timing),
     private val recorder: ApiUsageRecorder = ApiUsageRecorder.NONE,
     private val maxAttempts: Int = DEFAULT_MAX_ATTEMPTS,
+    private val endpoints: RpcEndpointSource = RpcEndpointSource.fixed(settings.endpoint),
+    private val limiters: RpcLimiterRegistry = RpcLimiterRegistry(timing),
 ) : SolanaReadRpc {
     init {
         require(maxAttempts in 1..DEFAULT_MAX_ATTEMPTS) { "maxAttempts must be between 1 and $DEFAULT_MAX_ATTEMPTS, was $maxAttempts" }
+        endpoint(settings.endpoint)
     }
 
     private val log = LoggerFactory.getLogger(HttpSolanaReadRpc::class.java)
-    private val endpoint = endpoint(settings.endpoint)
-    private val credentialFragments = endpoint?.let(::credentialFragments).orEmpty()
+    private val resolvedLimiters = ConcurrentHashMap<String, ProviderRequestLimiter>()
     private val client = RestClient.builder().requestFactory(JdkClientHttpRequestFactory(HttpClient.newBuilder()
         .version(HttpClient.Version.HTTP_1_1).connectTimeout(settings.connectTimeout).build()).apply {
         setReadTimeout(settings.readTimeout)
@@ -57,32 +61,61 @@ class HttpSolanaReadRpc(
 
     override fun call(method: String, params: List<Any>, budget: CaptureBudget): JsonNode {
         if (method !in ChainCaptureFormat.READ_METHODS) throw CaptureValidationException("RPC_METHOD")
-        val uri = endpoint ?: throw CaptureProviderException("NOT_CONFIGURED")
+        var choice = endpoints.choose()
+        if (choice is RpcEndpointChoice.NotConfigured) throw CaptureProviderException(CaptureCategory.NOT_CONFIGURED)
         budget.startDeadline(timing.nanoTime(), budget.operationTimeout ?: settings.operationTimeout)
         var last = CaptureHttpReply.Failed("UNAVAILABLE", true)
-        var attempts = 0
-        for (attempt in 1..maxAttempts) {
-            attempts = attempt
-            when (val reply = limiter.withStart(budget) { send(uri, method, params, budget) }) {
-                is CaptureHttpReply.Success -> return reply.result
-                is CaptureHttpReply.Failed -> {
-                    last = reply
-                    if (reply.rateLimited) budget.counters.rateLimited(reply.retryAfter)
-                    if (!reply.retryable || attempt == maxAttempts) break
-                    budget.counters.retry()
-                    val backoff = Duration.ofMillis((BASE_BACKOFF_MILLIS shl (attempt - 1)) + timing.jitterMillis(attempt))
-                    val delay = maxOf(backoff, reply.retryAfter ?: Duration.ZERO)
-                    LogLine("RPC call will be retried.").field("operation", method).field("category", reply.category).field("cause", reply.cause)
-                        .field("attempt", "$attempt/$maxAttempts").debug(log)
-                    if (reply.rateLimited) limiter.holdStarts(delay, budget) else pause(delay, budget)
-                }
+        var account: String? = null
+        val movedFrom = mutableSetOf<String>()
+        var attempt = 1
+        var requestsSent = 0
+        while (true) {
+            val target = when (val offered = choice) {
+                is RpcEndpointChoice.Use -> offered.target
+                RpcEndpointChoice.NotConfigured -> throw CaptureProviderException(CaptureCategory.NOT_CONFIGURED)
+                RpcEndpointChoice.OutOfCredits -> { last = CaptureHttpReply.Failed(CaptureCategory.CREDITS_EXHAUSTED, false); break }
             }
+            account = target.account
+            val uri = endpoint(target.endpoint) ?: throw CaptureProviderException(CaptureCategory.NOT_CONFIGURED)
+            val accountLimiter = limiterFor(target.endpoint)
+            requestsSent++
+            when (val reply = accountLimiter.withStart(budget) { send(uri, method, params, budget) }) {
+                is CaptureHttpReply.Success -> return reply.result
+                is CaptureHttpReply.Failed -> last = reply
+            }
+            if (last.category == CaptureCategory.CREDITS_EXHAUSTED) {
+                endpoints.exhausted(target.account)
+                movedFrom += target.account
+                LogLine("RPC account is out of credits.").field("operation", method).field("account", target.account).debug(log)
+                choice = endpoints.choose()
+                val next = choice
+                if (next is RpcEndpointChoice.Use && next.target.account in movedFrom) break
+                continue
+            }
+            if (last.rateLimited) budget.counters.rateLimited(last.retryAfter)
+            if (!last.retryable || attempt == maxAttempts) break
+            budget.counters.retry()
+            val backoff = Duration.ofMillis((BASE_BACKOFF_MILLIS shl (attempt - 1)) + timing.jitterMillis(attempt))
+            val delay = maxOf(backoff, last.retryAfter ?: Duration.ZERO)
+            LogLine("RPC call will be retried.").field("operation", method).field("category", last.category).field("cause", last.cause)
+                .field("account", target.account).field("attempt", "$attempt/$maxAttempts").debug(log)
+            if (last.rateLimited) accountLimiter.holdStarts(delay, budget) else pause(delay, budget)
+            attempt++
+            choice = endpoints.choose()
         }
-        val failed = LogLine("RPC call failed after {}: {}.", if (attempts == 1) "1 attempt" else "$attempts attempts", ProviderFailureMeanings.meaning(last.category))
-            .field("operation", method).field("category", last.category).field("cause", last.cause).field("attempts", attempts)
+        if (requestsSent == 0) {
+            LogLine("RPC call not sent: {}.", ProviderFailureMeanings.meaning(last.category)).field("operation", method).field("category", last.category).debug(log)
+            throw CaptureProviderException(last.category, last.retryAfter, budget.requestsUsed, budget.bytesUsed)
+        }
+        val failed = LogLine("RPC call failed after {}: {}.", if (attempt == 1) "1 attempt" else "$attempt attempts", ProviderFailureMeanings.meaning(last.category))
+            .field("operation", method).field("category", last.category).field("cause", last.cause).field("account", account).field("attempts", attempt)
         if (last.category in CaptureCategory.ANSWERS) failed.debug(log) else failed.warn(log)
         throw CaptureProviderException(last.category, last.retryAfter, budget.requestsUsed, budget.bytesUsed)
     }
+
+    /** The settings' own endpoint keeps the limiter it was built with; any other account's endpoint gets the limiter of its own, looked up once. */
+    private fun limiterFor(endpoint: String): ProviderRequestLimiter =
+        if (endpoint == settings.endpoint) limiter else resolvedLimiters.computeIfAbsent(endpoint) { limiters.limiterFor(it, settings) }
 
     private fun send(uri: URI, method: String, params: List<Any>, budget: CaptureBudget): CaptureHttpReply {
         budget.checkDeadline(timing.nanoTime())
@@ -122,12 +155,16 @@ class HttpSolanaReadRpc(
                 val bytes = readBounded(response.body, budget, received)
                 when {
                     status == 401 || status == 403 -> CaptureHttpReply.Failed("AUTHENTICATION", false)
+                    status == 429 && reportsCreditsUsedUp(bytes) -> CaptureHttpReply.Failed(CaptureCategory.CREDITS_EXHAUSTED, false)
                     status == 429 -> CaptureHttpReply.Failed(CaptureCategory.RATE_LIMITED, true, retryAfter(response.headers.getFirst("Retry-After")), rateLimited = true)
                     status in 500..599 -> CaptureHttpReply.Failed("UNAVAILABLE", true)
                     status !in 200..299 -> CaptureHttpReply.Failed("HTTP", false)
-                    else -> parse(bytes)
+                    else -> parse(bytes, uri)
                 }
             }
+
+    private fun reportsCreditsUsedUp(body: ByteArray): Boolean =
+        String(body, StandardCharsets.UTF_8).contains(CREDITS_USED_UP_TEXT, ignoreCase = true)
 
     private fun readBounded(input: java.io.InputStream, budget: CaptureBudget, received: AtomicLong): ByteArray {
         val output = ByteArrayOutputStream()
@@ -145,7 +182,7 @@ class HttpSolanaReadRpc(
         return output.toByteArray()
     }
 
-    private fun parse(bytes: ByteArray): CaptureHttpReply {
+    private fun parse(bytes: ByteArray, uri: URI): CaptureHttpReply {
         val node = try { mapper.reader().with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS).readTree(bytes) } catch (_: JacksonException) { return CaptureHttpReply.Failed("MALFORMED", false) }
         val version = node.path("jsonrpc")
         val id = node.path("id")
@@ -163,20 +200,20 @@ class HttpSolanaReadRpc(
         }
         if (!node.has("result")) return CaptureHttpReply.Failed("MALFORMED", false)
         val result = node.path("result")
-        if (echoesCredential(result)) return CaptureHttpReply.Failed("UNSAFE_RESULT", false)
+        if (echoesCredential(result, credentialFragments(uri))) return CaptureHttpReply.Failed("UNSAFE_RESULT", false)
         return CaptureHttpReply.Success(result)
     }
 
-    private fun echoesCredential(node: JsonNode): Boolean = when {
-        node.isString -> containsCredential(node.asString())
-        node.isObject -> node.properties().any { containsCredential(it.key) || echoesCredential(it.value) }
-        node.isArray -> node.any(::echoesCredential)
+    private fun echoesCredential(node: JsonNode, fragments: List<String>): Boolean = when {
+        node.isString -> containsCredential(node.asString(), fragments)
+        node.isObject -> node.properties().any { containsCredential(it.key, fragments) || echoesCredential(it.value, fragments) }
+        node.isArray -> node.any { echoesCredential(it, fragments) }
         else -> false
     }
 
-    private fun containsCredential(text: String): Boolean {
+    private fun containsCredential(text: String, fragments: List<String>): Boolean {
         val normalized = text.lowercase(Locale.ROOT)
-        return credentialFragments.any(normalized::contains)
+        return fragments.any(normalized::contains)
     }
 
     private fun credentialFragments(uri: URI): List<String> {
@@ -204,18 +241,13 @@ class HttpSolanaReadRpc(
         return requested.coerceIn(Duration.ZERO, MAX_RETRY_AFTER)
     }
 
-    private fun endpoint(value: String?): URI? {
-        if (value.isNullOrBlank()) return null
-        val uri = try { URI(value) } catch (_: URISyntaxException) { throw CaptureValidationException("ENDPOINT") }
-        if (uri.scheme !in setOf("http", "https") || uri.host == null || uri.userInfo != null || uri.fragment != null) throw CaptureValidationException("ENDPOINT")
-        if (uri.scheme == "http" && uri.host !in setOf("127.0.0.1", "localhost", "::1", "[::1]")) throw CaptureValidationException("ENDPOINT_TLS")
-        return uri
-    }
+    private fun endpoint(value: String?): URI? = if (value.isNullOrBlank()) null else RpcEndpointRules.uri(value)
 
     companion object {
         const val DEFAULT_MAX_ATTEMPTS = 3
         private val MAX_RETRY_AFTER: Duration = Duration.ofMinutes(30)
         private const val BASE_BACKOFF_MILLIS = 500L
+        private const val CREDITS_USED_UP_TEXT = "max usage reached"
         private const val MIN_CREDENTIAL_FRAGMENT_LENGTH = 8
     }
 }

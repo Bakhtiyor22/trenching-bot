@@ -49,6 +49,12 @@ import {
   v4Observations,
   V4_DATASET_ID,
 } from './fixtures';
+import {
+  RPC_ACCOUNTS_ERROR_STATE,
+  rpcAccountsFixture,
+  rpcScenarioOf,
+  type RpcAccountScenario,
+} from './rpcAccountFixtures';
 
 const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 /** `ReplayDatasetCatalogService.MAX_NAME_LENGTH`. */
@@ -59,6 +65,8 @@ const SUPPORTED_SCHEMA_VERSIONS = [3, 4, 5, 6];
 export interface MockOptions {
   /** Pretend `SOLANA_RPC_URL` is set (devnet). Default false, like a fresh local setup. */
   solanaConfigured?: boolean;
+  /** The RPC accounts' state; by default `healthy` when Solana is configured and `unconfigured` otherwise. */
+  rpcAccounts?: RpcAccountScenario;
   /** Artificial latency in ms, for exploring loading states in the browser. */
   latencyMs?: number;
 }
@@ -910,6 +918,15 @@ function solanaStatus(options: MockOptions): SolanaStatus {
   };
 }
 
+/** The accounts scenario in force: a `?mockState=rpc-…` preview wins over the handlers' own option. */
+function rpcAccountScenario(options: MockOptions): RpcAccountScenario {
+  return (
+    rpcScenarioOf(mockState()) ??
+    options.rpcAccounts ??
+    (options.solanaConfigured ? 'healthy' : 'unconfigured')
+  );
+}
+
 export function createHandlers(options: MockOptions = {}) {
   const wait = async () => {
     if (options.latencyMs) await delay(options.latencyMs);
@@ -1213,6 +1230,13 @@ export function createHandlers(options: MockOptions = {}) {
     http.get('/api/solana/status', async () => {
       await wait();
       return HttpResponse.json(solanaStatus(options));
+    }),
+
+    http.get('/api/solana/accounts', async () => {
+      await wait();
+      if (mockState() === RPC_ACCOUNTS_ERROR_STATE)
+        return error(503, 'UNAVAILABLE', 'Backend unreachable');
+      return HttpResponse.json(rpcAccountsFixture(rpcAccountScenario(options)));
     }),
 
     http.post('/api/solana/check', async () => {

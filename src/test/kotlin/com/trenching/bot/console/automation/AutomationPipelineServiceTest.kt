@@ -1,6 +1,9 @@
 package com.trenching.bot.console.automation
 
 import ch.qos.logback.classic.Level
+import com.trenching.bot.chaincapture.RpcEndpointChoice
+import com.trenching.bot.chaincapture.RpcEndpointTarget
+import com.trenching.bot.console.solana.accounts.ScriptedRpcEndpoints
 import com.trenching.bot.console.api.dto.CaptureCreateRequest
 import com.trenching.bot.console.api.dto.CaptureWalletSettings
 import com.trenching.bot.console.automation.AutomationFixtures.EVENING
@@ -615,6 +618,110 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
+    fun `while no RPC account has credits the item waits at its wallet step with no attempt charged and one warning however many ticks pass`() {
+        val endpoints = ScriptedRpcEndpoints(RpcEndpointChoice.OutOfCredits)
+        capture.close()
+        capture = CaptureHarness(root, clock, endpoints = endpoints)
+        discover(buy(1, 100, EVENING))
+
+        LogCapture().use { logs ->
+            ticks(30)
+
+            val item = item(1)
+            assertEquals(AutomationItemState.CAPTURING, item.state)
+            assertEquals(AutomationStep.WALLET, item.step)
+            assertEquals(1, item.stepAttempt)
+            assertNull(item.failureCode)
+            assertNull(item.operationId)
+            assertEquals(0, operations(item).count { it.step == CaptureNames.WALLET })
+            assertEquals(listOf("Capture paused: no RPC account has credits left; waiting buys go on once one has credits again. waiting=1"), logs.messages(Level.WARN))
+            assertEquals(listOf(AutomationHoldKind.RPC_CREDITS), holds.current().map { it.kind })
+        }
+    }
+
+    @Test
+    fun `an operation in flight when the last account runs out fails that attempt with CREDITS_EXHAUSTED, then the buy is held with no further attempt charged`() {
+        val endpoints = ScriptedRpcEndpoints(RpcEndpointChoice.Use(RpcEndpointTarget("primary", "https://primary.example.test/?api-key=PRIMARY-KEY")))
+        capture.close()
+        capture = CaptureHarness(root, clock, endpoints = endpoints)
+        capture.workflow.fail(CaptureStepCommand.Wallet::class, "CREDITS_EXHAUSTED")
+        discover(buy(1, 100, EVENING))
+        ticks(2)
+
+        val failedOperation = operations(item(1)).single { it.step == CaptureNames.WALLET }
+        assertEquals(CaptureNames.FAILED, failedOperation.state)
+        assertEquals("CREDITS_EXHAUSTED", failedOperation.code)
+
+        endpoints.choice = RpcEndpointChoice.OutOfCredits
+        ticks(30)
+
+        val item = item(1)
+        assertEquals(AutomationItemState.CAPTURING, item.state)
+        assertEquals(AutomationStep.WALLET, item.step)
+        assertEquals(2, item.stepAttempt, "the failed attempt was charged once; the held retry charges nothing")
+        assertNull(item.operationId, "no operation is running for the held retry")
+        assertEquals(1, operations(item).count { it.step == CaptureNames.WALLET }, "no further operation was started")
+        assertEquals(listOf(AutomationHoldKind.RPC_CREDITS), holds.current().map { it.kind })
+    }
+
+    @Test
+    fun `a buy whose last attempt runs into exhausted credits ends FAILED with CREDITS_EXHAUSTED`() {
+        capture.workflow.fail(CaptureStepCommand.Wallet::class, "CREDITS_EXHAUSTED", times = 2)
+        discover(buy(1, 100, EVENING))
+
+        ticks(6)
+
+        val item = item(1)
+        assertEquals(AutomationItemState.FAILED, item.state)
+        assertEquals(2, item.stepAttempt)
+        assertEquals("CREDITS_EXHAUSTED", item.failureCode)
+    }
+
+    @Test
+    fun `an operation waiting for its own automatic retry that resumes while every account is out fails that attempt`() {
+        val endpoints = ScriptedRpcEndpoints(RpcEndpointChoice.Use(RpcEndpointTarget("primary", "https://primary.example.test/?api-key=PRIMARY-KEY")))
+        capture.close()
+        capture = CaptureHarness(root, clock, endpoints = endpoints)
+        capture.workflow.fail(CaptureStepCommand.Wallet::class, "UNAVAILABLE")
+        discover(buy(1, 100, EVENING))
+        ticks(2)
+        val waiting = operations(item(1)).single { it.step == CaptureNames.WALLET }
+        assertEquals(CaptureNames.WAITING_RETRY, waiting.state)
+
+        endpoints.choice = RpcEndpointChoice.OutOfCredits
+        capture.workflow.fail(CaptureStepCommand.Wallet::class, "CREDITS_EXHAUSTED")
+        while (capture.retries.pending.isNotEmpty()) capture.retries.runNext()
+        capture.work()
+
+        val resumed = operations(item(1)).single { it.step == CaptureNames.WALLET }
+        assertEquals(CaptureNames.FAILED, resumed.state)
+        assertEquals("CREDITS_EXHAUSTED", resumed.code)
+        assertEquals(2, capture.workflow.executed.count { it is CaptureStepCommand.Wallet })
+    }
+
+    @Test
+    fun `when an account has credits again the item starts its wallet step and the hold ends with one info after the settle time`() {
+        val endpoints = ScriptedRpcEndpoints(RpcEndpointChoice.OutOfCredits)
+        capture.close()
+        capture = CaptureHarness(root, clock, endpoints = endpoints)
+        discover(buy(1, 100, EVENING))
+        ticks(3)
+
+        LogCapture().use { logs ->
+            endpoints.choice = RpcEndpointChoice.Use(RpcEndpointTarget("backup", "https://backup.example.test/?api-key=BACKUP-KEY"))
+            ticks(1)
+            assertTrue(logs.at(Level.INFO).none { it.formattedMessage.startsWith("Capture resumed") }, "a hold must stay clear for a while before it is over")
+            assertEquals(1, operations(item(1)).count { it.step == CaptureNames.WALLET })
+            clock.now = clock.now.plus(AutomationLimits.HOLD_SETTLE).plusSeconds(60)
+            ticks(1)
+
+            assertEquals(1, logs.messages(Level.INFO).count { it.startsWith("Capture resumed: an RPC account has credits again after ") }, logs.messages(Level.INFO).toString())
+            assertEquals(emptyList(), holds.current())
+            assertEquals(1, item(1).stepAttempt)
+        }
+    }
+
+    @Test
     fun `a manual close cancels the abandoned item's operation waiting for its retry, and only operations the cap admitted run after`() {
         capture.workflow.fail(CaptureStepCommand.Wallet::class, "UNAVAILABLE")
         discover(buy(1, 100, EVENING))
@@ -644,7 +751,7 @@ class AutomationPipelineServiceTest : AutomationDatabaseTest() {
     fun `an operation started for an item a manual close abandoned meanwhile is cancelled at once`() {
         discover(buy(1, 100, EVENING))
         ticks(1)
-        val closingDuringTick = object : AutomationPipelineTransaction(items, backfills, records, itemEventWriter) {
+        val closingDuringTick = object : AutomationPipelineTransaction(items, backfills, records, itemEventWriter, buyNotifier) {
             override fun due(now: Instant): List<AutomationDueItem> =
                 pipelineTransaction.due(now).onEach { sessionTransaction.closeManually(it.sessionId, "close-1", now) }
 

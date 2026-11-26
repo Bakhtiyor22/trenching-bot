@@ -2,6 +2,7 @@ package com.trenching.bot.console.capture
 
 import com.trenching.bot.chaincapture.CaptureCheckpoint
 import com.trenching.bot.chaincapture.CaptureCheckpointObserver
+import com.trenching.bot.chaincapture.RpcEndpointSource
 import com.trenching.bot.chaincapture.CaptureValidationException
 import com.trenching.bot.console.api.dto.CaptureCreateRequest
 import com.trenching.bot.console.api.dto.CaptureWalletSettings
@@ -112,13 +113,14 @@ class MutableClock(var now: Instant) : Clock() {
 }
 
 class CaptureConsoleFixture(root: Path, rpcConfigured: Boolean = true, ratesConfigured: Boolean = true, retryScheduler: CaptureRetryScheduler = CaptureRetryScheduler.NONE,
-                            val clock: Clock = Clock.fixed(FakeCaptureWorkflow.AT, ZoneOffset.UTC), suggested: CaptureSuggestedWallets = CaptureSuggestedWallets()) {
+                            val clock: Clock = Clock.fixed(FakeCaptureWorkflow.AT, ZoneOffset.UTC), suggested: CaptureSuggestedWallets = CaptureSuggestedWallets(),
+                            endpoints: RpcEndpointSource = RpcEndpointSource.fixed(null)) {
     val json: JsonMapper = JsonMapper.builder().addModule(kotlinModule()).build()
     val workflow = FakeCaptureWorkflow()
     val executor = ManualExecutor()
     val store = CaptureFileStore(CapturePathPolicy(root), json).also { it.initialize() }
     private var nextId = 0
-    val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured, retryScheduler)
+    val operations = CaptureOperationService(store, workflow, CaptureResponseMapperImpl(), json, clock, executor, rpcConfigured, ratesConfigured, retryScheduler, endpoints)
     val sessions = CaptureSessionService(store, operations, clock, CaptureIds { "id-${++nextId}" }, ratesConfigured, suggestedWallets = suggested)
 
     /** Creates a wallet session and runs its automatic offline inspection, leaving the worker idle and the log empty. */

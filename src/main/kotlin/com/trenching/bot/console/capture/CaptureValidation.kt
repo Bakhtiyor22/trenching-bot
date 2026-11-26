@@ -51,5 +51,8 @@ object CaptureValidation {
     }
     fun range(field: String, value: Long, max: Long) { if (value < 1 || value > max) invalid(field, "must be between 1 and $max") }
     fun invalid(field: String, reason: String): Nothing = throw CaptureRequestException(400, "INVALID_REQUEST", "Invalid capture settings", mapOf(field to reason))
+    /** The refusal code of a WALLET or MARKET operation start while every RPC account has used up its credits. */
+    const val RPC_CREDITS_EXHAUSTED = "RPC_CREDITS_EXHAUSTED"
+
     fun conflict(code: String, message: String): Nothing = throw CaptureRequestException(409, code, message)
 }

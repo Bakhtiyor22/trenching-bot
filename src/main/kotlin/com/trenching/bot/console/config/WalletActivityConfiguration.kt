@@ -1,6 +1,7 @@
 package com.trenching.bot.console.config
 
 import com.trenching.bot.apiusage.ApiUsageRecorder
+import com.trenching.bot.chaincapture.RpcEndpointSource
 import com.trenching.bot.chaincapture.SharedTransactionCache
 import com.trenching.bot.config.SimulationClock
 import com.trenching.bot.console.application.WalletActivityCache
@@ -19,7 +20,7 @@ import org.springframework.context.annotation.Configuration
 import tools.jackson.databind.ObjectMapper
 
 /**
- * Wallet activity reads `SOLANA_RPC_URL` with the wallet capture's pacing and timeouts. The transaction cache and the
+ * Wallet activity reads the active RPC account (`SOLANA_RPC_URL`, or the backup when that one is out of credits) with the wallet capture's pacing and timeouts. The transaction cache and the
  * capture annotations are the capture console's ([CaptureConfiguration], `local | prod`); elsewhere the lookup reads
  * uncached and no action is marked captured.
  */
@@ -34,7 +35,9 @@ class WalletActivityConfiguration {
         mapper: ObjectMapper,
         @Qualifier(SimulationClock.NAME) clock: Clock,
         recorder: ApiUsageRecorder,
-    ): WalletActivityLookup = WalletActivityLookups.create(wallet.withEndpoint(rpc.rpcUrl), mapper, clock, transactionCache.ifAvailable, recorder)
+        endpoints: RpcEndpointSource,
+    ): WalletActivityLookup =
+        WalletActivityLookups.create(wallet.withEndpoint(rpc.rpcUrl), mapper, clock, transactionCache.ifAvailable, recorder, endpoints = endpoints)
 
     @Bean
     fun walletActivityConsoleService(lookup: WalletActivityLookup, store: ObjectProvider<CaptureFileStore>, @Qualifier(SimulationClock.NAME) clock: Clock): WalletActivityConsoleService =

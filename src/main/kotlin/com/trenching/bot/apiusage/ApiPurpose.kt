@@ -11,6 +11,8 @@ enum class ApiPurpose {
     BLOCK_TIME,
     MINUTE_RATES,
     LIVE_RATE,
+    SEND_NOTIFICATION,
+    CREDIT_BALANCE,
     UNKNOWN;
 
     companion object {
@@ -30,6 +32,12 @@ enum class ApiPurpose {
             ApiProvider.BINANCE to mapOf(
                 "/api/v3/klines" to MINUTE_RATES,
                 "/api/v3/ticker/price" to LIVE_RATE,
+            ),
+            ApiProvider.HELIUS_ADMIN to mapOf(
+                "projectUsage" to CREDIT_BALANCE,
+            ),
+            ApiProvider.TELEGRAM to mapOf(
+                "sendMessage" to SEND_NOTIFICATION,
             ),
         )
 

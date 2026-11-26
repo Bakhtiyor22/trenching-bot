@@ -4,6 +4,9 @@ package com.trenching.bot.chaincapture
 object CaptureCategory {
     const val RATE_LIMITED = "RATE_LIMITED"
     const val UNSUPPORTED_VERSION = "UNSUPPORTED_VERSION"
+    /** The provider says the account's credits are used up and no other account can take the call. */
+    const val CREDITS_EXHAUSTED = "CREDITS_EXHAUSTED"
+    const val NOT_CONFIGURED = "NOT_CONFIGURED"
     const val STOP_REQUESTED = "STOP_REQUESTED"
 
     /** The provider has no block for the slot: its leader skipped it, or the ledger jumped past it. */

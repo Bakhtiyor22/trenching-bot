@@ -11,6 +11,7 @@ object ProviderFailureMeanings {
         "IO" to "the connection to the provider failed",
         "RATE_LIMITED" to "the provider is rate limiting",
         "UNAVAILABLE" to "the provider is unavailable",
+        "CREDITS_EXHAUSTED" to "the provider account has used up its credits",
         "AUTHENTICATION" to "the provider refused the credentials",
         "HTTP" to "the provider answered with an unexpected HTTP status",
         "MALFORMED" to "the provider's answer could not be read",
