@@ -686,14 +686,32 @@ describe('mock variation endpoints', () => {
     };
   };
 
-  it('lists the variations by sequence, filtered by state, and refuses an unknown state', async () => {
+  it('lists the variations by name, filtered by state, and refuses an unknown state', async () => {
     const all = await automationApi.variations(null);
     expect(all.planId).toBe('decu-sweep-1');
-    expect(all.items.map((v) => v.label)).toEqual([...MOCK_LABELS, 'V10']);
+    // V07's line: V07, then the legacy label V10 named V07.1, then the dotted V07.2.
+    expect(all.items.map((v) => v.name)).toEqual([
+      ...MOCK_LABELS.slice(0, 8),
+      'V07.1',
+      'V07.2',
+      'V08',
+      'V09',
+    ]);
+    expect(all.items.map((v) => v.label)).toEqual([
+      ...MOCK_LABELS.slice(0, 8),
+      'V10',
+      'V07.2',
+      'V08',
+      'V09',
+    ]);
     const archived = await automationApi.variations('ARCHIVED');
-    expect(archived.items.map((v) => v.label)).toEqual(['V07']);
+    expect(archived.items.map((v) => v.label)).toEqual(['V07', 'V10']);
     expect(archived.items[0]).toMatchObject({ replacedByLabel: 'V10', archivedAt: MOCK_EDIT_AT });
     expect((await automationApi.variations('ACTIVE')).items).toHaveLength(10);
+    expect(await automationApi.variation('V07.2')).toMatchObject({
+      name: 'V07.2',
+      replacesLabel: 'V10',
+    });
     expect(
       await failureOf(() =>
         request(`${API_BASE}/automation/variations?state=GONE`).then(() => null),
@@ -723,7 +741,8 @@ describe('mock variation endpoints', () => {
     const first = await automationApi.editVariation('V04', body);
     expect(first.created).toBe(true);
     expect(first.variation).toMatchObject({
-      label: 'V11',
+      label: 'V04.1',
+      name: 'V04.1',
       state: 'ACTIVE',
       replacesLabel: 'V04',
       changedFromReplaced: ['stopLossBps'],
@@ -731,10 +750,16 @@ describe('mock variation endpoints', () => {
       config: { takeProfitBps: 8000, stopLossBps: 5000, stopLossPercent: '50' },
     });
     expect(first.variation.activeFrom).not.toBeNull();
-    expect(await v04()).toMatchObject({ state: 'ARCHIVED', replacedByLabel: 'V11' });
+    expect(await v04()).toMatchObject({ state: 'ARCHIVED', replacedByLabel: 'V04.1' });
     const repeat = await automationApi.editVariation('V04', body);
     expect(repeat).toEqual({ variation: first.variation, created: false });
-    expect((await automationApi.variations(null)).items).toHaveLength(12);
+    expect((await automationApi.variations(null)).items).toHaveLength(13);
+    // An edit of the dotted V07.2 is V07.3; of the legacy V10, which is archived, none is allowed.
+    const next = await automationApi.editVariation(
+      'V07.2',
+      await editOf('V07.2', { stopLossPercent: '45' }),
+    );
+    expect(next.variation).toMatchObject({ label: 'V07.3', name: 'V07.3', replacesLabel: 'V07.2' });
     // The archived variation keeps its runs.
     const runs = await automationApi.sweepRuns({ label: 'V04', page: 0, size: 100 });
     expect(runs.total).toBeGreaterThan(0);
@@ -811,7 +836,7 @@ describe('mock variation endpoints', () => {
     expect((await automationApi.variations(null)).items).toHaveLength(500);
     resetAutomationMocks();
     // Nothing was stored by any refusal.
-    expect((await automationApi.variations(null)).items).toHaveLength(11);
+    expect((await automationApi.variations(null)).items).toHaveLength(12);
   });
 });
 
@@ -868,5 +893,131 @@ describe('mock GET /api/runs count only', () => {
     expect(page.total).toBeGreaterThan(0);
     expect(page.statusCounts).not.toBeNull();
     expect(page.totals?.length).toBeGreaterThan(0);
+  });
+});
+
+describe('mock variation create and archive', () => {
+  const configOf = async (label: string, change: Partial<VariationConfigRequest> = {}) => ({
+    ...variationConfigRequest(formValuesFrom((await automationApi.variation(label)).config, null)),
+    ...change,
+  });
+
+  it('creates under the next base number (201), and answers a repeat with it (200)', async () => {
+    const body = {
+      requestId: 'ui-create-1',
+      config: await configOf('V00', { stopLossPercent: '45' }),
+    };
+    const first = await automationApi.createVariation(body);
+    expect(first.created).toBe(true);
+    expect(first.variation).toMatchObject({
+      label: 'V11',
+      name: 'V11',
+      state: 'ACTIVE',
+      replacesLabel: null,
+    });
+    expect(first.variation.activeFrom).not.toBeNull();
+    expect(await automationApi.createVariation(body)).toEqual({
+      variation: first.variation,
+      created: false,
+    });
+  });
+
+  it("refuses a copy of an active variation's settings, naming it, but not of an archived one", async () => {
+    expect(
+      await failureOf(async () =>
+        automationApi.createVariation({ requestId: 'ui-create-2', config: await configOf('V04') }),
+      ),
+    ).toMatchObject({ status: 409, code: 'VARIATION_DUPLICATE', fields: { label: 'V04' } });
+    const archivedCopy = await automationApi.createVariation({
+      requestId: 'ui-create-3',
+      config: await configOf('V10'),
+    });
+    expect(archivedCopy.created).toBe(true);
+  });
+
+  it('archives without a replacement, keeps the runs, and refuses the baseline', async () => {
+    const runsBefore = (await automationApi.sweepRuns({ label: 'V05', page: 0, size: 100 })).total;
+    const archived = await automationApi.archiveVariation('V05');
+    expect(archived).toMatchObject({ state: 'ARCHIVED', replacedByLabel: null });
+    expect(archived.archivedAt).not.toBeNull();
+    expect(await automationApi.archiveVariation('V05')).toEqual(archived);
+    expect((await automationApi.sweepRuns({ label: 'V05', page: 0, size: 100 })).total).toBe(
+      runsBefore,
+    );
+    expect(await failureOf(() => automationApi.archiveVariation('V00'))).toMatchObject({
+      status: 409,
+      code: 'VARIATION_BASELINE',
+    });
+    expect(await failureOf(() => automationApi.archiveVariation('V99'))).toMatchObject({
+      status: 404,
+      code: 'AUTOMATION_VARIATION_NOT_FOUND',
+    });
+  });
+});
+
+describe('mock GET /api/runs?variation=', () => {
+  it("lists only the runs with the variation's settings, with counts and totals over them", async () => {
+    const all = await api.runs({ page: 0, size: 100 });
+    const page = await api.runs({ page: 0, size: 100, variation: 'V03' });
+    expect(page.total).toBeGreaterThan(0);
+    expect(page.total).toBeLessThan(all.total);
+    expect(page.items.every((r) => r.variations?.includes('V03'))).toBe(true);
+    const counted = Object.values(page.statusCounts ?? {}).reduce((sum, n) => sum + n, 0);
+    expect(counted).toBe(page.total);
+    expect(page.totals?.reduce((sum, t) => sum + t.runs, 0)).toBe(page.total);
+  });
+
+  it('gives an empty list for a variation that has not run, and refuses an unknown one', async () => {
+    const created = await automationApi.createVariation({
+      requestId: 'ui-create-runs',
+      config: {
+        ...variationConfigRequest(
+          formValuesFrom((await automationApi.variation('V00')).config, null),
+        ),
+        stopLossPercent: '45',
+      },
+    });
+    expect((await api.runs({ page: 0, size: 20, variation: created.variation.label })).total).toBe(
+      0,
+    );
+    expect(await failureOf(() => api.runs({ page: 0, size: 20, variation: 'V99' }))).toMatchObject({
+      status: 400,
+      code: 'INVALID_REQUEST',
+      fields: { variation: expect.any(String) },
+    });
+  });
+});
+
+describe('mock variation request ids', () => {
+  const configOf = async (label: string, change: Partial<VariationConfigRequest> = {}) => ({
+    ...variationConfigRequest(formValuesFrom((await automationApi.variation(label)).config, null)),
+    ...change,
+  });
+
+  it('refuses a request id an earlier, different create or edit used', async () => {
+    await automationApi.editVariation('V04', {
+      requestId: 'ui-shared',
+      config: await configOf('V04', { stopLossPercent: '50' }),
+    });
+    expect(
+      await failureOf(async () =>
+        automationApi.createVariation({
+          requestId: 'ui-shared',
+          config: await configOf('V00', { stopLossPercent: '45' }),
+        }),
+      ),
+    ).toMatchObject({
+      status: 409,
+      code: 'VARIATION_REQUEST_REUSED',
+      fields: { requestId: expect.any(String) },
+    });
+    expect(
+      await failureOf(async () =>
+        automationApi.editVariation('V05', {
+          requestId: 'ui-shared',
+          config: await configOf('V05', { stopLossPercent: '30' }),
+        }),
+      ),
+    ).toMatchObject({ status: 409, code: 'VARIATION_REQUEST_REUSED' });
   });
 });

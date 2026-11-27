@@ -287,7 +287,7 @@ export function SweepRunsView({
   const inEffect = [
     tab !== 'all' ? STATUS_LABELS[tab] : null,
     outcome ? `outcome ${outcomeLabel(outcome)}` : null,
-    !fixedLabel && variation ? `variation ${variation}` : null,
+    !fixedLabel && variation ? `variation ${book.name(variation)}` : null,
     sessionId ? 'one session' : null,
     fromDay ? `from ${fromDay}` : null,
     toDay ? `to ${toDay}` : null,

@@ -15,8 +15,10 @@ import {
 } from '@mantine/core';
 import { useForm, type UseFormReturnType } from '@mantine/form';
 import { notifications } from '@mantine/notifications';
+import type { ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import {
+  useCreateVariation,
   useEditVariation,
   type AutomationVariation,
   type VariationEditResult,
@@ -45,12 +47,15 @@ import {
 } from '../runs/runForm';
 import {
   editFieldReasons,
+  nameOf,
   settingChanges,
   unplacedReasonsText,
   validateVariationForm,
   variationConfigRequest,
+  variationCreateErrorText,
   variationEditErrorText,
 } from './automationModel';
+import { useVariationBook } from './useVariationBook';
 
 /** The settings in the form's order: entry and exit first, then the rules, sizes and timing. */
 const SETTING_FIELDS: SettingField[] = [
@@ -84,9 +89,12 @@ const UNITS: Partial<Record<SettingField, string>> = {
   maxAgeSlots: 'slots',
 };
 
-/** Where the edit's new variation is shown after saving, and how its page says so. */
+/**
+ * Where a saved form's new variation is shown, and how its page says so: `createdFrom` is the edited variation's label,
+ * or null for a new variation that replaces nothing; `created` is false when the backend returned an earlier one.
+ */
 export interface VariationCreatedState {
-  createdFrom: string;
+  createdFrom: string | null;
   created: boolean;
 }
 
@@ -183,28 +191,40 @@ function SettingInput({
 }
 
 /**
- * Edits a variation: every setting prefilled from it, the complete configuration posted. Beside the form, before
- * saving: each change ("Take profit 55% → 80%") and what saving does. A refused edit puts the backend's field reasons
- * on their inputs; any other refusal is said in words.
+ * A variation's settings form, for an edit or for a new variation. Every setting is prefilled (from the edited
+ * variation, or from the one a new variation copies) and the complete configuration is posted. Beside the form, before
+ * saving: each change ("Take profit 55% → 80%"), the name it saves as, and what saving does. A refused save puts the
+ * backend's field reasons on their inputs; any other refusal is said in words.
  */
 export function VariationEditForm({
+  mode = 'edit',
   variation,
   limits,
   captureMinSol,
-  nextLabel,
+  savesAs,
+  sourcePicker,
   onCancel,
 }: {
+  /** `edit` archives `variation` and saves its next revision; `create` saves a new variation copying `variation`. */
+  mode?: 'edit' | 'create';
   variation: AutomationVariation;
   limits: ConfigLimits;
   /** The capture filter from `/status`: a variation's minimum signal size must be at least this. */
   captureMinSol: string;
-  /** The label the new variation will probably get, for the text only. */
-  nextLabel: string | null;
+  /** The name it will be saved as (`V03.3`, or `V16` for a new one), for the text only; null when not known yet. */
+  savesAs: string | null;
+  /** For a new variation: the choice of whose settings to copy, shown above the settings. */
+  sourcePicker?: ReactNode;
   onCancel: () => void;
 }) {
+  const creating = mode === 'create';
   const { label } = variation;
+  const name = nameOf(variation);
+  const book = useVariationBook();
   const navigate = useNavigate();
   const edit = useEditVariation(label);
+  const create = useCreateVariation();
+  const save = creating ? create : edit;
   const form = useForm<RunFormValues>({
     mode: 'controlled',
     initialValues: formValuesFrom(variation.config, null),
@@ -213,21 +233,27 @@ export function VariationEditForm({
   });
   const changes = settingChanges(form.values, variation.config);
   const changed = new Set(changes.map((c) => c.field));
+  // An unchanged copy of an active variation would be refused as a duplicate; an archived one's settings may return.
+  const unchanged = changes.length === 0;
+  const blocked = creating ? unchanged && variation.state === 'ACTIVE' : unchanged;
 
-  function saved({ variation: created, created: isNew }: VariationEditResult) {
+  function saved({ variation: stored, created: isNew }: VariationEditResult) {
+    const storedName = nameOf(stored);
     notifications.show({
       color: isNew ? 'teal' : 'blue',
-      title: isNew ? `${created.label} created` : `${created.label} already existed`,
+      title: isNew ? `${storedName} created` : `${storedName} already existed`,
       message: isNew
-        ? `${created.label} replaces ${label} and runs only on buys captured from now on.`
-        : `This edit was saved earlier; ${created.label} is the variation it created.`,
+        ? creating
+          ? `${storedName} runs only on buys captured from now on.`
+          : `${storedName} replaces ${name} and runs only on buys captured from now on.`
+        : `This was saved earlier; ${storedName} is the variation it created.`,
     });
-    const state: VariationCreatedState = { createdFrom: label, created: isNew };
-    void navigate(paths.automationVariation(created.label), { state });
+    const state: VariationCreatedState = { createdFrom: creating ? null : label, created: isNew };
+    void navigate(paths.automationVariation(stored.label), { state });
   }
 
   const submit = form.onSubmit((values) => {
-    edit.mutate(variationConfigRequest(values), {
+    save.mutate(variationConfigRequest(values), {
       onSuccess: saved,
       onError: (error) => {
         if (!(error instanceof ApiError)) return;
@@ -237,7 +263,7 @@ export function VariationEditForm({
     });
   });
 
-  const error = edit.error;
+  const error = save.error;
   const placed =
     error instanceof ApiError
       ? placeFieldErrors(editFieldReasons(error.fields), INPUT_FIELDS)
@@ -246,52 +272,83 @@ export function VariationEditForm({
     (field) => form.errors[field] != null,
   ).length;
   // No answer, or a server failure: the same submit again reuses its request id, so it cannot save twice.
-  const retryable = error instanceof ApiError && (error.status === 0 || error.status >= 500);
+  // A request id another change already used is dropped, so the next save sends a fresh one.
+  const retryable =
+    error instanceof ApiError &&
+    (error.status === 0 || error.status >= 500 || error.code === 'VARIATION_REQUEST_REUSED');
+  const errorText = creating
+    ? variationCreateErrorText(error, book.name)
+    : variationEditErrorText(error, name, book.name);
 
   return (
-    <form onSubmit={submit} noValidate aria-label={`Edit variation ${label}`}>
+    <form
+      onSubmit={submit}
+      noValidate
+      aria-label={creating ? 'New variation' : `Edit variation ${name}`}
+    >
       <Grid align="flex-start">
         <Grid.Col span={{ base: 12, lg: 8 }}>
           <Section
-            title={`Edit ${label}`}
-            hint="Every setting is sent, prefilled with this variation's own. Changed settings are marked."
+            title={creating ? `Settings, copied from ${name}` : `Edit ${name}`}
+            hint={
+              creating
+                ? 'Every setting is sent. Change at least one from an active variation; changed settings are marked.'
+                : "Every setting is sent, prefilled with this variation's own. Changed settings are marked."
+            }
             actions={
               <Button
                 variant="subtle"
                 size="xs"
                 onClick={() => form.setValues(formValuesFrom(variation.config, null))}
-                disabled={changes.length === 0}
+                disabled={unchanged}
               >
                 Reset all
               </Button>
             }
           >
-            <SimpleGrid cols={{ base: 1, sm: 2 }}>
-              {SETTING_FIELDS.map((field) => (
-                <SettingInput
-                  key={field}
-                  field={field}
-                  form={form}
-                  limits={limits}
-                  captureMinSol={captureMinSol}
-                  edited={changed.has(field)}
-                />
-              ))}
-            </SimpleGrid>
+            <Stack gap="md">
+              {sourcePicker}
+              <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                {SETTING_FIELDS.map((field) => (
+                  <SettingInput
+                    key={field}
+                    field={field}
+                    form={form}
+                    limits={limits}
+                    captureMinSol={captureMinSol}
+                    edited={changed.has(field)}
+                  />
+                ))}
+              </SimpleGrid>
+            </Stack>
           </Section>
         </Grid.Col>
         <Grid.Col span={{ base: 12, lg: 4 }}>
           <Box style={{ position: 'sticky', top: 16 }}>
             <Section title="Before you save">
               <Stack gap="md">
-                {changes.length === 0 ? (
+                {savesAs && (
+                  <Text size="sm">
+                    Saves as{' '}
+                    <Text span ff="monospace" fw={600} inherit>
+                      {savesAs}
+                    </Text>
+                    {creating ? ', unless another variation is created first.' : '.'}
+                  </Text>
+                )}
+                {unchanged ? (
                   <Text size="sm" c="dimmed">
-                    No setting changed yet. Change at least one to save a new variation.
+                    {creating
+                      ? variation.state === 'ACTIVE'
+                        ? `No setting changed from ${name} yet. Change at least one: an active variation already has these settings.`
+                        : `No setting changed from ${name}, which is archived, so its settings can run again.`
+                      : 'No setting changed yet. Change at least one to save a new variation.'}
                   </Text>
                 ) : (
                   <Stack gap={6}>
                     <Text size="sm" fw={600}>
                       {changes.length} {changes.length === 1 ? 'change' : 'changes'}
+                      {creating ? ` from ${name}` : ''}
                     </Text>
                     <List size="sm" spacing={4} aria-label="Changes">
                       {changes.map((c) => (
@@ -309,28 +366,45 @@ export function VariationEditForm({
                   <Text size="sm" fw={600}>
                     What saving does
                   </Text>
-                  <List size="sm" spacing={4}>
-                    <List.Item>
-                      {label} is archived: it is no longer replayed, and its existing runs stay
-                      where they are.
-                    </List.Item>
-                    <List.Item>
-                      {nextLabel
-                        ? `A new variation, ${nextLabel} unless another edit is saved first,`
-                        : 'A new variation'}{' '}
-                      replaces it with these settings, from the next captured buy on.
-                    </List.Item>
-                    <List.Item>
-                      Buys already replayed are not replayed again, so the new variation starts with
-                      no runs.
-                    </List.Item>
-                  </List>
+                  {creating ? (
+                    <List size="sm" spacing={4}>
+                      <List.Item>
+                        A new variation is replayed on every buy captured from now on, next to the
+                        active ones.
+                      </List.Item>
+                      <List.Item>
+                        Buys already replayed are not replayed again, so it starts with no runs.
+                      </List.Item>
+                      <List.Item>
+                        Nothing else changes: {name} and every other variation stay as they are.
+                      </List.Item>
+                    </List>
+                  ) : (
+                    <List size="sm" spacing={4}>
+                      <List.Item>
+                        {name} is archived: it is no longer replayed, and its existing runs stay
+                        where they are.
+                      </List.Item>
+                      <List.Item>
+                        {savesAs ? `${savesAs}, the next version of ${name},` : 'Its next version'}{' '}
+                        replaces it with these settings, from the next captured buy on.
+                      </List.Item>
+                      <List.Item>
+                        Buys already replayed are not replayed again, so the new version starts with
+                        no runs.
+                      </List.Item>
+                    </List>
+                  )}
                 </Stack>
                 <Group gap="sm">
-                  <Button type="submit" loading={edit.isPending} disabled={changes.length === 0}>
-                    {retryable ? 'Save again' : `Archive ${label} and save`}
+                  <Button type="submit" loading={save.isPending} disabled={blocked}>
+                    {retryable
+                      ? 'Save again'
+                      : creating
+                        ? `Create ${savesAs ?? 'variation'}`
+                        : `Archive ${name} and save`}
                   </Button>
-                  <Button variant="default" onClick={onCancel} disabled={edit.isPending}>
+                  <Button variant="default" onClick={onCancel} disabled={save.isPending}>
                     Cancel
                   </Button>
                 </Group>
@@ -339,13 +413,13 @@ export function VariationEditForm({
                     color="red"
                     variant="light"
                     icon={<IconAlert />}
-                    title="The edit was not saved"
+                    title={creating ? 'The variation was not created' : 'The edit was not saved'}
                     role="alert"
                   >
                     <Stack gap="xs">
                       <Text size="sm" style={{ overflowWrap: 'anywhere' }}>
                         {[
-                          variationEditErrorText(error, label),
+                          errorText,
                           unplacedReasonsText(placed?.unplaced ?? []),
                           highlighted > 0
                             ? `See the highlighted ${highlighted === 1 ? 'field' : 'fields'}.`

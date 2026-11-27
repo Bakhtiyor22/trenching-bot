@@ -33,8 +33,12 @@ export const MOCK_WALLET = '4Kq2DecuWa11etAddre55xxxxxxxxxxxxxxxxx9xPd';
 export const MOCK_LABELS = ['V00', 'V01', 'V02', 'V03', 'V04', 'V05', 'V06', 'V07', 'V08', 'V09'];
 /** The archived variation of the fixtures, its replacement, and when the edit happened (29 Oct, 15:00 UTC+5). */
 export const MOCK_ARCHIVED_LABEL = 'V07';
+/** V07's first edit, under a legacy label from before names (as on the server): it is named V07.1. */
 export const MOCK_REPLACEMENT_LABEL = 'V10';
 export const MOCK_EDIT_AT = '2026-10-29T10:00:00.000Z';
+/** V10's edit, stored under its name as every edit is now: a dotted label. */
+export const MOCK_DOTTED_LABEL = 'V07.2';
+export const MOCK_SECOND_EDIT_AT = '2026-10-30T10:00:00.000Z';
 /** Today's trading day; the tests pin the clock inside it. */
 export const MOCK_TODAY = '2026-11-02';
 const LIVE_NIGHTS = 17;
@@ -183,7 +187,31 @@ const TAKE_PROFIT_PNL: Record<string, string> = {
 };
 
 /** A label's number, for stable fixture ids: "V07" → 7. */
-const labelSeed = (label: string) => Number(label.slice(1));
+const labelSeed = (label: string) => {
+  const [line = '0', revision] = label.slice(1).split('.');
+  return revision === undefined ? Number(line) : 1000 + Number(line) * 100 + Number(revision);
+};
+
+const NAME = /^V(\d+)(?:\.(\d+))?$/;
+
+/** A name's line number and revision, for ordering: V03.2 → [3, 2]; anything else sorts last. */
+function nameRank(name: string): [number, number] {
+  const match = NAME.exec(name);
+  return match ? [Number(match[1]), Number(match[2] ?? 0)] : [Number.MAX_SAFE_INTEGER, 0];
+}
+
+/** The API's order: by line number, then revision (V00, V01, V01.1, V02, …). */
+export function compareNames(a: string, b: string): number {
+  const [la, ra] = nameRank(a);
+  const [lb, rb] = nameRank(b);
+  return la - lb || ra - rb || a.localeCompare(b);
+}
+
+/** The name of a variation that replaces `replaced`: the next revision of its line (V07 → V07.1, V07.1 → V07.2). */
+export function nextRevisionName(replaced: Pick<AutomationVariation, 'label' | 'name'>): string {
+  const match = NAME.exec(replaced.name ?? replaced.label);
+  return match ? `V${match[1]}.${Number(match[2] ?? 0) + 1}` : `${replaced.label}.1`;
+}
 
 /** The configuration properties of `ConfigResponse`, in its order; the percent twins are left out. */
 export const CONFIG_PROPERTIES = [
@@ -227,6 +255,7 @@ const VARIATION_CHANGES: Record<string, Partial<Config>> = {
   V08: { minSignalSol: '1.500000000' },
   V09: { minMarketCapUsd: '20000.000000000000' },
   V10: { dipWindowMs: 90_000 },
+  'V07.2': { dipWindowMs: 120_000 },
 };
 
 const NUMERIC = /^-?[0-9]/;
@@ -250,6 +279,7 @@ export function mockVariation(
   return {
     planId: MOCK_PLAN,
     label,
+    name: label,
     state: 'ACTIVE',
     config,
     differsFromAgreed: differingProperties(config, MOCK_AGREED_CONFIG),
@@ -278,15 +308,28 @@ function seedVariations(): AutomationVariation[] {
       : mockVariation(label, configOf(label)),
   );
   const replacement = mockVariation(MOCK_REPLACEMENT_LABEL, configOf(MOCK_REPLACEMENT_LABEL), {
+    name: 'V07.1',
+    state: 'ARCHIVED',
     replacesLabel: MOCK_ARCHIVED_LABEL,
+    replacedByLabel: MOCK_DOTTED_LABEL,
     changedFromReplaced: differingProperties(
       configOf(MOCK_REPLACEMENT_LABEL),
       configOf(MOCK_ARCHIVED_LABEL),
     ),
     activeFrom: MOCK_EDIT_AT,
+    archivedAt: MOCK_SECOND_EDIT_AT,
     createdAt: MOCK_EDIT_AT,
   });
-  return [...seeded, replacement];
+  const dotted = mockVariation(MOCK_DOTTED_LABEL, configOf(MOCK_DOTTED_LABEL), {
+    replacesLabel: MOCK_REPLACEMENT_LABEL,
+    changedFromReplaced: differingProperties(
+      configOf(MOCK_DOTTED_LABEL),
+      configOf(MOCK_REPLACEMENT_LABEL),
+    ),
+    activeFrom: MOCK_SECOND_EDIT_AT,
+    createdAt: MOCK_SECOND_EDIT_AT,
+  });
+  return [...seeded, replacement, dotted].sort((a, b) => compareNames(a.name!, b.name!));
 }
 
 /** True when `variation` was active at `at`, so a buy captured then is swept under it. */
@@ -305,6 +348,11 @@ export function livesOn(variation: AutomationVariation, day: string): boolean {
   );
 }
 
+/** The configuration hash of a variation's sweep runs; a run of the same settings anywhere has the same one. */
+export function mockConfigurationHash(label: string): string {
+  return hex(labelSeed(label) + 400, 64);
+}
+
 function sweepRunFor(item: AutomationItem, label: string, k: number): AutomationSweepRun {
   const outcomes = OUTCOMES_BY_LABEL[label] ?? OUTCOMES_BY_LABEL.V00!;
   const outcome = outcomes[k % outcomes.length]!;
@@ -319,7 +367,7 @@ function sweepRunFor(item: AutomationItem, label: string, k: number): Automation
     planId: MOCK_PLAN,
     label,
     runId: `run-${hex(k * 31 + labelSeed(label), 24)}`,
-    configurationHash: hex(labelSeed(label) + 400, 64),
+    configurationHash: mockConfigurationHash(label),
     engineVersion: 'dip-paper-v6',
     outcome,
     positionState: open

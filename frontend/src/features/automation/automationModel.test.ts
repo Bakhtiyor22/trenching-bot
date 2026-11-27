@@ -30,7 +30,9 @@ import {
   defaultScoredDay,
   clockText,
   editFieldReasons,
-  nextVariationLabel,
+  editName,
+  nameOf,
+  newVariationName,
   propertiesText,
   settingChanges,
   settingsOfProperties,
@@ -297,18 +299,49 @@ describe('variations from the API', () => {
     expect(clockText(500)).toBe('0.5 s');
   });
 
-  it('finds the baseline, orders labels by sequence and names labels it does not know bare', () => {
+  it('finds the baseline, orders labels by name and names labels it does not know bare', () => {
     const book = variationBook(variationList);
     expect(book.baseline).toBe('V00');
     expect(book.describe('V10')).toBe('dip window 90 s');
     expect(book.describe('V99')).toBeNull();
     expect(variationName(book, 'V04')).toBe('V04 · take profit 80%');
     expect(variationName(book, 'V99')).toBe('V99');
-    expect(book.order(['V10', 'V99', 'V02', 'V00'])).toEqual(['V00', 'V02', 'V10', 'V99']);
-    expect(nextVariationLabel(book)).toBe('V11');
+    // The API's order is by name: V07, V07.1 (the legacy label V10), V07.2, V08.
+    expect(book.order(['V08', 'V99', 'V07.2', 'V10', 'V07'])).toEqual([
+      'V07',
+      'V10',
+      'V07.2',
+      'V08',
+      'V99',
+    ]);
     const empty = variationBook(undefined);
     expect(empty.baseline).toBeNull();
-    expect(nextVariationLabel(empty)).toBeNull();
+    expect(newVariationName(empty)).toBeNull();
+  });
+
+  it('shows the name for a label, the label itself until the book has it, and the archived state', () => {
+    const book = variationBook(variationList);
+    expect(book.name('V10')).toBe('V07.1');
+    expect(book.name('V07.2')).toBe('V07.2');
+    expect(book.name('V04')).toBe('V04');
+    expect(book.name('V99')).toBe('V99');
+    expect(variationBook(undefined).name('V10')).toBe('V10');
+    expect(book.archived('V10')).toBe(true);
+    expect(book.archived('V07.2')).toBe(false);
+    expect(book.archived('V99')).toBe(false);
+    expect(variationName(book, 'V10')).toBe('V07.1 · dip window 90 s');
+    expect(nameOf({ label: 'V10' })).toBe('V10');
+  });
+
+  it('names an edit as the next version in its line, and a new variation by the next base number', () => {
+    expect(editName({ label: 'V12', name: 'V03.2' })).toBe('V03.3');
+    expect(editName({ label: 'V04', name: 'V04' })).toBe('V04.1');
+    expect(editName({ label: 'V04' })).toBe('V04.1');
+    expect(editName({ label: 'odd', name: 'odd' })).toBeNull();
+    // V00–V09 plus the legacy V10 and the dotted V07.2: the next base is V11.
+    expect(newVariationName(variationBook(variationList))).toBe('V11');
+    const legacy = ['V00', 'V09', 'V10', 'V15', 'V03.3'].map((label) => ({ label }));
+    expect(newVariationName({ variations: legacy as never })).toBe('V16');
   });
 
   it('lists each changed setting with both values', () => {

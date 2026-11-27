@@ -28,6 +28,8 @@ import com.trenching.bot.console.automation.application.AutomationVariationTrans
 import com.trenching.bot.console.automation.application.AutomationVariationViews
 import com.trenching.bot.console.automation.application.AutomationSweepTransaction
 import com.trenching.bot.console.automation.config.AutomationProperties
+import com.trenching.bot.console.automation.domain.AutomationLimits
+import com.trenching.bot.console.automation.domain.VariationState
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationBackfillRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemEventRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationItemRepository
@@ -54,6 +56,11 @@ import com.trenching.bot.console.capture.CaptureOperationService
 import java.nio.file.Path
 import java.time.Clock
 import java.time.Duration
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import kotlin.test.assertTrue
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Tag
@@ -63,8 +70,11 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Import
+import org.springframework.data.domain.Limit
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.ActiveProfiles
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 
 /**
  * The automation services against PostgreSQL. Automation loads only under the local profile, so the transactional beans
@@ -106,6 +116,7 @@ abstract class AutomationDatabaseTest {
     @Autowired protected lateinit var buyNotifier: AutomationBuyNotifier
 
     @Autowired private lateinit var lockProbe: JdbcTemplate
+    @Autowired private lateinit var transactionManager: PlatformTransactionManager
 
     protected val runtime = AutomationRuntime()
 
@@ -135,6 +146,29 @@ abstract class AutomationDatabaseTest {
             val waiting = lockProbe.queryForObject("select count(*) from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'", Long::class.java)
             if (waiting != null && waiting > 0) return
             Thread.sleep(LOCK_POLL_MILLIS)
+        }
+    }
+
+    /**
+     * Runs [tasks] on threads of their own while the test holds the configured plan's active variations locked, and lets go once they are all
+     * under way and a session waits for the lock: the operations really overlap, so only the lock puts them one after the other.
+     */
+    protected fun <T> concurrentlyBehindLock(vararg tasks: () -> T): List<Result<T>> {
+        val started = CountDownLatch(tasks.size)
+        val pool = Executors.newFixedThreadPool(tasks.size)
+        try {
+            val futures = checkNotNull(TransactionTemplate(transactionManager).execute {
+                variationRows.findAllForUpdateByPlanIdAndStateOrderBySeqAsc(
+                    AutomationFixtures.properties().sweepPlan, VariationState.ACTIVE, Limit.of(AutomationLimits.MAX_VARIATIONS_PER_PLAN),
+                )
+                val running = tasks.map { task -> pool.submit(Callable { started.countDown(); runCatching(task) }) }
+                assertTrue(started.await(30, TimeUnit.SECONDS), "every task started")
+                awaitLockWaiterOr { false }
+                running
+            })
+            return futures.map { it.get(30, TimeUnit.SECONDS) }
+        } finally {
+            pool.shutdownNow()
         }
     }
 
@@ -259,8 +293,8 @@ abstract class AutomationDatabaseTest {
         fun switchableNotifications() = SwitchableNotifications()
 
         @Bean
-        fun automationBuyNotifier(sweepRuns: AutomationSweepRunRepository, variations: AutomationVariationRepository, notifications: SwitchableNotifications) =
-            AutomationBuyNotifier(sweepRuns, variations, notifications.publisher, AutomationFixtures.properties())
+        fun automationBuyNotifier(sweepRuns: AutomationSweepRunRepository, variations: AutomationVariationRepository, mapper: AutomationVariationMapper, notifications: SwitchableNotifications) =
+            AutomationBuyNotifier(sweepRuns, AutomationVariationViews(variations, mapper), notifications.publisher, AutomationFixtures.properties())
 
         @Bean
         fun automationSweepTransaction(items: AutomationItemRepository, sweepRuns: AutomationSweepRunRepository, mapper: AutomationRecordMapper, events: AutomationItemEventWriter) =

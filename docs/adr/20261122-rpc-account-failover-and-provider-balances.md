@@ -1,6 +1,6 @@
 # RPC account failover and provider balances
 
-Accepted 2026-11-22 with the approved [Telegram alerts and backup RPC account plan](../plans/20261122-telegram-alerts-and-backup-rpc-account.md) (Key Decisions 6 to 9; Domain Rules 2 and 11 to 20). This record covers `console.solana.accounts` and its wiring; the endpoint seam in `chaincapture` and the notification outbox have their own parts and records.
+Accepted 2026-11-22 with the approved [Telegram alerts and backup RPC account plan](../plans/archive/20261122-telegram-alerts-and-backup-rpc-account.md) (Key Decisions 6 to 9; Domain Rules 2 and 11 to 20). This record covers `console.solana.accounts` and its wiring; the endpoint seam in `chaincapture` and the notification outbox have their own parts and records.
 
 ## Context
 

@@ -618,8 +618,8 @@ export function DayLink({
 }
 
 /**
- * A link to a variation's page (its settings and runs), named by its label. `children` replaces the label; an
- * `aria-label` says where it goes when the visible text is only an arrow.
+ * A link to a variation's page (its settings and runs), shown by its name and linked by its label. `children` replaces
+ * the name; an `aria-label` says where it goes when the visible text is only an arrow.
  */
 export function VariationLink({
   label,
@@ -630,6 +630,8 @@ export function VariationLink({
   children?: ReactNode;
   size?: 'xs' | 'sm';
 }) {
+  const book = useVariationBook();
+  const name = book.name(label);
   return (
     <Anchor
       component={Link}
@@ -637,15 +639,15 @@ export function VariationLink({
       size={size}
       ff={children ? undefined : 'monospace'}
       fw={children ? undefined : 600}
-      aria-label={children ? `Open variation ${label}: settings and runs` : undefined}
+      aria-label={children ? `Open variation ${name}: settings and runs` : undefined}
       onClick={(event) => event.stopPropagation()}
     >
-      {children ?? label}
+      {children ?? name}
     </Anchor>
   );
 }
 
-/** A variation's label as a link to its page, followed by what it changes ("take profit 80%") when known. */
+/** A variation's name as a link to its page, followed by what it changes ("take profit 80%") when known. */
 export function VariationLabel({ label }: { label: string }) {
   const book = useVariationBook();
   const text = book.describe(label);
@@ -662,7 +664,7 @@ export function VariationLabel({ label }: { label: string }) {
   );
 }
 
-/** Active, or Archived with the label of its replacement; never colour alone. */
+/** Active, or Archived with the name of its replacement; never colour alone. */
 export function VariationStateChip({
   state,
   replacedBy,

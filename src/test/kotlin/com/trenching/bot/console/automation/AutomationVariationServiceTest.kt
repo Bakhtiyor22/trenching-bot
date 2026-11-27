@@ -2,7 +2,7 @@ package com.trenching.bot.console.automation
 
 import com.trenching.bot.console.automation.AutomationDaySeed.Companion.local
 import com.trenching.bot.console.automation.AutomationFixtures.properties
-import com.trenching.bot.console.automation.api.dto.AutomationVariationEditRequest
+import com.trenching.bot.console.automation.api.dto.AutomationVariationConfigRequest
 import com.trenching.bot.console.automation.application.AutomationVariationSeedTransaction
 import com.trenching.bot.console.automation.domain.AutomationLimits
 import com.trenching.bot.console.automation.domain.InvalidAutomationRequestException
@@ -17,6 +17,7 @@ import com.trenching.bot.console.automation.domain.VariationEditResult
 import com.trenching.bot.console.automation.domain.VariationEditRules
 import com.trenching.bot.console.automation.domain.VariationLimitReachedException
 import com.trenching.bot.console.automation.domain.VariationNotFoundException
+import com.trenching.bot.console.automation.domain.VariationRequestReusedException
 import com.trenching.bot.console.automation.domain.VariationUnchangedException
 import com.trenching.bot.console.automation.domain.VariationState
 import com.trenching.bot.console.capture.MutableClock
@@ -35,20 +36,14 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import org.junit.jupiter.api.Test
-import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.dao.OptimisticLockingFailureException
-import org.springframework.data.domain.Limit
-import org.springframework.transaction.PlatformTransactionManager
-import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.json.JsonMapper
 import tools.jackson.module.kotlin.kotlinModule
 import tools.jackson.module.kotlin.readValue
 
 /** Editable-variations plan Rules 1, 4, 8 and 13: the stored variations, their seed from the code plan, and the reads that serve the sweep and the scoreboard. */
 class AutomationVariationServiceTest : AutomationDatabaseTest() {
-    @Autowired private lateinit var transactionManager: PlatformTransactionManager
-
     private val clock = MutableClock(local("2026-11-12", "13:00"))
     private val plan = SweepPlans.DECU_SWEEP_1
     private val edits by lazy { AutomationVariationRows(variationRows, variationMapper) }
@@ -197,7 +192,7 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
     }
 
     @Test
-    fun `an edit of two settings archives the old row, creates V10 with both values and names what changed`() {
+    fun `an edit of two settings archives the old row, creates the next revision of its line with both values and names what changed`() {
         sweepRuns.save(AutomationRows.sweepRun("r-v04", "item-1", "V04"))
         val runsBefore = sweepRuns.findAll().map { it.id to it.label }
 
@@ -205,17 +200,48 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
 
         val created = result.variation
         assertTrue(result.created)
-        assertEquals(listOf("V10", 8000, 5000, "V04", VariationState.ACTIVE), listOf(created.variation.label, created.variation.config.takeProfitBps,
+        assertEquals(listOf("V04.1", 8000, 5000, "V04", VariationState.ACTIVE), listOf(created.variation.label, created.variation.config.takeProfitBps,
             created.variation.config.stopLossBps, created.variation.replacesLabel, created.variation.state))
+        assertEquals(listOf("V04.1", 10), listOf(created.name.text, created.variation.seq), "the label is the name; the sequence number stays the creation order")
         assertEquals(clock.instant(), created.variation.activeFrom)
         assertEquals(listOf("stopLossBps"), created.changedFromReplaced, "V04 already takes profit at 80%")
         assertEquals(listOf("takeProfitBps", "stopLossBps"), created.differsFromAgreed)
         val old = service().findView("V04").variation
-        assertEquals(listOf(VariationState.ARCHIVED, clock.instant(), "V10"), listOf(old.state, old.archivedAt, old.replacedByLabel))
-        assertEquals(created.variation, service().findView("V10").variation)
+        assertEquals(listOf(VariationState.ARCHIVED, clock.instant(), "V04.1"), listOf(old.state, old.archivedAt, old.replacedByLabel))
+        assertEquals(created.variation, service().findView("V04.1").variation)
         assertEquals(11, variationRows.count())
         assertEquals(runsBefore, sweepRuns.findAll().map { it.id to it.label }, "no sweep run is touched by an edit")
-        assertEquals("req-1", variationRows.findOneByPlanIdAndLabel(plan.id, "V10")?.requestId)
+        assertEquals("req-1", variationRows.findOneByPlanIdAndLabel(plan.id, "V04.1")?.requestId)
+    }
+
+    @Test
+    fun `an edit of a variation stored under a legacy label is stored under the next revision of its line`() {
+        edits.edit("V03", local("2026-11-12", "11:30"), "legacy-1")
+        edits.edit("V04", local("2026-11-12", "11:35"), "legacy-2")
+        edits.edit("V10", local("2026-11-12", "11:40"), "legacy-3")
+
+        val created = service().edit("V12", edit("req-1", editBody(takeProfitPercent = "61"))).variation
+
+        assertEquals(listOf("V03.3", "V03.3", "V12", 13), listOf(created.variation.label, created.name.text, created.variation.replacesLabel, created.variation.seq))
+        assertEquals("V03.3", service().findView("V12").variation.replacedByLabel)
+        assertEquals("V03.2", service().findView("V12").name.text)
+    }
+
+    @Test
+    fun `the list is by name, with a legacy label placed and named by its line`() {
+        edits.edit("V03", local("2026-11-12", "11:30"), "legacy-1")
+        edits.edit("V04", local("2026-11-12", "11:35"), "legacy-2")
+        edits.edit("V10", local("2026-11-12", "11:40"), "legacy-3")
+
+        val listed = service().listViews(null).items
+
+        assertEquals(
+            listOf("V00", "V01", "V02", "V03", "V03.1", "V03.2", "V04", "V04.1", "V05", "V06", "V07", "V08", "V09"),
+            listed.map { it.name.text },
+        )
+        assertEquals(listOf("V00", "V01", "V02", "V03", "V10", "V12", "V04", "V11", "V05", "V06", "V07", "V08", "V09"), listed.map { it.variation.label })
+        assertEquals(listOf("V03.2"), service().listViews("ACTIVE").items.map { it.name.text }.filter { it.startsWith("V03.") })
+        assertEquals((0..12).map { VariationEditRules.labelOf(it) }, service().list().map { it.label }, "the sweep's list stays in sequence order")
     }
 
     @Test
@@ -225,13 +251,22 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
         clock.now = clock.now.plusSeconds(60)
 
         val again = service().edit("V04", edit("req-1", editBody(takeProfitPercent = "60")))
-        val ofAnotherLabel = service().edit("V05", edit("req-1", editBody(takeProfitPercent = "61")))
 
         assertFalse(again.created)
-        assertFalse(ofAnotherLabel.created)
         assertEquals(first.variation, again.variation)
-        assertEquals(first.variation, ofAnotherLabel.variation)
         assertEquals(rowsBefore, rows())
+    }
+
+    @Test
+    fun `a request id an edit stored is refused for an edit of another label, naming the id and the stored label, and stores nothing`() {
+        service().edit("V04", edit("req-1", editBody()))
+        val before = rows()
+
+        val refused = assertFailsWith<VariationRequestReusedException> { service().edit("V05", edit("req-1", editBody(takeProfitPercent = "61"))) }
+
+        assertEquals(listOf("req-1", "V04.1"), listOf(refused.requestId, refused.storedLabel))
+        assertTrue("req-1" in refused.message.orEmpty() && "V04.1" in refused.message.orEmpty(), refused.message)
+        assertEquals(before, rows())
     }
 
     @Test
@@ -241,7 +276,7 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
 
         val refused = assertFailsWith<VariationDuplicateException> { service().edit("V05", edit("req-2", editBody())) }
 
-        assertEquals("V10", refused.label)
+        assertEquals("V04.1", refused.label)
         assertEquals(before, rows())
     }
 
@@ -268,7 +303,7 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
 
         service().edit("V04", edit("x".repeat(64), editBody()))
 
-        assertEquals("x".repeat(64), variationRows.findOneByPlanIdAndLabel(plan.id, "V10")?.requestId)
+        assertEquals("x".repeat(64), variationRows.findOneByPlanIdAndLabel(plan.id, "V04.1")?.requestId)
     }
 
     @Test
@@ -305,7 +340,7 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
         val failure = outcomes.single { it.isFailure }.exceptionOrNull()
         assertTrue(failure is VariationArchivedException || failure is OptimisticLockingFailureException, "$failure")
         assertEquals(11, variationRows.count())
-        assertEquals(listOf("V10"), variationRows.findAll().filter { it.replacesLabel == "V04" }.map { it.label })
+        assertEquals(listOf("V04.1"), variationRows.findAll().filter { it.replacesLabel == "V04" }.map { it.label })
         assertEquals(VariationState.ARCHIVED, service().findView("V04").variation.state)
     }
 
@@ -344,10 +379,10 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
         assertTrue(first.created)
         assertFalse(again.created)
         assertEquals(first.variation, again.variation)
-        assertEquals(first.variation, service().findView("V10"))
+        assertEquals(first.variation, service().findView("V04.1"))
         assertEquals(microseconds, first.variation.variation.activeFrom)
         assertEquals(microseconds, first.variation.variation.createdAt)
-        assertEquals(microseconds, variationRows.findOneByPlanIdAndLabel(plan.id, "V10")?.createdAt)
+        assertEquals(microseconds, variationRows.findOneByPlanIdAndLabel(plan.id, "V04.1")?.createdAt)
         assertEquals(microseconds, service().findView("V04").variation.archivedAt)
     }
 
@@ -376,20 +411,20 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
         val before = rows()
         val refused = assertFailsWith<VariationLimitReachedException> { service().edit("V03", edit("req-2", editBody(takeProfitPercent = "61"))) }
 
-        assertEquals(VariationEditRules.labelOf(AutomationLimits.MAX_VARIATIONS_PER_PLAN - 1), fits.variation.variation.label)
+        assertEquals(listOf("V04.1", AutomationLimits.MAX_VARIATIONS_PER_PLAN - 1), listOf(fits.variation.variation.label, fits.variation.variation.seq))
         assertEquals(plan.id, refused.planId)
         assertEquals(before, rows())
     }
 
     @Test
-    fun `two edits of different labels at once both succeed as V10 and V11, so the plan's lock serialises the sequence`() {
+    fun `two edits of different labels at once both succeed as revisions of their own lines, so the plan's lock serialises the sequence`() {
         val outcomes = concurrentlyBehindLock(
             { service().edit("V04", edit("req-a", editBody())) },
             { service().edit("V05", edit("req-b", editBody(takeProfitPercent = "61"))) },
         ).map { it.getOrThrow() }
 
         assertTrue(outcomes.all { it.created })
-        assertEquals(listOf("V10", "V11"), outcomes.map { it.variation.variation.label }.sorted())
+        assertEquals(listOf("V04.1", "V05.1"), outcomes.map { it.variation.variation.label }.sorted())
         assertEquals(12, variationRows.count())
         assertEquals(listOf("V04", "V05"), variationRows.findAll().mapNotNull { it.replacesLabel }.sorted())
         assertEquals(setOf(10, 11), variationRows.findAll().filter { it.replacesLabel != null }.map { it.seq }.toSet())
@@ -403,20 +438,21 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
         val archived = service().listViews("ARCHIVED")
 
         assertEquals(plan.id, all.planId)
-        assertEquals((0..10).map { VariationEditRules.labelOf(it) }, all.items.map { it.variation.label })
+        assertEquals(listOf("V00", "V01", "V02", "V03", "V04", "V04.1", "V05", "V06", "V07", "V08", "V09"), all.items.map { it.name.text })
+        assertEquals(all.items.map { it.name.text }, all.items.map { it.variation.label }, "an edit's label is its name")
         assertEquals(emptyList(), all.items.first().differsFromAgreed, "V00 is the agreed configuration")
         assertEquals(emptyList(), all.items.first().changedFromReplaced)
         assertEquals(listOf("V04"), archived.items.map { it.variation.label })
-        assertEquals(listOf("stopLossBps"), service().findView("V10").changedFromReplaced)
-        assertEquals(listOf("V10"), service().listViews("ACTIVE").items.filter { it.variation.replacesLabel != null }.map { it.variation.label })
+        assertEquals(listOf("stopLossBps"), service().findView("V04.1").changedFromReplaced)
+        assertEquals(listOf("V04.1"), service().listViews("ACTIVE").items.filter { it.variation.replacesLabel != null }.map { it.variation.label })
         assertFailsWith<InvalidAutomationRequestException> { service().listViews("active") }
         assertFailsWith<VariationNotFoundException> { service().findView("V99") }
     }
 
     private fun rows() = variationRows.findAll().sortedBy { it.seq }.map { Triple(it.label, it.state, it.version) }
 
-    private fun edit(requestId: String, config: String): AutomationVariationEditRequest =
-        json.readValue<AutomationVariationEditRequest>("""{"requestId":"$requestId","config":$config}""")
+    private fun edit(requestId: String, config: String): AutomationVariationConfigRequest =
+        json.readValue<AutomationVariationConfigRequest>("""{"requestId":"$requestId","config":$config}""")
 
     /** V04's configuration with the take profit and stop loss sent as percents, which is how the console sends a level. */
     private fun editBody(takeProfitPercent: String = "80", stopLossPercent: String = "50", without: String? = null, extra: Map<String, String> = emptyMap()) =
@@ -450,27 +486,6 @@ class AutomationVariationServiceTest : AutomationDatabaseTest() {
         try {
             val futures = tasks.map { task -> pool.submit(Callable { start.await(); runCatching(task) }) }
             start.countDown()
-            return futures.map { it.get(30, TimeUnit.SECONDS) }
-        } finally {
-            pool.shutdownNow()
-        }
-    }
-
-    /**
-     * Runs [tasks] on threads of their own while the test holds the plan's active rows locked, and lets go once they are all under
-     * way and a session waits for the lock: the edits really overlap, so only the lock puts them one after the other.
-     */
-    private fun concurrentlyBehindLock(vararg tasks: () -> VariationEditResult): List<Result<VariationEditResult>> {
-        val started = CountDownLatch(tasks.size)
-        val pool = Executors.newFixedThreadPool(tasks.size)
-        try {
-            val futures = checkNotNull(TransactionTemplate(transactionManager).execute {
-                variationRows.findAllForUpdateByPlanIdAndStateOrderBySeqAsc(plan.id, VariationState.ACTIVE, Limit.of(AutomationLimits.MAX_VARIATIONS_PER_PLAN))
-                val running = tasks.map { task -> pool.submit(Callable { started.countDown(); runCatching(task) }) }
-                assertTrue(started.await(30, TimeUnit.SECONDS), "every edit started")
-                awaitLockWaiterOr { false }
-                running
-            })
             return futures.map { it.get(30, TimeUnit.SECONDS) }
         } finally {
             pool.shutdownNow()

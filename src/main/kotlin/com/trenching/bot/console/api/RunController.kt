@@ -62,8 +62,9 @@ class RunController(
         @RequestParam(required = false) createdTo: Instant?,
         @RequestParam(name = "q", required = false) text: String?,
         @RequestParam(required = false) asOf: Instant?,
+        @RequestParam(required = false) variation: String?,
     ): RunPageResponse = runResponseMapper.toPage(runSearchService.search(
-        RunSearchParams(page, size, datasetId, statuses.orEmpty(), mint, anchorFrom, anchorTo, createdFrom, createdTo, text, asOf)))
+        RunSearchParams(page, size, datasetId, statuses.orEmpty(), mint, anchorFrom, anchorTo, createdFrom, createdTo, text, asOf, variation)))
 
     @GetMapping("/{id}")
     fun detail(@PathVariable id: String): RunDetailResponse = runResponseMapper.toResponse(consoleService.detailWithSource(id))

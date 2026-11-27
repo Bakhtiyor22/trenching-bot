@@ -24,11 +24,15 @@ class VariationUnchangedException(label: String) : AutomationException("The edit
 class VariationDuplicateException(val label: String) :
     AutomationException("Another active variation already has the edit's configuration duplicateOfLabel=$label")
 
-/** A plan holds at most [AutomationLimits.MAX_VARIATIONS_PER_PLAN] variations; the edit that would number one past it is refused. */
+/** A plan holds at most [AutomationLimits.MAX_VARIATIONS_PER_PLAN] variations; the edit or creation that would number one past it is refused. */
 class VariationLimitReachedException(val planId: String) :
     AutomationException("A plan holds at most ${AutomationLimits.MAX_VARIATIONS_PER_PLAN} variations planId=$planId")
 
-class VariationBaselineException(label: String) : AutomationException("The agreed baseline cannot be edited label=$label")
+/** A request id belongs to one operation: [requestId] was stored by [storedLabel], which another kind of operation, or an edit of another label, made. */
+class VariationRequestReusedException(val requestId: String, val storedLabel: String) :
+    AutomationException("A request id belongs to the one operation that stored it requestId=$requestId storedLabel=$storedLabel")
+
+class VariationBaselineException(label: String) : AutomationException("The agreed baseline cannot be edited or archived label=$label")
 
 /** [code] is the most specific reason the edit's configuration was refused and [fields] the reason of each offending field. */
 class InvalidVariationConfigException(val fields: Map<String, String>, val code: ConfigErrorCode) :

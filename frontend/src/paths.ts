@@ -33,6 +33,7 @@ export const paths = {
   automationItem: (id: string) => `/automation/items/${encodeURIComponent(id)}`,
   automationSweepRuns: '/automation/sweep-runs',
   automationVariations: '/automation/variations',
+  automationVariationNew: '/automation/variations/new',
   automationVariation: (label: string) => `/automation/variations/${encodeURIComponent(label)}`,
   /** The variation's page with its edit form open. */
   automationVariationEdit: (label: string) =>

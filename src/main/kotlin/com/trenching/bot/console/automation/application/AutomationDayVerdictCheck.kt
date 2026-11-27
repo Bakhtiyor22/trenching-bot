@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service
 @ConditionalOnAutomationEnabled
 class AutomationDayVerdictCheck(
     private val days: AutomationDayService,
+    private val variations: AutomationVariationViews,
     private val publisher: NotificationPublisher,
     private val properties: AutomationProperties,
     @param:Qualifier(SimulationClock.NAME) private val clock: Clock,
@@ -36,8 +37,10 @@ class AutomationDayVerdictCheck(
         try {
             val today = calendar.dayOf(clock.instant())
             val first = today.minusDays(properties.evaluationWindowSessions - 1L)
-            verdicts(first.date, today.date).groupBy { it.day }.toSortedMap()
-                .forEach { (day, rows) -> DayVerdictMessage.of(day, rows)?.let(publisher::publish) }
+            val byDay = verdicts(first.date, today.date).groupBy { it.day }.toSortedMap()
+            if (byDay.isEmpty()) return
+            val names = variations.names(properties.sweepPlan)
+            byDay.forEach { (day, rows) -> DayVerdictMessage.of(day, rows, names)?.let(publisher::publish) }
         } catch (e: Exception) {
             LogLine("Unexpected error while checking the trading days for a verdict to publish; the next hourly check tries again.").error(log, e)
         }

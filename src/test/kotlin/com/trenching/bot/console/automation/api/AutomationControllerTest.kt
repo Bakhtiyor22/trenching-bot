@@ -368,12 +368,13 @@ class AutomationControllerTest : AutomationDatabaseTest() {
     }
 
     @Test
-    fun `variations list by sequence with their configuration and what differs from the agreed one, filtered by state`() {
+    fun `variations list by name with their configuration and what differs from the agreed one, filtered by state`() {
         val body = ok(get("/api/automation/variations"))
         val items = List(body["items"].size()) { body["items"][it] }
 
         assertEquals("decu-sweep-1", body["planId"].asString())
         assertEquals((0..9).map { "V0$it" }, items.map { it["label"].asString() })
+        assertEquals((0..9).map { "V0$it" }, items.map { it["name"].asString() })
         assertEquals(List(10) { "ACTIVE" }, items.map { it["state"].asString() })
         assertEquals(0, items[0]["differsFromAgreed"].size())
         assertEquals(listOf("takeProfitBps"), List(items[4]["differsFromAgreed"].size()) { items[4]["differsFromAgreed"][it].asString() })
@@ -399,20 +400,38 @@ class AutomationControllerTest : AutomationDatabaseTest() {
     }
 
     @Test
-    fun `editing V04 answers 201 with V10, archives V04, and the same request answers 200 with V10 and stores nothing more`() {
+    fun `editing V04 answers 201 with V04 point 1, archives V04, and the same request answers 200 with it and stores nothing more`() {
         val created = edited("V04", "req-1")
         val repeated = ok(editRequest("V04", "req-1", editConfig("80", "50")))
         val old = ok(get("/api/automation/variations/V04"))
 
-        assertEquals(listOf("V10", "ACTIVE", 8000, 5000, "V04"), listOf(created["label"].asString(), created["state"].asString(),
+        assertEquals(listOf("V04.1", "V04.1", "ACTIVE", 8000, 5000, "V04"), listOf(created["label"].asString(), created["name"].asString(), created["state"].asString(),
             created["config"]["takeProfitBps"].asInt(), created["config"]["stopLossBps"].asInt(), created["replacesLabel"].asString()))
         assertEquals(listOf("stopLossBps"), List(created["changedFromReplaced"].size()) { created["changedFromReplaced"][it].asString() })
         assertEquals(clock.instant().toString(), created["activeFrom"].asString())
-        assertEquals("V10", repeated["label"].asString())
+        assertEquals("V04.1", repeated["label"].asString())
         assertEquals(created, repeated)
-        assertEquals(listOf("ARCHIVED", clock.instant().toString(), "V10"), listOf(old["state"].asString(), old["archivedAt"].asString(), old["replacedByLabel"].asString()))
+        assertEquals(listOf("ARCHIVED", clock.instant().toString(), "V04.1"), listOf(old["state"].asString(), old["archivedAt"].asString(), old["replacedByLabel"].asString()))
         assertEquals(11, ok(get("/api/automation/variations"))["items"].size())
+        assertEquals(
+            listOf("V00", "V01", "V02", "V03", "V04", "V04.1", "V05", "V06", "V07", "V08", "V09"),
+            ok(get("/api/automation/variations"))["items"].let { list -> List(list.size()) { list[it]["name"].asString() } },
+            "listed in name order, not in sequence order",
+        )
         assertEquals(listOf("V04"), ok(get("/api/automation/variations?state=ARCHIVED"))["items"].let { list -> List(list.size()) { list[it]["label"].asString() } })
+    }
+
+    @Test
+    fun `a dotted label is a path variable like any other, to read a variation and to edit it`() {
+        edited("V04", "req-1")
+
+        val read = ok(get("/api/automation/variations/V04.1"))
+        val again = created(mvc, editRequest("V04.1", "req-2", editConfig("70", "50")))
+
+        assertEquals(listOf("V04.1", "V04.1", "V04"), listOf(read["label"].asString(), read["name"].asString(), read["replacesLabel"].asString()))
+        assertEquals(listOf("V04.2", "V04.1"), listOf(again["label"].asString(), again["replacesLabel"].asString()))
+        assertEquals("V04.2", ok(get("/api/automation/variations/V04.1"))["replacedByLabel"].asString())
+        assertEquals(404, mvc.perform(get("/api/automation/variations/V04.9")).andReturn().response.status)
     }
 
     @Test
@@ -433,7 +452,7 @@ class AutomationControllerTest : AutomationDatabaseTest() {
         assertEquals("VARIATION_ARCHIVED", body(unchanged)["code"].asString(), "an archived variation is refused before its configuration is compared")
         assertEquals("VARIATION_UNCHANGED", body(unchangedActive)["code"].asString())
         assertEquals("VARIATION_DUPLICATE", body(duplicate)["code"].asString())
-        assertEquals("V10", body(duplicate)["fields"]["label"].asString())
+        assertEquals("V04.1", body(duplicate)["fields"]["label"].asString())
         assertEquals("AUTOMATION_VARIATION_NOT_FOUND", body(unknown)["code"].asString())
         assertEquals(11, ok(get("/api/automation/variations"))["items"].size())
     }
@@ -469,6 +488,87 @@ class AutomationControllerTest : AutomationDatabaseTest() {
         assertEquals(listOf("INVALID_PERCENT", "takeProfitPercent"), listOf(body(badPercent)["code"].asString(), body(badPercent)["fields"].propertyNames().single()))
         assertEquals(true, body(lowSignal)["fields"].has("minSignalSol"))
         assertEquals(10, ok(get("/api/automation/variations"))["items"].size())
+    }
+
+    @Test
+    fun `creating a variation answers 201 with the next base label, the same request answers 200 with it, and nothing is archived`() {
+        val created = created(mvc, createRequest("req-1", editConfig("80", "50")))
+        val repeated = ok(createRequest("req-1", editConfig("80", "50")))
+
+        assertEquals(listOf("V10", "V10", "ACTIVE", true), listOf(created["label"].asString(), created["name"].asString(), created["state"].asString(), created["replacesLabel"].isNull))
+        assertEquals(clock.instant().toString(), created["activeFrom"].asString())
+        assertEquals(created, repeated)
+        assertEquals(11, ok(get("/api/automation/variations"))["items"].size())
+        assertEquals(11, ok(get("/api/automation/variations?state=ACTIVE"))["items"].size())
+        assertEquals("V10", ok(get("/api/automation/variations/V10"))["label"].asString())
+    }
+
+    @Test
+    fun `a request id belongs to one operation, so each other use of it is a 409 VARIATION_REQUEST_REUSED naming requestId, and nothing is stored`() {
+        edited("V04", "req-1")
+        created(mvc, createRequest("req-2", editConfig("83", "50")))
+        val before = variationRows.count()
+
+        val createAfterEdit = mvc.perform(createRequest("req-1", editConfig("60", "50"))).andReturn().response
+        val editAfterCreate = mvc.perform(editRequest("V05", "req-2", editConfig("61", "50"))).andReturn().response
+        val editOfAnotherLabel = mvc.perform(editRequest("V05", "req-1", editConfig("62", "50"))).andReturn().response
+
+        assertEquals(listOf(409, 409, 409), listOf(createAfterEdit, editAfterCreate, editOfAnotherLabel).map { it.status })
+        listOf(createAfterEdit, editAfterCreate, editOfAnotherLabel).forEach { assertEquals("VARIATION_REQUEST_REUSED", body(it)["code"].asString()) }
+        assertEquals(true, listOf(createAfterEdit, editOfAnotherLabel).all { body(it)["fields"]["requestId"].asString().contains("V04.1") })
+        assertEquals(true, body(editAfterCreate)["fields"]["requestId"].asString().contains("V10"))
+        assertEquals(true, body(createAfterEdit)["message"].asString().let { "req-1" in it && "V04.1" in it })
+        assertEquals(before, variationRows.count())
+    }
+
+    @Test
+    fun `a refused creation answers its status and code, and a bad request is a 400 naming its fields`() {
+        val duplicate = mvc.perform(createRequest("req-1", editConfig("35", "40", dip = "20"))).andReturn().response
+        val noRequestId = mvc.perform(post("/api/automation/variations").contentType(MediaType.APPLICATION_JSON).content("""{"config":${editConfig("80", "50")}}""")).andReturn().response
+        val noConfig = mvc.perform(post("/api/automation/variations").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"req-2"}""")).andReturn().response
+        val badPercent = mvc.perform(createRequest("req-3", editConfig("80.555", "50"))).andReturn().response
+        val last = AutomationLimits.MAX_VARIATIONS_PER_PLAN - 1
+        variationRows.saveAndFlush(AutomationVariationRows.entityLike(
+            checkNotNull(variationRows.findOneByPlanIdAndLabel(SweepPlans.DECU_SWEEP_1.id, "V05")), label = VariationEditRules.labelOf(last), seq = last,
+        ))
+        val limit = mvc.perform(createRequest("req-4", editConfig("80", "50"))).andReturn().response
+
+        assertEquals(listOf(409, 400, 400, 400, 409), listOf(duplicate, noRequestId, noConfig, badPercent, limit).map { it.status })
+        assertEquals("VARIATION_DUPLICATE", body(duplicate)["code"].asString())
+        assertEquals("V03", body(duplicate)["fields"]["label"].asString())
+        assertEquals("INVALID_REQUEST", body(noRequestId)["code"].asString())
+        assertEquals(true, body(noRequestId)["fields"].has("requestId"))
+        assertEquals("CONFIG_INVALID", body(noConfig)["code"].asString())
+        assertEquals(listOf("INVALID_PERCENT", "takeProfitPercent"), listOf(body(badPercent)["code"].asString(), body(badPercent)["fields"].propertyNames().single()))
+        assertEquals("VARIATION_LIMIT_REACHED", body(limit)["code"].asString())
+        assertEquals(11, variationRows.count())
+    }
+
+    @Test
+    fun `archiving answers 200 with the archived variation, a repeat answers the same, and the row stays listed with no replacement`() {
+        val archived = ok(archiveRequest("V05"))
+        val repeated = ok(archiveRequest("V05"))
+        val listed = ok(get("/api/automation/variations?state=ARCHIVED"))
+
+        assertEquals(listOf("V05", "ARCHIVED", clock.instant().toString(), true), listOf(archived["label"].asString(), archived["state"].asString(),
+            archived["archivedAt"].asString(), archived["replacedByLabel"].isNull))
+        assertEquals(archived, repeated)
+        assertEquals(listOf("V05"), List(listed["items"].size()) { listed["items"][it]["label"].asString() })
+        assertEquals(10, ok(get("/api/automation/variations"))["items"].size())
+    }
+
+    @Test
+    fun `archiving a dotted label works, the baseline is a 409 and an unknown label a 404`() {
+        edited("V04", "req-1")
+
+        val dotted = ok(archiveRequest("V04.1"))
+        val baseline = mvc.perform(archiveRequest("V00")).andReturn().response
+        val unknown = mvc.perform(archiveRequest("V99")).andReturn().response
+
+        assertEquals(listOf("V04.1", "ARCHIVED"), listOf(dotted["label"].asString(), dotted["state"].asString()))
+        assertEquals(listOf(409, 404), listOf(baseline.status, unknown.status))
+        assertEquals("VARIATION_BASELINE", body(baseline)["code"].asString())
+        assertEquals("AUTOMATION_VARIATION_NOT_FOUND", body(unknown)["code"].asString())
     }
 
     @Test
@@ -892,6 +992,11 @@ class AutomationControllerTest : AutomationDatabaseTest() {
 
     private fun editRequest(label: String, requestId: String, config: String) =
         post("/api/automation/variations/$label/edit").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"$requestId","config":$config}""")
+
+    private fun createRequest(requestId: String, config: String) =
+        post("/api/automation/variations").contentType(MediaType.APPLICATION_JSON).content("""{"requestId":"$requestId","config":$config}""")
+
+    private fun archiveRequest(label: String) = post("/api/automation/variations/$label/archive")
 
     private fun edited(label: String, requestId: String): JsonNode = created(mvc, editRequest(label, requestId, editConfig("80", "50")))
 

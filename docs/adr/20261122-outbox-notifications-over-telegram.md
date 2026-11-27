@@ -1,6 +1,6 @@
 # Outbox notifications over a send-only Telegram channel
 
-Accepted 2026-11-22 with the approved [Telegram alerts plan](../plans/20261122-telegram-alerts-and-backup-rpc-account.md) (Key Decisions 1, 2 and 5; Domain Rules 1, 2 and 7–10). This record covers the `notification` module; the messages publishers build and the RPC account failover have their own parts and record.
+Accepted 2026-11-22 with the approved [Telegram alerts plan](../plans/archive/20261122-telegram-alerts-and-backup-rpc-account.md) (Key Decisions 1, 2 and 5; Domain Rules 1, 2 and 7–10). This record covers the `notification` module; the messages publishers build and the RPC account failover have their own parts and record.
 
 ## Context
 

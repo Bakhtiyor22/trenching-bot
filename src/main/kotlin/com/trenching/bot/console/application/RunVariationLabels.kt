@@ -13,4 +13,7 @@ class RunVariationLabels(private val lookup: RunVariationLookup) {
     }
 
     fun of(runId: String): List<String> = of(listOf(runId)).getValue(runId)
+
+    /** The configuration hashes [label]'s runs ran with; null when there is no such variation, empty when it has not run. */
+    fun configurationHashes(label: String): Set<String>? = lookup.configurationHashes(label)
 }

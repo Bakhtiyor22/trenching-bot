@@ -1,14 +1,16 @@
-import { Alert, Button, Grid, Group, Stack, Table, Text, Tooltip } from '@mantine/core';
+import { Alert, Button, Grid, Group, Modal, Stack, Table, Text, Tooltip } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router';
 import {
   readStored,
+  useArchiveVariation,
   useAutomationVariation,
   writeStored,
   type AutomationStatus,
   type AutomationVariation,
 } from '../../api/automation';
 import { ApiError } from '../../api/client';
+import { CodeText } from '../../components/PlainLanguage';
 import { useConfigDefaults } from '../../api/queries';
 import { KeyValueTable, Section } from '../../components/Panels';
 import { QueryView } from '../../components/QueryView';
@@ -18,10 +20,13 @@ import { formatSettingValue, SETTING_LABELS, type SettingField } from '../runs/c
 import { formValuesFrom } from '../runs/runForm';
 import {
   daySpanText,
-  nextVariationLabel,
+  editName,
+  nameOf,
   propertiesText,
   settingsOfProperties,
+  variationArchiveErrorText,
   variationText,
+  type VariationBook,
 } from './automationModel';
 import {
   AutomationFrame,
@@ -41,23 +46,27 @@ function isNotFound(error: unknown): boolean {
   return error instanceof ApiError && error.code === 'AUTOMATION_VARIATION_NOT_FOUND';
 }
 
-/** Why Edit is not offered, or null when it is. */
-function editBlock(variation: AutomationVariation, baseline: string | null): string | null {
+/** Why Edit (and Archive) is not offered, or null when it is. */
+function editBlock(
+  variation: AutomationVariation,
+  baseline: string | null,
+  book: VariationBook,
+): string | null {
   if (variation.state === 'ARCHIVED')
     return variation.replacedByLabel
-      ? `Archived: edit its replacement, ${variation.replacedByLabel}, instead.`
+      ? `Archived: edit its next version, ${book.name(variation.replacedByLabel)}, instead.`
       : 'Archived variations cannot be edited.';
   if (variation.label === baseline)
     return 'The agreed baseline every other variation is compared with; it is not editable.';
   return null;
 }
 
-function Settings({ variation }: { variation: AutomationVariation }) {
+function Settings({ variation, book }: { variation: AutomationVariation; book: VariationBook }) {
   const values = formValuesFrom(variation.config, null);
   const differs = new Set(settingsOfProperties(variation.differsFromAgreed));
   const changed = new Set(settingsOfProperties(variation.changedFromReplaced));
   return (
-    <Table verticalSpacing="xs" aria-label={`Settings of ${variation.label}`}>
+    <Table verticalSpacing="xs" aria-label={`Settings of ${nameOf(variation)}`}>
       <Table.Tbody>
         {SHOWN_SETTINGS.map((field) => (
           <Table.Tr key={field}>
@@ -76,7 +85,7 @@ function Settings({ variation }: { variation: AutomationVariation }) {
                 )}
                 {changed.has(field) && variation.replacesLabel && (
                   <Text span size="xs" c="dimmed">
-                    changed from {variation.replacesLabel}
+                    changed from {book.name(variation.replacesLabel)}
                   </Text>
                 )}
               </Group>
@@ -175,28 +184,50 @@ function Notices({
   variation,
   status,
   state,
+  book,
 }: {
   variation: AutomationVariation;
   status: AutomationStatus;
-  /** What the edit form passed when it opened this page; null on any later visit or reload. */
+  /** What the form passed when it opened this page; null on any later visit or reload. */
   state: VariationCreatedState | null;
+  book: VariationBook;
 }) {
+  const name = nameOf(variation);
   if (variation.state === 'ARCHIVED')
     return (
-      <Alert color="gray" variant="light" title={`${variation.label} is archived`}>
+      <Alert color="gray" variant="light" title={`${name} is archived`}>
         <Text size="sm">
           Since <ZoneTime iso={variation.archivedAt} zone={status.zone} withDate /> it is no longer
-          replayed on new buys. Its runs below stay as they were.
-          {variation.replacedByLabel && (
+          replayed on new buys. Its runs and trading days below stay as they were.
+          {variation.replacedByLabel ? (
             <>
               {' '}
               <VariationLink label={variation.replacedByLabel} /> replaces it.
             </>
+          ) : (
+            ' It was archived on its own: nothing replaces it.'
           )}
         </Text>
       </Alert>
     );
-  if (!variation.replacesLabel) return null;
+  if (!variation.replacesLabel) {
+    // A new variation, just created here: it replaces nothing and starts with the next captured buy.
+    if (state == null || state.createdFrom !== null) return null;
+    return (
+      <Alert
+        color="teal"
+        variant="light"
+        title={state.created ? `${name} created` : `${name} was already created by this request`}
+        role="status"
+      >
+        <Text size="sm">
+          It runs only on buys captured from now on. Buys replayed before get no run under {name},
+          so its first runs appear with the next captured buy.
+        </Text>
+      </Alert>
+    );
+  }
+  const replaced = book.name(variation.replacesLabel);
   const justCreated = state?.createdFrom === variation.replacesLabel;
   return (
     <Alert
@@ -205,9 +236,9 @@ function Notices({
       title={
         justCreated
           ? state.created
-            ? `${variation.label} created`
-            : `${variation.label} was already created by this edit`
-          : `${variation.label} replaces ${variation.replacesLabel}`
+            ? `${name} created`
+            : `${name} was already created by this edit`
+          : `${name} replaces ${replaced}`
       }
       role="status"
     >
@@ -219,10 +250,60 @@ function Notices({
           'its creation'
         )}{' '}
         on{justCreated ? ', that is from now on' : ''}. Buys replayed before keep their{' '}
-        <VariationLink label={variation.replacesLabel} /> runs and get none under {variation.label},
-        so its first runs appear with the next captured buy.
+        <VariationLink label={variation.replacesLabel} /> runs and get none under {name}, so its
+        first runs appear with the next captured buy.
       </Text>
     </Alert>
+  );
+}
+
+/**
+ * Archive without a replacement, after a confirmation: the variation stops being replayed on new buys; its runs, days
+ * and history stay, and it stays listed as archived. There is no un-archive, so the confirmation says so.
+ */
+function ArchiveAction({ variation }: { variation: AutomationVariation }) {
+  const [open, setOpen] = useState(false);
+  const archive = useArchiveVariation(variation.label);
+  const name = nameOf(variation);
+  const close = () => {
+    setOpen(false);
+    archive.reset();
+  };
+  return (
+    <>
+      <Button size="xs" variant="default" onClick={() => setOpen(true)}>
+        Archive
+      </Button>
+      <Modal opened={open} onClose={close} title={`Archive ${name}?`} centered>
+        <Stack gap="md">
+          <Text size="sm">
+            {name} stops being replayed on new buys. Its runs, trading days and history stay where
+            they are, and it stays listed as archived. Nothing replaces it, and it can&apos;t be
+            made active again.
+          </Text>
+          {archive.error != null && (
+            <Alert color="red" variant="light" title="Not archived" role="alert">
+              <Stack gap="xs">
+                <Text size="sm">{variationArchiveErrorText(archive.error, name)}</Text>
+                {archive.error instanceof ApiError && <CodeText code={archive.error.code} />}
+              </Stack>
+            </Alert>
+          )}
+          <Group justify="flex-end" gap="sm">
+            <Button variant="default" onClick={close} disabled={archive.isPending}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              loading={archive.isPending}
+              onClick={() => archive.mutate(undefined, { onSuccess: () => setOpen(false) })}
+            >
+              Archive {name}
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </>
   );
 }
 
@@ -285,7 +366,7 @@ function Detail({ label, status }: { label: string; status: AutomationStatus }) 
   if (query.data === undefined && isNotFound(query.error))
     return (
       <EmptyState
-        title={`No variation ${label}`}
+        title={`No variation ${book.name(label)}`}
         description="The plan has no variation under this label. Labels are never reused, so a link to one that never existed stays empty."
         action={
           <Button component={Link} to={paths.automationVariations} variant="default">
@@ -306,11 +387,12 @@ function Detail({ label, status }: { label: string; status: AutomationStatus }) 
         // baseline is never offered for editing by mistake.
         const baseline =
           book.baseline ?? (variation.differsFromAgreed.length === 0 ? variation.label : null);
-        const blocked = editBlock(variation, baseline);
+        const blocked = editBlock(variation, baseline, book);
         const canEdit = blocked == null;
+        const name = nameOf(variation);
         return (
           <Stack gap="lg">
-            <Notices variation={variation} status={status} state={created} />
+            <Notices variation={variation} status={status} state={created} book={book} />
             {editing && canEdit ? (
               defaults.data ? (
                 <VariationEditForm
@@ -318,7 +400,7 @@ function Detail({ label, status }: { label: string; status: AutomationStatus }) 
                   variation={variation}
                   limits={defaults.data.limits}
                   captureMinSol={status.captureMinSignalSol}
-                  nextLabel={nextVariationLabel(book)}
+                  savesAs={editName(variation)}
                   onCancel={() => setEditing(false)}
                 />
               ) : defaults.isError ? (
@@ -338,9 +420,12 @@ function Detail({ label, status }: { label: string; status: AutomationStatus }) 
                     hint={variationText(variation)}
                     actions={
                       canEdit ? (
-                        <Button size="xs" onClick={() => setEditing(true)}>
-                          Edit
-                        </Button>
+                        <Group gap="xs">
+                          <ArchiveAction variation={variation} />
+                          <Button size="xs" onClick={() => setEditing(true)}>
+                            Edit
+                          </Button>
+                        </Group>
                       ) : (
                         <Tooltip label={blocked} multiline w={260}>
                           <Button
@@ -362,14 +447,14 @@ function Detail({ label, status }: { label: string; status: AutomationStatus }) 
                           {blocked}
                         </Text>
                       )}
-                      <Settings variation={variation} />
+                      <Settings variation={variation} book={book} />
                     </Stack>
                   </Section>
                 </Grid.Col>
                 <Grid.Col span={{ base: 12, lg: 5 }}>
                   <Section
                     title="Lineage"
-                    hint="An edit archives a variation and creates its replacement; labels are never reused."
+                    hint="An edit archives a variation and saves its next version (V03 → V03.1); a new variation takes the next base number. Names are never reused."
                   >
                     <Lineage variation={variation} status={status} />
                   </Section>
@@ -377,7 +462,7 @@ function Detail({ label, status }: { label: string; status: AutomationStatus }) 
               </Grid>
             )}
             <Section
-              title={`Runs of ${variation.label}`}
+              title={`Runs of ${name}`}
               hint={`One run per captured buy it was replayed on, newest buy first. Days are trading days (${daySpanText(status.zone, status.tradingDayStart)}), both included.`}
               actions={<ZoneNote zone={status.zone} />}
             >
@@ -387,8 +472,8 @@ function Detail({ label, status }: { label: string; status: AutomationStatus }) 
                 planId={variation.planId}
                 emptyText={
                   variation.state === 'ACTIVE'
-                    ? `${variation.label} has no runs yet: it runs on the next captured buy.`
-                    : `${variation.label} was archived before any buy was replayed under it.`
+                    ? `${name} has no runs yet: it runs on the next captured buy.`
+                    : `${name} was archived before any buy was replayed under it.`
                 }
               />
             </Section>
@@ -401,13 +486,15 @@ function Detail({ label, status }: { label: string; status: AutomationStatus }) 
 
 export function VariationDetailPage() {
   const { label = '' } = useParams();
+  const book = useVariationBook();
+  const name = book.name(label);
   return (
     <AutomationFrame
-      title={`Variation ${label}`}
+      title={`Variation ${name}`}
       breadcrumbs={[
         { label: 'Automation', to: paths.automation },
         { label: 'Variations', to: paths.automationVariations },
-        { label },
+        { label: name },
       ]}
       description="Its settings, where it comes from, and every buy it was replayed on."
       actions={null}

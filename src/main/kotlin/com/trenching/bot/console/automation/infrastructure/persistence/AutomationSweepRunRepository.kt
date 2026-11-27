@@ -1,6 +1,7 @@
 package com.trenching.bot.console.automation.infrastructure.persistence
 
 import java.time.Instant
+import org.springframework.data.domain.Limit
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Modifying
@@ -44,6 +45,10 @@ interface AutomationSweepRunRepository : JpaRepository<AutomationSweepRunEntity,
     /** The label of each entry that got one of [runIds] under [planId]; a refused entry has no run and never matches. At most one row per run, session and entry. */
     @Query("select r.runId as runId, r.label as label from AutomationSweepRunEntity r where r.runId in :runIds and r.planId = :planId")
     fun findRunLabels(@Param("runIds") runIds: Collection<String>, @Param("planId") planId: String): List<AutomationRunLabelRow>
+
+    /** The distinct configuration hashes of the runs entry [label] got under [planId], up to [limit]; a refused entry has none. Uses the label and plan index. */
+    @Query("select distinct r.configurationHash from AutomationSweepRunEntity r where r.label = :label and r.planId = :planId and r.configurationHash is not null")
+    fun findConfigurationHashes(@Param("label") label: String, @Param("planId") planId: String, limit: Limit): List<String>
 
     /** The sweep runs of the sessions of a span of trading days under a plan; bounded by the span's items and the plan's entries. */
     fun findAllBySessionIdInAndPlanId(sessionIds: Collection<String>, planId: String): List<AutomationSweepRunEntity>

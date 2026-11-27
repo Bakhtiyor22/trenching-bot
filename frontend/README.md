@@ -59,6 +59,37 @@ the backend to include those coordinates. The frontend never substitutes a
 candle open or another trade's price. This is the sole rendering deviation from
 the chart brief.
 
+## Variations
+
+A variation is keyed by its `label` in every URL and API call, and shown by its
+`name` everywhere a person reads it: run chips, the sweep runs table and its
+filter, the scoreboard, status grid, trend, day pages, a buy's history and the
+variation pages. An edit saves the next version of its line (V03 → V03.1 →
+V03.2), stored under that name; the six edits made before names keep their
+labels V10–V15 and show as V03.1, V04.1 and so on. The one mapping from label to
+name and state is the variation book (`useVariationBook`); until it loads, a
+label shows as itself.
+
+- **Variations page:** All, Active and Archived tabs with counts (`?show=`, All by
+  default); archived rows are dimmed with the Archived chip.
+- **New variation** (`/automation/variations/new`): the edit form, prefilled with
+  the agreed settings or a copy of any variation (`?from=<label>`), saved under
+  the next base number (V16 after V10–V15). An unchanged copy of an active
+  variation is refused as a duplicate, so the form asks for a change first.
+- **Archive** on an active variation's page (never V00): after a confirmation,
+  it stops being replayed; its runs, days and history stay, nothing replaces it,
+  and it cannot be made active again.
+- **Edit form:** says what it saves as ("Saves as V03.3").
+- **Runs page Variation filter** (`?variation=<label>`, cleared by Clear
+  filters): runs with the configurations that variation ran with, so any run
+  with identical settings is listed too. Archived variations are marked
+  "(archived)". It is hidden when the automation console is off.
+
+The dev-only `?mockState=variation-conflict` and `?mockState=variation-limit`
+previews make every edit and create answer 409 `AUTOMATION_CONFLICT` and
+`VARIATION_LIMIT_REACHED`. The mock plan holds V07's line as V07, V10 (named
+V07.1) and the dotted V07.2.
+
 ## Local development and verification
 
 From this directory:

@@ -4,21 +4,22 @@ import com.trenching.bot.strategy.domain.SimulationConfig
 import java.math.BigDecimal
 
 /**
- * A variation with what makes it readable: the configuration properties in which it differs from the agreed configuration and
+ * A variation with what makes it readable: its [name] in its edit line, the configuration properties in which it differs from the agreed configuration and
  * from the variation it replaced (none when it replaced nothing), each in the order of the configuration response.
  */
-data class VariationView(val variation: Variation, val differsFromAgreed: List<String>, val changedFromReplaced: List<String>) {
+data class VariationView(val variation: Variation, val name: VariationName, val differsFromAgreed: List<String>, val changedFromReplaced: List<String>) {
     companion object {
         /** [replaced] is the variation [variation] replaced, null when it replaced none or it is not known. */
-        fun of(variation: Variation, replaced: Variation?): VariationView = VariationView(
+        fun of(variation: Variation, name: VariationName, replaced: Variation?): VariationView = VariationView(
             variation,
+            name,
             VariationDifferences.between(variation.config, VariationDifferences.AGREED),
             replaced?.let { VariationDifferences.between(variation.config, it.config) }.orEmpty(),
         )
     }
 }
 
-/** The plan's variations as listed, by sequence number. */
+/** The plan's variations as listed, by name. */
 data class VariationList(val planId: String, val items: List<VariationView>)
 
 /** Which configuration properties two configurations do not share. */

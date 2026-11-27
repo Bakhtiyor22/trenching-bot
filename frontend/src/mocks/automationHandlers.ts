@@ -19,11 +19,14 @@ import { bpsToPercent } from '../lib/percent';
 import {
   addDecimal,
   compareEvaluations,
+  compareNames,
+  nextRevisionName,
   createAutomationDb,
   dayDetail,
   dayRows,
   daySummary,
   differingProperties,
+  MOCK_AGREED_CONFIG,
   discoveryOnly,
   mockAddDays,
   mockDayOf,
@@ -57,6 +60,10 @@ const DEFAULT_DAYS = 14;
 const retryRequestIds = new Map<string, string>();
 /** The variation each edit request id created, as `uq_automation_variations_request` keeps it. */
 const editRequestIds = new Map<string, string>();
+/** The label each edit request id edited: a repeat answers 200 only for the same edit of the same label. */
+const editTargets = new Map<string, string>();
+/** The variation each create request id stored. */
+const createRequestIds = new Map<string, string>();
 const MAX_EDIT_REQUEST_ID = 64;
 /** `AutomationLimits.MAX_VARIATIONS_PER_PLAN`: sequences 0 to 499. */
 const MAX_VARIATIONS_PER_PLAN = 500;
@@ -98,6 +105,8 @@ export function resetAutomationMocks(next: AutomationDb = createAutomationDb()):
   startedAt.clear();
   retryRequestIds.clear();
   editRequestIds.clear();
+  editTargets.clear();
+  createRequestIds.clear();
 }
 
 /** Percent "80" → 8000 bps, exactly, as `PercentConversion` does; already validated. */
@@ -162,29 +171,79 @@ function completeConfigRefusal(config: VariationConfigRequest | undefined): Resp
     : null;
 }
 
-/** "V" and the sequence, at least two digits: V10, V11, … */
-function labelOf(seq: number): string {
-  return `V${String(seq).padStart(2, '0')}`;
+/** A new variation's label: V and one more than the highest number any label starts with, two digits at least. */
+function nextBaseLabel(): string {
+  const highest = Math.max(...db.variations.map((v) => Number(/^V(\d+)/.exec(v.label)?.[1] ?? 0)));
+  return `V${String(highest + 1).padStart(2, '0')}`;
+}
+
+/** The distinct configuration hashes `label`'s sweep runs ran with; null for a label the plan does not hold. */
+export function variationHashes(label: string): Set<string> | null {
+  const data = current();
+  if (!data.variations.some((v) => v.label === label)) return null;
+  return new Set(
+    data.sweepRuns
+      .filter((r) => r.label === label && r.configurationHash != null)
+      .map((r) => r.configurationHash!),
+  );
 }
 
 function sameConfig(a: Config, b: Config): boolean {
   return differingProperties(a, b).length === 0;
 }
 
-/** The sequence the next variation gets: one more than the highest. */
-function nextSeq(): number {
-  return Math.max(...db.variations.map((v) => Number(v.label.slice(1)))) + 1;
+/** A missing, blank or too long request id of an edit or a create, as the backend refuses it; null when usable. */
+function requestIdRefusal(requestId: unknown): Response | null {
+  if (typeof requestId !== 'string' || requestId.trim() === '')
+    return error(400, 'INVALID_REQUEST', 'requestId is missing', {
+      requestId: 'must not be blank',
+    });
+  if (requestId.length > MAX_EDIT_REQUEST_ID)
+    return error(400, 'INVALID_REQUEST', 'requestId is too long', {
+      requestId: `must be at most ${MAX_EDIT_REQUEST_ID} characters`,
+    });
+  return null;
 }
 
-/** Plan Domain Rule 2: archive `old` and insert its replacement, in one step. */
+/** An active variation with exactly `config`, other than `except`: a copy would only replay it twice. */
+function duplicateRefusal(config: Config, except?: string): Response | null {
+  const twin = db.variations.find(
+    (v) => v.state === 'ACTIVE' && v.label !== except && sameConfig(v.config, config),
+  );
+  return twin
+    ? error(409, 'VARIATION_DUPLICATE', `Variation ${twin.label} has this configuration`, {
+        label: twin.label,
+      })
+    : null;
+}
+
+/** A request id an earlier, different create or edit already used: a request id belongs to one operation. */
+function reusedRefusal(): Response {
+  return error(409, 'VARIATION_REQUEST_REUSED', 'The request id was used by another operation', {
+    requestId: 'was already used by another create or edit',
+  });
+}
+
+/** The plan already holds its 500 rows; nothing more can be stored. */
+function limitRefusal(): Response | null {
+  return mockState() === 'variation-limit' || db.variations.length >= MAX_VARIATIONS_PER_PLAN
+    ? error(
+        409,
+        'VARIATION_LIMIT_REACHED',
+        `The plan already holds ${MAX_VARIATIONS_PER_PLAN} variations`,
+      )
+    : null;
+}
+
+/** Plan Domain Rule 2: archive `old` and insert its next version, under its name, in one step. */
 function applyEdit(
   old: AutomationVariation,
   config: Config,
   requestId: string,
 ): AutomationVariation {
   const now = new Date().toISOString();
-  const seq = nextSeq();
-  const created = mockVariation(labelOf(seq), config, {
+  const label = nextRevisionName(old);
+  const created = mockVariation(label, config, {
     replacesLabel: old.label,
     changedFromReplaced: differingProperties(config, old.config),
     activeFrom: now,
@@ -194,7 +253,19 @@ function applyEdit(
   old.archivedAt = now;
   old.replacedByLabel = created.label;
   db.variations.push(created);
+  db.variations.sort((a, b) => compareNames(a.name ?? a.label, b.name ?? b.label));
   editRequestIds.set(requestId, created.label);
+  editTargets.set(requestId, old.label);
+  return created;
+}
+
+/** A new variation under the next base number, replacing nothing, active from now. */
+function applyCreate(config: Config, requestId: string): AutomationVariation {
+  const now = new Date().toISOString();
+  const created = mockVariation(nextBaseLabel(), config, { activeFrom: now, createdAt: now });
+  db.variations.push(created);
+  db.variations.sort((a, b) => compareNames(a.name ?? a.label, b.name ?? b.label));
+  createRequestIds.set(requestId, created.label);
   return created;
 }
 
@@ -684,15 +755,14 @@ export function createAutomationHandlers(
       if (!old)
         return error(404, 'AUTOMATION_VARIATION_NOT_FOUND', `No automation variation ${label}`);
       const body = (await request.json().catch(() => ({}))) as Partial<VariationEditRequest>;
-      const requestId = body.requestId;
-      if (typeof requestId !== 'string' || requestId.trim() === '')
-        return error(400, 'INVALID_REQUEST', 'requestId is missing', {
-          requestId: 'must not be blank',
-        });
-      if (requestId.length > MAX_EDIT_REQUEST_ID)
-        return error(400, 'INVALID_REQUEST', 'requestId is too long', {
-          requestId: `must be at most ${MAX_EDIT_REQUEST_ID} characters`,
-        });
+      const badId = requestIdRefusal(body.requestId);
+      if (badId) return badId;
+      const requestId = body.requestId!;
+      if (
+        createRequestIds.has(requestId) ||
+        (editTargets.has(requestId) && editTargets.get(requestId) !== label)
+      )
+        return reusedRefusal();
       const repeated = editRequestIds.get(requestId);
       if (repeated)
         return HttpResponse.json(
@@ -710,20 +780,50 @@ export function createAutomationHandlers(
       const config = configOf(body.config!, old.config);
       if (sameConfig(config, old.config))
         return error(409, 'VARIATION_UNCHANGED', `The configuration equals ${label}'s own`);
-      const twin = db.variations.find(
-        (v) => v.state === 'ACTIVE' && v.label !== label && sameConfig(v.config, config),
-      );
-      if (twin)
-        return error(409, 'VARIATION_DUPLICATE', `Variation ${twin.label} has this configuration`, {
-          label: twin.label,
-        });
-      if (mockState() === 'variation-limit' || nextSeq() >= MAX_VARIATIONS_PER_PLAN)
-        return error(
-          409,
-          'VARIATION_LIMIT_REACHED',
-          `The plan already holds ${MAX_VARIATIONS_PER_PLAN} variations`,
-        );
+      const stored = duplicateRefusal(config, label) ?? limitRefusal();
+      if (stored) return stored;
       return HttpResponse.json(applyEdit(old, config, requestId), { status: 201 });
+    }),
+    http.post('/api/automation/variations', async ({ request }) => {
+      await wait();
+      const blocked = off();
+      if (blocked) return blocked;
+      const body = (await request.json().catch(() => ({}))) as Partial<VariationEditRequest>;
+      const badId = requestIdRefusal(body.requestId);
+      if (badId) return badId;
+      const requestId = body.requestId!;
+      if (editRequestIds.has(requestId)) return reusedRefusal();
+      const repeated = createRequestIds.get(requestId);
+      if (repeated)
+        return HttpResponse.json(
+          db.variations.find((v) => v.label === repeated),
+          { status: 200 },
+        );
+      if (mockState() === 'variation-conflict')
+        return error(409, 'AUTOMATION_CONFLICT', 'The plan was changed concurrently');
+      const refusal = completeConfigRefusal(body.config) ?? configRefusal(body.config!);
+      if (refusal) return refusal;
+      const config = configOf(body.config!, MOCK_AGREED_CONFIG);
+      const stored = duplicateRefusal(config) ?? limitRefusal();
+      if (stored) return stored;
+      return HttpResponse.json(applyCreate(config, requestId), { status: 201 });
+    }),
+    http.post('/api/automation/variations/:label/archive', async ({ params }) => {
+      await wait();
+      const blocked = off();
+      if (blocked) return blocked;
+      const label = String(params.label);
+      const variation = db.variations.find((v) => v.label === label);
+      if (!variation)
+        return error(404, 'AUTOMATION_VARIATION_NOT_FOUND', `No automation variation ${label}`);
+      if (variation.state === 'ACTIVE' && variation.differsFromAgreed.length === 0)
+        return error(409, 'VARIATION_BASELINE', `Variation ${label} is the agreed baseline`);
+      // Archiving an archived variation changes nothing; no row, run or day is removed either way.
+      if (variation.state === 'ACTIVE') {
+        variation.state = 'ARCHIVED';
+        variation.archivedAt = new Date().toISOString();
+      }
+      return HttpResponse.json(variation);
     }),
     http.get('/api/automation/backfills', async ({ request }) => {
       await wait();

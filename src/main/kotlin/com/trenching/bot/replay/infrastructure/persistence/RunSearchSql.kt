@@ -43,6 +43,14 @@ internal class RunSearchSql(private val query: RunSearchQuery) {
         }
         range("r.anchor_block_time", "anchorFrom", query.anchorFrom, "anchorTo", query.anchorTo, conditions, parameters)
         range("r.created_at", "createdFrom", query.createdFrom, "createdTo", query.createdTo, conditions, parameters)
+        query.configurationHashes?.let { hashes ->
+            if (hashes.isEmpty()) {
+                conditions += "1 = 0"
+            } else {
+                conditions += "r.configuration_hash in (:configurationHashes)"
+                parameters["configurationHashes"] = hashes.sorted()
+            }
+        }
         query.datasetId?.let {
             conditions += "r.dataset_checksum = :datasetId"
             parameters["datasetId"] = it

@@ -17,6 +17,7 @@ import com.trenching.bot.console.automation.domain.VariationBaselineException
 import com.trenching.bot.console.automation.domain.VariationDuplicateException
 import com.trenching.bot.console.automation.domain.VariationLimitReachedException
 import com.trenching.bot.console.automation.domain.VariationNotFoundException
+import com.trenching.bot.console.automation.domain.VariationRequestReusedException
 import com.trenching.bot.console.automation.domain.VariationUnchangedException
 import com.trenching.bot.console.mapper.ConsoleErrorMapper
 import org.springframework.dao.OptimisticLockingFailureException
@@ -111,6 +112,11 @@ class AutomationExceptionHandler(private val mapper: ConsoleErrorMapper) {
 
     @ExceptionHandler
     @ResponseStatus(HttpStatus.CONFLICT)
+    fun variationRequestReused(e: VariationRequestReusedException): ConsoleErrorResponse =
+        mapper.toResponse(VARIATION_REQUEST_REUSED, e.message.orEmpty(), mapOf(REQUEST_ID to "already used by the variation ${e.storedLabel}"))
+
+    @ExceptionHandler
+    @ResponseStatus(HttpStatus.CONFLICT)
     fun concurrentChange(e: OptimisticLockingFailureException): ConsoleErrorResponse = mapper.toResponse(CONFLICT, CONFLICT_MESSAGE, emptyMap())
 
     private companion object {
@@ -122,7 +128,9 @@ class AutomationExceptionHandler(private val mapper: ConsoleErrorMapper) {
         const val VARIATION_DUPLICATE = "VARIATION_DUPLICATE"
         const val VARIATION_BASELINE = "VARIATION_BASELINE"
         const val VARIATION_LIMIT_REACHED = "VARIATION_LIMIT_REACHED"
+        const val VARIATION_REQUEST_REUSED = "VARIATION_REQUEST_REUSED"
         const val LABEL = "label"
+        const val REQUEST_ID = "requestId"
         const val INVALID_REQUEST = "INVALID_REQUEST"
         const val CONFLICT = "AUTOMATION_CONFLICT"
         const val AUTOMATION_DISABLED = "AUTOMATION_DISABLED"

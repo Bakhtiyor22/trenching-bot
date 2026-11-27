@@ -418,6 +418,8 @@ export interface RunQuery {
   anchorTo?: IsoInstant | null;
   createdFrom?: IsoInstant | null;
   createdTo?: IsoInstant | null;
+  /** A variation's label: runs with one of the configurations it ran with, identical settings from elsewhere included. */
+  variation?: string | null;
   /** 2–100 characters after trim. */
   q?: string | null;
   asOf?: IsoInstant | null;

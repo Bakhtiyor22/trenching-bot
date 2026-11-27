@@ -234,11 +234,11 @@ export function StatusGrid({
                       size="compact-sm"
                       onClick={() => onSelectLabel(row.label)}
                       aria-pressed={selected}
-                      aria-label={`Show ${row.label} over time`}
+                      aria-label={`Show ${book.name(row.label)} over time`}
                       styles={{ label: { fontWeight: 400 } }}
                     >
                       <Text span ff="monospace" fw={600} size="sm">
-                        {row.label}
+                        {book.name(row.label)}
                       </Text>
                       {change && (
                         <Text span size="xs" c="dimmed" ml={6} visibleFrom="sm">
@@ -252,7 +252,7 @@ export function StatusGrid({
                   </Box>
                   {row.cells.map((e, i) => {
                     const column = grid.columns[i]!;
-                    const aria = cellLabel(row.label, column.label, e);
+                    const aria = cellLabel(book.name(row.label), column.label, e);
                     return (
                       <td key={column.key} style={{ padding: 0 }}>
                         <Tooltip
@@ -260,7 +260,7 @@ export function StatusGrid({
                             e ? (
                               <Stack gap={2}>
                                 <Text size="xs" fw={600}>
-                                  {row.label} · {column.label}
+                                  {book.name(row.label)} · {column.label}
                                 </Text>
                                 <Text size="xs">
                                   {e.status === 'PENDING'

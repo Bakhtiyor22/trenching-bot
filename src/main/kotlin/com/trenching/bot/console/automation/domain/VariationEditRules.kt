@@ -2,7 +2,7 @@ package com.trenching.bot.console.automation.domain
 
 import com.trenching.bot.strategy.domain.SimulationConfig
 
-/** What may be edited and how the replacement is named (plan Rules 1 and 2, Open Question 5). */
+/** What may be edited, created and archived, and how the replacement is named (plan Rules 1 and 2, Open Question 5; versions plan Rules 5 to 7). */
 object VariationEditRules {
     /** The agreed configuration, which every other variation is compared with and so is never edited. */
     const val BASELINE_LABEL = "V00"
@@ -20,11 +20,23 @@ object VariationEditRules {
         return requestId
     }
 
-    /** The label of the variation with sequence number [seq]: `V` and the number, two digits at least. Labels are never reused because sequence numbers never are. */
+    /** The label of the variation with sequence number [seq]: `V` and the number, two digits at least. Seeded labels are named so, and an edit's label is its name (`VariationNames.editLabel`). */
     fun labelOf(seq: Int): String = LABEL_PREFIX + seq.toString().padStart(LABEL_DIGITS, '0')
 
-    /** The sequence number [label] names, or null when it is not `V` and digits; the inverse of [labelOf]. */
-    fun seqOf(label: String): Int? = label.takeIf { it.startsWith(LABEL_PREFIX) }?.drop(LABEL_PREFIX.length)?.takeIf { it.all(Char::isDigit) }?.toIntOrNull()
+    /** Refuses a variation numbered [seq]: a plan holds at most [AutomationLimits.MAX_VARIATIONS_PER_PLAN] of them, numbered from 0. */
+    fun requireWithinLimit(planId: String, seq: Int) {
+        if (seq >= AutomationLimits.MAX_VARIATIONS_PER_PLAN) throw VariationLimitReachedException(planId)
+    }
+
+    /** Refuses a new variation with [config] when one of the [active] variations has it, naming that one. */
+    fun requireCreatable(config: SimulationConfig, active: List<Variation>) {
+        active.firstOrNull { it.config == config }?.let { throw VariationDuplicateException(it.label) }
+    }
+
+    /** Refuses to archive the baseline. An archived variation is not refused: archiving it again changes nothing. */
+    fun requireArchivable(label: String) {
+        if (label == BASELINE_LABEL) throw VariationBaselineException(label)
+    }
 
     /**
      * Refuses an edit of [target] to [config] unless it is allowed, naming the first reason: [target] is the baseline, is archived,

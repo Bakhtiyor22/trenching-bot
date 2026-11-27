@@ -53,6 +53,7 @@ describe('toRunQuery', () => {
       page: 2,
       size: 20,
       datasetId: 'ds-1',
+      variation: null,
       status: 'LOSS',
       mint: REAL_MINT,
       // 12:00 UTC+5 is 07:00 UTC; the range is half-open, ending where the next trading day starts.

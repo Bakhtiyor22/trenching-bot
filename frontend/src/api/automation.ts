@@ -449,7 +449,13 @@ export type VariationState = 'ACTIVE' | 'ARCHIVED';
  */
 export interface AutomationVariation {
   planId: string;
+  /** The key in every URL and API parameter. Never shown where a name is known. */
   label: string;
+  /**
+   * What people see: the edit line's first label, a dot and the number of edits since it (`V03.1`, `V03.2`), or the
+   * label itself for a variation that replaces nothing. Derived on the server; absent from an older backend.
+   */
+  name?: string;
   state: VariationState;
   config: Config;
   differsFromAgreed: string[];
@@ -461,7 +467,7 @@ export interface AutomationVariation {
   createdAt: IsoInstant;
 }
 
-/** The plan's variations, oldest first (by sequence). */
+/** The plan's variations, ordered by name: V00, V01, V01.1, V02, V03, V03.1, … */
 export interface AutomationVariationList {
   planId: string;
   items: AutomationVariation[];
@@ -528,6 +534,12 @@ export const automationApi = {
     getJson<AutomationVariationList>(withQuery(`${BASE}/variations`, { state }), signal),
   variation: (label: string, signal?: AbortSignal) =>
     getJson<AutomationVariation>(`${BASE}/variations/${enc(label)}`, signal),
+  createVariation: (body: VariationEditRequest): Promise<VariationEditResult> =>
+    postJsonCreated<AutomationVariation>(`${BASE}/variations`, body).then(
+      ({ body: variation, created }) => ({ variation, created }),
+    ),
+  archiveVariation: (label: string) =>
+    postJson<AutomationVariation>(`${BASE}/variations/${enc(label)}/archive`),
   editVariation: (label: string, body: VariationEditRequest): Promise<VariationEditResult> =>
     postJsonCreated<AutomationVariation>(`${BASE}/variations/${enc(label)}/edit`, body).then(
       ({ body: variation, created }) => ({ variation, created }),
@@ -707,7 +719,7 @@ export function useEditVariation(label: string) {
   const client = useQueryClient();
   return useMutation({
     mutationFn: (config: VariationConfigRequest) =>
-      withStoredRequestId(variationEditKey(label, config), 'ui-edit', (requestId) =>
+      withVariationRequestId(variationEditKey(label, config), 'ui-edit', (requestId) =>
         automationApi.editVariation(label, { requestId, config }),
       ),
     onSuccess: ({ variation }) =>
@@ -717,6 +729,66 @@ export function useEditVariation(label: string) {
       if (error instanceof ApiError && error.status === 400) return;
       void client.invalidateQueries({ queryKey: automationKeys.all });
     },
+  });
+}
+
+/** A request id an earlier, different create or edit already used; nothing was saved. */
+export const VARIATION_REQUEST_REUSED = 'VARIATION_REQUEST_REUSED';
+
+/**
+ * {@link withStoredRequestId} for a variation create or edit, whose keys never overlap, so one form's id never reaches
+ * the other. A request id refused as already used by another operation is dropped, so saving again sends a fresh one.
+ */
+async function withVariationRequestId<T>(
+  key: string,
+  prefix: string,
+  call: (requestId: string) => Promise<T>,
+): Promise<T> {
+  try {
+    return await withStoredRequestId(key, prefix, call);
+  } catch (error) {
+    if (error instanceof ApiError && error.code === VARIATION_REQUEST_REUSED)
+      writeStored(key, null);
+    throw error;
+  }
+}
+
+/** The session-storage key of one create submission: the exact configuration it posts. */
+export function variationCreateKey(config: VariationConfigRequest): string {
+  return `automation-variation-create:${JSON.stringify(config)}`;
+}
+
+/**
+ * Creates a variation under the next free base number (V16), replacing nothing. One request id per submitted
+ * configuration, kept until the backend answers, as for an edit: a retried submit returns the variation it created.
+ */
+export function useCreateVariation() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (config: VariationConfigRequest) =>
+      withVariationRequestId(variationCreateKey(config), 'ui-create', (requestId) =>
+        automationApi.createVariation({ requestId, config }),
+      ),
+    onSuccess: ({ variation }) =>
+      client.setQueryData(automationKeys.variation(variation.label), variation),
+    onSettled: (_data, error) => {
+      if (error instanceof ApiError && error.status === 400) return;
+      void client.invalidateQueries({ queryKey: automationKeys.all });
+    },
+  });
+}
+
+/**
+ * Archives a variation without a replacement: it stops being replayed, and its runs and days stay. Archiving an
+ * archived one changes nothing, so it needs no request id. Every automation view is read again afterwards.
+ */
+export function useArchiveVariation(label: string) {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: () => automationApi.archiveVariation(label),
+    onSuccess: (variation) =>
+      client.setQueryData(automationKeys.variation(variation.label), variation),
+    onSettled: () => void client.invalidateQueries({ queryKey: automationKeys.all }),
   });
 }
 

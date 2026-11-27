@@ -21,17 +21,11 @@ const SELECTED = {
   boxShadow: 'inset 3px 0 0 var(--mantine-primary-color-filled)',
 } as const;
 
-function VariationName({
-  evaluation,
-  change,
-}: {
-  evaluation: AutomationEvaluation;
-  change: string | null;
-}) {
+function VariationName({ name, change }: { name: string; change: string | null }) {
   return (
     <span>
       <Text span ff="monospace" fw={600} size="sm">
-        {evaluation.label}
+        {name}
       </Text>
       {change && (
         <Text span size="sm" c="dimmed">
@@ -88,12 +82,12 @@ export function Scoreboard({
           >
             <UnstyledButton
               onClick={() => onSelect?.(e.label)}
-              aria-label={`Show ${e.label} over time`}
+              aria-label={`Show ${book.name(e.label)} over time`}
               style={{ display: 'block', width: '100%' }}
             >
               <Stack gap={8}>
                 <Group justify="space-between" wrap="nowrap" gap="xs">
-                  <VariationName evaluation={e} change={book.describe(e.label)} />
+                  <VariationName name={book.name(e.label)} change={book.describe(e.label)} />
                   <EvaluationChip status={e.status} pendingDay={e.pendingDay} />
                 </Group>
                 <PnlBarCell
@@ -101,7 +95,7 @@ export function Scoreboard({
                   realized={e.realizedPnl}
                   scale={scale}
                   faded={e.status === 'NO_RESULT' || e.status === 'PENDING'}
-                  label={e.label}
+                  label={book.name(e.label)}
                 />
                 <Group justify="space-between" gap="xs">
                   <Text size="xs" c="dimmed">
@@ -162,12 +156,12 @@ export function Scoreboard({
                     {onSelect ? (
                       <UnstyledButton
                         onClick={() => onSelect(e.label)}
-                        aria-label={`Show ${e.label} over time`}
+                        aria-label={`Show ${book.name(e.label)} over time`}
                       >
-                        <VariationName evaluation={e} change={book.describe(e.label)} />
+                        <VariationName name={book.name(e.label)} change={book.describe(e.label)} />
                       </UnstyledButton>
                     ) : (
-                      <VariationName evaluation={e} change={book.describe(e.label)} />
+                      <VariationName name={book.name(e.label)} change={book.describe(e.label)} />
                     )}
                     <OpenVariation label={e.label} />
                   </Stack>
@@ -181,7 +175,7 @@ export function Scoreboard({
                     realized={e.realizedPnl}
                     scale={scale}
                     faded={e.status === 'NO_RESULT' || e.status === 'PENDING'}
-                    label={e.label}
+                    label={book.name(e.label)}
                   />
                 </Table.Td>
                 <Table.Td ta="right">

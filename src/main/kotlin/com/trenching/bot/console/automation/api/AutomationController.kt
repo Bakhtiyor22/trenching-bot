@@ -17,7 +17,7 @@ import com.trenching.bot.console.automation.api.dto.AutomationSessionDetailRespo
 import com.trenching.bot.console.automation.api.dto.AutomationSessionPageResponse
 import com.trenching.bot.console.automation.api.dto.AutomationStatusResponse
 import com.trenching.bot.console.automation.api.dto.AutomationSweepRunPageResponse
-import com.trenching.bot.console.automation.api.dto.AutomationVariationEditRequest
+import com.trenching.bot.console.automation.api.dto.AutomationVariationConfigRequest
 import com.trenching.bot.console.automation.api.dto.AutomationVariationListResponse
 import com.trenching.bot.console.automation.api.dto.AutomationVariationResponse
 import com.trenching.bot.console.automation.application.AutomationBackfillQueryService
@@ -133,11 +133,20 @@ class AutomationController(
     @GetMapping("/variations/{label}")
     fun variation(@PathVariable label: String): AutomationVariationResponse = variationResponses.toResponse(variations.findView(label))
 
+    @PostMapping("/variations")
+    fun createVariation(@RequestBody request: AutomationVariationConfigRequest): ResponseEntity<AutomationVariationResponse> {
+        val result = variations.create(request)
+        return ConsoleResponses.createdOrExisting(result.created, variationResponses.toResponse(result.variation))
+    }
+
     @PostMapping("/variations/{label}/edit")
-    fun editVariation(@PathVariable label: String, @RequestBody request: AutomationVariationEditRequest): ResponseEntity<AutomationVariationResponse> {
+    fun editVariation(@PathVariable label: String, @RequestBody request: AutomationVariationConfigRequest): ResponseEntity<AutomationVariationResponse> {
         val result = variations.edit(label, request)
         return ConsoleResponses.createdOrExisting(result.created, variationResponses.toResponse(result.variation))
     }
+
+    @PostMapping("/variations/{label}/archive")
+    fun archiveVariation(@PathVariable label: String): AutomationVariationResponse = variationResponses.toResponse(variations.archive(label).variation)
 
     @PostMapping("/backfills")
     @ResponseStatus(HttpStatus.CREATED)

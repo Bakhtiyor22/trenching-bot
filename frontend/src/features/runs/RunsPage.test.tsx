@@ -415,9 +415,12 @@ describe('RunsPage columns', () => {
     ).toHaveAttribute('href', `/automation/variations/${newest.variations![0]}`);
     const shared = rowOf(table, listedRuns[1]!.id);
     expect(within(shared).getAllByRole('link', { name: /^Open variation/ })).toHaveLength(2);
+    // The legacy label V10 shows by its name, V07.1, and says it is archived; it still links by its label.
+    expect(SHARED_LABEL).toBe('V10');
     expect(
-      within(shared).getByRole('link', { name: `Open variation ${SHARED_LABEL}` }),
-    ).toBeInTheDocument();
+      within(shared).getByRole('link', { name: 'Open variation V07.1, archived' }),
+    ).toHaveAttribute('href', '/automation/variations/V10');
+    expect(within(shared).getByText('archived')).toBeInTheDocument();
   });
 
   it('links a V03 run to the V03 page', async () => {
@@ -729,5 +732,54 @@ describe('RunsPage review fixes', () => {
     await screen.findByRole('table');
     await waitFor(() => expect(counts.length).toBeGreaterThan(0));
     expect(counts.every((u) => !u.searchParams.has('asOf'))).toBe(true);
+  });
+});
+
+describe('RunsPage variation filter', () => {
+  afterEach(() => server.events.removeAllListeners());
+
+  it('lists every variation by name, archived ones marked, and keeps the choice in the URL and the request', async () => {
+    const requests = recordRequests();
+    const { user, router } = renderRuns();
+    await screen.findByRole('table');
+    const select = await screen.findByRole('combobox', { name: 'Filter by variation' });
+    await user.click(select);
+    expect(await screen.findByRole('option', { name: 'V07.1 (archived)' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'V07.2' })).toBeInTheDocument();
+    await user.click(screen.getByRole('option', { name: 'V03' }));
+    await waitFor(() => expect(router.state.location.search).toContain('variation=V03'));
+    await waitFor(() => expect(requests.at(-1)?.searchParams.get('variation')).toBe('V03'));
+    const table = await screen.findByRole('table');
+    await waitFor(() => {
+      const rows = within(table).getAllByRole('row').slice(1);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows)
+        expect(within(row).getByRole('link', { name: 'Open variation V03' })).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText('Runs with its settings, any run with identical settings included'),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole('button', { name: 'Clear filters' }).at(-1)!);
+    await waitFor(() => expect(router.state.location.search).not.toContain('variation='));
+  });
+
+  it('opens a legacy-labelled variation from the URL by its name', async () => {
+    renderRuns('/runs?variation=V10');
+    expect(await screen.findByRole('combobox', { name: 'Filter by variation' })).toHaveValue(
+      'V07.1 (archived)',
+    );
+  });
+
+  it('offers no variation filter, and sends none, without the automation console', async () => {
+    const requests = recordRequests();
+    server.use(
+      http.get('/api/automation/variations', () => new HttpResponse(null, { status: 404 })),
+    );
+    renderRuns('/runs?variation=V03');
+    await screen.findByRole('table');
+    await waitFor(() => expect(requests.length).toBeGreaterThan(0));
+    expect(screen.queryByRole('combobox', { name: 'Filter by variation' })).not.toBeInTheDocument();
+    expect(requests.every((url) => !url.searchParams.has('variation'))).toBe(true);
   });
 });

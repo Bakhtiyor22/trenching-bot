@@ -15,7 +15,7 @@ import java.time.temporal.ChronoUnit
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 
-/** Validates the run search parameters and fixes the snapshot; the filtering itself belongs to `SimulationRuns.search`. */
+/** Validates the run search parameters, resolves a variation into its configuration hashes and fixes the snapshot; the filtering itself belongs to `SimulationRuns.search`. */
 @Service
 class RunSearchConsoleService(
     private val runs: SimulationRuns,
@@ -28,6 +28,7 @@ class RunSearchConsoleService(
         requireOrdered("anchorFrom", params.anchorFrom, "anchorTo", params.anchorTo)
         requireOrdered("createdFrom", params.createdFrom, "createdTo", params.createdTo)
         val asOf = snapshot(params.asOf)
+        val configurationHashes = params.variation?.takeIf { it.isNotBlank() }?.let(::configurationHashes)
         val query = RunSearchQuery(
             statuses = params.statuses.map(::status).toSet(),
             mint = params.mint?.takeIf { it.isNotBlank() }?.let(::mint),
@@ -40,6 +41,7 @@ class RunSearchConsoleService(
             asOf = asOf,
             page = params.page,
             size = params.size,
+            configurationHashes = configurationHashes,
         )
         val result = runs.search(query)
         val runIds = result.page.items.map { it.id }
@@ -65,6 +67,9 @@ class RunSearchConsoleService(
     private fun status(value: String): RunStatus =
         RunStatus.entries.firstOrNull { it.name == value }
             ?: throw InvalidConsoleRequestException("status", "must be one of ${RunStatus.entries.joinToString()}")
+
+    private fun configurationHashes(label: String): Set<String> =
+        variations.configurationHashes(label) ?: throw InvalidConsoleRequestException("variation", "must name a variation of the sweep plan")
 
     private fun mint(value: String): MintAddress =
         ConsoleAddresses.mintOrNull(value) ?: throw InvalidConsoleRequestException("mint", "must be a 32-byte base58 address")

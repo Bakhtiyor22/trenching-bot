@@ -10,6 +10,7 @@ import java.time.LocalTime
 import java.time.ZoneOffset
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
@@ -37,7 +38,7 @@ class AutomationNotificationsTest {
     }
 
     @Test
-    fun `the other variations are listed once by label under no trade with their outcome, in seq order`() {
+    fun `the other variations are listed once by label under no trade with their outcome, in name order`() {
         val message = assertNotNull(buyMessage.of(buy, listOf(
             idle(4, "HORIZON_REACHED", "run-4", PositionState.OPEN),
             closed(1, "0.010000000000", "TAKE_PROFIT", "run-1"),
@@ -53,18 +54,26 @@ class AutomationNotificationsTest {
     }
 
     @Test
-    fun `variations come out in seq order even when their labels sort differently`() {
+    fun `variations come out by the number of their line, then revision, and are printed by name`() {
         val message = assertNotNull(buyMessage.of(buy, listOf(
-            closed(100, "0.020000000000", "TAKE_PROFIT", "run-100").copy(label = "V100"),
+            closed(100, "0.020000000000", "TAKE_PROFIT", "run-100"),
             closed(11, "0.010000000000", "TAKE_PROFIT", "run-11"),
+            result(VariationName("V03", 2), "-0.010000000000", "STOP_LOSS", "run-12"),
+            result(VariationName("V04", 0), "0.030000000000", "TAKE_PROFIT", "run-4"),
+            result(VariationName("V03", 1), "0.040000000000", "TAKE_PROFIT", "run-10"),
         )))
 
-        assertEquals(listOf("V11 profit +0.0100 SOL, take profit", "V100 profit +0.0200 SOL, take profit"), message.lines)
-        assertEquals(listOf("Buy", "V11", "V100"), message.links.map { it.label })
+        assertEquals(
+            listOf("V03.1 profit +0.0400 SOL, take profit", "V03.2 loss -0.0100 SOL, stop loss", "V04 profit +0.0300 SOL, take profit",
+                "V11 profit +0.0100 SOL, take profit", "V100 profit +0.0200 SOL, take profit"),
+            message.lines,
+        )
+        assertEquals(listOf("Buy", "V03.1", "V03.2", "V04", "V11", "V100"), message.links.map { it.label })
+        assertEquals(listOf("/runs/run-10", "/runs/run-12", "/runs/run-4", "/runs/run-11", "/runs/run-100"), message.links.drop(1).map { it.path })
     }
 
     @Test
-    fun `the links are the buy's page in the console, then a run page for each variation that has a run, by seq`() {
+    fun `the links are the buy's page in the console, then a run page for each variation that has a run, by name`() {
         val message = assertNotNull(buyMessage.of(buy, listOf(
             refused(5, "DATASET_NOT_FOUND"),
             closed(2, "0.010000000000", "TAKE_PROFIT", "run-2"),
@@ -137,7 +146,7 @@ class AutomationNotificationsTest {
             verdict("V03", EvaluationStatus.NO_RESULT),
             verdict("V04", EvaluationStatus.SUCCESS, worstCase = "0.051000000000", signals = 15),
             verdict("V05", EvaluationStatus.NO_SUCCESS),
-        )))
+        ), names))
 
         assertEquals("DAY_VERDICT|decu-sweep-1|2026-11-05", message.key)
         assertEquals(NotificationKind.DAY_VERDICT, message.kind)
@@ -151,7 +160,7 @@ class AutomationNotificationsTest {
 
     @Test
     fun `a decided day with no success lists only the counts of the other standings`() {
-        val message = assertNotNull(DayVerdictMessage.of(DAY, listOf(verdict("V00", EvaluationStatus.NO_RESULT), verdict("V01", EvaluationStatus.NO_RESULT))))
+        val message = assertNotNull(DayVerdictMessage.of(DAY, listOf(verdict("V00", EvaluationStatus.NO_RESULT), verdict("V01", EvaluationStatus.NO_RESULT)), names))
 
         assertEquals("Day 2026-11-05: 0 of 2 variations SUCCESS", message.title)
         assertEquals(listOf("Others: 2 NO_RESULT"), message.lines)
@@ -161,19 +170,41 @@ class AutomationNotificationsTest {
     fun `a day with one pending row, or with no row at all, has no message`() {
         val pending = DayVerdict(DAY, PLAN, "V03", listOf(DAY), tally(), DayStanding.Pending(TradingDay(DAY.minusDays(1))), seq = 3)
 
-        assertNull(DayVerdictMessage.of(DAY, listOf(verdict("V00", EvaluationStatus.SUCCESS), pending)))
-        assertNull(DayVerdictMessage.of(DAY, emptyList()))
+        assertNull(DayVerdictMessage.of(DAY, listOf(verdict("V00", EvaluationStatus.SUCCESS), pending), names))
+        assertNull(DayVerdictMessage.of(DAY, emptyList(), names))
     }
 
-    private fun closed(seq: Int, pnl: String, outcome: String, runId: String) =
-        BuyVariationResult(seq, label(seq), runId, outcome, PositionState.CLOSED, BigDecimal(pnl))
+    @Test
+    fun `a success is printed under its name, and successes with the same worst case follow the names' order`() {
+        val message = assertNotNull(DayVerdictMessage.of(DAY, listOf(
+            verdict("V12", EvaluationStatus.SUCCESS, worstCase = "0.010000000000", signals = 11),
+            verdict("V04", EvaluationStatus.SUCCESS, worstCase = "0.010000000000", signals = 10),
+            verdict("V10", EvaluationStatus.SUCCESS, worstCase = "0.010000000000", signals = 12),
+        ), names + mapOf("V10" to VariationName("V03", 1), "V12" to VariationName("V03", 2))))
+
+        assertEquals(
+            listOf("V03.1 SUCCESS: worst case +0.0100 SOL over 12 signals", "V03.2 SUCCESS: worst case +0.0100 SOL over 11 signals",
+                "V04 SUCCESS: worst case +0.0100 SOL over 10 signals"),
+            message.lines,
+        )
+    }
+
+    @Test
+    fun `a verdict of a label with no name is not printed under an invented one`() {
+        assertFailsWith<IllegalStateException> { DayVerdictMessage.of(DAY, listOf(verdict("V99", EvaluationStatus.SUCCESS)), names) }
+    }
+
+    private fun closed(seq: Int, pnl: String, outcome: String, runId: String) = result(name(seq), pnl, outcome, runId)
+
+    private fun result(name: VariationName, pnl: String, outcome: String, runId: String) =
+        BuyVariationResult(name, runId, outcome, PositionState.CLOSED, BigDecimal(pnl))
 
     private fun idle(seq: Int, outcome: String, runId: String, state: PositionState?) =
-        BuyVariationResult(seq, label(seq), runId, outcome, state, BigDecimal.ZERO)
+        BuyVariationResult(name(seq), runId, outcome, state, BigDecimal.ZERO)
 
-    private fun refused(seq: Int, code: String) = BuyVariationResult(seq, label(seq), null, code, null, BigDecimal.ZERO)
+    private fun refused(seq: Int, code: String) = BuyVariationResult(name(seq), null, code, null, BigDecimal.ZERO)
 
-    private fun label(seq: Int) = VariationEditRules.labelOf(seq)
+    private fun name(seq: Int) = VariationName(VariationEditRules.labelOf(seq), 0)
 
     private fun verdict(label: String, status: EvaluationStatus, worstCase: String = "0", signals: Int = 0) =
         DayVerdict(DAY, PLAN, label, listOf(DAY), tally(signals, worstCase), DayStanding.Decided(status), seq = label.removePrefix("V").toInt())
@@ -182,6 +213,7 @@ class AutomationNotificationsTest {
 
     private companion object {
         const val PLAN = "decu-sweep-1"
+        val names = (0..5).associate { VariationEditRules.labelOf(it) to VariationName(VariationEditRules.labelOf(it), 0) }
         val DAY: LocalDate = LocalDate.parse("2026-11-05")
     }
 }

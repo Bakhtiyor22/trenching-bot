@@ -403,8 +403,8 @@ function Overview({ status }: { status: AutomationStatus }) {
                     <Section
                       title={
                         !baseline || selected === baseline
-                          ? `Trend · the default${baseline ? ` (${baseline})` : ''} with the other variations as context`
-                          : `Trend · ${selected} against the default (${baseline})`
+                          ? `Trend · the default${baseline ? ` (${book.name(baseline)})` : ''} with the other variations as context`
+                          : `Trend · ${book.name(selected)} against the default (${book.name(baseline)})`
                       }
                       hint="Worst-case net P&L of the 7 trading days ending each day. Success needs it above the 0 SOL line with at least 10 signals."
                     >

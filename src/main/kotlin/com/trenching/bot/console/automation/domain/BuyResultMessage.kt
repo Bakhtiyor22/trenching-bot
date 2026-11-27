@@ -12,10 +12,9 @@ import java.util.Locale
 /** The simulated buy a message reports; [backfillId] is set for a buy a backfill found. */
 data class BuySubject(val itemId: String, val mint: String, val boughtAt: Instant, val backfillId: String?)
 
-/** One variation's stored sweep row for the buy, with the variation's [seq]. [realizedPnl] is SOL at scale 12. */
+/** One variation's stored sweep row for the buy, under the variation's [name]. [realizedPnl] is SOL at scale 12. */
 data class BuyVariationResult(
-    val seq: Int,
-    val label: String,
+    val name: VariationName,
     val runId: String?,
     val outcome: String,
     val positionState: PositionState?,
@@ -25,7 +24,7 @@ data class BuyVariationResult(
 }
 
 /**
- * The message for a simulated live buy (notification plan Rules 3, 4 and 6): a line for each variation whose position closed with a
+ * The message for a simulated live buy (notification plan Rules 3, 4 and 6): a line for each variation, by its name, whose position closed with a
  * profit or a loss, one line naming the others with their outcome, and links to the buy and to each run. Nothing for a backfilled buy
  * or one where no position closed with a profit or a loss, since then there is nothing to report. A pure function of the stored rows.
  */
@@ -34,7 +33,7 @@ class BuyResultMessage(private val calendar: TradingCalendar) {
 
     fun of(buy: BuySubject, results: List<BuyVariationResult>): OutboundNotification? {
         if (buy.backfillId != null) return null
-        val ordered = results.sortedBy { it.seq }
+        val ordered = results.sortedWith(compareBy(VariationName.ORDER, BuyVariationResult::name))
         val (traded, idle) = ordered.partition { it.profitOrLoss }
         if (traded.isEmpty()) return null
         val profits = traded.count { it.realizedPnl.signum() > 0 }
@@ -45,16 +44,16 @@ class BuyResultMessage(private val calendar: TradingCalendar) {
 
     private fun tradedLine(result: BuyVariationResult): String {
         val verdict = if (result.realizedPnl.signum() > 0) PROFIT else LOSS
-        return "${result.label} $verdict ${NotificationText.signedSol(result.realizedPnl)}, ${NotificationText.words(result.outcome)}"
+        return "${result.name.text} $verdict ${NotificationText.signedSol(result.realizedPnl)}, ${NotificationText.words(result.outcome)}"
     }
 
     private fun idleLine(idle: List<BuyVariationResult>): String =
-        NO_TRADE + idle.joinToString(", ") { "${it.label} ${NotificationText.words(it.outcome)}" }
+        NO_TRADE + idle.joinToString(", ") { "${it.name.text} ${NotificationText.words(it.outcome)}" }
 
     private fun links(buy: BuySubject, ordered: List<BuyVariationResult>): List<NotificationLink> {
         val day = calendar.dayOf(buy.boughtAt).date
         val buyPage = NotificationLink(BUY_LINK, "/automation/days/$day?item=${buy.itemId}")
-        return listOf(buyPage) + ordered.mapNotNull { result -> result.runId?.let { NotificationLink(result.label, "/runs/$it") } }
+        return listOf(buyPage) + ordered.mapNotNull { result -> result.runId?.let { NotificationLink(result.name.text, "/runs/$it") } }
     }
 
     companion object {

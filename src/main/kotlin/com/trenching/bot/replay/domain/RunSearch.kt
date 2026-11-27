@@ -9,8 +9,9 @@ import java.time.Instant
  * Filters of [com.trenching.bot.replay.SimulationRuns.search], combined with AND. [statuses] empty means any status. Ranges are
  * half-open `[from, to)`; a run without an anchor never matches an anchor bound. Only runs created at or before [asOf] are
  * visible, so every page of one [asOf] is cut from the same list. [text] matches a run id, dataset id or configuration hash by
- * prefix (at least [MIN_PREFIX_LENGTH] characters) or a dataset name as a case-insensitive substring. A [size] of 0 asks for the
- * counts and totals only: the result has no items and its page size is 0.
+ * prefix (at least [MIN_PREFIX_LENGTH] characters) or a dataset name as a case-insensitive substring. [configurationHashes] limits
+ * the runs to those whose configuration hash is one of them: null means any hash, and an empty set matches no run. A [size] of 0
+ * asks for the counts and totals only: the result has no items and its page size is 0.
  */
 data class RunSearchQuery(
     val statuses: Set<RunStatus>,
@@ -24,6 +25,7 @@ data class RunSearchQuery(
     val asOf: Instant,
     val page: Int,
     val size: Int,
+    val configurationHashes: Set<String>? = null,
 ) {
     companion object {
         const val MIN_PREFIX_LENGTH = 4

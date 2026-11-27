@@ -103,8 +103,9 @@ describe('AutomationOverviewPage', () => {
     const rows = within(screen.getByRole('table', { name: 'Scoreboard' }))
       .getAllByRole('row')
       .slice(1);
+    // Shown by name; every label alive on 1 Nov is named by itself (V07.2 is stored under its name).
     const expected = dayRows(db, '2026-11-01', NOW.getTime()).map((e) => e.label);
-    expect(rows.map((row) => within(row).getAllByText(/^V\d\d$/)[0]!.textContent)).toEqual(
+    expect(rows.map((row) => within(row).getAllByText(/^V\d\d(\.\d+)?$/)[0]!.textContent)).toEqual(
       expected,
     );
   });
@@ -853,74 +854,132 @@ describe('old links', () => {
 });
 
 describe('variations', () => {
-  it('lists the active variations, with the archived ones behind a toggle', async () => {
+  it('lists every variation by name with All, Active and Archived tabs, archived ones dimmed', async () => {
     const { user, router } = renderPage(<VariationsPage />, {
       path: '/automation/variations',
       url: '/automation/variations',
     });
     const table = await screen.findByRole('table', { name: 'Variations' });
-    const rows = () => within(table).getAllByRole('row').slice(1);
-    expect(rows()).toHaveLength(10);
+    const tabs = screen.getByRole('radiogroup', { name: 'Show variations' });
+    expect(within(tabs).getByRole('radio', { name: 'All 12' })).toBeChecked();
+    expect(within(tabs).getByRole('radio', { name: 'Active 10' })).toBeInTheDocument();
+    expect(within(tabs).getByRole('radio', { name: 'Archived 2' })).toBeInTheDocument();
     const heads = () =>
       within(table)
         .getAllByRole('rowheader')
-        .map((h) => h.textContent);
-    expect(heads()).not.toContain('V07');
-    expect(within(rows()[0]!).getByText('agreed (default)')).toBeInTheDocument();
-    expect(within(rows()[0]!).getByText('baseline')).toBeInTheDocument();
-    const v10 = rows().find((row) => within(row).queryByRole('link', { name: 'V10' }) != null)!;
-    expect(within(v10).getByText('dip window 90 s')).toBeInTheDocument();
-    expect(within(v10).getByRole('link', { name: 'V07' })).toHaveAttribute(
+        .map((h) => within(h).getAllByRole('link')[0]!.textContent);
+    // By name: the legacy label V10 reads V07.1, between V07 and the dotted V07.2.
+    expect(heads().slice(7, 10)).toEqual(['V07', 'V07.1', 'V07.2']);
+    const row = (name: string) =>
+      within(table)
+        .getAllByRole('rowheader')
+        .find((h) => within(h).getAllByRole('link')[0]!.textContent === name)!
+        .closest('tr')!;
+    expect(within(row('V00')).getByText('baseline')).toBeInTheDocument();
+    expect(row('V07.1')).toHaveAttribute('data-archived', 'true');
+    expect(row('V07.1')).toHaveStyle({ opacity: '0.7' });
+    expect(within(row('V07.1')).getByText('Archived')).toBeInTheDocument();
+    expect(within(row('V07.1')).getByRole('link', { name: 'V07.1' })).toHaveAttribute(
       'href',
-      '/automation/variations/V07',
+      '/automation/variations/V10',
     );
+    expect(within(row('V07')).getByText('29 Oct, 15:00')).toBeInTheDocument();
+    expect(within(row('V07')).getByText(/replaced by/)).toHaveTextContent('replaced by V07.1');
+    expect(row('V07.2')).not.toHaveAttribute('data-archived');
 
-    await user.click(screen.getByRole('switch', { name: 'Show archived' }));
-    expect(router.state.location.search).toBe('?archived=1');
-    await waitFor(() => expect(heads()).toContain('V07'));
-    const row = within(table)
-      .getAllByRole('rowheader')
-      .find((h) => h.textContent === 'V07')!
-      .closest('tr')!;
-    expect(within(row).getByText('Archived')).toBeInTheDocument();
-    expect(within(row).getByText('29 Oct, 15:00')).toBeInTheDocument();
-    expect(within(row).getByText(/replaced by/)).toHaveTextContent('replaced by V10');
+    await user.click(within(tabs).getByRole('radio', { name: 'Archived 2' }));
+    expect(router.state.location.search).toBe('?show=archived');
+    await waitFor(() => expect(heads()).toEqual(['V07', 'V07.1']));
+    await user.click(within(tabs).getByRole('radio', { name: 'Active 10' }));
+    await waitFor(() => expect(heads()).not.toContain('V07'));
+    expect(heads()).toHaveLength(10);
   });
 
-  it('shows a variation with its settings, lineage and runs', async () => {
+  it('opens Archived from an old "show archived" link', async () => {
+    renderPage(<VariationsPage />, {
+      path: '/automation/variations',
+      url: '/automation/variations?archived=1',
+    });
+    expect(await screen.findByRole('radio', { name: /^Archived/ })).toBeChecked();
+  });
+
+  it('shows a variation by its name, with its settings, lineage and runs, under a dotted label', async () => {
     renderPage(<VariationDetailPage />, {
       path: '/automation/variations/:label',
-      url: '/automation/variations/V10',
+      url: '/automation/variations/V07.2',
     });
-    const settings = await screen.findByRole('table', { name: 'Settings of V10' });
-    expect(within(settings).getByText('90 s')).toBeInTheDocument();
-    expect(within(settings).getByText('changed from V07')).toBeInTheDocument();
-    expect(screen.getByText(/V10 replaces V07/)).toBeInTheDocument();
+    const settings = await screen.findByRole('table', { name: 'Settings of V07.2' });
+    expect(within(settings).getByText('120 s')).toBeInTheDocument();
+    expect(within(settings).getByText('changed from V07.1')).toBeInTheDocument();
+    expect(screen.getByText(/V07.2 replaces V07.1/)).toBeInTheDocument();
     expect(screen.getByText(/It runs only on buys captured from/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Archive' })).toBeEnabled();
     const runs = await screen.findByRole('table', { name: 'Sweep runs' });
-    // No variation column on a variation's own runs; every buy is from 29 Oct on.
     expect(within(runs).queryByRole('columnheader', { name: 'Variation' })).not.toBeInTheDocument();
     const days = within(runs)
       .getAllByRole('row')
       .slice(1)
       .map((row) => within(row).getAllByRole('link')[0]!.getAttribute('href')!);
-    expect(days.every((href) => href.slice('/automation/days/'.length, -1) >= '2026-10-29')).toBe(
+    expect(days.every((href) => href.slice('/automation/days/'.length, -1) >= '2026-10-30')).toBe(
       true,
     );
   });
 
+  it('names a legacy-labelled variation by its name in the heading and its lineage', async () => {
+    renderPage(<VariationDetailPage />, {
+      path: '/automation/variations/:label',
+      url: '/automation/variations/V10',
+    });
+    expect(await screen.findByRole('table', { name: 'Settings of V07.1' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Variation V07.1' })).toBeInTheDocument();
+    expect(screen.getByText('V07.1 is archived')).toBeInTheDocument();
+    for (const link of screen.getAllByRole('link', { name: 'V07.2' }))
+      expect(link).toHaveAttribute('href', '/automation/variations/V07.2');
+    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
+  });
+
+  it('archives a variation after a confirmation that says its runs stay', async () => {
+    const posts = postBodies('/variations/V05/archive');
+    const { user } = renderPage(<VariationDetailPage />, {
+      path: '/automation/variations/:label',
+      url: '/automation/variations/V05',
+    });
+    await user.click(await screen.findByRole('button', { name: 'Archive' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Archive V05?' });
+    expect(within(dialog).getByText(/stops being replayed on new buys/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/runs, trading days and history stay/)).toBeInTheDocument();
+    expect(posts).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Archive V05' }));
+    expect(await screen.findByText('V05 is archived')).toBeInTheDocument();
+    expect(screen.getByText(/archived on its own: nothing replaces it/)).toBeInTheDocument();
+    expect(posts).toHaveLength(1);
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Archive V05?' })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
+  });
+
+  it('never offers Archive for the baseline', async () => {
+    renderPage(<VariationDetailPage />, {
+      path: '/automation/variations/:label',
+      url: '/automation/variations/V00',
+    });
+    expect(await screen.findByRole('table', { name: 'Settings of V00' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument();
+  });
+
   it('says "created" once after an edit, and only "replaces" after a reload', async () => {
     const opened = {
-      pathname: '/automation/variations/V10',
+      pathname: '/automation/variations/V07.2',
       search: '?from=2026-10-30',
-      state: { createdFrom: 'V07', created: true },
+      state: { createdFrom: 'V10', created: true },
     };
     const first = renderPage(<VariationDetailPage />, {
       path: '/automation/variations/:label',
       url: opened,
     });
-    expect(await screen.findByText('V10 created')).toBeInTheDocument();
+    expect(await screen.findByText('V07.2 created')).toBeInTheDocument();
     // The page never navigates by itself, since a late navigation of its own would undo a newer one: the entry keeps its
     // state and search, and is remembered as shown instead.
     expect(first.router.state.historyAction).toBe('POP');
@@ -935,8 +994,8 @@ describe('variations', () => {
       path: '/automation/variations/:label',
       url: reloaded,
     });
-    expect(await screen.findByText('V10 replaces V07')).toBeInTheDocument();
-    expect(screen.queryByText('V10 created')).not.toBeInTheDocument();
+    expect(await screen.findByText('V07.2 replaces V07.1')).toBeInTheDocument();
+    expect(screen.queryByText('V07.2 created')).not.toBeInTheDocument();
     expect(screen.queryByText(/that is from now on/)).not.toBeInTheDocument();
   });
 
@@ -959,6 +1018,8 @@ describe('variations', () => {
     expect(
       within(grid).getByRole('link', { name: 'Open variation V07: settings and runs' }),
     ).toBeInTheDocument();
+    // The archived legacy label V10 shows by its name in the grid's rows.
+    expect(within(grid).getByRole('button', { name: 'Show V07.1 over time' })).toBeInTheDocument();
   });
 });
 

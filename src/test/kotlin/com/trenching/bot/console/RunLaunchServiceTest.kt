@@ -5,7 +5,7 @@ import com.trenching.bot.console.api.dto.RunStartRequest
 import com.trenching.bot.console.application.ConsoleConfigValidator
 import com.trenching.bot.console.application.RunLaunchService
 import com.trenching.bot.console.application.RunVariationLabels
-import com.trenching.bot.console.domain.RunVariationLookup
+import com.trenching.bot.support.FakeRunVariationLookup
 import com.trenching.bot.replay.ReplayDatasetCatalog
 import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.domain.DatasetSummary
@@ -32,7 +32,7 @@ class RunLaunchServiceTest {
     private val stores = StubOutcomeStores()
     private val runs = mock(SimulationRuns::class.java)
     private val catalog = mock(ReplayDatasetCatalog::class.java)
-    private val service = RunLaunchService(runs, catalog, ConsoleConfigValidator(), RunVariationLabels(RunVariationLookup { ids ->
+    private val service = RunLaunchService(runs, catalog, ConsoleConfigValidator(), RunVariationLabels(FakeRunVariationLookup { ids ->
         lookups += ids.toList()
         mapOf("run-1" to listOf("V03", "V12"))
     }), stores.outcomes(), SimpleMeterRegistry())

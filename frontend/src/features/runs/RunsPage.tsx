@@ -28,7 +28,7 @@ import {
   useNavigationType,
   useSearchParams,
 } from 'react-router';
-import { useAutomationStatus } from '../../api/automation';
+import { useAutomationStatus, useAutomationVariations } from '../../api/automation';
 import {
   MAX_SEARCH_CHARS,
   MIN_SEARCH_CHARS,
@@ -53,6 +53,7 @@ import { MAX_COMPARED_RUNS, paths } from '../../paths';
 import {
   dayInfo,
   daySpanText,
+  nameOf,
   tradingDayOf,
   zoneDateTime,
   zoneLabel,
@@ -82,6 +83,7 @@ import {
   type Sort,
   type SortKey,
 } from './runList';
+import { useVariationBook } from '../automation/useVariationBook';
 import { RunVariations } from './RunVariations';
 import { StatusTabs } from './StatusTabs';
 
@@ -671,8 +673,19 @@ export function RunsPage() {
     : null;
   // A trading day is cut on the automation's clock; wait for it rather than send a day-less query.
   const waitingForClock = Boolean(filters.day) && !clock && status.isPending;
-  const query = toRunQuery(filters, clock, page, PAGE_SIZE, asOf);
-  const runs = useRuns(query, { enabled: !waitingForClock });
+  // The variation filter needs the automation console's variations; without them (no console) it is not offered or sent.
+  const variationList = useAutomationVariations(null);
+  const book = useVariationBook();
+  const variationsAvailable = variationList.data !== undefined;
+  const waitingForVariations = Boolean(filters.variation) && variationList.isPending;
+  const query = toRunQuery(
+    { ...filters, variation: variationsAvailable ? filters.variation : null },
+    clock,
+    page,
+    PAGE_SIZE,
+    asOf,
+  );
+  const runs = useRuns(query, { enabled: !waitingForClock && !waitingForVariations });
   const data = runs.data;
   const current = data && !runs.isPlaceholderData ? data : undefined;
   const liveTotal = useLiveRunTotal(query, Boolean(asOf && data));
@@ -775,7 +788,7 @@ export function RunsPage() {
       />
     );
   } else if (data.items.length === 0) {
-    const labels = activeFilterLabels(filters, datasetName);
+    const labels = activeFilterLabels(filters, datasetName, book.name);
     body = (
       <EmptyState
         title="No runs match"
@@ -875,6 +888,24 @@ export function RunsPage() {
             datasetName={datasetName}
             onChange={(value) => update({ set: { datasetId: value } })}
           />
+          {variationsAvailable && (
+            <Select
+              label="Variation"
+              aria-label="Filter by variation"
+              placeholder="Any variation"
+              description="Runs with its settings, any run with identical settings included"
+              data={book.variations.map((v) => ({
+                value: v.label,
+                label: `${nameOf(v)}${v.state === 'ARCHIVED' ? ' (archived)' : ''}`,
+              }))}
+              value={filters.variation}
+              onChange={(value) => update({ set: { variation: value } })}
+              searchable
+              clearable
+              nothingFoundMessage="No variation matches"
+              w={{ base: '100%', sm: 220 }}
+            />
+          )}
           <TextInput
             type="date"
             label="Buy's trading day"

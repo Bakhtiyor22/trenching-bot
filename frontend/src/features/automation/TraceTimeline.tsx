@@ -12,6 +12,7 @@ import {
   type AutomationStep,
 } from '../../api/automation';
 import { capturesApi } from '../../api/captures';
+import { useVariationBook } from './useVariationBook';
 import { CodeText } from '../../components/PlainLanguage';
 import { QueryView } from '../../components/QueryView';
 import { codeLabel } from '../../lib/codes';
@@ -63,7 +64,7 @@ function detailText(event: AutomationItemEvent, key: string): string | null {
 }
 
 /** What an event did, in words; an unknown kind reads as its humanized code. */
-function eventTitle(event: AutomationItemEvent): string {
+function eventTitle(event: AutomationItemEvent, nameOf: (label: string) => string): string {
   const step = stepName(event.step);
   const attempt = event.attempt && event.attempt > 1 ? ` (attempt ${event.attempt})` : '';
   switch (event.kind) {
@@ -86,7 +87,7 @@ function eventTitle(event: AutomationItemEvent): string {
     case 'SWEEP_ENTRY_RECORDED': {
       const label = detailText(event, 'label');
       const outcome = detailText(event, 'outcome');
-      return `Replayed ${label ?? 'a variation'}${outcome ? `: ${outcomeLabel(outcome)}` : ''}`;
+      return `Replayed ${label ? nameOf(label) : 'a variation'}${outcome ? `: ${outcomeLabel(outcome)}` : ''}`;
     }
     default:
       return `${humanizeCode(event.kind)}${step ? ` at the ${step} step` : ''}`;
@@ -308,6 +309,7 @@ export function TraceTimeline({
   live: boolean;
 }) {
   const events = useAutomationItemEvents(itemId, { poll: live });
+  const book = useVariationBook();
   const unavailable = events.data === undefined && isItemHistoryUnavailable(events.error);
   if (unavailable)
     return (
@@ -370,7 +372,7 @@ export function TraceTimeline({
                     role="listitem"
                     title={
                       <Text size="sm" fw={600}>
-                        {eventTitle(event)}
+                        {eventTitle(event, book.name)}
                       </Text>
                     }
                     color={TONE_COLOR[eventTone(event)]}

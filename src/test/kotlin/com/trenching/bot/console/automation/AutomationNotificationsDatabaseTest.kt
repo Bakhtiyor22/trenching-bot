@@ -6,6 +6,7 @@ import com.trenching.bot.console.automation.AutomationFixtures.properties
 import com.trenching.bot.console.automation.AutomationRows.item
 import com.trenching.bot.console.automation.AutomationRows.session
 import com.trenching.bot.console.automation.application.AutomationDayVerdictCheck
+import com.trenching.bot.console.automation.application.AutomationVariationViews
 import com.trenching.bot.console.automation.domain.AutomationItemProgress
 import com.trenching.bot.console.automation.domain.AutomationItemState
 import com.trenching.bot.console.automation.domain.AutomationSessionState
@@ -167,10 +168,9 @@ class AutomationNotificationsDatabaseTest : AutomationDatabaseTest() {
     }
 
     @Test
-    fun `a buy's lines follow the plan's order, with an archived variation in its place, an unknown label last and another plan's rows left out`() {
+    fun `a buy's lines follow the names' order, with an archived variation in its place and another plan's rows left out`() {
         capturedBuy(1)
         val replacement = AutomationVariationRows(variationRows, variationMapper).edit("V01", EVENING, "request-1").label
-        sweepRow(1, "X01", "STOP_LOSS", "-0.04", PositionState.CLOSED)
         sweepRow(1, replacement, "TAKE_PROFIT", "0.03", PositionState.CLOSED)
         sweepRow(1, "V01", "STOP_LOSS", "-0.02", PositionState.CLOSED)
         sweepRow(1, "V00", "TAKE_PROFIT", "0.01", PositionState.CLOSED)
@@ -179,15 +179,15 @@ class AutomationNotificationsDatabaseTest : AutomationDatabaseTest() {
         assertTrue(simulate(1))
 
         val published = notifications.recording.notifications.single()
-        val expected = listOf("V00", "V01", replacement, "X01")
-        assertEquals(expected, published.lines.map { it.substringBefore(' ') })
-        assertTrue(published.title.endsWith("at 2 Nov 20:00: 2 profit, 2 loss"), published.title)
-        assertEquals(expected.map { "/runs/run-$it" }, published.links.drop(1).map { it.path })
+        assertEquals(listOf("V00", "V01", "V01.1"), published.lines.map { it.substringBefore(' ') })
+        assertTrue(published.title.endsWith("at 2 Nov 20:00: 2 profit, 1 loss"), published.title)
+        assertEquals(listOf("V00", "V01", "V01.1"), published.links.drop(1).map { it.label })
+        assertEquals(listOf("V00", "V01", replacement).map { "/runs/run-$it" }, published.links.drop(1).map { it.path })
     }
 
     @Test
     fun `a check that fails is logged and left for the next hour`() {
-        val failing = AutomationDayVerdictCheck(dayService(properties(captureEnabled = true), dayClock), { error("outbox is down") }, properties(captureEnabled = true), dayClock)
+        val failing = AutomationDayVerdictCheck(dayService(properties(captureEnabled = true), dayClock), views(), { error("outbox is down") }, properties(captureEnabled = true), dayClock)
         seed.week()
         coverage(from = AutomationDaySeed.local("2026-10-20", "12:00"))
 
@@ -198,7 +198,9 @@ class AutomationNotificationsDatabaseTest : AutomationDatabaseTest() {
         }
     }
 
-    private fun check() = AutomationDayVerdictCheck(dayService(properties(captureEnabled = true), dayClock), notifications.publisher, properties(captureEnabled = true), dayClock)
+    private fun check() = AutomationDayVerdictCheck(dayService(properties(captureEnabled = true), dayClock), views(), notifications.publisher, properties(captureEnabled = true), dayClock)
+
+    private fun views() = AutomationVariationViews(variationRows, variationMapper)
 
     private fun coverage(from: Instant) {
         watermarks.save(AutomationWatermarkEntity(WALLET, 1, "sig-1", 2, -1, dayClock.instant()).apply { this.coveredFrom = from })

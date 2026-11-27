@@ -16,6 +16,7 @@ import java.time.Instant
         Index(name = "idx_simulation_runs_dataset", columnList = "dataset_checksum, created_at"),
         Index(name = "idx_simulation_runs_storage_dataset", columnList = "dataset_checksum, storage"),
         Index(name = "idx_simulation_runs_anchor", columnList = "anchor_block_time, id"),
+        Index(name = "idx_simulation_runs_configuration", columnList = "configuration_hash, created_at"),
     ],
 )
 class SimulationRunEntity(

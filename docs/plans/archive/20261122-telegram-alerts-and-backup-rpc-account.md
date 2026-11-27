@@ -3,7 +3,7 @@
 > The bot tells you on Telegram how each buy's runs ended and when a day is scored; it moves to a second Helius account
 > when the first runs out and shows both balances; and the buys stuck since 7–12 Nov are closed so their days complete.
 
-Status: Approved (2026-11-22)
+Status: Delivered (2026-11-26)
 
 ## Context
 
@@ -452,3 +452,42 @@ provider was called.
   variations work in the main checkout and need reconciling.
 - Accepted limits: a wrong token or chat id fails messages at once and they are not re-queued; a day decided later
   than the 7-day lookback is never announced; the return wait is kept in memory, so a restart forgets it.
+
+## Delivered
+
+**2026-11-26.** The backend parts were committed as `f53a122` on `feature/telegram-alerts-backup-rpc`. D1 (the console
+part) was committed as `3e4e66f`:
+
+- the Solana page's two accounts, with state, credits left of the limit, the cycle end and the last check;
+- the `RPC_CREDITS` hold;
+- the `RPC_CREDITS_EXHAUSTED` and `CREDITS_EXHAUSTED` explanations and the new usage labels.
+
+Its screenshots are in `frontend/qa/20261122-rpc-accounts/`.
+
+**The merge.** The branch was merged into `develop` as `98faacb`:
+
+- `README.md` was resolved word by word, keeping both sides: the RPC-credits hold sentences and the later cap figures.
+- `AutomationShared.tsx` kept both imports.
+- `AutomationNotificationsTest` passes the `seq` that `develop` added to `DayVerdict`.
+
+**Verification on the merge:**
+
+- `./gradlew build`: 284 test classes, 2,713 tests, 0 failures, 0 skipped.
+- Frontend: 811 tests pass, and lint and the typecheck are clean.
+- No live provider was called.
+
+**Schema.** As in "Delivery status": `notification_outbox` and `rpc_accounts` are new and additive, and the startup
+repair widens the `api_usage_buckets` checks. No SQL is applied by hand.
+
+**Later change.** The two messages print variation names (V03.1) instead of labels since
+[`20261126-variation-versions-archive-and-run-filter.md`](20261126-variation-versions-archive-and-run-filter.md).
+
+**Still open, the user's steps on the server:**
+
+- A2, the daily cap.
+- A3, Grafana step 14 and the held-capture alert rule.
+- The environment variables, by name: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `SOLANA_RPC_BACKUP_URL`,
+  `HELIUS_PROJECT_ID`, `HELIUS_BACKUP_PROJECT_ID`. Without them notifications stay off and only the primary account
+  is used.
+- Open Questions 1–4, settled against the real services: one approved test message to settle `link-style`, and one
+  balance read per account.

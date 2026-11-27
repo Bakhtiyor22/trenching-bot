@@ -16,5 +16,6 @@ interface AutomationVariationResponseMapper {
     fun toList(list: VariationList): AutomationVariationListResponse
 
     @Mapping(target = ".", source = "variation")
+    @Mapping(target = "name", source = "name.text")
     fun toResponse(view: VariationView): AutomationVariationResponse
 }

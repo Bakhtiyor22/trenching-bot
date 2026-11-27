@@ -301,6 +301,55 @@ class SimulationRunSearchIntegrationTest {
     }
 
     @Test
+    fun `a hash set restricts the page, the status counts and the totals to the runs with those hashes`() {
+        run("a-profit", at(1), pnl = "2", configurationHash = "hash-a", mints = listOf(MINT_A))
+        run("a-loss", at(2), pnl = "-1", configurationHash = "hash-a", mints = listOf(MINT_B))
+        run("b-profit", at(3), pnl = "5", configurationHash = "hash-b", mints = listOf(MINT_A))
+        run("c-profit", at(4), pnl = "7", configurationHash = "hash-c", mints = listOf(MINT_A))
+
+        val result = runs.search(query(configurationHashes = setOf("hash-a", "hash-b")))
+
+        assertEquals(listOf("b-profit", "a-loss", "a-profit"), result.page.items.map { it.id })
+        assertEquals(3L, result.page.total)
+        assertEquals(2L, result.statusCounts.getValue(RunStatus.PROFIT))
+        assertEquals(1L, result.statusCounts.getValue(RunStatus.LOSS))
+        assertEquals(listOf(RunQuoteTotal(MintAddress.WRAPPED_SOL.value, 3, BigDecimal("6.000000000000"))), result.totals)
+
+        val counted = runs.search(query(configurationHashes = setOf("hash-a", "hash-b"), size = 0))
+
+        assertEquals(0, counted.page.items.size)
+        assertEquals(result.page.total, counted.page.total)
+        assertEquals(result.statusCounts, counted.statusCounts)
+        assertEquals(result.totals, counted.totals)
+    }
+
+    @Test
+    fun `an empty hash set matches no run and every count is zero`() {
+        run("a-profit", at(1), pnl = "2", configurationHash = "hash-a")
+
+        val result = runs.search(query(configurationHashes = emptySet()))
+
+        assertEquals(emptyList(), result.page.items)
+        assertEquals(0L, result.page.total)
+        assertEquals(RunStatus.entries.associateWith { 0L }, result.statusCounts)
+        assertEquals(emptyList(), result.totals)
+    }
+
+    @Test
+    fun `a hash set combines with a status and a mint filter`() {
+        run("a-profit", at(1), pnl = "2", configurationHash = "hash-a", mints = listOf(MINT_A))
+        run("a-loss", at(2), pnl = "-1", configurationHash = "hash-a", mints = listOf(MINT_A))
+        run("a-other-mint", at(3), pnl = "-1", configurationHash = "hash-a", mints = listOf(MINT_B))
+        run("b-loss", at(4), pnl = "-1", configurationHash = "hash-b", mints = listOf(MINT_A))
+
+        val result = runs.search(query(configurationHashes = setOf("hash-a"), statuses = setOf(RunStatus.LOSS), mint = MINT_A))
+
+        assertEquals(listOf("a-loss"), result.page.items.map { it.id })
+        assertEquals(1L, result.statusCounts.getValue(RunStatus.PROFIT), "the counts ignore the status filter but keep the hashes and the mint")
+        assertEquals(1L, result.statusCounts.getValue(RunStatus.LOSS))
+    }
+
+    @Test
     fun `a dataset search matches a name substring ignoring case or an id prefix`() {
         fixtures.dataset("feedface01", "Sweep Alpha")
         fixtures.dataset("cafebabe02", "Sweep Beta")
@@ -315,14 +364,20 @@ class SimulationRunSearchIntegrationTest {
         assertEquals(1, catalog.search("sweep", 0, 1).items.size)
     }
 
+    /** A run of its own dataset, as runs of one configuration are: the same hash under many datasets. */
+    private fun run(id: String, createdAt: Instant, pnl: String, configurationHash: String, mints: List<MintAddress> = emptyList()) {
+        fixtures.dataset("dataset-$id")
+        fixtures.run(id, createdAt, datasetId = "dataset-$id", pnl = pnl, configurationHash = configurationHash, mints = mints)
+    }
+
     private fun at(minute: Int): Instant = BASE.plus(Duration.ofMinutes(minute.toLong()))
 
     @Suppress("LongParameterList")
     private fun query(
         statuses: Set<RunStatus> = emptySet(), mint: MintAddress? = null, anchorFrom: Instant? = null, anchorTo: Instant? = null,
         createdFrom: Instant? = null, createdTo: Instant? = null, datasetId: String? = null, text: String? = null,
-        asOf: Instant = FAR_FUTURE, page: Int = 0, size: Int = 20,
-    ) = RunSearchQuery(statuses, mint, anchorFrom, anchorTo, createdFrom, createdTo, datasetId, text, asOf, page, size)
+        asOf: Instant = FAR_FUTURE, page: Int = 0, size: Int = 20, configurationHashes: Set<String>? = null,
+    ) = RunSearchQuery(statuses, mint, anchorFrom, anchorTo, createdFrom, createdTo, datasetId, text, asOf, page, size, configurationHashes)
 
     private companion object {
         const val TOTAL_RUNS = 45

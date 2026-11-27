@@ -6,6 +6,7 @@ import com.trenching.bot.console.application.RunSearchConsoleService
 import com.trenching.bot.console.application.RunVariationLabels
 import com.trenching.bot.console.domain.InvalidConsoleRequestException
 import com.trenching.bot.console.domain.RunSearchParams
+import com.trenching.bot.console.domain.RunVariationLookup
 import com.trenching.bot.replay.SimulationRuns
 import com.trenching.bot.replay.domain.RunAggregates
 import com.trenching.bot.replay.domain.RunSearchQuery
@@ -25,6 +26,7 @@ import kotlin.test.assertNull
 import com.trenching.bot.console.domain.RunOutcome
 import com.trenching.bot.console.domain.RunOutcomeStage
 import com.trenching.bot.papertrading.domain.RejectionReason
+import com.trenching.bot.support.FakeRunVariationLookup
 import com.trenching.bot.support.StubOutcomeStores
 import org.junit.jupiter.api.Test
 
@@ -32,10 +34,10 @@ class RunSearchConsoleServiceTest {
     private val runs = RecordingRuns()
     private val lookups = mutableListOf<Collection<String>>()
     private val stores = StubOutcomeStores()
-    private val service = RunSearchConsoleService(runs, RunVariationLabels { ids ->
+    private val service = RunSearchConsoleService(runs, RunVariationLabels(FakeRunVariationLookup(mapOf("V03" to setOf("h2", "h1"), "V05" to emptySet())) { ids ->
         lookups += ids
         mapOf("run-1" to listOf("V03", "V12"))
-    }, stores.outcomes(), Clock.fixed(NOW, ZoneOffset.UTC))
+    }), stores.outcomes(), Clock.fixed(NOW, ZoneOffset.UTC))
 
     @Test
     fun `without filters every status matches and the snapshot is five seconds ago, which a run still being written cannot cross`() {
@@ -125,6 +127,43 @@ class RunSearchConsoleServiceTest {
     }
 
     @Test
+    fun `without a variation the query has no hash filter`() {
+        service.search(params())
+        assertNull(checkNotNull(runs.query).configurationHashes)
+
+        service.search(params(variation = "  "))
+        assertNull(checkNotNull(runs.query).configurationHashes)
+    }
+
+    @Test
+    fun `a variation is resolved through the lookup into the hashes the query filters by`() {
+        service.search(params(variation = "V03"))
+
+        assertEquals(setOf("h1", "h2"), runs.query?.configurationHashes)
+    }
+
+    @Test
+    fun `a variation that has not run gives an empty hash set, which matches no run`() {
+        service.search(params(variation = "V05"))
+
+        assertEquals(emptySet(), runs.query?.configurationHashes)
+    }
+
+    @Test
+    fun `an unknown variation is refused naming the variation field and runs no search`() {
+        assertEquals("variation", assertFailsWith<InvalidConsoleRequestException> { service.search(params(variation = "V99")) }.field)
+        assertNull(runs.query)
+    }
+
+    @Test
+    fun `without the automation console every variation is unknown`() {
+        val absent = RunSearchConsoleService(runs, RunVariationLabels(RunVariationLookup.ABSENT), stores.outcomes(), Clock.fixed(NOW, ZoneOffset.UTC))
+
+        assertEquals("variation", assertFailsWith<InvalidConsoleRequestException> { absent.search(params(variation = "V03")) }.field)
+        assertNull(runs.query)
+    }
+
+    @Test
     fun `an unknown status is refused naming the status field`() {
         assertEquals("status", assertFailsWith<InvalidConsoleRequestException> { service.search(params(statuses = listOf("WON"))) }.field)
         assertEquals("status", assertFailsWith<InvalidConsoleRequestException> { service.search(params(statuses = listOf("loss"))) }.field)
@@ -161,8 +200,8 @@ class RunSearchConsoleServiceTest {
     private fun params(
         page: Int = 0, size: Int = 20, datasetId: String? = null, statuses: List<String> = emptyList(), mint: String? = null,
         from: Instant? = null, to: Instant? = null, anchorFrom: Instant? = from, anchorTo: Instant? = to,
-        createdFrom: Instant? = from, createdTo: Instant? = to, text: String? = null, asOf: Instant? = null,
-    ) = RunSearchParams(page, size, datasetId, statuses, mint, anchorFrom, anchorTo, createdFrom, createdTo, text, asOf)
+        createdFrom: Instant? = from, createdTo: Instant? = to, text: String? = null, asOf: Instant? = null, variation: String? = null,
+    ) = RunSearchParams(page, size, datasetId, statuses, mint, anchorFrom, anchorTo, createdFrom, createdTo, text, asOf, variation)
 
     private fun summary(id: String) = RunSummary(id, "ds-1", "engine", "config", "result", MintAddress.WRAPPED_SOL, 1, 1, 0, 0, 1,
         BigDecimal.ZERO, NOW, RunStorage.COPY)

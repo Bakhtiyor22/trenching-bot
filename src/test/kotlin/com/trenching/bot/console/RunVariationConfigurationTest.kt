@@ -3,6 +3,7 @@ package com.trenching.bot.console
 import com.trenching.bot.console.application.RunVariationLabels
 import com.trenching.bot.console.config.RunVariationConfiguration
 import com.trenching.bot.console.domain.RunVariationLookup
+import com.trenching.bot.support.FakeRunVariationLookup
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.runner.ApplicationContextRunner
@@ -29,6 +30,6 @@ class RunVariationConfigurationTest {
     @Configuration(proxyBeanMethods = false)
     class Lookup {
         @Bean
-        fun lookup() = RunVariationLookup { ids -> ids.associateWith { listOf("V03") } }
+        fun lookup() = FakeRunVariationLookup { ids -> ids.associateWith { listOf("V03") } }
     }
 }

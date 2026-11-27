@@ -25,7 +25,11 @@ import { recordsTrades, TRADES_SCHEMA_VERSION } from '../lib/datasetSchema';
 import { addDecimals, compareDecimals, decimalSign } from '../lib/decimal';
 import { bpsToPercent } from '../lib/percent';
 import { createCaptureHandlers, resetCaptureMocks } from './captureHandlers';
-import { createAutomationHandlers, resetAutomationMocks } from './automationHandlers';
+import {
+  createAutomationHandlers,
+  resetAutomationMocks,
+  variationHashes,
+} from './automationHandlers';
 import {
   configDefaults,
   dashboardFixture,
@@ -1137,8 +1141,14 @@ export function createHandlers(options: MockOptions = {}) {
         .map((r) => r.detail.run)
         .filter((r) => db.startedRuns.has(r.id));
       const arriving = mockState() === 'runs-arriving' ? arrivingRuns(Date.now()) : [];
+      // `variation`: the runs with a configuration the variation ran with, identical settings from elsewhere included.
+      const variation = url.searchParams.get('variation');
+      const hashes = variation ? variationHashes(variation) : null;
+      if (variation && hashes === null)
+        return invalidRequest('variation', 'is not a known variation');
       const matching = [...arriving, ...listedRuns, ...started]
         .filter((run) => runMatches(run, search))
+        .filter((run) => hashes === null || hashes.has(run.configurationHash))
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       const statusCounts = Object.fromEntries(
         RUN_STATUSES.map((status) => [status, matching.filter((r) => r.status === status).length]),

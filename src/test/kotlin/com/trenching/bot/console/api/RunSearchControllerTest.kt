@@ -29,6 +29,7 @@ import java.time.Instant
 import java.time.ZoneOffset
 import com.trenching.bot.papertrading.domain.RejectionReason
 import com.trenching.bot.replay.domain.RunQuoteTotal
+import com.trenching.bot.support.FakeRunVariationLookup
 import com.trenching.bot.support.StubOutcomeStores
 import kotlin.test.assertEquals
 import org.junit.jupiter.api.Test
@@ -45,7 +46,7 @@ class RunSearchControllerTest {
     private val stores = StubOutcomeStores(mutableMapOf("run-1" to mapOf(RejectionReason.NO_DIP to 1)))
     private val mvc: MockMvc = MockMvcBuilders.standaloneSetup(RunController(
         mock(RunLaunchService::class.java), mock(ConsoleService::class.java),
-        RunSearchConsoleService(runs, RunVariationLabels { mapOf("run-1" to listOf("V03", "V12")) }, stores.outcomes(), Clock.fixed(NOW, ZoneOffset.UTC)), responseMapper(),
+        RunSearchConsoleService(runs, RunVariationLabels(FakeRunVariationLookup(mapOf("V03" to setOf("h1"))) { mapOf("run-1" to listOf("V03", "V12")) }), stores.outcomes(), Clock.fixed(NOW, ZoneOffset.UTC)), responseMapper(),
         ObservationResponseMapperImpl(), mock(RunUsdtViewService::class.java), mock(RunUsdtViewMapper::class.java),
     )).setControllerAdvice(ConsoleExceptionHandler(ConsoleErrorMapperImpl())).build()
 
@@ -115,6 +116,19 @@ class RunSearchControllerTest {
         assertEquals(Instant.parse("2026-11-15T10:00:00.5Z"), query.asOf)
         assertEquals("ds-1", query.datasetId)
         assertEquals(Instant.parse("2026-11-15T10:00:00.5Z"), Instant.parse(json.readTree(response.contentAsString)["asOf"].asString()))
+    }
+
+    @Test
+    fun `the variation parameter is resolved into the query's hashes and an unknown one is a 400 naming it`() {
+        assertEquals(200, mvc.perform(get("/api/runs").param("variation", "V03")).andReturn().response.status)
+        assertEquals(setOf("h1"), runs.query?.configurationHashes)
+
+        val response = mvc.perform(get("/api/runs").param("variation", "V99")).andReturn().response
+
+        assertEquals(400, response.status)
+        val body = json.readTree(response.contentAsString)
+        assertEquals("INVALID_REQUEST", body["code"].asString())
+        assertEquals(listOf("variation"), body["fields"].propertyNames().toList())
     }
 
     @Test

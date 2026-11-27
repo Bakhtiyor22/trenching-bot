@@ -1,6 +1,6 @@
 # Stored, editable sweep variations
 
-Accepted 2026-11-22 with the approved [editable variations plan](../plans/archive/20261122-editable-variations-and-variation-runs.md) (Key Decisions 1–5, Domain Rules 1, 4–10, 13 and 16), every open question answered as recommended. It supersedes the part of Decision 6 of [automated capture and sweep evaluation](20261102-automated-capture-and-sweep-evaluation.md) that fixes the sweep plan in code ("a changed list is a new plan id, never an edit"); the rest of that decision stands.
+Accepted 2026-11-22 with the approved [editable variations plan](../plans/archive/20261122-editable-variations-and-variation-runs.md) (Key Decisions 1–5, Domain Rules 1, 4–10, 13 and 16), every open question answered as recommended. It supersedes the part of Decision 6 of [automated capture and sweep evaluation](20261102-automated-capture-and-sweep-evaluation.md) that fixes the sweep plan in code ("a changed list is a new plan id, never an edit"); the rest of that decision stands. The label an edit takes (Decision 2: the next number, never reused) is superseded by [variation version names](20261126-variation-version-names.md).
 
 ## Context
 

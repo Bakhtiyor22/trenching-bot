@@ -16,6 +16,7 @@ data class RunSearchParams(
     val createdTo: Instant?,
     val text: String?,
     val asOf: Instant?,
+    val variation: String? = null,
 )
 
 /**

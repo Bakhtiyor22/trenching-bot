@@ -33,7 +33,7 @@ data class Variation(
     companion object {
         /**
          * The seed of [plan]: its entries as active variations in plan order, numbered from zero so that the label `V` plus the number is the entry's own,
-         * with no creation day. An entry with another label is refused: an edit names its replacement by the next number and would meet that entry's key.
+         * with no creation day. An entry with another label is refused: names and the next base label are derived from labels of that shape.
          */
         fun seed(plan: SweepPlan, createdAt: Instant): List<Variation> = plan.entries.mapIndexed { index, entry ->
             require(entry.label == VariationEditRules.labelOf(index)) {

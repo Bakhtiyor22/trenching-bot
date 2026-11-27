@@ -1,5 +1,10 @@
 import type { RunDetail, RunOutcome, RunOutcomeStage, RunStatus, RunSummary } from '../api/types';
-import { createAutomationDb, MOCK_LABELS, mockMintOf } from './automationFixtures';
+import {
+  createAutomationDb,
+  MOCK_LABELS,
+  mockConfigurationHash,
+  mockMintOf,
+} from './automationFixtures';
 import { ENGINE_VERSION, SOL_MINT, sampleRunDetail } from './fixtures';
 
 /**
@@ -16,7 +21,7 @@ export const USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 /** The newest listed run's realized P&L: 69.08 USDT per SOL makes it ≈ +1.69 USDT. */
 export const NEWEST_RUN_PNL = '0.024477624000';
 /** The label the second listed run shares with its own, as a repeated archived variation would. */
-export const SHARED_LABEL = 'V12';
+export const SHARED_LABEL = 'V10';
 
 const LISTED_RUN_COUNT = 22;
 const CREATED_BASE_MS = Date.UTC(2026, 10, 2, 16, 0);
@@ -89,7 +94,8 @@ function buildListedRuns(): RunSummary[] {
       id: `${hex(n + 1, 8)}${hex(n + 501, 56)}`,
       datasetId: buy.datasetId!,
       engineVersion: ENGINE_VERSION,
-      configurationHash: hex(MOCK_LABELS.indexOf(label) + 400, 64),
+      // The hash the variation's sweep runs carry: `GET /api/runs?variation=` finds the run by it.
+      configurationHash: mockConfigurationHash(label),
       resultChecksum: hex(n + 900, 64),
       quoteMint: SOL_MINT,
       scenarioCount: 1,

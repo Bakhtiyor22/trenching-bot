@@ -29,6 +29,9 @@ object AutomationLimits {
     /** Variations read for a plan, active and archived; a plan grows by one per edit, by hand. */
     const val MAX_VARIATIONS_PER_PLAN = 500
 
+    /** Configuration hashes read for one variation's sweep runs; a variation has one per engine rule set, so a handful in practice. */
+    const val MAX_HASHES_PER_VARIATION = 100
+
     /** History events read for one item; an item has about twenty, its sweep entries and a few retries included. */
     const val MAX_EVENTS_PER_ITEM = 1000
 

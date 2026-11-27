@@ -34,6 +34,7 @@ import com.trenching.bot.replay.domain.SampleDataset
 import com.trenching.bot.strategy.TradeIntentStore
 import com.trenching.bot.strategy.domain.SimulationConfig
 import com.trenching.bot.support.DipSample
+import com.trenching.bot.support.FakeRunVariationLookup
 import com.trenching.bot.walletactivity.WalletEventStore
 import com.trenching.bot.walletactivity.domain.NormalizationOutcome
 import java.io.InputStream
@@ -79,7 +80,7 @@ class ConsoleServiceRunDetailTest {
         store = CaptureFileStore(CapturePathPolicy(root), JsonMapper.builder().addModule(kotlinModule()).build()).also { it.initialize() }
         service = ConsoleService(runs, reports, events, inputs, intents, orders, positions,
             DatasetSourceService(DatasetCatalog(), CaptureFileSourceLookup(store)),
-            RunVariationLabels { ids -> ids.filter { it == run.id }.associateWith { listOf("V03", "V12") } },
+            RunVariationLabels(FakeRunVariationLookup { ids -> ids.filter { it == run.id }.associateWith { listOf("V03", "V12") } }),
             RunOutcomes(orders, positions))
         val trades = report.ingestion.filterIsInstance<NormalizationOutcome.Accepted>().map { it.trade }
             .map { it.copy(blockTime = if (it.pair == DipSample.pair(DipSample.STOP_LOSS)) null else MIDNIGHT.plusSeconds(it.slot.value)) }

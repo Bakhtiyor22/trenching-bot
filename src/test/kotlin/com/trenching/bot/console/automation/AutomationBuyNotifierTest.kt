@@ -3,10 +3,14 @@ package com.trenching.bot.console.automation
 import ch.qos.logback.classic.Level
 import com.trenching.bot.console.automation.AutomationRows.item
 import com.trenching.bot.console.automation.application.AutomationBuyNotifier
+import com.trenching.bot.console.automation.application.AutomationVariationViews
 import com.trenching.bot.console.automation.domain.AutomationItemState
+import com.trenching.bot.console.automation.domain.SweepPlans
+import com.trenching.bot.console.automation.domain.Variation
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunEntity
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationSweepRunRepository
 import com.trenching.bot.console.automation.infrastructure.persistence.AutomationVariationRepository
+import com.trenching.bot.console.automation.mapper.AutomationVariationMapper
 import com.trenching.bot.notification.NotificationPublisher
 import com.trenching.bot.portfolio.domain.PositionState
 import java.math.BigDecimal
@@ -27,8 +31,9 @@ class AutomationBuyNotifierTest {
         readFailure?.let { throw it }
         if (call.method.name == "findAllByItemIdOrderByPlanIdAscLabelAsc") sweepRows else null
     }
+    private val variationMapper = AutomationVariationMapper()
     private val variations = mock(AutomationVariationRepository::class.java) { call ->
-        if (call.method.name == "findAllByPlanIdOrderBySeqAsc") emptyList<Any>() else null
+        if (call.method.name == "findAllByPlanIdOrderBySeqAsc") Variation.seed(SweepPlans.DECU_SWEEP_1, EVENING).map { variationMapper.toEntity(it) } else null
     }
     private val published = mutableListOf<String>()
     private var publishFailure: RuntimeException? = null
@@ -36,7 +41,7 @@ class AutomationBuyNotifierTest {
         publishFailure?.let { throw it }
         published += notification.key
     }
-    private val notifier = AutomationBuyNotifier(sweepRuns, variations, publisher, AutomationFixtures.properties())
+    private val notifier = AutomationBuyNotifier(sweepRuns, AutomationVariationViews(variations, variationMapper), publisher, AutomationFixtures.properties())
     private val logs = LogCapture()
 
     @AfterTest

@@ -15,7 +15,7 @@ class ConsoleResourceResolver(private val enabled: Boolean) : AbstractResourceRe
         if (!enabled) return null
         val resource = chain.resolveResource(request, requestPath, locations)
         if (resource != null) return resource
-        if (requestPath.startsWith("assets/") || requestPath.contains('.') || requestPath.contains('\\')) return null
+        if (requestPath.startsWith("assets/") || FILE_EXTENSION.containsMatchIn(requestPath) || requestPath.contains('\\')) return null
         return chain.resolveResource(request, "index.html", locations)
     }
 
@@ -24,4 +24,9 @@ class ConsoleResourceResolver(private val enabled: Boolean) : AbstractResourceRe
         locations: List<Resource>,
         chain: ResourceResolverChain,
     ): String? = if (enabled) chain.resolveUrlPath(resourceUrlPath, locations) else null
+
+    private companion object {
+        /** A last segment ending in a dot, a letter and then letters or digits is a file; `V03.1` is a page route. */
+        val FILE_EXTENSION = Regex("""\.[A-Za-z][A-Za-z0-9]*$""")
+    }
 }

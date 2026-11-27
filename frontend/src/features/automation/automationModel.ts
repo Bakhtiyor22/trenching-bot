@@ -462,10 +462,10 @@ export function variationText(
     : propertiesText(variation.differsFromAgreed, variation.config);
 }
 
-/** The plan's variations as the pages need them: names, order, the baseline and lookups. */
+/** The plan's variations as the pages need them: names, order, state, the baseline and lookups. */
 export interface VariationBook {
   planId: string | null;
-  /** By sequence, active and archived. */
+  /** By name (the API's order), active and archived. */
   variations: AutomationVariation[];
   /**
    * The variation every other one is compared with: the active one that differs from nothing agreed. Null while the
@@ -473,10 +473,47 @@ export interface VariationBook {
    */
   baseline: string | null;
   find(label: string): AutomationVariation | undefined;
+  /**
+   * What people see for a label: its name (`V03.1` for the legacy label V10), or the label itself while the book has
+   * not loaded or does not hold it. Links keep using the label.
+   */
+  name(label: string): string;
+  /** True for a variation the book holds as archived; false for an active or unknown one. */
+  archived(label: string): boolean;
   /** The variation's short text, or null for a label the book does not hold. */
   describe(label: string): string | null;
-  /** `labels` in sequence order; labels the book does not hold go last, sorted. */
+  /** `labels` in name order; labels the book does not hold go last, sorted. */
   order(labels: Iterable<string>): string[];
+}
+
+/** A variation's name, or its label from a backend that sends none. */
+export function nameOf(variation: Pick<AutomationVariation, 'label' | 'name'>): string {
+  return variation.name ?? variation.label;
+}
+
+const NAME = /^V(\d+)(?:\.(\d+))?$/;
+
+/**
+ * The name an edit of `variation` is saved as: the next revision in its line, `V03.2` → `V03.3`, `V04` → `V04.1`. The
+ * backend stores it under the same label. Null for a name outside that shape.
+ */
+export function editName(variation: Pick<AutomationVariation, 'label' | 'name'>): string | null {
+  const match = NAME.exec(nameOf(variation));
+  if (!match) return null;
+  return `V${match[1]}.${Number(match[2] ?? 0) + 1}`;
+}
+
+/**
+ * The name a new variation gets: `V` and one more than the highest number any label starts with, two digits at least
+ * (V16 after the legacy labels V10–V15). Only a forecast for the form's text: the backend names what it stores.
+ */
+export function newVariationName(book: Pick<VariationBook, 'variations'>): string | null {
+  const numbers = book.variations
+    .map((v) => /^V(\d+)/.exec(v.label)?.[1])
+    .filter((n): n is string => n != null)
+    .map(Number);
+  if (numbers.length === 0) return null;
+  return `V${String(Math.max(...numbers) + 1).padStart(2, '0')}`;
 }
 
 export function variationBook(list: AutomationVariationList | null | undefined): VariationBook {
@@ -490,6 +527,11 @@ export function variationBook(list: AutomationVariationList | null | undefined):
     variations,
     baseline,
     find: (label) => byLabel.get(label),
+    name: (label) => {
+      const variation = byLabel.get(label);
+      return variation ? nameOf(variation) : label;
+    },
+    archived: (label) => byLabel.get(label)?.state === 'ARCHIVED',
     describe: (label) => {
       const variation = byLabel.get(label);
       return variation ? variationText(variation) : null;
@@ -503,23 +545,10 @@ export function variationBook(list: AutomationVariationList | null | undefined):
   };
 }
 
-/**
- * The label the next edit would create: "V" and one more than the highest number, at least two digits. Only a
- * forecast for the form's text; another edit saved first takes it, and the backend names the label it created.
- */
-export function nextVariationLabel(book: VariationBook): string | null {
-  const numbers = book.variations
-    .map((v) => /^V(\d+)$/.exec(v.label)?.[1])
-    .filter((n): n is string => n != null)
-    .map(Number);
-  if (numbers.length === 0) return null;
-  return `V${String(Math.max(...numbers) + 1).padStart(2, '0')}`;
-}
-
-/** "V04 · take profit 80%", or the bare label when its text is unknown. */
+/** "V03.1 · take profit 80%": the name and what it changes, or the bare name when its text is unknown. */
 export function variationName(book: VariationBook, label: string): string {
   const text = book.describe(label);
-  return text ? `${label} · ${text}` : label;
+  return text ? `${book.name(label)} · ${text}` : book.name(label);
 }
 
 /** One setting changed in the edit form: its label and both values in words ("Take profit", "55%", "80%"). */
@@ -586,7 +615,11 @@ export function editFieldReasons(fields: Record<string, string>): Record<string,
 }
 
 /** Why an edit was refused or failed, in plain words, for the variation `label`. */
-export function variationEditErrorText(error: unknown, label: string): string {
+export function variationEditErrorText(
+  error: unknown,
+  label: string,
+  nameOfLabel: (label: string) => string = (other) => other,
+): string {
   if (!(error instanceof ApiError))
     return error instanceof Error ? error.message : 'Unexpected error.';
   switch (error.code) {
@@ -596,7 +629,7 @@ export function variationEditErrorText(error: unknown, label: string): string {
       return `These settings are exactly ${label}'s own. Change at least one setting to save a new variation.`;
     case 'VARIATION_DUPLICATE': {
       const other = error.fields.label;
-      return `${other ? `Active variation ${other}` : 'Another active variation'} already has exactly these settings, so a copy would only replay the same strategy twice.`;
+      return `${other ? `Active variation ${nameOfLabel(other)}` : 'Another active variation'} already has exactly these settings, so a copy would only replay the same strategy twice.`;
     }
     case 'VARIATION_BASELINE':
       return `${label} is the agreed baseline every other variation is compared with, so it can't be edited.`;
@@ -604,6 +637,8 @@ export function variationEditErrorText(error: unknown, label: string): string {
       return `Another edit of ${label} was saved at the same moment, so this one was not. Reload the variation and edit it again.`;
     case 'AUTOMATION_VARIATION_NOT_FOUND':
       return `The backend has no variation ${label}.`;
+    case 'VARIATION_REQUEST_REUSED':
+      return 'This request was already used for a different change, so nothing was saved. Save again: it is sent as a new request.';
     case 'VARIATION_LIMIT_REACHED':
       return 'The plan has reached its limit of variations, so no new one can be saved. Nothing was saved.';
     case 'CONFIG_INVALID':
@@ -615,6 +650,27 @@ export function variationEditErrorText(error: unknown, label: string): string {
     default:
       return error.message;
   }
+}
+
+/** Why archiving the variation `name` was refused or failed, in plain words. */
+export function variationArchiveErrorText(error: unknown, name: string): string {
+  if (error instanceof ApiError && error.code === 'VARIATION_BASELINE')
+    return `${name} is the agreed baseline every other variation is compared with, so it can't be archived.`;
+  if (error instanceof ApiError && error.code === NETWORK_ERROR)
+    return 'The backend could not be reached, so it is not known whether it was archived. Archiving again is safe: an archived variation stays as it is.';
+  return variationEditErrorText(error, name);
+}
+
+/** Why creating a variation was refused or failed, in plain words; the edit's own refusals do not apply. */
+export function variationCreateErrorText(
+  error: unknown,
+  nameOfLabel: (label: string) => string = (other) => other,
+): string {
+  if (error instanceof ApiError && error.code === 'AUTOMATION_CONFLICT')
+    return 'Another variation was saved at the same moment, so this one was not. Create it again.';
+  if (error instanceof ApiError && error.code === NETWORK_ERROR)
+    return 'The backend could not be reached, so it is not known whether the variation was created. Creating it again sends the same request: it cannot create it twice.';
+  return variationEditErrorText(error, '', nameOfLabel);
 }
 
 const EDIT_UNPLACED_SUBJECTS: Record<string, string> = {

@@ -31,6 +31,7 @@ export const RUN_PARAMS = {
   createdFrom: 'from',
   createdTo: 'to',
   datasetId: 'datasetId',
+  variation: 'variation',
   q: 'q',
   asOf: 'asOf',
   page: 'page',
@@ -44,6 +45,7 @@ export const FILTER_PARAMS = [
   RUN_PARAMS.createdFrom,
   RUN_PARAMS.createdTo,
   RUN_PARAMS.datasetId,
+  RUN_PARAMS.variation,
   RUN_PARAMS.q,
 ] as const;
 /** The old `?outcome=loss` links still open the matching status. */
@@ -186,6 +188,8 @@ export interface RunFilters {
   createdFrom: string;
   createdTo: string;
   datasetId: string | null;
+  /** A variation's label: runs with the settings it ran with. */
+  variation: string | null;
   q: string;
 }
 
@@ -203,6 +207,7 @@ export function readFilters(params: URLSearchParams): RunFilters {
     createdFrom: params.get(RUN_PARAMS.createdFrom) ?? '',
     createdTo: params.get(RUN_PARAMS.createdTo) ?? '',
     datasetId: params.get(RUN_PARAMS.datasetId) || null,
+    variation: params.get(RUN_PARAMS.variation) || null,
     q: params.get(RUN_PARAMS.q) ?? '',
   };
 }
@@ -267,6 +272,7 @@ export function toRunQuery(
     page,
     size,
     datasetId: filters.datasetId,
+    variation: filters.variation,
     status: filters.status === 'all' ? null : filters.status,
     mint: filters.mint && !mintProblem(filters.mint) ? filters.mint : null,
     anchorFrom: day && clock ? dayStartInstant(day, clock.zone, clock.dayStart) : null,
@@ -304,6 +310,7 @@ export function pnlDisplay(
 export function activeFilterLabels(
   filters: RunFilters,
   datasetName: string | null | undefined,
+  variationName: (label: string) => string = (label) => label,
 ): string[] {
   const labels: string[] = [];
   if (filters.status !== 'all') labels.push(STATUS_PHRASES[filters.status]);
@@ -318,6 +325,7 @@ export function activeFilterLabels(
       }`,
     );
   if (filters.datasetId) labels.push(`dataset ${datasetName || shortId(filters.datasetId)}`);
+  if (filters.variation) labels.push(`using ${variationName(filters.variation)}'s settings`);
   if (filters.q.trim() && !queryProblem(filters.q)) labels.push(`text “${filters.q.trim()}”`);
   return labels;
 }
@@ -330,6 +338,7 @@ export function hasFilters(filters: RunFilters): boolean {
     filters.createdFrom !== '' ||
     filters.createdTo !== '' ||
     filters.datasetId !== null ||
+    filters.variation !== null ||
     filters.q.trim() !== ''
   );
 }

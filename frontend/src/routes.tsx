@@ -133,6 +133,12 @@ export const routes: RouteObject[] = [
         }),
       },
       {
+        path: 'automation/variations/new',
+        lazy: async () => ({
+          Component: (await import('./features/automation/VariationNewPage')).VariationNewPage,
+        }),
+      },
+      {
         path: 'automation/variations/:label',
         lazy: async () => ({
           Component: (await import('./features/automation/VariationDetailPage'))
